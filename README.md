@@ -32,7 +32,12 @@ Create org structure:
 ```bash
 TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Payments")
 node dist/cli.js agent:new /path/to/workspace --name "Payments Manager" --role manager --provider codex --team "$TEAM_ID"
-node dist/cli.js project:new /path/to/workspace --name "Project X"
+PROJECT_ID=$(node dist/cli.js project:new /path/to/workspace --name "Project X")
+```
+
+Create a run (run.yaml + events.jsonl + context pack skeleton):
+```bash
+node dist/cli.js run:new /path/to/workspace --project "$PROJECT_ID" --agent <agent_id> --provider codex
 ```
 
 Validate a Company Workspace folder:
