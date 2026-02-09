@@ -7,6 +7,10 @@ import { validateWorkspace } from "./workspace/validate.js";
 import { ArtifactType, newArtifactMarkdown, validateMarkdownArtifact } from "./artifacts/markdown.js";
 import { writeFileAtomic } from "./store/fs.js";
 import { Visibility } from "./schemas/common.js";
+import { createTeam } from "./org/teams.js";
+import { createAgent } from "./org/agents.js";
+import { createProject } from "./work/projects.js";
+import { AgentRole } from "./schemas/agent.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -64,6 +68,67 @@ program
       process.stderr.write("VALIDATION FAILED\n");
       for (const i of res.issues) process.stderr.write(`- ${i.message}\n`);
       process.exitCode = 2;
+    });
+  });
+
+program
+  .command("team:new")
+  .description("Create a new team in a workspace")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--name <name>", "Team name", "")
+  .action(async (workspaceDir: string, opts: { name: string }) => {
+    await runAction(async () => {
+      if (!opts.name.trim()) throw new UserError("--name is required");
+      const { team_id } = await createTeam({ workspace_dir: workspaceDir, name: opts.name });
+      process.stdout.write(`${team_id}\n`);
+    });
+  });
+
+program
+  .command("agent:new")
+  .description("Create a new agent in a workspace")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--name <name>", "Agent name", "")
+  .option("--role <role>", "Role (ceo|director|manager|worker)", "")
+  .option("--provider <provider>", "Provider driver name (e.g., codex, claude_code)", "")
+  .option("--team <team_id>", "Team id (optional)", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { name: string; role: string; provider: string; team?: string }
+    ) => {
+      await runAction(async () => {
+        if (!opts.name.trim()) throw new UserError("--name is required");
+        if (!opts.role.trim()) throw new UserError("--role is required");
+        if (!opts.provider.trim()) throw new UserError("--provider is required");
+        const roleParsed = AgentRole.safeParse(opts.role);
+        if (!roleParsed.success) {
+          throw new UserError(
+            `Invalid role "${opts.role}". Valid: ${AgentRole.options.join(", ")}`
+          );
+        }
+        const { agent_id } = await createAgent({
+          workspace_dir: workspaceDir,
+          name: opts.name,
+          role: roleParsed.data,
+          provider: opts.provider,
+          team_id: opts.team
+        });
+        process.stdout.write(`${agent_id}\n`);
+      });
+    }
+  );
+
+program
+  .command("project:new")
+  .description("Create a new project in a workspace")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--name <name>", "Project name", "")
+  .action(async (workspaceDir: string, opts: { name: string }) => {
+    await runAction(async () => {
+      if (!opts.name.trim()) throw new UserError("--name is required");
+      const { project_id } = await createProject({ workspace_dir: workspaceDir, name: opts.name });
+      process.stdout.write(`${project_id}\n`);
     });
   });
 
