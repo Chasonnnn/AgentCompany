@@ -28,6 +28,13 @@ Initialize a Company Workspace folder:
 node dist/cli.js workspace:init /path/to/workspace --name "Acme"
 ```
 
+Create org structure:
+```bash
+TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Payments")
+node dist/cli.js agent:new /path/to/workspace --name "Payments Manager" --role manager --provider codex --team "$TEAM_ID"
+node dist/cli.js project:new /path/to/workspace --name "Project X"
+```
+
 Validate a Company Workspace folder:
 ```bash
 node dist/cli.js workspace:validate /path/to/workspace
