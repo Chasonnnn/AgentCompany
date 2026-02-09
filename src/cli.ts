@@ -11,6 +11,7 @@ import { createTeam } from "./org/teams.js";
 import { createAgent } from "./org/agents.js";
 import { createProject } from "./work/projects.js";
 import { AgentRole } from "./schemas/agent.js";
+import { createRun } from "./runtime/run.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -131,6 +132,33 @@ program
       process.stdout.write(`${project_id}\n`);
     });
   });
+
+program
+  .command("run:new")
+  .description("Create a new run folder (run.yaml + events.jsonl + context pack skeleton)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--agent <agent_id>", "Agent id", "")
+  .option("--provider <provider>", "Provider name", "")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project: string; agent: string; provider: string }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.agent.trim()) throw new UserError("--agent is required");
+        if (!opts.provider.trim()) throw new UserError("--provider is required");
+        const { run_id, context_pack_id } = await createRun({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          agent_id: opts.agent,
+          provider: opts.provider
+        });
+        process.stdout.write(JSON.stringify({ run_id, context_pack_id }) + "\n");
+      });
+    }
+  );
 
 program
   .command("artifact:new")
