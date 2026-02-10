@@ -4,7 +4,13 @@ import { z } from "zod";
 import { initWorkspace } from "../workspace/init.js";
 import { validateWorkspace } from "../workspace/validate.js";
 import { createRun } from "../runtime/run.js";
-import { launchSession, pollSession, collectSession, stopSession } from "../runtime/session.js";
+import {
+  launchSession,
+  pollSession,
+  collectSession,
+  stopSession,
+  listSessions
+} from "../runtime/session.js";
 import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
@@ -55,6 +61,13 @@ const SessionLaunchParams = z.object({
 
 const SessionSingleParams = z.object({
   session_ref: z.string().min(1)
+});
+
+const SessionListParams = z.object({
+  workspace_dir: z.string().min(1).optional(),
+  project_id: z.string().min(1).optional(),
+  run_id: z.string().min(1).optional(),
+  status: z.enum(["running", "ended", "failed", "stopped"]).optional()
 });
 
 const RunListParams = z.object({
@@ -245,6 +258,10 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     case "session.stop": {
       const p = SessionSingleParams.parse(params);
       return stopSession(p.session_ref);
+    }
+    case "session.list": {
+      const p = SessionListParams.parse(params ?? {});
+      return listSessions(p);
     }
     case "run.list": {
       const p = RunListParams.parse(params);

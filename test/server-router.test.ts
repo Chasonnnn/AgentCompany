@@ -58,4 +58,11 @@ describe("server router", () => {
     expect(names).toContain("codex_cli");
     expect(names).toContain("claude_cli");
   });
+
+  test("session.list returns an array", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const sessions = await routeRpcMethod("session.list", { workspace_dir: dir });
+    expect(Array.isArray(sessions)).toBe(true);
+  });
 });

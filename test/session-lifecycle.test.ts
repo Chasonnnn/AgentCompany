@@ -7,7 +7,13 @@ import { createTeam } from "../src/org/teams.js";
 import { createAgent } from "../src/org/agents.js";
 import { createProject } from "../src/work/projects.js";
 import { createRun } from "../src/runtime/run.js";
-import { launchSession, pollSession, collectSession, stopSession } from "../src/runtime/session.js";
+import {
+  launchSession,
+  pollSession,
+  collectSession,
+  stopSession,
+  listSessions
+} from "../src/runtime/session.js";
 import { readYamlFile } from "../src/store/yaml.js";
 import { RunYaml } from "../src/schemas/run.js";
 
@@ -104,5 +110,37 @@ describe("runtime session lifecycle", () => {
       await readYamlFile(path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml"))
     );
     expect(runDoc.status).toBe("stopped");
+  });
+
+  test("listSessions supports workspace and status filters", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+
+    const launched = await launchSession({
+      workspace_dir: dir,
+      project_id,
+      run_id,
+      argv: [process.execPath, "-e", "setTimeout(() => process.exit(0), 2000);"]
+    });
+
+    await sleep(60);
+    const running = listSessions({ workspace_dir: dir, status: "running" });
+    expect(running.some((s) => s.session_ref === launched.session_ref)).toBe(true);
+
+    stopSession(launched.session_ref);
+    await waitForTerminal(launched.session_ref);
+
+    const stopped = listSessions({ workspace_dir: dir, status: "stopped" });
+    expect(stopped.some((s) => s.session_ref === launched.session_ref)).toBe(true);
   });
 });

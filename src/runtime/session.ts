@@ -25,6 +25,19 @@ export type SessionCollectResult = SessionPollResult & {
   output_relpaths: string[];
 };
 
+export type SessionListArgs = {
+  workspace_dir?: string;
+  project_id?: string;
+  run_id?: string;
+  status?: SessionStatus;
+};
+
+export type SessionListItem = SessionPollResult & {
+  workspace_dir: string;
+  started_at_ms: number;
+  ended_at_ms?: number;
+};
+
 type SessionRecord = {
   session_ref: string;
   project_id: string;
@@ -35,6 +48,8 @@ type SessionRecord = {
   result: ExecuteCommandResult | null;
   error?: string;
   workspace_dir: string;
+  started_at_ms: number;
+  ended_at_ms?: number;
 };
 
 const SESSIONS = new Map<string, SessionRecord>();
@@ -74,7 +89,8 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
     abort_controller: abortController,
     result: null,
     workspace_dir: args.workspace_dir,
-    promise: Promise.resolve()
+    promise: Promise.resolve(),
+    started_at_ms: Date.now()
   };
   rec.promise = (async () => {
     try {
@@ -86,6 +102,8 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
     } catch (e) {
       rec.status = "failed";
       rec.error = e instanceof Error ? e.message : String(e);
+    } finally {
+      rec.ended_at_ms = Date.now();
     }
   })();
   SESSIONS.set(sessionRef, rec);
@@ -139,3 +157,23 @@ export function stopSession(session_ref: string): SessionPollResult {
   return pollSession(session_ref);
 }
 
+export function listSessions(filters: SessionListArgs = {}): SessionListItem[] {
+  const out: SessionListItem[] = [];
+  for (const rec of SESSIONS.values()) {
+    if (filters.workspace_dir && rec.workspace_dir !== filters.workspace_dir) continue;
+    if (filters.project_id && rec.project_id !== filters.project_id) continue;
+    if (filters.run_id && rec.run_id !== filters.run_id) continue;
+    if (filters.status && rec.status !== filters.status) continue;
+    out.push({
+      ...pollSession(rec.session_ref),
+      workspace_dir: rec.workspace_dir,
+      started_at_ms: rec.started_at_ms,
+      ended_at_ms: rec.ended_at_ms
+    });
+  }
+  out.sort((a, b) => {
+    if (a.started_at_ms !== b.started_at_ms) return b.started_at_ms - a.started_at_ms;
+    return a.session_ref.localeCompare(b.session_ref);
+  });
+  return out;
+}
