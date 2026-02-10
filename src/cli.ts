@@ -25,6 +25,7 @@ import { approveMilestone } from "./milestones/approve_milestone.js";
 import { createSharePack } from "./share/share_pack.js";
 import { createHelpRequestFile } from "./help/help_request_files.js";
 import { validateHelpRequestMarkdown } from "./help/help_request.js";
+import { demoInit } from "./demo/demo_init.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -82,6 +83,19 @@ program
       process.stderr.write("VALIDATION FAILED\n");
       for (const i of res.issues) process.stderr.write(`- ${i.message}\n`);
       process.exitCode = 2;
+    });
+  });
+
+program
+  .command("demo:init")
+  .description("Initialize a demo workspace with 2 teams, managers/workers, and a sample project")
+  .argument("<dir>", "Workspace root directory")
+  .option("--name <name>", "Company name", "AgentCompany Demo")
+  .option("--force", "Initialize even if the directory is non-empty", false)
+  .action(async (dir: string, opts: { name: string; force: boolean }) => {
+    await runAction(async () => {
+      const res = await demoInit({ workspace_dir: dir, company_name: opts.name, force: opts.force });
+      process.stdout.write(JSON.stringify(res, null, 2) + "\n");
     });
   });
 
