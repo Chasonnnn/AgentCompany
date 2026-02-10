@@ -230,6 +230,7 @@ export async function doctorWorkspace(args: WorkspaceDoctorArgs): Promise<Worksp
         `db_path: ${rebuilt.db_path}`,
         `runs_indexed: ${rebuilt.runs_indexed}`,
         `events_indexed: ${rebuilt.events_indexed}`,
+        `artifacts_indexed: ${rebuilt.artifacts_indexed}`,
         `reviews_indexed: ${rebuilt.reviews_indexed}`,
         `help_requests_indexed: ${rebuilt.help_requests_indexed}`
       ]
@@ -253,6 +254,8 @@ export async function doctorWorkspace(args: WorkspaceDoctorArgs): Promise<Worksp
         `events_deleted: ${synced.events_deleted}`,
         `event_parse_errors_indexed: ${synced.event_parse_errors_indexed}`,
         `event_parse_errors_deleted: ${synced.event_parse_errors_deleted}`,
+        `artifacts_upserted: ${synced.artifacts_upserted}`,
+        `artifacts_deleted: ${synced.artifacts_deleted}`,
         `reviews_upserted: ${synced.reviews_upserted}`,
         `reviews_deleted: ${synced.reviews_deleted}`,
         `help_requests_upserted: ${synced.help_requests_upserted}`,
@@ -290,6 +293,7 @@ export async function doctorWorkspace(args: WorkspaceDoctorArgs): Promise<Worksp
             `runs: ${stats.runs}`,
             `events: ${stats.events}`,
             `event_parse_errors: ${stats.event_parse_errors}`,
+            `artifacts: ${stats.artifacts}`,
             `reviews: ${stats.reviews}`,
             `help_requests: ${stats.help_requests}`,
             `index_mtime_ms: ${Math.floor(dbStat.mtimeMs)}`,

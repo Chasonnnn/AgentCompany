@@ -27,6 +27,7 @@ type RebuildCounters = {
   runs_indexed: number;
   events_indexed: number;
   event_parse_errors: number;
+  artifacts_indexed: number;
   reviews_indexed: number;
   help_requests_indexed: number;
 };
@@ -44,6 +45,8 @@ export type SyncIndexResult = {
   events_deleted: number;
   event_parse_errors_indexed: number;
   event_parse_errors_deleted: number;
+  artifacts_upserted: number;
+  artifacts_deleted: number;
   reviews_upserted: number;
   reviews_deleted: number;
   help_requests_upserted: number;
@@ -96,6 +99,44 @@ export type IndexedRunParseErrorCount = {
   project_id: string;
   run_id: string;
   parse_error_count: number;
+};
+
+export type IndexedArtifact = {
+  project_id: string;
+  artifact_id: string;
+  type: string;
+  title: string | null;
+  visibility: string | null;
+  produced_by: string | null;
+  run_id: string | null;
+  context_pack_id: string | null;
+  created_at: string | null;
+  relpath: string;
+};
+
+export type IndexedPendingApproval = {
+  project_id: string;
+  artifact_id: string;
+  artifact_type: string;
+  title: string | null;
+  visibility: string | null;
+  produced_by: string | null;
+  run_id: string | null;
+  created_at: string | null;
+};
+
+export type IndexedReviewDecision = {
+  review_id: string;
+  created_at: string;
+  decision: "approved" | "denied";
+  actor_id: string;
+  actor_role: string;
+  subject_kind: string;
+  subject_artifact_id: string;
+  project_id: string;
+  notes: string | null;
+  artifact_type: string | null;
+  artifact_run_id: string | null;
 };
 
 export type IndexedReview = {
@@ -203,6 +244,23 @@ CREATE TABLE IF NOT EXISTS event_parse_errors (
   PRIMARY KEY (project_id, run_id, seq)
 );
 
+CREATE TABLE IF NOT EXISTS artifacts (
+  project_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT,
+  visibility TEXT,
+  produced_by TEXT,
+  run_id TEXT,
+  context_pack_id TEXT,
+  created_at TEXT,
+  relpath TEXT NOT NULL,
+  PRIMARY KEY (project_id, artifact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type);
+CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifacts_run_id ON artifacts(run_id);
+
 CREATE TABLE IF NOT EXISTS reviews (
   review_id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
@@ -238,6 +296,33 @@ function parseJsonLine(line: string): { ok: true; value: any } | { ok: false; er
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+function parseArtifactForIndex(args: {
+  project_id: string;
+  relpath: string;
+  markdown: string;
+}): IndexedArtifact | null {
+  const parsed = parseFrontMatter(args.markdown);
+  if (!parsed.ok) return null;
+  const fm = parsed.frontmatter;
+  if (!fm || typeof fm !== "object") return null;
+  const obj = fm as Record<string, unknown>;
+  const artifactId = typeof obj.id === "string" && obj.id.trim() ? obj.id : null;
+  const type = typeof obj.type === "string" && obj.type.trim() ? obj.type : null;
+  if (!artifactId || !type) return null;
+  return {
+    project_id: args.project_id,
+    artifact_id: artifactId,
+    type,
+    title: typeof obj.title === "string" ? obj.title : null,
+    visibility: typeof obj.visibility === "string" ? obj.visibility : null,
+    produced_by: typeof obj.produced_by === "string" ? obj.produced_by : null,
+    run_id: typeof obj.run_id === "string" ? obj.run_id : null,
+    context_pack_id: typeof obj.context_pack_id === "string" ? obj.context_pack_id : null,
+    created_at: typeof obj.created_at === "string" ? obj.created_at : null,
+    relpath: args.relpath
+  };
 }
 
 function changesOf(runResult: unknown): number {
@@ -276,6 +361,7 @@ export async function rebuildSqliteIndex(workspaceDir: string): Promise<RebuildI
     runs_indexed: 0,
     events_indexed: 0,
     event_parse_errors: 0,
+    artifacts_indexed: 0,
     reviews_indexed: 0,
     help_requests_indexed: 0
   };
@@ -300,6 +386,13 @@ export async function rebuildSqliteIndex(workspaceDir: string): Promise<RebuildI
     const insertEventParseError = db.prepare(`
       INSERT INTO event_parse_errors (project_id, run_id, seq, error, raw_line)
       VALUES (:project_id, :run_id, :seq, :error, :raw_line)
+    `);
+    const insertArtifact = db.prepare(`
+      INSERT INTO artifacts (
+        project_id, artifact_id, type, title, visibility, produced_by, run_id, context_pack_id, created_at, relpath
+      ) VALUES (
+        :project_id, :artifact_id, :type, :title, :visibility, :produced_by, :run_id, :context_pack_id, :created_at, :relpath
+      )
     `);
     const insertReview = db.prepare(`
       INSERT INTO reviews (
@@ -386,6 +479,27 @@ export async function rebuildSqliteIndex(workspaceDir: string): Promise<RebuildI
             counters.events_indexed += 1;
           }
         }
+
+        const artifactsDir = path.join(workspaceDir, "work/projects", projectId, "artifacts");
+        const artifactFiles = await listFiles(artifactsDir, ".md");
+        for (const file of artifactFiles) {
+          const rel = path.join("work/projects", projectId, "artifacts", file);
+          const abs = path.join(workspaceDir, rel);
+          let markdown = "";
+          try {
+            markdown = await fs.readFile(abs, { encoding: "utf8" });
+          } catch {
+            continue;
+          }
+          const parsed = parseArtifactForIndex({
+            project_id: projectId,
+            relpath: rel,
+            markdown
+          });
+          if (!parsed) continue;
+          insertArtifact.run(parsed);
+          counters.artifacts_indexed += 1;
+        }
       }
 
       const reviewFiles = await listFiles(path.join(workspaceDir, "inbox/reviews"), ".yaml");
@@ -460,6 +574,8 @@ export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexRe
     events_deleted: 0,
     event_parse_errors_indexed: 0,
     event_parse_errors_deleted: 0,
+    artifacts_upserted: 0,
+    artifacts_deleted: 0,
     reviews_upserted: 0,
     reviews_deleted: 0,
     help_requests_upserted: 0,
@@ -508,6 +624,22 @@ export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexRe
         error = excluded.error,
         raw_line = excluded.raw_line
     `);
+    const upsertArtifact = db.prepare(`
+      INSERT INTO artifacts (
+        project_id, artifact_id, type, title, visibility, produced_by, run_id, context_pack_id, created_at, relpath
+      ) VALUES (
+        :project_id, :artifact_id, :type, :title, :visibility, :produced_by, :run_id, :context_pack_id, :created_at, :relpath
+      )
+      ON CONFLICT(project_id, artifact_id) DO UPDATE SET
+        type = excluded.type,
+        title = excluded.title,
+        visibility = excluded.visibility,
+        produced_by = excluded.produced_by,
+        run_id = excluded.run_id,
+        context_pack_id = excluded.context_pack_id,
+        created_at = excluded.created_at,
+        relpath = excluded.relpath
+    `);
 
     const deleteRun = db.prepare(`
       DELETE FROM runs
@@ -528,6 +660,10 @@ export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexRe
     const deleteParseErrorSeq = db.prepare(`
       DELETE FROM event_parse_errors
       WHERE project_id = :project_id AND run_id = :run_id AND seq = :seq
+    `);
+    const deleteArtifact = db.prepare(`
+      DELETE FROM artifacts
+      WHERE project_id = :project_id AND artifact_id = :artifact_id
     `);
 
     const maxEventSeq = db.prepare(`
@@ -590,6 +726,14 @@ export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexRe
         }>
       ).map((r) => `${r.project_id}::${r.run_id}`)
     );
+    const existingArtifactKeys = new Set(
+      (
+        db.prepare(`SELECT project_id, artifact_id FROM artifacts`).all() as Array<{
+          project_id: string;
+          artifact_id: string;
+        }>
+      ).map((r) => `${r.project_id}::${r.artifact_id}`)
+    );
     const existingReviewIds = new Set(
       (
         db.prepare(`SELECT review_id FROM reviews`).all() as Array<{
@@ -606,6 +750,7 @@ export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexRe
     );
 
     const seenRuns = new Set<string>();
+    const seenArtifactKeys = new Set<string>();
     const seenReviewIds = new Set<string>();
     const seenHelpRequestIds = new Set<string>();
 
@@ -706,6 +851,28 @@ export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexRe
             counters.events_indexed += 1;
           }
         }
+
+        const artifactsDir = path.join(workspaceDir, "work/projects", projectId, "artifacts");
+        const artifactFiles = await listFiles(artifactsDir, ".md");
+        for (const file of artifactFiles) {
+          const rel = path.join("work/projects", projectId, "artifacts", file);
+          const abs = path.join(workspaceDir, rel);
+          let markdown = "";
+          try {
+            markdown = await fs.readFile(abs, { encoding: "utf8" });
+          } catch {
+            continue;
+          }
+          const artifact = parseArtifactForIndex({
+            project_id: projectId,
+            relpath: rel,
+            markdown
+          });
+          if (!artifact) continue;
+          seenArtifactKeys.add(`${projectId}::${artifact.artifact_id}`);
+          upsertArtifact.run(artifact);
+          counters.artifacts_upserted += 1;
+        }
       }
 
       for (const key of existingRuns) {
@@ -716,6 +883,12 @@ export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexRe
           deleteRunParseErrors.run({ project_id, run_id })
         );
         counters.runs_deleted += changesOf(deleteRun.run({ project_id, run_id }));
+      }
+
+      for (const key of existingArtifactKeys) {
+        if (seenArtifactKeys.has(key)) continue;
+        const [project_id, artifact_id] = key.split("::");
+        counters.artifacts_deleted += changesOf(deleteArtifact.run({ project_id, artifact_id }));
       }
 
       const reviewFiles = await listFiles(path.join(workspaceDir, "inbox/reviews"), ".yaml");
@@ -937,6 +1110,163 @@ export async function listIndexedEvents(args: ListIndexedEventsArgs): Promise<In
   }
 }
 
+export async function listIndexedArtifacts(args: {
+  workspace_dir: string;
+  project_id?: string;
+  artifact_id?: string;
+  type?: string;
+  run_id?: string;
+  limit?: number;
+}): Promise<IndexedArtifact[]> {
+  const { db } = await openExistingDb(args.workspace_dir);
+  try {
+    const where: string[] = [];
+    const params: Record<string, SQLInputValue> = {};
+    if (args.project_id) {
+      where.push("project_id = :project_id");
+      params.project_id = args.project_id;
+    }
+    if (args.artifact_id) {
+      where.push("artifact_id = :artifact_id");
+      params.artifact_id = args.artifact_id;
+    }
+    if (args.type) {
+      where.push("type = :type");
+      params.type = args.type;
+    }
+    if (args.run_id) {
+      where.push("run_id = :run_id");
+      params.run_id = args.run_id;
+    }
+    const limit = Math.max(1, Math.min(args.limit ?? 500, 5000));
+    params.limit = limit;
+    const sql = `
+      SELECT
+        project_id,
+        artifact_id,
+        type,
+        title,
+        visibility,
+        produced_by,
+        run_id,
+        context_pack_id,
+        created_at,
+        relpath
+      FROM artifacts
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY created_at DESC, artifact_id DESC
+      LIMIT :limit
+    `;
+    return db.prepare(sql).all(params) as IndexedArtifact[];
+  } finally {
+    db.close();
+  }
+}
+
+export async function listIndexedPendingApprovals(args: {
+  workspace_dir: string;
+  project_id?: string;
+  limit?: number;
+}): Promise<IndexedPendingApproval[]> {
+  const { db } = await openExistingDb(args.workspace_dir);
+  try {
+    const where: string[] = [];
+    const params: Record<string, SQLInputValue> = {};
+    if (args.project_id) {
+      where.push("a.project_id = :project_id");
+      params.project_id = args.project_id;
+    }
+    const limit = Math.max(1, Math.min(args.limit ?? 200, 5000));
+    params.limit = limit;
+    const sql = `
+      SELECT
+        a.project_id,
+        a.artifact_id,
+        a.type AS artifact_type,
+        a.title,
+        a.visibility,
+        a.produced_by,
+        a.run_id,
+        a.created_at
+      FROM artifacts a
+      WHERE (
+        (
+          a.type = 'memory_delta'
+          AND NOT EXISTS (
+            SELECT 1 FROM reviews r
+            WHERE r.project_id = a.project_id
+              AND r.subject_artifact_id = a.artifact_id
+              AND r.subject_kind = 'memory_delta'
+          )
+        )
+        OR
+        (
+          a.type = 'milestone_report'
+          AND NOT EXISTS (
+            SELECT 1 FROM reviews r
+            WHERE r.project_id = a.project_id
+              AND r.subject_artifact_id = a.artifact_id
+              AND r.subject_kind = 'milestone'
+          )
+        )
+      )
+      ${where.length ? `AND ${where.join(" AND ")}` : ""}
+      ORDER BY a.created_at DESC, a.artifact_id DESC
+      LIMIT :limit
+    `;
+    return db.prepare(sql).all(params) as IndexedPendingApproval[];
+  } finally {
+    db.close();
+  }
+}
+
+export async function listIndexedReviewDecisions(args: {
+  workspace_dir: string;
+  project_id?: string;
+  decision?: "approved" | "denied";
+  limit?: number;
+}): Promise<IndexedReviewDecision[]> {
+  const { db } = await openExistingDb(args.workspace_dir);
+  try {
+    const where: string[] = [];
+    const params: Record<string, SQLInputValue> = {};
+    if (args.project_id) {
+      where.push("r.project_id = :project_id");
+      params.project_id = args.project_id;
+    }
+    if (args.decision) {
+      where.push("r.decision = :decision");
+      params.decision = args.decision;
+    }
+    const limit = Math.max(1, Math.min(args.limit ?? 200, 5000));
+    params.limit = limit;
+    const sql = `
+      SELECT
+        r.review_id,
+        r.created_at,
+        r.decision,
+        r.actor_id,
+        r.actor_role,
+        r.subject_kind,
+        r.subject_artifact_id,
+        r.project_id,
+        r.notes,
+        a.type AS artifact_type,
+        a.run_id AS artifact_run_id
+      FROM reviews r
+      LEFT JOIN artifacts a
+        ON a.project_id = r.project_id
+       AND a.artifact_id = r.subject_artifact_id
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY r.created_at DESC, r.review_id DESC
+      LIMIT :limit
+    `;
+    return db.prepare(sql).all(params) as IndexedReviewDecision[];
+  } finally {
+    db.close();
+  }
+}
+
 export async function listIndexedRunLastEvents(args: {
   workspace_dir: string;
   project_id?: string;
@@ -1085,6 +1415,7 @@ export type IndexStats = {
   runs: number;
   events: number;
   event_parse_errors: number;
+  artifacts: number;
   reviews: number;
   help_requests: number;
 };
@@ -1100,6 +1431,7 @@ export async function readIndexStats(workspaceDir: string): Promise<IndexStats> 
       runs: count("runs"),
       events: count("events"),
       event_parse_errors: count("event_parse_errors"),
+      artifacts: count("artifacts"),
       reviews: count("reviews"),
       help_requests: count("help_requests")
     };
