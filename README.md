@@ -121,6 +121,7 @@ node dist/cli.js ui:snapshot /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js ui:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor human --role manager
 node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor human --role manager
 node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor human --role manager --json
+node dist/cli.js ui:web /path/to/workspace --project "$PROJECT_ID" --actor human --role manager --port 8787
 ```
 
 Cross-team sharing:

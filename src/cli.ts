@@ -36,6 +36,7 @@ import { refreshAgentContextIndex } from "./eval/agent_context_index.js";
 import { resolveInboxItem } from "./inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "./ui/resolve_and_snapshot.js";
 import { buildManagerDashboardJson, runManagerDashboard } from "./ui/manager_dashboard.js";
+import { startUiWebServer } from "./ui/web_server.js";
 import { runJsonRpcServer } from "./server/main.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
@@ -956,6 +957,92 @@ program
           sync_index: opts.syncIndex,
           once: opts.once,
           clear_screen: opts.clearScreen
+        });
+      });
+    }
+  );
+
+program
+  .command("ui:web")
+  .description("Start a local web UI server for run monitor + review inbox")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--actor <actor_id>", "Actor id (human or agent id)", "human")
+  .option("--role <role>", "Actor role (human|ceo|director|manager|worker)", "manager")
+  .option("--team <team_id>", "Actor team id (optional)", undefined)
+  .option("--host <host>", "Listen host", "127.0.0.1")
+  .option("--port <n>", "Listen port (0 for random)", (v) => parseInt(v, 10), 8787)
+  .option("--monitor-limit <n>", "Max run monitor rows", (v) => parseInt(v, 10), 200)
+  .option("--pending-limit <n>", "Max pending inbox rows", (v) => parseInt(v, 10), 200)
+  .option("--decisions-limit <n>", "Max recent decision rows", (v) => parseInt(v, 10), 200)
+  .option("--refresh-index", "Rebuild index before initial reads", false)
+  .option("--no-sync-index", "Skip incremental index sync before reads")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        actor: string;
+        role: string;
+        team?: string;
+        host: string;
+        port: number;
+        monitorLimit: number;
+        pendingLimit: number;
+        decisionsLimit: number;
+        refreshIndex: boolean;
+        syncIndex: boolean;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        const role = opts.role as any;
+        if (!["human", "ceo", "director", "manager", "worker"].includes(role)) {
+          throw new UserError("Invalid --role. Valid: human, ceo, director, manager, worker");
+        }
+        if (!Number.isInteger(opts.port) || opts.port < 0 || opts.port > 65535) {
+          throw new UserError("--port must be an integer between 0 and 65535");
+        }
+
+        const web = await startUiWebServer({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          actor_id: opts.actor,
+          actor_role: role,
+          actor_team_id: opts.team,
+          host: opts.host,
+          port: opts.port,
+          monitor_limit: opts.monitorLimit,
+          pending_limit: opts.pendingLimit,
+          decisions_limit: opts.decisionsLimit,
+          refresh_index: opts.refreshIndex,
+          sync_index: opts.syncIndex
+        });
+
+        process.stdout.write(`UI web server listening at ${web.url}\n`);
+        process.stdout.write("Press Ctrl+C to stop.\n");
+
+        await new Promise<void>((resolve) => {
+          let closing = false;
+          const shutdown = async (): Promise<void> => {
+            if (closing) return;
+            closing = true;
+            process.off("SIGINT", onSigint);
+            process.off("SIGTERM", onSigterm);
+            try {
+              await web.close();
+            } finally {
+              resolve();
+            }
+          };
+          const onSigint = (): void => {
+            void shutdown();
+          };
+          const onSigterm = (): void => {
+            void shutdown();
+          };
+          process.on("SIGINT", onSigint);
+          process.on("SIGTERM", onSigterm);
         });
       });
     }
