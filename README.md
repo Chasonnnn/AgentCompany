@@ -45,6 +45,12 @@ Execute a run command (writes `provider.raw` events and updates `run.yaml` statu
 node dist/cli.js run:execute /path/to/workspace --project "$PROJECT_ID" --run <run_id> --argv node -e "console.log('hello')"
 ```
 
+Create a task and add a milestone:
+```bash
+TASK_ID=$(node dist/cli.js task:new /path/to/workspace --project "$PROJECT_ID" --title "Run Monitor v0")
+node dist/cli.js task:add-milestone /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --title "List runs" --kind coding --status ready --accept "Shows recent runs with status"
+```
+
 Validate a Company Workspace folder:
 ```bash
 node dist/cli.js workspace:validate /path/to/workspace
