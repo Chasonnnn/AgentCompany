@@ -12,6 +12,7 @@ import { ContextPackManifestYaml, PolicySnapshotYaml } from "../schemas/context_
 import { pathExists } from "../store/fs.js";
 import { readYamlFile } from "../store/yaml.js";
 import { REQUIRED_DIRS, REQUIRED_FILES } from "./layout.js";
+import { validateTaskMarkdown } from "../work/task_markdown.js";
 
 export type ValidationIssue = {
   code: string;
@@ -192,6 +193,35 @@ export async function validateWorkspace(rootDir: string): Promise<ValidationResu
         }
       } catch {
         // If missing, ignore here; REQUIRED_DIRS doesn't require project subdirs yet.
+      }
+
+      // Validate tasks under this project.
+      const tasksDir = path.join(rootDir, "work/projects", projectId, "tasks");
+      try {
+        const taskEntries = await fs.readdir(tasksDir, { withFileTypes: true });
+        for (const t of taskEntries) {
+          if (!t.isFile()) continue;
+          if (!t.name.endsWith(".md")) continue;
+          const rel = path.join("work/projects", projectId, "tasks", t.name);
+          const p = path.join(rootDir, rel);
+          try {
+            const md = await fs.readFile(p, { encoding: "utf8" });
+            const res = validateTaskMarkdown(md);
+            if (!res.ok) {
+              for (const i of res.issues) {
+                issues.push({
+                  code: i.code,
+                  message: `${rel}: ${i.message}`,
+                  path: rel
+                });
+              }
+            }
+          } catch (e) {
+            issues.push({ code: "read_error", message: `${rel}: ${(e as Error).message}`, path: rel });
+          }
+        }
+      } catch {
+        // ignore
       }
 
       // Validate context packs under this project.

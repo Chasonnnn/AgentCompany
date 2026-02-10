@@ -14,6 +14,8 @@ import { AgentRole } from "./schemas/agent.js";
 import { createRun } from "./runtime/run.js";
 import { executeCommandRun } from "./runtime/execute_command.js";
 import { setProviderBin, setRepoRoot } from "./machine/machine.js";
+import { createTaskFile, addTaskMilestone } from "./work/tasks.js";
+import { MilestoneKind, MilestoneStatus, validateTaskMarkdown } from "./work/task_markdown.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -226,6 +228,121 @@ program
       if (!opts.path.trim()) throw new UserError("--path is required");
       await setProviderBin(workspaceDir, opts.provider, opts.path);
       process.stdout.write("OK\n");
+    });
+  });
+
+program
+  .command("task:new")
+  .description("Create a new task contract file in a project")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--title <title>", "Task title", "")
+  .option("--visibility <visibility>", "Visibility (private_agent|team|managers|org)", "team")
+  .option("--team <team_id>", "Team id (optional)", undefined)
+  .option("--assignee <agent_id>", "Assignee agent id (optional)", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        title: string;
+        visibility: string;
+        team?: string;
+        assignee?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.title.trim()) throw new UserError("--title is required");
+        const visParsed = Visibility.safeParse(opts.visibility);
+        if (!visParsed.success) {
+          throw new UserError(
+            `Invalid visibility "${opts.visibility}". Valid: ${Visibility.options.join(", ")}`
+          );
+        }
+        const { task_id } = await createTaskFile({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          title: opts.title,
+          visibility: visParsed.data,
+          team_id: opts.team,
+          assignee_agent_id: opts.assignee
+        });
+        process.stdout.write(`${task_id}\n`);
+      });
+    }
+  );
+
+program
+  .command("task:add-milestone")
+  .description("Append a milestone to an existing task")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--task <task_id>", "Task id", "")
+  .option("--title <title>", "Milestone title", "")
+  .option("--kind <kind>", "Milestone kind (coding|research|planning)", "")
+  .option("--status <status>", "Milestone status (draft|ready|in_progress|blocked|done)", "draft")
+  .option("--accept <criteria...>", "Acceptance criteria strings", [])
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        task: string;
+        title: string;
+        kind: string;
+        status: string;
+        accept: string[];
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.task.trim()) throw new UserError("--task is required");
+        if (!opts.title.trim()) throw new UserError("--title is required");
+        if (!opts.kind.trim()) throw new UserError("--kind is required");
+        const kindParsed = MilestoneKind.safeParse(opts.kind);
+        if (!kindParsed.success) {
+          throw new UserError(
+            `Invalid kind "${opts.kind}". Valid: ${MilestoneKind.options.join(", ")}`
+          );
+        }
+        const statusParsed = MilestoneStatus.safeParse(opts.status);
+        if (!statusParsed.success) {
+          throw new UserError(
+            `Invalid status "${opts.status}". Valid: ${MilestoneStatus.options.join(", ")}`
+          );
+        }
+        const { milestone_id } = await addTaskMilestone({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          task_id: opts.task,
+          milestone: {
+            title: opts.title,
+            kind: kindParsed.data,
+            status: statusParsed.data,
+            acceptance_criteria: opts.accept
+          }
+        });
+        process.stdout.write(`${milestone_id}\n`);
+      });
+    }
+  );
+
+program
+  .command("task:validate")
+  .description("Validate a single task markdown file (front matter + required sections)")
+  .argument("<file>", "Task markdown file path")
+  .action(async (file: string) => {
+    await runAction(async () => {
+      const md = await fs.readFile(file, { encoding: "utf8" });
+      const res = validateTaskMarkdown(md);
+      if (res.ok) {
+        process.stdout.write("OK\n");
+        return;
+      }
+      process.stderr.write("VALIDATION FAILED\n");
+      for (const i of res.issues) process.stderr.write(`- ${i.message}\n`);
+      process.exitCode = 2;
     });
   });
 
