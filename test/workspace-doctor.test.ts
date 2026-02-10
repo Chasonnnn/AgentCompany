@@ -57,4 +57,44 @@ describe("workspace doctor", () => {
     const idx = report.checks.find((c) => c.id === "index.rebuild");
     expect(idx?.status).toBe("warn");
   });
+
+  test("warns when index is stale compared to canonical files", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+
+    await setProviderBin(dir, "codex", process.execPath);
+    await setProviderBin(dir, "claude", process.execPath);
+
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
+
+    await doctorWorkspace({ workspace_dir: dir, rebuild_index: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Mutate canonical state after index build.
+    await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
+
+    const report = await doctorWorkspace({ workspace_dir: dir, rebuild_index: false });
+    const idx = report.checks.find((c) => c.id === "index.rebuild");
+    expect(idx?.status).toBe("warn");
+    expect(idx?.message.toLowerCase()).toContain("stale");
+  });
 });

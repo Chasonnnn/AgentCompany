@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Dirent } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import { validateWorkspace } from "./validate.js";
 import { readMachineConfig } from "../machine/machine.js";
 import { listAdapterStatuses } from "../adapters/registry.js";
@@ -62,6 +62,30 @@ async function listProjectRunIds(workspaceDir: string): Promise<Array<{ project_
     }
   }
   return out;
+}
+
+async function latestMtimeUnder(absPath: string): Promise<number> {
+  let st: Stats;
+  try {
+    st = await fs.stat(absPath);
+  } catch {
+    return 0;
+  }
+  if (!st.isDirectory()) return st.mtimeMs;
+
+  let maxMtime = st.mtimeMs;
+  let entries: Dirent[] = [];
+  try {
+    entries = await fs.readdir(absPath, { withFileTypes: true });
+  } catch {
+    return maxMtime;
+  }
+  for (const entry of entries) {
+    const child = path.join(absPath, entry.name);
+    const childMtime = await latestMtimeUnder(child);
+    if (childMtime > maxMtime) maxMtime = childMtime;
+  }
+  return maxMtime;
 }
 
 export async function doctorWorkspace(args: WorkspaceDoctorArgs): Promise<WorkspaceDoctorResult> {
@@ -216,11 +240,19 @@ export async function doctorWorkspace(args: WorkspaceDoctorArgs): Promise<Worksp
     } else {
       try {
         const stats = await readIndexStats(args.workspace_dir);
+        const dbStat = await fs.stat(dbPath);
+        const latestCanonicalMtime = Math.max(
+          await latestMtimeUnder(path.join(args.workspace_dir, "work/projects")),
+          await latestMtimeUnder(path.join(args.workspace_dir, "inbox/reviews")),
+          await latestMtimeUnder(path.join(args.workspace_dir, "inbox/help_requests"))
+        );
+        const stale = latestCanonicalMtime > dbStat.mtimeMs + 1;
         checks.push({
           id: "index.rebuild",
-          status: stats.event_parse_errors > 0 ? "warn" : "pass",
-          message:
-            stats.event_parse_errors > 0
+          status: stale || stats.event_parse_errors > 0 ? "warn" : "pass",
+          message: stale
+            ? "SQLite index is readable but appears stale relative to canonical files."
+            : stats.event_parse_errors > 0
               ? `SQLite index loaded with ${stats.event_parse_errors} event parse error(s).`
               : "SQLite index is present and readable.",
           details: [
@@ -228,7 +260,9 @@ export async function doctorWorkspace(args: WorkspaceDoctorArgs): Promise<Worksp
             `events: ${stats.events}`,
             `event_parse_errors: ${stats.event_parse_errors}`,
             `reviews: ${stats.reviews}`,
-            `help_requests: ${stats.help_requests}`
+            `help_requests: ${stats.help_requests}`,
+            `index_mtime_ms: ${Math.floor(dbStat.mtimeMs)}`,
+            `canonical_latest_mtime_ms: ${Math.floor(latestCanonicalMtime)}`
           ]
         });
       } catch (e) {
