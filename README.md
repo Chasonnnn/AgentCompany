@@ -90,6 +90,11 @@ Validate a Company Workspace folder:
 node dist/cli.js workspace:validate /path/to/workspace
 ```
 
+Run workspace health checks (optionally rebuilding index cache):
+```bash
+node dist/cli.js workspace:doctor /path/to/workspace --rebuild-index
+```
+
 Run monitor helpers:
 ```bash
 node dist/cli.js run:list /path/to/workspace --project "$PROJECT_ID"

@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { initWorkspace } from "./workspace/init.js";
 import { validateWorkspace } from "./workspace/validate.js";
+import { doctorWorkspace } from "./workspace/doctor.js";
 import { ArtifactType, newArtifactMarkdown, validateMarkdownArtifact } from "./artifacts/markdown.js";
 import { writeFileAtomic } from "./store/fs.js";
 import { Visibility } from "./schemas/common.js";
@@ -95,6 +96,22 @@ program
       process.stderr.write("VALIDATION FAILED\n");
       for (const i of res.issues) process.stderr.write(`- ${i.message}\n`);
       process.exitCode = 2;
+    });
+  });
+
+program
+  .command("workspace:doctor")
+  .description("Run workspace health checks (schema, providers, repos, index, worktree references)")
+  .argument("<dir>", "Workspace root directory")
+  .option("--rebuild-index", "Rebuild SQLite index as part of health checks", false)
+  .action(async (dir: string, opts: { rebuildIndex: boolean }) => {
+    await runAction(async () => {
+      const report = await doctorWorkspace({
+        workspace_dir: dir,
+        rebuild_index: opts.rebuildIndex
+      });
+      process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+      if (!report.ok) process.exitCode = 2;
     });
   });
 
