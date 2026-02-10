@@ -28,6 +28,7 @@ import { validateHelpRequestMarkdown } from "./help/help_request.js";
 import { demoInit } from "./demo/demo_init.js";
 import { scaffoldProjectIntake } from "./pipeline/intake_scaffold.js";
 import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
+import { runPlanningPipeline } from "./pipeline/plan_run.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -125,6 +126,64 @@ program
           ceo_agent_id: opts.ceo,
           director_agent_id: opts.director,
           manager_agent_ids: opts.managers
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("pipeline:plan")
+  .description(
+    "Run an end-to-end planning pipeline (intake brief -> manager proposals -> director workplan)"
+  )
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--name <project_name>", "Project name", "")
+  .option("--ceo <agent_id>", "CEO agent id", "")
+  .option("--director <agent_id>", "Director agent id", "")
+  .option("--managers <agent_ids...>", "Manager agent ids", [])
+  .option("--intake <text>", "CEO brief text (use --intake-file for longer inputs)", "")
+  .option("--intake-file <path>", "Path to a file containing the CEO brief", undefined)
+  .option("--model <model>", "Provider model override (optional)", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        name: string;
+        ceo: string;
+        director: string;
+        managers: string[];
+        intake: string;
+        intakeFile?: string;
+        model?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.name.trim()) throw new UserError("--name is required");
+        if (!opts.ceo.trim()) throw new UserError("--ceo is required");
+        if (!opts.director.trim()) throw new UserError("--director is required");
+        if (!opts.managers.length) throw new UserError("--managers is required (one or more ids)");
+
+        const hasInline = Boolean(opts.intake?.trim());
+        const hasFile = Boolean(opts.intakeFile?.trim());
+        if (!hasInline && !hasFile) {
+          throw new UserError("Provide one of --intake or --intake-file");
+        }
+        if (hasInline && hasFile) {
+          throw new UserError("Provide only one of --intake or --intake-file");
+        }
+        const intakeText = hasFile
+          ? await fs.readFile(opts.intakeFile!, { encoding: "utf8" })
+          : opts.intake;
+
+        const res = await runPlanningPipeline({
+          workspace_dir: workspaceDir,
+          project_name: opts.name,
+          ceo_agent_id: opts.ceo,
+          director_agent_id: opts.director,
+          manager_agent_ids: opts.managers,
+          intake_brief: intakeText,
+          model: opts.model
         });
         process.stdout.write(JSON.stringify(res, null, 2) + "\n");
       });
