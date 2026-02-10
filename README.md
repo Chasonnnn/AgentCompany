@@ -76,6 +76,12 @@ node dist/cli.js run:list /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --tail 50
 ```
 
+Cross-team sharing:
+```bash
+node dist/cli.js sharepack:create /path/to/workspace --project "$PROJECT_ID" --by human
+node dist/cli.js help:new /path/to/workspace --title "Need help reviewing this workplan" --requester human --target <manager_agent_id> --project "$PROJECT_ID" --visibility managers
+```
+
 Create and validate an artifact template:
 ```bash
 node dist/cli.js artifact:new proposal /tmp/proposal.md --title "Payments Proposal" --visibility managers --by agent_mgr_payments --run run_123 --ctx ctx_123
