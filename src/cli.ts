@@ -12,6 +12,8 @@ import { createAgent } from "./org/agents.js";
 import { createProject } from "./work/projects.js";
 import { AgentRole } from "./schemas/agent.js";
 import { createRun } from "./runtime/run.js";
+import { executeCommandRun } from "./runtime/execute_command.js";
+import { setProviderBin, setRepoRoot } from "./machine/machine.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -159,6 +161,73 @@ program
       });
     }
   );
+
+program
+  .command("run:execute")
+  .description("Execute a command for an existing run (streams provider.raw to events.jsonl)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--run <run_id>", "Run id", "")
+  .option("--argv <argv...>", "Command argv", [])
+  .option("--repo <repo_id>", "Repo id (resolves via .local/machine.yaml)", undefined)
+  .option("--subdir <workdir_rel>", "Workdir relative to repo root", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        run: string;
+        argv: string[];
+        repo?: string;
+        subdir?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.run.trim()) throw new UserError("--run is required");
+        if (!opts.argv.length) throw new UserError("--argv is required (use --argv cmd arg1 arg2)");
+        const res = await executeCommandRun({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          run_id: opts.run,
+          argv: opts.argv,
+          repo_id: opts.repo,
+          workdir_rel: opts.subdir
+        });
+        process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
+
+program
+  .command("machine:set-repo")
+  .description("Set a repo_id -> absolute path mapping in .local/machine.yaml")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--repo <repo_id>", "Repo id", "")
+  .option("--path <abs_path>", "Absolute repo path", "")
+  .action(async (workspaceDir: string, opts: { repo: string; path: string }) => {
+    await runAction(async () => {
+      if (!opts.repo.trim()) throw new UserError("--repo is required");
+      if (!opts.path.trim()) throw new UserError("--path is required");
+      await setRepoRoot(workspaceDir, opts.repo, opts.path);
+      process.stdout.write("OK\n");
+    });
+  });
+
+program
+  .command("machine:set-provider-bin")
+  .description("Set a provider -> absolute CLI path mapping in .local/machine.yaml")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--provider <provider>", "Provider name (e.g., codex, claude_code)", "")
+  .option("--path <abs_path>", "Absolute CLI path", "")
+  .action(async (workspaceDir: string, opts: { provider: string; path: string }) => {
+    await runAction(async () => {
+      if (!opts.provider.trim()) throw new UserError("--provider is required");
+      if (!opts.path.trim()) throw new UserError("--path is required");
+      await setProviderBin(workspaceDir, opts.provider, opts.path);
+      process.stdout.write("OK\n");
+    });
+  });
 
 program
   .command("artifact:new")
