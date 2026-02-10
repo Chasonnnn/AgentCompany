@@ -33,6 +33,11 @@ Initialize a demo workspace (2 teams, managers/workers, sample project):
 node dist/cli.js demo:init /path/to/workspace --name "Acme Demo" --force
 ```
 
+Scaffold a planning pipeline (CEO -> Managers -> Director):
+```bash
+node dist/cli.js pipeline:intake /path/to/workspace --name "Project X" --ceo <ceo_agent_id> --director <director_agent_id> --managers <mgr_id_1> <mgr_id_2>
+```
+
 Create org structure:
 ```bash
 TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Payments")
