@@ -28,6 +28,11 @@ Initialize a Company Workspace folder:
 node dist/cli.js workspace:init /path/to/workspace --name "Acme"
 ```
 
+Initialize a demo workspace (2 teams, managers/workers, sample project):
+```bash
+node dist/cli.js demo:init /path/to/workspace --name "Acme Demo" --force
+```
+
 Create org structure:
 ```bash
 TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Payments")
