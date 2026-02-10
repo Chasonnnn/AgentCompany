@@ -63,6 +63,12 @@ Validate a Company Workspace folder:
 node dist/cli.js workspace:validate /path/to/workspace
 ```
 
+Run monitor helpers:
+```bash
+node dist/cli.js run:list /path/to/workspace --project "$PROJECT_ID"
+node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --tail 50
+```
+
 Create and validate an artifact template:
 ```bash
 node dist/cli.js artifact:new proposal /tmp/proposal.md --title "Payments Proposal" --visibility managers --by agent_mgr_payments --run run_123 --ctx ctx_123
