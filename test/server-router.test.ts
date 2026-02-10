@@ -95,4 +95,13 @@ describe("server router", () => {
     expect(Array.isArray(doctor.checks)).toBe(true);
     expect(doctor.summary).toBeDefined();
   });
+
+  test("monitor.snapshot returns rows list", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const monitor = (await routeRpcMethod("monitor.snapshot", {
+      workspace_dir: dir
+    })) as any;
+    expect(Array.isArray(monitor.rows)).toBe(true);
+  });
 });

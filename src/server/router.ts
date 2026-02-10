@@ -12,6 +12,7 @@ import {
   stopSession,
   listSessions
 } from "../runtime/session.js";
+import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
 import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
@@ -198,6 +199,13 @@ const IndexListHelpRequestsParams = z.object({
   target_manager: z.string().min(1).optional(),
   project_id: z.string().min(1).optional(),
   limit: z.number().int().positive().max(5000).optional()
+});
+
+const MonitorSnapshotParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(5000).optional(),
+  refresh_index: z.boolean().optional()
 });
 
 async function listReviews(workspaceDir: string, limit: number): Promise<unknown[]> {
@@ -464,6 +472,15 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         target_manager: p.target_manager,
         project_id: p.project_id,
         limit: p.limit
+      });
+    }
+    case "monitor.snapshot": {
+      const p = MonitorSnapshotParams.parse(params);
+      return buildRunMonitorSnapshot({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        limit: p.limit,
+        refresh_index: p.refresh_index
       });
     }
     default:
