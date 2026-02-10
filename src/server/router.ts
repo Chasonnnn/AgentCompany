@@ -21,6 +21,13 @@ import { ReviewYaml } from "../schemas/review.js";
 import { validateHelpRequestMarkdown } from "../help/help_request.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
 import { listAdapterStatuses } from "../adapters/registry.js";
+import {
+  rebuildSqliteIndex,
+  listIndexedRuns,
+  listIndexedReviews,
+  listIndexedHelpRequests,
+  readIndexStats
+} from "../index/sqlite.js";
 
 export class RpcUserError extends Error {
   override name = "RpcUserError";
@@ -141,6 +148,31 @@ const AgentRecordMistakeParams = z.object({
 
 const AdapterStatusParams = z.object({
   workspace_dir: z.string().min(1)
+});
+
+const IndexRebuildParams = z.object({
+  workspace_dir: z.string().min(1)
+});
+
+const IndexListRunsParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  status: z.enum(["running", "ended", "failed", "stopped"]).optional(),
+  limit: z.number().int().positive().max(5000).optional()
+});
+
+const IndexListReviewsParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  decision: z.enum(["approved", "denied"]).optional(),
+  limit: z.number().int().positive().max(5000).optional()
+});
+
+const IndexListHelpRequestsParams = z.object({
+  workspace_dir: z.string().min(1),
+  target_manager: z.string().min(1).optional(),
+  project_id: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(5000).optional()
 });
 
 async function listReviews(workspaceDir: string, limit: number): Promise<unknown[]> {
@@ -345,6 +377,41 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     case "adapter.status": {
       const p = AdapterStatusParams.parse(params);
       return listAdapterStatuses(p.workspace_dir);
+    }
+    case "index.rebuild": {
+      const p = IndexRebuildParams.parse(params);
+      return rebuildSqliteIndex(p.workspace_dir);
+    }
+    case "index.stats": {
+      const p = IndexRebuildParams.parse(params);
+      return readIndexStats(p.workspace_dir);
+    }
+    case "index.list_runs": {
+      const p = IndexListRunsParams.parse(params);
+      return listIndexedRuns({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        status: p.status,
+        limit: p.limit
+      });
+    }
+    case "index.list_reviews": {
+      const p = IndexListReviewsParams.parse(params);
+      return listIndexedReviews({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        decision: p.decision,
+        limit: p.limit
+      });
+    }
+    case "index.list_help_requests": {
+      const p = IndexListHelpRequestsParams.parse(params);
+      return listIndexedHelpRequests({
+        workspace_dir: p.workspace_dir,
+        target_manager: p.target_manager,
+        project_id: p.project_id,
+        limit: p.limit
+      });
     }
     default:
       throw new RpcUserError(`Unknown method: ${method}`);

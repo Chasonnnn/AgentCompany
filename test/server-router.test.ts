@@ -45,6 +45,17 @@ describe("server router", () => {
       project_id
     })) as any[];
     expect(runs.some((r) => r.run_id === run.run_id)).toBe(true);
+
+    const rebuilt = (await routeRpcMethod("index.rebuild", {
+      workspace_dir: dir
+    })) as any;
+    expect(rebuilt.runs_indexed).toBeGreaterThanOrEqual(1);
+
+    const indexedRuns = (await routeRpcMethod("index.list_runs", {
+      workspace_dir: dir,
+      project_id
+    })) as any[];
+    expect(indexedRuns.some((r) => r.run_id === run.run_id)).toBe(true);
   });
 
   test("adapter.status returns codex/claude adapter states", async () => {
