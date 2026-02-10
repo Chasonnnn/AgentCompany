@@ -23,6 +23,11 @@ Run the CLI:
 node dist/cli.js --help
 ```
 
+Start the local JSON-RPC server (stdio transport):
+```bash
+node dist/cli.js server:start
+```
+
 Initialize a Company Workspace folder:
 ```bash
 node dist/cli.js workspace:init /path/to/workspace --name "Acme"
