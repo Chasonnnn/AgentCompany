@@ -9,6 +9,7 @@ import { createProject } from "../src/work/projects.js";
 import { createRun } from "../src/runtime/run.js";
 import { proposeMemoryDelta } from "../src/memory/propose_memory_delta.js";
 import {
+  buildManagerDashboardJson,
   buildManagerDashboardText,
   parseManagerDashboardCommand,
   managerDashboardHelpText
@@ -91,5 +92,50 @@ describe("ui manager dashboard", () => {
     expect(text).toContain(proposed.artifact_id);
     expect(text).toContain("Commands:");
     expect(text).toContain(managerDashboardHelpText().split("\n")[0]!);
+  });
+
+  test("builds compact dashboard JSON payload", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const mgr = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id, context_pack_id } = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id: mgr.agent_id,
+      provider: "cmd"
+    });
+    const proposed = await proposeMemoryDelta({
+      workspace_dir: dir,
+      project_id,
+      title: "Dashboard pending JSON",
+      under_heading: "## Decisions",
+      insert_lines: ["- pending dashboard json item"],
+      visibility: "managers",
+      produced_by: mgr.agent_id,
+      run_id,
+      context_pack_id
+    });
+
+    const payload = await buildManagerDashboardJson({
+      workspace_dir: dir,
+      project_id,
+      actor_id: mgr.agent_id,
+      actor_role: "manager",
+      actor_team_id: team_id
+    });
+
+    expect(payload.workspace_dir).toBe(dir);
+    expect(payload.counts.pending).toBeGreaterThanOrEqual(1);
+    expect(payload.counts.runs).toBeGreaterThanOrEqual(1);
+    expect(payload.pending.some((p) => p.artifact_id === proposed.artifact_id)).toBe(true);
+    expect(typeof payload.index_sync_worker.enabled).toBe("boolean");
   });
 });

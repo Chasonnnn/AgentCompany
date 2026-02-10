@@ -35,7 +35,7 @@ import { recordAgentMistake } from "./eval/mistake_loop.js";
 import { refreshAgentContextIndex } from "./eval/agent_context_index.js";
 import { resolveInboxItem } from "./inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "./ui/resolve_and_snapshot.js";
-import { runManagerDashboard } from "./ui/manager_dashboard.js";
+import { buildManagerDashboardJson, runManagerDashboard } from "./ui/manager_dashboard.js";
 import { runJsonRpcServer } from "./server/main.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
@@ -901,6 +901,7 @@ program
   .option("--refresh-index", "Rebuild index before initial snapshot", false)
   .option("--no-sync-index", "Skip incremental index sync before snapshots")
   .option("--once", "Render one snapshot and exit", false)
+  .option("--json", "Print a compact JSON snapshot and exit", false)
   .option("--no-clear-screen", "Do not clear terminal between refreshes")
   .action(
     async (
@@ -916,6 +917,7 @@ program
         refreshIndex: boolean;
         syncIndex: boolean;
         once: boolean;
+        json: boolean;
         clearScreen: boolean;
       }
     ) => {
@@ -924,6 +926,22 @@ program
         const role = opts.role as any;
         if (!["human", "ceo", "director", "manager", "worker"].includes(role)) {
           throw new UserError("Invalid --role. Valid: human, ceo, director, manager, worker");
+        }
+        if (opts.json) {
+          const payload = await buildManagerDashboardJson({
+            workspace_dir: workspaceDir,
+            project_id: opts.project,
+            actor_id: opts.actor,
+            actor_role: role,
+            actor_team_id: opts.team,
+            monitor_limit: opts.monitorLimit,
+            pending_limit: opts.pendingLimit,
+            decisions_limit: opts.decisionsLimit,
+            refresh_index: opts.refreshIndex,
+            sync_index: opts.syncIndex
+          });
+          process.stdout.write(`${JSON.stringify(payload)}\n`);
+          return;
         }
         await runManagerDashboard({
           workspace_dir: workspaceDir,

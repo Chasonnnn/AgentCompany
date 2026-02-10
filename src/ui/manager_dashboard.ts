@@ -33,6 +33,51 @@ export type ManagerDashboardCommand =
     }
   | { kind: "invalid"; error: string };
 
+export type ManagerDashboardJson = {
+  workspace_dir: string;
+  generated_at: string;
+  index_sync_worker: {
+    enabled: boolean;
+    running: boolean;
+    pending_workspaces: number;
+    total_notify_calls: number;
+    total_workspace_sync_errors: number;
+    last_error_at_ms: number | null;
+    last_error_message: string | null;
+  };
+  counts: {
+    pending: number;
+    recent_decisions: number;
+    runs: number;
+  };
+  pending: Array<{
+    artifact_id: string;
+    artifact_type: string;
+    project_id: string;
+    run_id: string | null;
+    created_at: string | null;
+    parse_error_count: number;
+    title: string | null;
+  }>;
+  recent_decisions: Array<{
+    decision: "approved" | "denied";
+    subject_artifact_id: string;
+    project_id: string;
+    actor_id: string;
+    created_at: string;
+    parse_error_count: number;
+  }>;
+  runs: Array<{
+    run_id: string;
+    project_id: string;
+    run_status: string;
+    live_status?: string;
+    last_event_type?: string;
+    parse_error_count: number;
+    created_at?: string;
+  }>;
+};
+
 function compact(text: string | null | undefined, max = 64): string {
   if (!text) return "-";
   const trimmed = text.trim();
@@ -153,6 +198,53 @@ export function formatManagerDashboardSnapshot(snapshot: UiSnapshot): string {
   return `${lines.join("\n")}\n`;
 }
 
+export function compactManagerDashboardSnapshot(snapshot: UiSnapshot): ManagerDashboardJson {
+  return {
+    workspace_dir: snapshot.workspace_dir,
+    generated_at: snapshot.generated_at,
+    index_sync_worker: {
+      enabled: snapshot.index_sync_worker.enabled,
+      running: snapshot.index_sync_worker.running,
+      pending_workspaces: snapshot.index_sync_worker.pending_workspaces,
+      total_notify_calls: snapshot.index_sync_worker.total_notify_calls,
+      total_workspace_sync_errors: snapshot.index_sync_worker.total_workspace_sync_errors,
+      last_error_at_ms: snapshot.index_sync_worker.last_error_at_ms,
+      last_error_message: snapshot.index_sync_worker.last_error_message
+    },
+    counts: {
+      pending: snapshot.review_inbox.pending.length,
+      recent_decisions: snapshot.review_inbox.recent_decisions.length,
+      runs: snapshot.monitor.rows.length
+    },
+    pending: snapshot.review_inbox.pending.map((p) => ({
+      artifact_id: p.artifact_id,
+      artifact_type: p.artifact_type,
+      project_id: p.project_id,
+      run_id: p.run_id,
+      created_at: p.created_at,
+      parse_error_count: p.parse_error_count,
+      title: p.title
+    })),
+    recent_decisions: snapshot.review_inbox.recent_decisions.map((d) => ({
+      decision: d.decision,
+      subject_artifact_id: d.subject_artifact_id,
+      project_id: d.project_id,
+      actor_id: d.actor_id,
+      created_at: d.created_at,
+      parse_error_count: d.parse_error_count
+    })),
+    runs: snapshot.monitor.rows.map((r) => ({
+      run_id: r.run_id,
+      project_id: r.project_id,
+      run_status: r.run_status,
+      live_status: r.live_status,
+      last_event_type: r.last_event?.type,
+      parse_error_count: r.parse_error_count,
+      created_at: r.created_at
+    }))
+  };
+}
+
 async function fetchSnapshot(args: ManagerDashboardArgs): Promise<UiSnapshot> {
   return buildUiSnapshot({
     workspace_dir: args.workspace_dir,
@@ -170,6 +262,13 @@ export async function buildManagerDashboardText(
 ): Promise<string> {
   const snapshot = await fetchSnapshot(args);
   return formatManagerDashboardSnapshot(snapshot);
+}
+
+export async function buildManagerDashboardJson(
+  args: Omit<ManagerDashboardArgs, "once" | "clear_screen" | "input" | "output">
+): Promise<ManagerDashboardJson> {
+  const snapshot = await fetchSnapshot(args);
+  return compactManagerDashboardSnapshot(snapshot);
 }
 
 function question(rl: readline.Interface, prompt: string): Promise<string> {
