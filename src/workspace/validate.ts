@@ -17,6 +17,8 @@ import { validateMarkdownArtifact } from "../artifacts/markdown.js";
 import { parseMemoryDeltaMarkdown } from "../memory/memory_delta.js";
 import { ReviewYaml } from "../schemas/review.js";
 import { parseMilestoneReportMarkdown } from "../milestones/milestone_report.js";
+import { validateHelpRequestMarkdown } from "../help/help_request.js";
+import { SharePackManifestYaml } from "../schemas/share_pack.js";
 
 export type ValidationIssue = {
   code: string;
@@ -98,6 +100,31 @@ export async function validateWorkspace(rootDir: string): Promise<ValidationResu
     }
   } catch {
     // If the directory doesn't exist, REQUIRED_DIRS will already report it.
+  }
+
+  // Validate help requests.
+  const helpDir = path.join(rootDir, "inbox/help_requests");
+  try {
+    const entries = await fs.readdir(helpDir, { withFileTypes: true });
+    for (const ent of entries) {
+      if (!ent.isFile()) continue;
+      if (!ent.name.endsWith(".md")) continue;
+      const rel = path.join("inbox/help_requests", ent.name);
+      const p = path.join(rootDir, rel);
+      try {
+        const md = await fs.readFile(p, { encoding: "utf8" });
+        const res = validateHelpRequestMarkdown(md);
+        if (!res.ok) {
+          for (const i of res.issues) {
+            issues.push({ code: i.code, message: `${rel}: ${i.message}`, path: rel });
+          }
+        }
+      } catch (e) {
+        issues.push({ code: "read_error", message: `${rel}: ${(e as Error).message}`, path: rel });
+      }
+    }
+  } catch {
+    // ignore
   }
 
   const machinePath = path.join(rootDir, ".local/machine.yaml");
@@ -361,6 +388,66 @@ export async function validateWorkspace(rootDir: string): Promise<ValidationResu
                 code: "parse_error",
                 message: `${policyRel}: ${(e as Error).message}`,
                 path: policyRel
+              });
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      // Validate share packs under this project.
+      const shareRoot = path.join(rootDir, "work/projects", projectId, "share_packs");
+      try {
+        const shareEntries = await fs.readdir(shareRoot, { withFileTypes: true });
+        for (const sEnt of shareEntries) {
+          if (!sEnt.isDirectory()) continue;
+          const shareId = sEnt.name;
+          const manifestRel = path.join(
+            "work/projects",
+            projectId,
+            "share_packs",
+            shareId,
+            "manifest.yaml"
+          );
+          const manifestAbs = path.join(rootDir, manifestRel);
+          if (!(await pathExists(manifestAbs))) {
+            issues.push({
+              code: "missing_file",
+              message: `Missing file: ${manifestRel}`,
+              path: manifestRel
+            });
+            continue;
+          }
+          try {
+            const doc = await readYamlFile(manifestAbs);
+            const manifest = SharePackManifestYaml.parse(doc);
+            for (const inc of manifest.included_artifacts) {
+              const bundleAbs = path.join(rootDir, inc.bundle_relpath);
+              if (!(await pathExists(bundleAbs))) {
+                issues.push({
+                  code: "missing_file",
+                  message: `Missing bundled artifact file: ${inc.bundle_relpath}`,
+                  path: inc.bundle_relpath
+                });
+              }
+            }
+            for (const inc of manifest.included_files ?? []) {
+              const bundleAbs = path.join(rootDir, inc.bundle_relpath);
+              if (!(await pathExists(bundleAbs))) {
+                issues.push({
+                  code: "missing_file",
+                  message: `Missing bundled file: ${inc.bundle_relpath}`,
+                  path: inc.bundle_relpath
+                });
+              }
+            }
+          } catch (e) {
+            if (e instanceof z.ZodError) issues.push(...zodIssuesToIssues(manifestRel, e));
+            else
+              issues.push({
+                code: "parse_error",
+                message: `${manifestRel}: ${(e as Error).message}`,
+                path: manifestRel
               });
           }
         }

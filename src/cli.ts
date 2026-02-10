@@ -22,6 +22,9 @@ import { approveMemoryDelta } from "./memory/approve_memory_delta.js";
 import { listRuns, readEventsJsonl } from "./runtime/run_queries.js";
 import { createMilestoneReportFile } from "./milestones/report_files.js";
 import { approveMilestone } from "./milestones/approve_milestone.js";
+import { createSharePack } from "./share/share_pack.js";
+import { createHelpRequestFile } from "./help/help_request_files.js";
+import { validateHelpRequestMarkdown } from "./help/help_request.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -602,6 +605,86 @@ program
       });
     }
   );
+
+program
+  .command("sharepack:create")
+  .description("Create a Share Pack bundle for cross-team sharing (managers/org visible artifacts only)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--by <actor_id>", "Creator actor id (human or agent id)", "human")
+  .action(async (workspaceDir: string, opts: { project: string; by: string }) => {
+    await runAction(async () => {
+      if (!opts.project.trim()) throw new UserError("--project is required");
+      const res = await createSharePack({
+        workspace_dir: workspaceDir,
+        project_id: opts.project,
+        created_by: opts.by
+      });
+      process.stdout.write(JSON.stringify(res) + "\n");
+    });
+  });
+
+program
+  .command("help:new")
+  .description("Create a new help request (stored in inbox/help_requests)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--title <title>", "Help request title", "")
+  .option("--requester <id>", "Requester actor id (human or agent id)", "human")
+  .option("--target <id>", "Target manager agent id", "")
+  .option("--project <project_id>", "Project id (optional)", undefined)
+  .option("--share <share_pack_id>", "Share pack id (optional)", undefined)
+  .option("--visibility <visibility>", "Visibility (private_agent|team|managers|org)", "managers")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        title: string;
+        requester: string;
+        target: string;
+        project?: string;
+        share?: string;
+        visibility: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.title.trim()) throw new UserError("--title is required");
+        if (!opts.target.trim()) throw new UserError("--target is required");
+        const visParsed = Visibility.safeParse(opts.visibility);
+        if (!visParsed.success) {
+          throw new UserError(
+            `Invalid visibility "${opts.visibility}". Valid: ${Visibility.options.join(", ")}`
+          );
+        }
+        const res = await createHelpRequestFile(workspaceDir, {
+          title: opts.title,
+          visibility: visParsed.data,
+          requester: opts.requester,
+          target_manager: opts.target,
+          project_id: opts.project,
+          share_pack_id: opts.share
+        });
+        process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
+
+program
+  .command("help:validate")
+  .description("Validate a single help request markdown file (front matter + required sections)")
+  .argument("<file>", "Help request markdown file path")
+  .action(async (file: string) => {
+    await runAction(async () => {
+      const md = await fs.readFile(file, { encoding: "utf8" });
+      const res = validateHelpRequestMarkdown(md);
+      if (res.ok) {
+        process.stdout.write("OK\n");
+        return;
+      }
+      process.stderr.write("VALIDATION FAILED\n");
+      for (const i of res.issues) process.stderr.write(`- ${i.message}\n`);
+      process.exitCode = 2;
+    });
+  });
 
 program
   .command("artifact:new")
