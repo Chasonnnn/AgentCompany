@@ -13,7 +13,7 @@ import {
 } from "./protocol.js";
 import { routeRpcMethod, RpcUserError } from "./router.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
-import { listIndexedEvents } from "../index/sqlite.js";
+import { listIndexedEvents, syncSqliteIndex } from "../index/sqlite.js";
 
 type StdioLike = {
   stdin: NodeJS.ReadableStream;
@@ -91,6 +91,7 @@ async function handleEventsMethod(
 
     if (p.workspace_dir && p.backfill_limit) {
       try {
+        await syncSqliteIndex(p.workspace_dir);
         const events = await listIndexedEvents({
           workspace_dir: p.workspace_dir,
           project_id: p.project_id,

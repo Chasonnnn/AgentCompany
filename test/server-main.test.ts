@@ -9,7 +9,6 @@ import { createTeam } from "../src/org/teams.js";
 import { createAgent } from "../src/org/agents.js";
 import { createRun } from "../src/runtime/run.js";
 import { executeCommandRun } from "../src/runtime/execute_command.js";
-import { rebuildSqliteIndex } from "../src/index/sqlite.js";
 import { runJsonRpcServer } from "../src/server/main.js";
 
 async function mkTmpDir(): Promise<string> {
@@ -170,7 +169,6 @@ describe("JSON-RPC server", () => {
       run_id: runId,
       argv: [process.execPath, "-e", "console.log('backfill')"]
     });
-    await rebuildSqliteIndex(dir);
 
     const input = new PassThrough();
     const output = new PassThrough();
