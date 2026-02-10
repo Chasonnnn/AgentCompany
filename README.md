@@ -108,6 +108,8 @@ node dist/cli.js index:stats /path/to/workspace
 node dist/cli.js index:runs /path/to/workspace --project "$PROJECT_ID" --status ended
 node dist/cli.js index:reviews /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js index:help /path/to/workspace --project "$PROJECT_ID"
+node dist/cli.js index:events /path/to/workspace --project "$PROJECT_ID" --run <run_id> --limit 100
+node dist/cli.js index:event-errors /path/to/workspace --project "$PROJECT_ID"
 ```
 
 Cross-team sharing:

@@ -36,6 +36,8 @@ import {
   rebuildSqliteIndex,
   readIndexStats,
   listIndexedRuns,
+  listIndexedEvents,
+  listIndexedEventParseErrors,
   listIndexedReviews,
   listIndexedHelpRequests
 } from "./index/sqlite.js";
@@ -536,6 +538,77 @@ program
           workspace_dir: workspaceDir,
           project_id: opts.project,
           target_manager: opts.target,
+          limit: opts.limit
+        });
+        process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("index:events")
+  .description("List indexed events from SQLite cache (for run monitor tails/filters)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id filter", undefined)
+  .option("--run <run_id>", "Run id filter", undefined)
+  .option("--type <event_type>", "Event type filter", undefined)
+  .option("--since-seq <n>", "Only events with seq > n", (v) => parseInt(v, 10), undefined)
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
+  .option("--order <order>", "Sort order (asc|desc)", "desc")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project?: string;
+        run?: string;
+        type?: string;
+        sinceSeq?: number;
+        limit: number;
+        order: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (opts.order !== "asc" && opts.order !== "desc") {
+          throw new UserError("Invalid --order. Valid: asc, desc");
+        }
+        if (opts.sinceSeq !== undefined && Number.isNaN(opts.sinceSeq)) {
+          throw new UserError("Invalid --since-seq. Must be an integer >= 0");
+        }
+        const rows = await listIndexedEvents({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          run_id: opts.run,
+          type: opts.type,
+          since_seq: opts.sinceSeq,
+          limit: opts.limit,
+          order: opts.order as "asc" | "desc"
+        });
+        process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("index:event-errors")
+  .description("List indexed event parse errors captured during index rebuild")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id filter", undefined)
+  .option("--run <run_id>", "Run id filter", undefined)
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project?: string;
+        run?: string;
+        limit: number;
+      }
+    ) => {
+      await runAction(async () => {
+        const rows = await listIndexedEventParseErrors({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          run_id: opts.run,
           limit: opts.limit
         });
         process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
