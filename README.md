@@ -58,6 +58,13 @@ ARTIFACT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$D
 node dist/cli.js memory:approve /path/to/workspace --project "$PROJECT_ID" --artifact "$ARTIFACT_ID" --actor human --role manager --notes "LGTM"
 ```
 
+Milestone report and approval:
+```bash
+REPORT=$(node dist/cli.js milestone:report:new /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --milestone <ms_id> --title "Milestone 1 report" --by <worker_agent_id> --run <run_id> --ctx <ctx_id> --evidence <patch_art_id> --tests <test_art_id>)
+REPORT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$REPORT")
+node dist/cli.js milestone:approve /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --milestone <ms_id> --report "$REPORT_ID" --actor human --role manager --notes "Approved"
+```
+
 Validate a Company Workspace folder:
 ```bash
 node dist/cli.js workspace:validate /path/to/workspace
