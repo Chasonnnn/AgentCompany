@@ -16,6 +16,8 @@ import { executeCommandRun } from "./runtime/execute_command.js";
 import { setProviderBin, setRepoRoot } from "./machine/machine.js";
 import { createTaskFile, addTaskMilestone } from "./work/tasks.js";
 import { MilestoneKind, MilestoneStatus, validateTaskMarkdown } from "./work/task_markdown.js";
+import { proposeMemoryDelta } from "./memory/propose_memory_delta.js";
+import { approveMemoryDelta } from "./memory/approve_memory_delta.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -345,6 +347,99 @@ program
       process.exitCode = 2;
     });
   });
+
+program
+  .command("memory:delta")
+  .description("Propose a curated memory delta (writes memory_delta artifact + unified diff patch)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--title <title>", "Delta title", "")
+  .option("--target <relpath>", "Target memory file (workspace-relative)", undefined)
+  .option("--under <heading>", "Heading to insert under (exact match)", "")
+  .option("--insert <line...>", "Lines to insert under the heading", [])
+  .option("--visibility <visibility>", "Visibility (private_agent|team|managers|org)", "managers")
+  .option("--by <producer>", "Produced by (agent_id|human)", "human")
+  .option("--run <run_id>", "Run id", "run_manual")
+  .option("--ctx <context_pack_id>", "Context pack id", "ctx_manual")
+  .option("--evidence <artifact_id...>", "Evidence artifact ids", [])
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        title: string;
+        target?: string;
+        under: string;
+        insert: string[];
+        visibility: string;
+        by: string;
+        run: string;
+        ctx: string;
+        evidence: string[];
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.title.trim()) throw new UserError("--title is required");
+        if (!opts.under.trim()) throw new UserError("--under is required");
+        if (!opts.insert.length) throw new UserError("--insert is required (one or more lines)");
+        const visParsed = Visibility.safeParse(opts.visibility);
+        if (!visParsed.success) {
+          throw new UserError(
+            `Invalid visibility "${opts.visibility}". Valid: ${Visibility.options.join(", ")}`
+          );
+        }
+        const res = await proposeMemoryDelta({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          title: opts.title,
+          target_file: opts.target,
+          under_heading: opts.under,
+          insert_lines: opts.insert,
+          visibility: visParsed.data,
+          produced_by: opts.by,
+          run_id: opts.run,
+          context_pack_id: opts.ctx,
+          evidence: opts.evidence.length ? opts.evidence : undefined
+        });
+        process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
+
+program
+  .command("memory:approve")
+  .description("Approve and apply a memory delta patch; writes a review record and appends an approval event")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--artifact <artifact_id>", "Memory delta artifact id (art_...)", "")
+  .option("--actor <actor_id>", "Actor id (human or agent id)", "human")
+  .option("--role <role>", "Actor role (human|ceo|director|manager|worker)", "human")
+  .option("--notes <notes>", "Approval notes", "")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project: string; artifact: string; actor: string; role: string; notes: string }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.artifact.trim()) throw new UserError("--artifact is required");
+        const role = opts.role as any;
+        if (!["human", "ceo", "director", "manager", "worker"].includes(role)) {
+          throw new UserError('Invalid --role. Valid: human, ceo, director, manager, worker');
+        }
+        const res = await approveMemoryDelta({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          artifact_id: opts.artifact,
+          actor_id: opts.actor,
+          actor_role: role,
+          notes: opts.notes
+        });
+        process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
 
 program
   .command("artifact:new")

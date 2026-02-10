@@ -13,6 +13,8 @@ import { pathExists } from "../store/fs.js";
 import { readYamlFile } from "../store/yaml.js";
 import { REQUIRED_DIRS, REQUIRED_FILES } from "./layout.js";
 import { validateTaskMarkdown } from "../work/task_markdown.js";
+import { validateMarkdownArtifact } from "../artifacts/markdown.js";
+import { parseMemoryDeltaMarkdown } from "../memory/memory_delta.js";
 
 export type ValidationIssue = {
   code: string;
@@ -218,6 +220,50 @@ export async function validateWorkspace(rootDir: string): Promise<ValidationResu
             }
           } catch (e) {
             issues.push({ code: "read_error", message: `${rel}: ${(e as Error).message}`, path: rel });
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      // Validate artifacts under this project.
+      const artifactsDir = path.join(rootDir, "work/projects", projectId, "artifacts");
+      try {
+        const artifactEntries = await fs.readdir(artifactsDir, { withFileTypes: true });
+        for (const a of artifactEntries) {
+          if (!a.isFile()) continue;
+          if (a.name.endsWith(".md")) {
+            const rel = path.join("work/projects", projectId, "artifacts", a.name);
+            const p = path.join(rootDir, rel);
+            try {
+              const md = await fs.readFile(p, { encoding: "utf8" });
+              const res = validateMarkdownArtifact(md);
+              if (!res.ok) {
+                for (const i of res.issues) {
+                  issues.push({ code: i.code, message: `${rel}: ${i.message}`, path: rel });
+                }
+              } else if (res.frontmatter.type === "memory_delta") {
+                const parsed = parseMemoryDeltaMarkdown(md);
+                if (!parsed.ok) {
+                  issues.push({
+                    code: "memory_delta_invalid",
+                    message: `${rel}: ${parsed.error}`,
+                    path: rel
+                  });
+                } else {
+                  const patchAbs = path.join(rootDir, parsed.frontmatter.patch_file);
+                  if (!(await pathExists(patchAbs))) {
+                    issues.push({
+                      code: "missing_file",
+                      message: `Missing patch_file for memory delta: ${parsed.frontmatter.patch_file}`,
+                      path: parsed.frontmatter.patch_file
+                    });
+                  }
+                }
+              }
+            } catch (e) {
+              issues.push({ code: "read_error", message: `${rel}: ${(e as Error).message}`, path: rel });
+            }
           }
         }
       } catch {
