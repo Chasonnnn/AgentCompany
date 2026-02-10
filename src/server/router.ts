@@ -25,6 +25,8 @@ import { listAdapterStatuses } from "../adapters/registry.js";
 import {
   rebuildSqliteIndex,
   listIndexedRuns,
+  listIndexedEvents,
+  listIndexedEventParseErrors,
   listIndexedReviews,
   listIndexedHelpRequests,
   readIndexStats
@@ -164,6 +166,23 @@ const IndexListRunsParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1).optional(),
   status: z.enum(["running", "ended", "failed", "stopped"]).optional(),
+  limit: z.number().int().positive().max(5000).optional()
+});
+
+const IndexListEventsParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  run_id: z.string().min(1).optional(),
+  type: z.string().min(1).optional(),
+  since_seq: z.number().int().nonnegative().optional(),
+  limit: z.number().int().positive().max(5000).optional(),
+  order: z.enum(["asc", "desc"]).optional()
+});
+
+const IndexListEventParseErrorsParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  run_id: z.string().min(1).optional(),
   limit: z.number().int().positive().max(5000).optional()
 });
 
@@ -414,6 +433,27 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         workspace_dir: p.workspace_dir,
         project_id: p.project_id,
         decision: p.decision,
+        limit: p.limit
+      });
+    }
+    case "index.list_events": {
+      const p = IndexListEventsParams.parse(params);
+      return listIndexedEvents({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        run_id: p.run_id,
+        type: p.type,
+        since_seq: p.since_seq,
+        limit: p.limit,
+        order: p.order
+      });
+    }
+    case "index.list_event_parse_errors": {
+      const p = IndexListEventParseErrorsParams.parse(params);
+      return listIndexedEventParseErrors({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        run_id: p.run_id,
         limit: p.limit
       });
     }

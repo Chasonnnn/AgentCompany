@@ -56,6 +56,14 @@ describe("server router", () => {
       project_id
     })) as any[];
     expect(indexedRuns.some((r) => r.run_id === run.run_id)).toBe(true);
+
+    const indexedEvents = (await routeRpcMethod("index.list_events", {
+      workspace_dir: dir,
+      project_id,
+      run_id: run.run_id,
+      limit: 100
+    })) as any[];
+    expect(indexedEvents.some((e) => e.type === "run.started")).toBe(true);
   });
 
   test("adapter.status returns codex/claude adapter states", async () => {
