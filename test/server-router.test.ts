@@ -76,4 +76,15 @@ describe("server router", () => {
     const sessions = await routeRpcMethod("session.list", { workspace_dir: dir });
     expect(Array.isArray(sessions)).toBe(true);
   });
+
+  test("workspace.doctor returns summary checks", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const doctor = (await routeRpcMethod("workspace.doctor", {
+      workspace_dir: dir
+    })) as any;
+    expect(typeof doctor.ok).toBe("boolean");
+    expect(Array.isArray(doctor.checks)).toBe(true);
+    expect(doctor.summary).toBeDefined();
+  });
 });

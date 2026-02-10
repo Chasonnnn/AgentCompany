@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { initWorkspace } from "../workspace/init.js";
 import { validateWorkspace } from "../workspace/validate.js";
+import { doctorWorkspace } from "../workspace/doctor.js";
 import { createRun } from "../runtime/run.js";
 import {
   launchSession,
@@ -43,6 +44,11 @@ const WorkspaceInitParams = z.object({
   workspace_dir: z.string().min(1),
   company_name: z.string().min(1).default("AgentCompany"),
   force: z.boolean().default(false)
+});
+
+const WorkspaceDoctorParams = z.object({
+  workspace_dir: z.string().min(1),
+  rebuild_index: z.boolean().default(false)
 });
 
 const RunCreateParams = z.object({
@@ -253,6 +259,13 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     case "workspace.validate": {
       const p = WorkspaceValidateParams.parse(params);
       return validateWorkspace(p.workspace_dir);
+    }
+    case "workspace.doctor": {
+      const p = WorkspaceDoctorParams.parse(params);
+      return doctorWorkspace({
+        workspace_dir: p.workspace_dir,
+        rebuild_index: p.rebuild_index
+      });
     }
     case "run.create": {
       const p = RunCreateParams.parse(params);
