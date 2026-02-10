@@ -26,6 +26,7 @@ import { createSharePack } from "./share/share_pack.js";
 import { createHelpRequestFile } from "./help/help_request_files.js";
 import { validateHelpRequestMarkdown } from "./help/help_request.js";
 import { demoInit } from "./demo/demo_init.js";
+import { scaffoldProjectIntake } from "./pipeline/intake_scaffold.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -98,6 +99,36 @@ program
       process.stdout.write(JSON.stringify(res, null, 2) + "\n");
     });
   });
+
+program
+  .command("pipeline:intake")
+  .description("Scaffold a project intake pipeline (intake brief + manager proposals + director workplan)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--name <project_name>", "Project name", "")
+  .option("--ceo <agent_id>", "CEO agent id", "")
+  .option("--director <agent_id>", "Director agent id", "")
+  .option("--managers <agent_ids...>", "Manager agent ids", [])
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { name: string; ceo: string; director: string; managers: string[] }
+    ) => {
+      await runAction(async () => {
+        if (!opts.name.trim()) throw new UserError("--name is required");
+        if (!opts.ceo.trim()) throw new UserError("--ceo is required");
+        if (!opts.director.trim()) throw new UserError("--director is required");
+        if (!opts.managers.length) throw new UserError("--managers is required (one or more ids)");
+        const res = await scaffoldProjectIntake({
+          workspace_dir: workspaceDir,
+          project_name: opts.name,
+          ceo_agent_id: opts.ceo,
+          director_agent_id: opts.director,
+          manager_agent_ids: opts.managers
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
 
 program
   .command("team:new")
