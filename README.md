@@ -51,6 +51,13 @@ TASK_ID=$(node dist/cli.js task:new /path/to/workspace --project "$PROJECT_ID" -
 node dist/cli.js task:add-milestone /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --title "List runs" --kind coding --status ready --accept "Shows recent runs with status"
 ```
 
+Propose and approve a curated memory delta (project memory):
+```bash
+DELTA=$(node dist/cli.js memory:delta /path/to/workspace --project "$PROJECT_ID" --title "Decision: strict JSONL envelope" --under "## Decisions" --insert "- Events are strict-envelope JSONL and append-only." --by human)
+ARTIFACT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$DELTA")
+node dist/cli.js memory:approve /path/to/workspace --project "$PROJECT_ID" --artifact "$ARTIFACT_ID" --actor human --role manager --notes "LGTM"
+```
+
 Validate a Company Workspace folder:
 ```bash
 node dist/cli.js workspace:validate /path/to/workspace
