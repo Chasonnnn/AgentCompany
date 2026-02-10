@@ -112,6 +112,7 @@ describe("review inbox snapshot", () => {
       project_id,
       sync_index: true
     });
+    expect(typeof ui.index_sync_worker.enabled).toBe("boolean");
     expect(Array.isArray(ui.monitor.rows)).toBe(true);
     expect(Array.isArray(ui.review_inbox.pending)).toBe(true);
     expect(ui.review_inbox.recent_decisions.some((d) => d.subject_artifact_id === delta.artifact_id)).toBe(true);

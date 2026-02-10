@@ -211,4 +211,40 @@ describe("sqlite index cache", () => {
     const runsAfterDelete = await listIndexedRuns({ workspace_dir: dir, project_id, limit: 10 });
     expect(runsAfterDelete.some((r) => r.run_id === runA.run_id)).toBe(false);
   });
+
+  test("serializes concurrent index writers per workspace", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id } = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
+    await executeCommandRun({
+      workspace_dir: dir,
+      project_id,
+      run_id,
+      argv: [process.execPath, "-e", "console.log('lock')"]
+    });
+
+    const results = await Promise.all([
+      rebuildSqliteIndex(dir),
+      syncSqliteIndex(dir),
+      syncSqliteIndex(dir)
+    ]);
+
+    expect(results).toHaveLength(3);
+    const runs = await listIndexedRuns({ workspace_dir: dir, project_id, limit: 10 });
+    expect(runs.some((r) => r.run_id === run_id)).toBe(true);
+  });
 });

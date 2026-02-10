@@ -23,6 +23,34 @@ export function indexDbPath(workspaceDir: string): string {
   return path.join(workspaceDir, ".local", "index.sqlite");
 }
 
+const workspaceWriteLocks = new Map<string, Promise<void>>();
+
+function lockKey(workspaceDir: string): string {
+  return path.resolve(workspaceDir);
+}
+
+async function withWorkspaceWriteLock<T>(
+  workspaceDir: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const key = lockKey(workspaceDir);
+  const prev = workspaceWriteLocks.get(key) ?? Promise.resolve();
+  let release: (value?: void | PromiseLike<void>) => void = () => {};
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  workspaceWriteLocks.set(key, next);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (workspaceWriteLocks.get(key) === next) {
+      workspaceWriteLocks.delete(key);
+    }
+  }
+}
+
 type RebuildCounters = {
   runs_indexed: number;
   events_indexed: number;
@@ -355,7 +383,7 @@ async function listFiles(absDir: string, ext: string): Promise<string[]> {
   }
 }
 
-export async function rebuildSqliteIndex(workspaceDir: string): Promise<RebuildIndexResult> {
+async function rebuildSqliteIndexUnlocked(workspaceDir: string): Promise<RebuildIndexResult> {
   const { db, dbPath } = await openFreshDb(workspaceDir);
   const counters: RebuildCounters = {
     runs_indexed: 0,
@@ -565,7 +593,7 @@ export async function rebuildSqliteIndex(workspaceDir: string): Promise<RebuildI
   }
 }
 
-export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexResult> {
+async function syncSqliteIndexUnlocked(workspaceDir: string): Promise<SyncIndexResult> {
   const { db, dbPath, created } = await openIndexDb(workspaceDir);
   const counters: Omit<SyncIndexResult, "db_path" | "db_created"> = {
     runs_upserted: 0,
@@ -967,6 +995,14 @@ export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexRe
   } finally {
     db.close();
   }
+}
+
+export async function rebuildSqliteIndex(workspaceDir: string): Promise<RebuildIndexResult> {
+  return withWorkspaceWriteLock(workspaceDir, async () => rebuildSqliteIndexUnlocked(workspaceDir));
+}
+
+export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexResult> {
+  return withWorkspaceWriteLock(workspaceDir, async () => syncSqliteIndexUnlocked(workspaceDir));
 }
 
 export type ListIndexedRunsArgs = {

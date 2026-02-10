@@ -134,6 +134,7 @@ describe("server router", () => {
     const ui = (await routeRpcMethod("ui.snapshot", {
       workspace_dir: dir
     })) as any;
+    expect(typeof ui.index_sync_worker.enabled).toBe("boolean");
     expect(Array.isArray(ui.monitor.rows)).toBe(true);
     expect(Array.isArray(ui.review_inbox.pending)).toBe(true);
   });

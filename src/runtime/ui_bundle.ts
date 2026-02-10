@@ -1,6 +1,7 @@
 import { nowIso } from "../core/time.js";
 import { buildRunMonitorSnapshot, type RunMonitorSnapshot } from "./run_monitor.js";
 import { buildReviewInboxSnapshot, type ReviewInboxSnapshot } from "./review_inbox.js";
+import { readIndexSyncWorkerStatus, type IndexSyncServiceStatus } from "./index_sync_service.js";
 
 export type UiSnapshotArgs = {
   workspace_dir: string;
@@ -15,6 +16,7 @@ export type UiSnapshotArgs = {
 export type UiSnapshot = {
   workspace_dir: string;
   generated_at: string;
+  index_sync_worker: IndexSyncServiceStatus;
   monitor: RunMonitorSnapshot;
   review_inbox: ReviewInboxSnapshot;
 };
@@ -42,6 +44,7 @@ export async function buildUiSnapshot(args: UiSnapshotArgs): Promise<UiSnapshot>
   return {
     workspace_dir: args.workspace_dir,
     generated_at: nowIso(),
+    index_sync_worker: readIndexSyncWorkerStatus(),
     monitor,
     review_inbox: reviewInbox
   };
