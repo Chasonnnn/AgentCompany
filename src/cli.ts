@@ -32,6 +32,7 @@ import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 import { runPlanningPipeline } from "./pipeline/plan_run.js";
 import { recordAgentMistake } from "./eval/mistake_loop.js";
 import { runJsonRpcServer } from "./server/main.js";
+import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import {
   rebuildSqliteIndex,
   readIndexStats,
@@ -612,6 +613,30 @@ program
           limit: opts.limit
         });
         process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("monitor:runs")
+  .description("Build a run monitor snapshot (indexed runs/events + live sessions)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id filter", undefined)
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
+  .option("--refresh-index", "Rebuild index before generating snapshot", false)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project?: string; limit: number; refreshIndex: boolean }
+    ) => {
+      await runAction(async () => {
+        const snapshot = await buildRunMonitorSnapshot({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          limit: opts.limit,
+          refresh_index: opts.refreshIndex
+        });
+        process.stdout.write(JSON.stringify(snapshot, null, 2) + "\n");
       });
     }
   );
