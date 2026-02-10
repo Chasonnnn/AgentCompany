@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createWriteStream } from "node:fs";
 import { spawn } from "node:child_process";
 import { nowIso } from "../core/time.js";
 import { newId } from "../core/ids.js";
@@ -19,6 +20,7 @@ export type ExecuteCommandArgs = {
   repo_id?: string;
   workdir_rel?: string;
   env?: Record<string, string>;
+  stdin_text?: string;
 };
 
 export type ExecuteCommandResult = {
@@ -84,7 +86,19 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     throw new Error(`Resolved cwd does not exist or is not a directory: ${cwd}`);
   }
 
+  // Always tee raw stdout/stderr to run outputs for debugging/replay.
+  const outputsDir = path.join(runDir, "outputs");
+  const stdoutPath = path.join(outputsDir, "stdout.txt");
+  const stderrPath = path.join(outputsDir, "stderr.txt");
+  const stdoutStream = createWriteStream(stdoutPath, { flags: "w" });
+  const stderrStream = createWriteStream(stderrPath, { flags: "w" });
+
   // Persist run spec for reproducibility.
+  const stdinRelpath =
+    args.stdin_text === undefined ? undefined : path.join("runs", args.run_id, "outputs", "stdin.txt");
+  if (args.stdin_text !== undefined) {
+    await writeFileAtomic(path.join(outputsDir, "stdin.txt"), args.stdin_text);
+  }
   await writeYamlFile(runYamlPath, {
     ...runDoc,
     spec: {
@@ -92,7 +106,8 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       argv: args.argv,
       repo_id: args.repo_id,
       workdir_rel: args.workdir_rel,
-      env: args.env
+      env: args.env,
+      stdin_relpath: stdinRelpath
     }
   });
 
@@ -206,7 +221,8 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       payload: {
         argv: args.argv,
         repo_id: args.repo_id,
-        workdir_rel: args.workdir_rel
+        workdir_rel: args.workdir_rel,
+        stdin_relpath: stdinRelpath ?? null
       }
     })
   );
@@ -214,10 +230,16 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   const child = spawn(args.argv[0], args.argv.slice(1), {
     cwd,
     env: { ...process.env, ...(args.env ?? {}) },
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: [args.stdin_text === undefined ? "ignore" : "pipe", "pipe", "pipe"]
   });
 
+  if (args.stdin_text !== undefined && child.stdin) {
+    child.stdin.write(args.stdin_text, "utf8");
+    child.stdin.end();
+  }
+
   child.stdout?.on("data", (buf: Buffer) => {
+    stdoutStream.write(buf);
     writer.write(
       newEnvelope({
         schema_version: 1,
@@ -236,6 +258,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   });
 
   child.stderr?.on("data", (buf: Buffer) => {
+    stderrStream.write(buf);
     writer.write(
       newEnvelope({
         schema_version: 1,
@@ -254,8 +277,16 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   });
 
   const exitRes: ExecuteCommandResult = await new Promise((resolve, reject) => {
-    child.on("error", (e) => reject(e));
-    child.on("exit", (code, signal) => resolve({ exit_code: code, signal }));
+    child.on("error", async (e) => {
+      try {
+        stdoutStream.end();
+        stderrStream.end();
+      } finally {
+        reject(e);
+      }
+    });
+    // 'close' fires after stdio streams are drained.
+    child.on("close", (code, signal) => resolve({ exit_code: code, signal }));
   });
 
   const endedAt = nowIso();
@@ -279,6 +310,9 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
 
   await writer.flush();
 
+  await new Promise<void>((resolve) => stdoutStream.end(() => resolve()));
+  await new Promise<void>((resolve) => stderrStream.end(() => resolve()));
+
   await writeYamlFile(runYamlPath, {
     ...runDoc,
     status: ok ? "ended" : "failed",
@@ -287,7 +321,8 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       argv: args.argv,
       repo_id: args.repo_id,
       workdir_rel: args.workdir_rel,
-      env: args.env
+      env: args.env,
+      stdin_relpath: stdinRelpath
     }
   });
 

@@ -70,6 +70,43 @@ describe("executeCommandRun", () => {
     expect(evs.some((e) => e.type === "run.ended")).toBe(true);
   });
 
+  test("stores stdin_text in outputs and records stdin_relpath in run spec", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+
+    const stdinText = "hello-from-stdin\n";
+    const res = await executeCommandRun({
+      workspace_dir: dir,
+      project_id,
+      run_id,
+      argv: [
+        process.execPath,
+        "-e",
+        "let d=''; process.stdin.setEncoding('utf8'); process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>process.stdout.write(d));"
+      ],
+      stdin_text: stdinText
+    });
+    expect(res.exit_code).toBe(0);
+
+    const runYamlPath = path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml");
+    const runDoc = RunYaml.parse(await readYamlFile(runYamlPath));
+    expect(runDoc.spec?.stdin_relpath).toBe(`runs/${run_id}/outputs/stdin.txt`);
+
+    const stdinPath = path.join(dir, "work/projects", project_id, "runs", run_id, "outputs", "stdin.txt");
+    const stored = await fs.readFile(stdinPath, { encoding: "utf8" });
+    expect(stored).toBe(stdinText);
+  });
+
   test("marks run failed on non-zero exit code", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
@@ -101,4 +138,3 @@ describe("executeCommandRun", () => {
     expect(evs.some((e) => e.type === "run.failed")).toBe(true);
   });
 });
-
