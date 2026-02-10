@@ -50,6 +50,8 @@ describe("run monitor snapshot", () => {
       project_id,
       refresh_index: true
     });
+    expect(snap.index_rebuilt).toBe(true);
+    expect(snap.index_synced).toBe(false);
     const row = snap.rows.find((r) => r.run_id === run_id);
     expect(row).toBeDefined();
     expect(row?.last_event).toBeDefined();
@@ -96,6 +98,8 @@ describe("run monitor snapshot", () => {
       project_id,
       refresh_index: false
     });
+    expect(snap.index_rebuilt).toBe(false);
+    expect(snap.index_synced).toBe(true);
     const liveRow = snap.rows.find((r) => r.run_id === liveRunId);
     expect(liveRow).toBeDefined();
     expect(liveRow?.live_status).toBe("running");

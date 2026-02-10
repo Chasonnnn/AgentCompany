@@ -5,7 +5,8 @@ import {
   listIndexedRuns,
   listIndexedRunLastEvents,
   listIndexedRunParseErrorCounts,
-  rebuildSqliteIndex
+  rebuildSqliteIndex,
+  syncSqliteIndex
 } from "../index/sqlite.js";
 import { pathExists } from "../store/fs.js";
 
@@ -14,6 +15,7 @@ export type RunMonitorSnapshotArgs = {
   project_id?: string;
   limit?: number;
   refresh_index?: boolean;
+  sync_index?: boolean;
 };
 
 export type RunMonitorRow = {
@@ -45,6 +47,7 @@ export type RunMonitorSnapshot = {
   workspace_dir: string;
   generated_at: string;
   index_rebuilt: boolean;
+  index_synced: boolean;
   rows: RunMonitorRow[];
 };
 
@@ -55,11 +58,15 @@ function runKey(projectId: string, runId: string): string {
 export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Promise<RunMonitorSnapshot> {
   const limit = Math.max(1, Math.min(args.limit ?? 200, 5000));
   let indexRebuilt = false;
+  let indexSynced = false;
   const dbPath = indexDbPath(args.workspace_dir);
   const dbExists = await pathExists(dbPath);
   if (args.refresh_index || !dbExists) {
     await rebuildSqliteIndex(args.workspace_dir);
     indexRebuilt = true;
+  } else if (args.sync_index !== false) {
+    await syncSqliteIndex(args.workspace_dir);
+    indexSynced = true;
   }
 
   const [runs, lastEvents, parseErrors] = await Promise.all([
@@ -167,6 +174,7 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     workspace_dir: args.workspace_dir,
     generated_at: nowIso(),
     index_rebuilt: indexRebuilt,
+    index_synced: indexSynced,
     rows: rows.slice(0, limit)
   };
 }
