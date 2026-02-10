@@ -67,6 +67,22 @@ export type IndexedEventParseError = {
   raw_line: string;
 };
 
+export type IndexedRunLastEvent = {
+  project_id: string;
+  run_id: string;
+  seq: number;
+  type: string;
+  ts_wallclock: string | null;
+  actor: string | null;
+  visibility: string | null;
+};
+
+export type IndexedRunParseErrorCount = {
+  project_id: string;
+  run_id: string;
+  parse_error_count: number;
+};
+
 export type IndexedReview = {
   review_id: string;
   created_at: string;
@@ -536,6 +552,72 @@ export async function listIndexedEvents(args: ListIndexedEventsArgs): Promise<In
       LIMIT :limit
     `;
     return db.prepare(sql).all(params) as IndexedEvent[];
+  } finally {
+    db.close();
+  }
+}
+
+export async function listIndexedRunLastEvents(args: {
+  workspace_dir: string;
+  project_id?: string;
+  limit?: number;
+}): Promise<IndexedRunLastEvent[]> {
+  const { db } = await openExistingDb(args.workspace_dir);
+  try {
+    const params: Record<string, SQLInputValue> = {};
+    const limit = Math.max(1, Math.min(args.limit ?? 500, 5000));
+    params.limit = limit;
+
+    const where = args.project_id ? "WHERE project_id = :project_id" : "";
+    if (args.project_id) params.project_id = args.project_id;
+
+    const sql = `
+      SELECT
+        e.project_id,
+        e.run_id,
+        e.seq,
+        e.type,
+        e.ts_wallclock,
+        e.actor,
+        e.visibility
+      FROM events e
+      INNER JOIN (
+        SELECT project_id, run_id, MAX(seq) AS max_seq
+        FROM events
+        ${where}
+        GROUP BY project_id, run_id
+      ) m
+      ON e.project_id = m.project_id AND e.run_id = m.run_id AND e.seq = m.max_seq
+      ORDER BY e.ts_wallclock DESC, e.seq DESC
+      LIMIT :limit
+    `;
+    return db.prepare(sql).all(params) as IndexedRunLastEvent[];
+  } finally {
+    db.close();
+  }
+}
+
+export async function listIndexedRunParseErrorCounts(args: {
+  workspace_dir: string;
+  project_id?: string;
+  limit?: number;
+}): Promise<IndexedRunParseErrorCount[]> {
+  const { db } = await openExistingDb(args.workspace_dir);
+  try {
+    const params: Record<string, SQLInputValue> = {};
+    const where = args.project_id ? "WHERE project_id = :project_id" : "";
+    if (args.project_id) params.project_id = args.project_id;
+    const limit = Math.max(1, Math.min(args.limit ?? 500, 5000));
+    params.limit = limit;
+    const sql = `
+      SELECT project_id, run_id, COUNT(*) AS parse_error_count
+      FROM event_parse_errors
+      ${where}
+      GROUP BY project_id, run_id
+      ORDER BY parse_error_count DESC, run_id DESC
+      LIMIT :limit
+    `;
+    return db.prepare(sql).all(params) as IndexedRunParseErrorCount[];
   } finally {
     db.close();
   }
