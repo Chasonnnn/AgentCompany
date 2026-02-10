@@ -7,6 +7,8 @@ import { createTeam } from "../src/org/teams.js";
 import { createAgent } from "../src/org/agents.js";
 import { createProject } from "../src/work/projects.js";
 import { newArtifactMarkdown } from "../src/artifacts/markdown.js";
+import { createRun } from "../src/runtime/run.js";
+import { proposeMemoryDelta } from "../src/memory/propose_memory_delta.js";
 import { routeRpcMethod } from "../src/server/router.js";
 
 async function mkTmpDir(): Promise<string> {
@@ -137,6 +139,53 @@ describe("server router", () => {
     expect(typeof ui.index_sync_worker.enabled).toBe("boolean");
     expect(Array.isArray(ui.monitor.rows)).toBe(true);
     expect(Array.isArray(ui.review_inbox.pending)).toBe(true);
+  });
+
+  test("ui.resolve returns decision result and refreshed snapshot", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
+    const proposed = await proposeMemoryDelta({
+      workspace_dir: dir,
+      project_id,
+      title: "Router Resolve",
+      under_heading: "## Decisions",
+      insert_lines: ["- denied via ui.resolve test"],
+      visibility: "managers",
+      produced_by: agent_id,
+      run_id: run.run_id,
+      context_pack_id: run.context_pack_id
+    });
+
+    const res = (await routeRpcMethod("ui.resolve", {
+      workspace_dir: dir,
+      project_id,
+      artifact_id: proposed.artifact_id,
+      decision: "denied",
+      actor_id: agent_id,
+      actor_role: "manager",
+      actor_team_id: team_id
+    })) as any;
+    expect(res.resolved.artifact_id).toBe(proposed.artifact_id);
+    expect(res.resolved.decision).toBe("denied");
+    expect(Array.isArray(res.snapshot.review_inbox.pending)).toBe(true);
+    expect(
+      res.snapshot.review_inbox.pending.some((p: any) => p.artifact_id === proposed.artifact_id)
+    ).toBe(false);
   });
 
   test("agent.refresh_context updates agent guidance context index", async () => {

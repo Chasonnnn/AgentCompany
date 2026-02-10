@@ -17,6 +17,7 @@ import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { buildUiSnapshot } from "../runtime/ui_bundle.js";
 import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/index_sync_service.js";
 import { resolveInboxItem } from "../inbox/resolve.js";
+import { resolveInboxAndBuildUiSnapshot } from "../ui/resolve_and_snapshot.js";
 import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
@@ -260,6 +261,22 @@ const InboxSnapshotParams = z.object({
 const UiSnapshotParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1).optional(),
+  monitor_limit: z.number().int().positive().max(5000).optional(),
+  pending_limit: z.number().int().positive().max(5000).optional(),
+  decisions_limit: z.number().int().positive().max(5000).optional(),
+  refresh_index: z.boolean().optional(),
+  sync_index: z.boolean().optional()
+});
+
+const UiResolveParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  artifact_id: z.string().min(1),
+  decision: z.enum(["approved", "denied"]),
+  actor_id: z.string().min(1),
+  actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  actor_team_id: z.string().min(1).optional(),
+  notes: z.string().optional(),
   monitor_limit: z.number().int().positive().max(5000).optional(),
   pending_limit: z.number().int().positive().max(5000).optional(),
   decisions_limit: z.number().int().positive().max(5000).optional(),
@@ -598,6 +615,24 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       return buildUiSnapshot({
         workspace_dir: p.workspace_dir,
         project_id: p.project_id,
+        monitor_limit: p.monitor_limit,
+        pending_limit: p.pending_limit,
+        decisions_limit: p.decisions_limit,
+        refresh_index: p.refresh_index,
+        sync_index: p.sync_index
+      });
+    }
+    case "ui.resolve": {
+      const p = UiResolveParams.parse(params);
+      return resolveInboxAndBuildUiSnapshot({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        artifact_id: p.artifact_id,
+        decision: p.decision,
+        actor_id: p.actor_id,
+        actor_role: p.actor_role,
+        actor_team_id: p.actor_team_id,
+        notes: p.notes,
         monitor_limit: p.monitor_limit,
         pending_limit: p.pending_limit,
         decisions_limit: p.decisions_limit,
