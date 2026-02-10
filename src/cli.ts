@@ -288,6 +288,8 @@ program
   .option("--stdin-file <path>", "Read stdin content from a file and pipe to the command", undefined)
   .option("--repo <repo_id>", "Repo id (resolves via .local/machine.yaml)", undefined)
   .option("--subdir <workdir_rel>", "Workdir relative to repo root", undefined)
+  .option("--task <task_id>", "Task id (enables task-aware execution behavior)", undefined)
+  .option("--milestone <milestone_id>", "Milestone id (used with --task)", undefined)
   .action(
     async (
       workspaceDir: string,
@@ -298,12 +300,17 @@ program
         stdinFile?: string;
         repo?: string;
         subdir?: string;
+        task?: string;
+        milestone?: string;
       }
     ) => {
       await runAction(async () => {
         if (!opts.project.trim()) throw new UserError("--project is required");
         if (!opts.run.trim()) throw new UserError("--run is required");
         if (!opts.argv.length) throw new UserError("--argv is required (use --argv cmd arg1 arg2)");
+        if (opts.milestone && !opts.task) {
+          throw new UserError("--milestone requires --task");
+        }
         const stdinText = opts.stdinFile
           ? await fs.readFile(opts.stdinFile, { encoding: "utf8" })
           : undefined;
@@ -314,7 +321,9 @@ program
           argv: opts.argv,
           stdin_text: stdinText,
           repo_id: opts.repo,
-          workdir_rel: opts.subdir
+          workdir_rel: opts.subdir,
+          task_id: opts.task,
+          milestone_id: opts.milestone
         });
         process.stdout.write(JSON.stringify(res) + "\n");
       });

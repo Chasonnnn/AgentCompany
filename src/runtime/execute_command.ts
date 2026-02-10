@@ -11,6 +11,8 @@ import { newEnvelope } from "./events.js";
 import { createEventWriter } from "./event_writer.js";
 import { ContextPackManifestYaml } from "../schemas/context_pack.js";
 import { writeFileAtomic } from "../store/fs.js";
+import { parseFrontMatter } from "../artifacts/frontmatter.js";
+import { TaskFrontMatter } from "../work/task_markdown.js";
 
 export type ExecuteCommandArgs = {
   workspace_dir: string;
@@ -19,6 +21,8 @@ export type ExecuteCommandArgs = {
   argv: string[];
   repo_id?: string;
   workdir_rel?: string;
+  task_id?: string;
+  milestone_id?: string;
   env?: Record<string, string>;
   stdin_text?: string;
 };
@@ -46,6 +50,16 @@ function resolveCwd(
   return workdirRel ? path.join(root, workdirRel) : root;
 }
 
+function defaultWorktreeBranch(projectId: string, taskId: string, runId: string): string {
+  return `ac/${projectId}/${taskId}/${runId}`;
+}
+
+type ResolvedWorktree = {
+  cwd: string;
+  worktree_relpath?: string;
+  worktree_branch?: string;
+};
+
 async function execText(cmd: string, args: string[], cwd: string): Promise<string> {
   const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
   const chunks: Buffer[] = [];
@@ -61,6 +75,89 @@ async function execText(cmd: string, args: string[], cwd: string): Promise<strin
     throw new Error(`Command failed: ${cmd} ${args.join(" ")} (code=${exit.code}): ${stderr}`);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+async function resolveExecutionWorktree(args: {
+  workspace_dir: string;
+  project_id: string;
+  run_id: string;
+  repo_id?: string;
+  workdir_rel?: string;
+  task_id?: string;
+  milestone_id?: string;
+  repo_roots: Record<string, string>;
+  event_writer: ReturnType<typeof createEventWriter>;
+  session_ref: string;
+  actor: string;
+}): Promise<ResolvedWorktree> {
+  const baseCwd = resolveCwd(args.workspace_dir, args.repo_roots, args.repo_id, args.workdir_rel);
+  if (!args.repo_id || !args.task_id) {
+    return { cwd: baseCwd };
+  }
+
+  const taskPath = path.join(
+    args.workspace_dir,
+    "work/projects",
+    args.project_id,
+    "tasks",
+    `${args.task_id}.md`
+  );
+  const taskMd = await fs.readFile(taskPath, { encoding: "utf8" });
+  const taskParsed = parseFrontMatter(taskMd);
+  if (!taskParsed.ok) throw new Error(`Invalid task markdown: ${taskParsed.error}`);
+  const taskFm = TaskFrontMatter.parse(taskParsed.frontmatter);
+
+  let milestoneKind: string | undefined;
+  if (args.milestone_id) {
+    const ms = taskFm.milestones.find((m) => m.id === args.milestone_id);
+    if (!ms) throw new Error(`Milestone not found in task ${args.task_id}: ${args.milestone_id}`);
+    milestoneKind = ms.kind;
+  }
+
+  const scopeIsolation = taskFm.scope?.requires_worktree_isolation;
+  const shouldIsolate =
+    scopeIsolation === true || (scopeIsolation !== false && milestoneKind === "coding");
+  if (!shouldIsolate) {
+    return { cwd: baseCwd };
+  }
+
+  const repoRoot = args.repo_roots[args.repo_id];
+  if (!repoRoot) {
+    throw new Error(`Cannot prepare worktree: unknown repo_id "${args.repo_id}"`);
+  }
+
+  const worktreeRel = path.join(".local", "worktrees", args.project_id, args.task_id, args.run_id);
+  const worktreeAbs = path.join(args.workspace_dir, worktreeRel);
+  const branch = defaultWorktreeBranch(args.project_id, args.task_id, args.run_id);
+
+  await fs.mkdir(path.dirname(worktreeAbs), { recursive: true });
+  await execText("git", ["worktree", "add", "-b", branch, worktreeAbs, "HEAD"], repoRoot);
+
+  args.event_writer.write(
+    newEnvelope({
+      schema_version: 1,
+      ts_wallclock: nowIso(),
+      run_id: args.run_id,
+      session_ref: args.session_ref,
+      actor: args.actor,
+      visibility: "org",
+      type: "worktree.prepared",
+      payload: {
+        repo_id: args.repo_id,
+        task_id: args.task_id,
+        milestone_id: args.milestone_id ?? null,
+        worktree_relpath: worktreeRel,
+        branch
+      }
+    })
+  );
+
+  const cwd = args.workdir_rel ? path.join(worktreeAbs, args.workdir_rel) : worktreeAbs;
+  return {
+    cwd,
+    worktree_relpath: worktreeRel,
+    worktree_branch: branch
+  };
 }
 
 export async function executeCommandRun(args: ExecuteCommandArgs): Promise<ExecuteCommandResult> {
@@ -80,12 +177,6 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     throw new Error(`Run is not in running status (status=${runDoc.status})`);
   }
 
-  const cwd = resolveCwd(args.workspace_dir, machineDoc.repo_roots, args.repo_id, args.workdir_rel);
-  const cwdStat = await fs.stat(cwd).catch(() => null);
-  if (!cwdStat || !cwdStat.isDirectory()) {
-    throw new Error(`Resolved cwd does not exist or is not a directory: ${cwd}`);
-  }
-
   // Always tee raw stdout/stderr to run outputs for debugging/replay.
   const outputsDir = path.join(runDir, "outputs");
   const stdoutPath = path.join(outputsDir, "stdout.txt");
@@ -99,6 +190,27 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   if (args.stdin_text !== undefined) {
     await writeFileAtomic(path.join(outputsDir, "stdin.txt"), args.stdin_text);
   }
+  const sessionRef = `local_${args.run_id}`;
+  const writer = createEventWriter(eventsPath);
+  const worktree = await resolveExecutionWorktree({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    run_id: args.run_id,
+    repo_id: args.repo_id,
+    workdir_rel: args.workdir_rel,
+    task_id: args.task_id,
+    milestone_id: args.milestone_id,
+    repo_roots: machineDoc.repo_roots,
+    event_writer: writer,
+    session_ref: sessionRef,
+    actor: runDoc.agent_id
+  });
+  const cwd = worktree.cwd;
+  const cwdStat = await fs.stat(cwd).catch(() => null);
+  if (!cwdStat || !cwdStat.isDirectory()) {
+    throw new Error(`Resolved cwd does not exist or is not a directory: ${cwd}`);
+  }
+
   await writeYamlFile(runYamlPath, {
     ...runDoc,
     spec: {
@@ -106,13 +218,14 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       argv: args.argv,
       repo_id: args.repo_id,
       workdir_rel: args.workdir_rel,
+      task_id: args.task_id,
+      milestone_id: args.milestone_id,
+      worktree_relpath: worktree.worktree_relpath,
+      worktree_branch: worktree.worktree_branch,
       env: args.env,
       stdin_relpath: stdinRelpath
     }
   });
-
-  const sessionRef = `local_${args.run_id}`;
-  const writer = createEventWriter(eventsPath);
 
   // Best-effort: snapshot repo HEAD + dirty state into the Context Pack manifest.
   if (args.repo_id) {
@@ -222,6 +335,10 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
         argv: args.argv,
         repo_id: args.repo_id,
         workdir_rel: args.workdir_rel,
+        task_id: args.task_id ?? null,
+        milestone_id: args.milestone_id ?? null,
+        worktree_relpath: worktree.worktree_relpath ?? null,
+        worktree_branch: worktree.worktree_branch ?? null,
         stdin_relpath: stdinRelpath ?? null
       }
     })
@@ -321,6 +438,10 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       argv: args.argv,
       repo_id: args.repo_id,
       workdir_rel: args.workdir_rel,
+      task_id: args.task_id,
+      milestone_id: args.milestone_id,
+      worktree_relpath: worktree.worktree_relpath,
+      worktree_branch: worktree.worktree_branch,
       env: args.env,
       stdin_relpath: stdinRelpath
     }
