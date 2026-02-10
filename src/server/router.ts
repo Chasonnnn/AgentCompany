@@ -53,7 +53,8 @@ const WorkspaceInitParams = z.object({
 
 const WorkspaceDoctorParams = z.object({
   workspace_dir: z.string().min(1),
-  rebuild_index: z.boolean().default(false)
+  rebuild_index: z.boolean().default(false),
+  sync_index: z.boolean().default(false)
 });
 
 const RunCreateParams = z.object({
@@ -304,7 +305,8 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       const p = WorkspaceDoctorParams.parse(params);
       return doctorWorkspace({
         workspace_dir: p.workspace_dir,
-        rebuild_index: p.rebuild_index
+        rebuild_index: p.rebuild_index,
+        sync_index: p.sync_index
       });
     }
     case "run.create": {

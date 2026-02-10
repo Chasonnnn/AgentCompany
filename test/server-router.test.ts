@@ -95,7 +95,8 @@ describe("server router", () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
     const doctor = (await routeRpcMethod("workspace.doctor", {
-      workspace_dir: dir
+      workspace_dir: dir,
+      sync_index: true
     })) as any;
     expect(typeof doctor.ok).toBe("boolean");
     expect(Array.isArray(doctor.checks)).toBe(true);
