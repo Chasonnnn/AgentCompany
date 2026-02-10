@@ -6,6 +6,7 @@ import { initWorkspace } from "../src/workspace/init.js";
 import { createTeam } from "../src/org/teams.js";
 import { createAgent } from "../src/org/agents.js";
 import { createProject } from "../src/work/projects.js";
+import { newArtifactMarkdown } from "../src/artifacts/markdown.js";
 import { routeRpcMethod } from "../src/server/router.js";
 
 async function mkTmpDir(): Promise<string> {
@@ -103,5 +104,35 @@ describe("server router", () => {
       workspace_dir: dir
     })) as any;
     expect(Array.isArray(monitor.rows)).toBe(true);
+  });
+
+  test("artifact.read returns artifact content when policy allows", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const artifactId = "art_router_read";
+    const md = newArtifactMarkdown({
+      type: "proposal",
+      id: artifactId,
+      title: "Router Artifact",
+      visibility: "org",
+      produced_by: "human",
+      run_id: "run_manual",
+      context_pack_id: "ctx_manual"
+    });
+    await fs.writeFile(
+      path.join(dir, "work/projects", project_id, "artifacts", `${artifactId}.md`),
+      md,
+      { encoding: "utf8" }
+    );
+    const res = (await routeRpcMethod("artifact.read", {
+      workspace_dir: dir,
+      project_id,
+      artifact_id: artifactId,
+      actor_id: "human",
+      actor_role: "human"
+    })) as any;
+    expect(res.artifact_id).toBe(artifactId);
+    expect(typeof res.markdown).toBe("string");
   });
 });

@@ -22,6 +22,7 @@ import { readYamlFile } from "../store/yaml.js";
 import { ReviewYaml } from "../schemas/review.js";
 import { validateHelpRequestMarkdown } from "../help/help_request.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
+import { readArtifactWithPolicy } from "../artifacts/read_artifact.js";
 import { listAdapterStatuses } from "../adapters/registry.js";
 import {
   rebuildSqliteIndex,
@@ -115,6 +116,16 @@ const MemoryProposeParams = z.object({
   run_id: z.string().min(1),
   context_pack_id: z.string().min(1),
   evidence: z.array(z.string().min(1)).optional()
+});
+
+const ArtifactReadParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  artifact_id: z.string().min(1),
+  actor_id: z.string().min(1),
+  actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  actor_team_id: z.string().min(1).optional(),
+  run_id: z.string().min(1).optional()
 });
 
 const MemoryApproveParams = z.object({
@@ -382,6 +393,18 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         run_id: p.run_id,
         context_pack_id: p.context_pack_id,
         evidence: p.evidence
+      });
+    }
+    case "artifact.read": {
+      const p = ArtifactReadParams.parse(params);
+      return readArtifactWithPolicy({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        artifact_id: p.artifact_id,
+        actor_id: p.actor_id,
+        actor_role: p.actor_role,
+        actor_team_id: p.actor_team_id,
+        run_id: p.run_id
       });
     }
     case "memory.approve_delta": {
