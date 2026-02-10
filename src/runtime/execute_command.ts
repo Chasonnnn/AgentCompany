@@ -2,11 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { nowIso } from "../core/time.js";
+import { newId } from "../core/ids.js";
 import { readYamlFile, writeYamlFile } from "../store/yaml.js";
 import { MachineYaml } from "../schemas/machine.js";
 import { RunYaml } from "../schemas/run.js";
 import { newEnvelope } from "./events.js";
 import { createEventWriter } from "./event_writer.js";
+import { ContextPackManifestYaml } from "../schemas/context_pack.js";
+import { writeFileAtomic } from "../store/fs.js";
 
 export type ExecuteCommandArgs = {
   workspace_dir: string;
@@ -39,6 +42,23 @@ function resolveCwd(
     );
   }
   return workdirRel ? path.join(root, workdirRel) : root;
+}
+
+async function execText(cmd: string, args: string[], cwd: string): Promise<string> {
+  const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  const chunks: Buffer[] = [];
+  const errChunks: Buffer[] = [];
+  child.stdout?.on("data", (b: Buffer) => chunks.push(b));
+  child.stderr?.on("data", (b: Buffer) => errChunks.push(b));
+  const exit = await new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
+    child.on("error", (e) => reject(e));
+    child.on("exit", (code, signal) => resolve({ code, signal }));
+  });
+  if (exit.code !== 0) {
+    const stderr = Buffer.concat(errChunks).toString("utf8");
+    throw new Error(`Command failed: ${cmd} ${args.join(" ")} (code=${exit.code}): ${stderr}`);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 export async function executeCommandRun(args: ExecuteCommandArgs): Promise<ExecuteCommandResult> {
@@ -78,6 +98,101 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
 
   const sessionRef = `local_${args.run_id}`;
   const writer = createEventWriter(eventsPath);
+
+  // Best-effort: snapshot repo HEAD + dirty state into the Context Pack manifest.
+  if (args.repo_id) {
+    const repoRoot = machineDoc.repo_roots[args.repo_id];
+    const ctxManifestPath = path.join(
+      projectDir,
+      "context_packs",
+      runDoc.context_pack_id,
+      "manifest.yaml"
+    );
+    try {
+      const headSha = (await execText("git", ["rev-parse", "HEAD"], repoRoot)).trim();
+      const statusPorcelain = await execText("git", ["status", "--porcelain=v1"], repoRoot);
+      const dirty = statusPorcelain.trim().length > 0;
+      let dirtyPatchArtifactId: string | undefined;
+
+      if (dirty) {
+        const patchText = await execText("git", ["diff", "HEAD"], repoRoot);
+        if (patchText.trim().length > 0) {
+          dirtyPatchArtifactId = newId("art");
+          const patchRel = path.join(
+            "work/projects",
+            args.project_id,
+            "artifacts",
+            `${dirtyPatchArtifactId}.patch`
+          );
+          await writeFileAtomic(path.join(args.workspace_dir, patchRel), patchText);
+          writer.write(
+            newEnvelope({
+              schema_version: 1,
+              ts_wallclock: nowIso(),
+              run_id: args.run_id,
+              session_ref: sessionRef,
+              actor: "system",
+              visibility: "org",
+              type: "artifact.produced",
+              payload: {
+                artifact_id: dirtyPatchArtifactId,
+                relpath: patchRel,
+                kind: "repo_dirty_patch",
+                repo_id: args.repo_id
+              }
+            })
+          );
+        }
+      }
+
+      const manifest = ContextPackManifestYaml.parse(await readYamlFile(ctxManifestPath));
+      await writeYamlFile(ctxManifestPath, {
+        ...manifest,
+        repo_snapshot: {
+          repo_id: args.repo_id,
+          head_sha: headSha,
+          dirty,
+          dirty_patch_artifact_id: dirtyPatchArtifactId
+        }
+      });
+
+      writer.write(
+        newEnvelope({
+          schema_version: 1,
+          ts_wallclock: nowIso(),
+          run_id: args.run_id,
+          session_ref: sessionRef,
+          actor: "system",
+          visibility: "org",
+          type: "context_pack.snapshot_written",
+          payload: {
+            context_pack_id: runDoc.context_pack_id,
+            repo_id: args.repo_id,
+            head_sha: headSha,
+            dirty,
+            dirty_patch_artifact_id: dirtyPatchArtifactId ?? null
+          }
+        })
+      );
+    } catch (e) {
+      writer.write(
+        newEnvelope({
+          schema_version: 1,
+          ts_wallclock: nowIso(),
+          run_id: args.run_id,
+          session_ref: sessionRef,
+          actor: "system",
+          visibility: "org",
+          type: "context_pack.snapshot_failed",
+          payload: {
+            context_pack_id: runDoc.context_pack_id,
+            repo_id: args.repo_id,
+            error: e instanceof Error ? e.message : String(e)
+          }
+        })
+      );
+    }
+  }
 
   writer.write(
     newEnvelope({
@@ -178,4 +293,3 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
 
   return exitRes;
 }
-
