@@ -33,6 +33,7 @@ import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 import { runPlanningPipeline } from "./pipeline/plan_run.js";
 import { recordAgentMistake } from "./eval/mistake_loop.js";
 import { refreshAgentContextIndex } from "./eval/agent_context_index.js";
+import { resolveInboxItem } from "./inbox/resolve.js";
 import { runJsonRpcServer } from "./server/main.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
@@ -730,6 +731,55 @@ program
           sync_index: opts.syncIndex
         });
         process.stdout.write(JSON.stringify(snapshot, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("inbox:resolve")
+  .description("Resolve a pending inbox artifact decision (approved|denied)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--artifact <artifact_id>", "Artifact id (art_...)", "")
+  .option("--decision <decision>", "Decision (approved|denied)", "approved")
+  .option("--actor <actor_id>", "Actor id (human or agent id)", "human")
+  .option("--role <role>", "Actor role (human|ceo|director|manager|worker)", "human")
+  .option("--team <team_id>", "Actor team id (optional)", undefined)
+  .option("--notes <notes>", "Decision notes", "")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        artifact: string;
+        decision: string;
+        actor: string;
+        role: string;
+        team?: string;
+        notes: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.artifact.trim()) throw new UserError("--artifact is required");
+        if (!["approved", "denied"].includes(opts.decision)) {
+          throw new UserError("Invalid --decision. Valid: approved, denied");
+        }
+        const role = opts.role as any;
+        if (!["human", "ceo", "director", "manager", "worker"].includes(role)) {
+          throw new UserError("Invalid --role. Valid: human, ceo, director, manager, worker");
+        }
+        const res = await resolveInboxItem({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          artifact_id: opts.artifact,
+          decision: opts.decision as "approved" | "denied",
+          actor_id: opts.actor,
+          actor_role: role,
+          actor_team_id: opts.team,
+          notes: opts.notes
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
       });
     }
   );

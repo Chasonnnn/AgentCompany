@@ -116,6 +116,7 @@ node dist/cli.js index:event-errors /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID" --no-sync-index
 node dist/cli.js inbox:snapshot /path/to/workspace --project "$PROJECT_ID"
+node dist/cli.js inbox:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor human --role manager
 node dist/cli.js ui:snapshot /path/to/workspace --project "$PROJECT_ID"
 ```
 

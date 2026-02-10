@@ -16,6 +16,7 @@ import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { buildUiSnapshot } from "../runtime/ui_bundle.js";
 import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/index_sync_service.js";
+import { resolveInboxItem } from "../inbox/resolve.js";
 import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
@@ -108,6 +109,17 @@ const RunReplayParams = z.object({
 const InboxListParams = z.object({
   workspace_dir: z.string().min(1),
   limit: z.number().int().positive().max(1000).default(200)
+});
+
+const InboxResolveParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  artifact_id: z.string().min(1),
+  decision: z.enum(["approved", "denied"]),
+  actor_id: z.string().min(1),
+  actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  actor_team_id: z.string().min(1).optional(),
+  notes: z.string().optional()
 });
 
 const MemoryProposeParams = z.object({
@@ -415,6 +427,10 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     case "inbox.list_help_requests": {
       const p = InboxListParams.parse(params);
       return listHelpRequests(p.workspace_dir, p.limit);
+    }
+    case "inbox.resolve": {
+      const p = InboxResolveParams.parse(params);
+      return resolveInboxItem(p);
     }
     case "memory.propose_delta": {
       const p = MemoryProposeParams.parse(params);
