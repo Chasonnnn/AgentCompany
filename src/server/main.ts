@@ -14,6 +14,7 @@ import {
 import { routeRpcMethod, RpcUserError } from "./router.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
 import { listIndexedEvents, syncSqliteIndex } from "../index/sqlite.js";
+import { createIndexSyncWorker } from "../index/sync_worker.js";
 
 type StdioLike = {
   stdin: NodeJS.ReadableStream;
@@ -60,6 +61,15 @@ function projectFromEventsPath(eventsPath: string): string | undefined {
   const normalized = eventsPath.split(path.sep).join("/");
   const m = normalized.match(/\/work\/projects\/([^/]+)\/runs\/[^/]+\/events\.jsonl$/);
   return m?.[1];
+}
+
+function workspaceFromEventsPath(eventsPath: string): string | undefined {
+  const normalized = eventsPath.split(path.sep).join("/");
+  const m = normalized.match(/^(.*)\/work\/projects\/[^/]+\/runs\/[^/]+\/events\.jsonl$/);
+  if (!m?.[1]) return undefined;
+  const prefix = m[1];
+  if (!prefix) return undefined;
+  return eventsPath.includes(path.sep) ? prefix.split("/").join(path.sep) : prefix;
 }
 
 function matchesSubscription(sub: Subscription, msg: { project_id?: string; event: any }): boolean {
@@ -168,9 +178,22 @@ export async function runJsonRpcServer(io: StdioLike = {
   stderr: process.stderr
 }): Promise<void> {
   const subscriptions = new Map<string, Subscription>();
+  const syncWorker = createIndexSyncWorker({
+    debounce_ms: 250,
+    min_interval_ms: 1000,
+    sync: async (workspaceDir: string) => {
+      await syncSqliteIndex(workspaceDir);
+    },
+    on_error: (error, workspaceDir) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      io.stderr.write(`[index-sync-worker] ${workspaceDir}: ${msg}\n`);
+    }
+  });
 
   const unsub = subscribeRuntimeEvents((msg) => {
     const project_id = projectFromEventsPath(msg.events_file_path);
+    const workspaceDir = workspaceFromEventsPath(msg.events_file_path);
+    if (workspaceDir) syncWorker.notify(workspaceDir);
     const ev = msg.event as any;
     for (const sub of subscriptions.values()) {
       if (!matchesSubscription(sub, { project_id, event: ev })) continue;
@@ -183,28 +206,32 @@ export async function runJsonRpcServer(io: StdioLike = {
   });
 
   const rl = readline.createInterface({ input: io.stdin, crlfDelay: Infinity });
-  for await (const line of rl) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      writeJsonLine(io.stdout, error(null, -32700, "Parse error"));
-      continue;
-    }
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        writeJsonLine(io.stdout, error(null, -32700, "Parse error"));
+        continue;
+      }
 
-    if (isNotification(parsed)) {
-      // v1: ignore incoming notifications.
-      continue;
+      if (isNotification(parsed)) {
+        // v1: ignore incoming notifications.
+        continue;
+      }
+      if (!isRequest(parsed)) {
+        writeJsonLine(io.stdout, error(null, -32600, "Invalid Request"));
+        continue;
+      }
+      await handleRequest(parsed, io, subscriptions);
     }
-    if (!isRequest(parsed)) {
-      writeJsonLine(io.stdout, error(null, -32600, "Invalid Request"));
-      continue;
-    }
-    await handleRequest(parsed, io, subscriptions);
+  } finally {
+    unsub();
+    await syncWorker.close();
   }
-  unsub();
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
