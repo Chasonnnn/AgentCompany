@@ -40,6 +40,11 @@ Create a run (run.yaml + events.jsonl + context pack skeleton):
 node dist/cli.js run:new /path/to/workspace --project "$PROJECT_ID" --agent <agent_id> --provider codex
 ```
 
+Execute a run command (writes `provider.raw` events and updates `run.yaml` status):
+```bash
+node dist/cli.js run:execute /path/to/workspace --project "$PROJECT_ID" --run <run_id> --argv node -e "console.log('hello')"
+```
+
 Validate a Company Workspace folder:
 ```bash
 node dist/cli.js workspace:validate /path/to/workspace
