@@ -1,0 +1,327 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { z } from "zod";
+import { initWorkspace } from "../workspace/init.js";
+import { validateWorkspace } from "../workspace/validate.js";
+import { createRun } from "../runtime/run.js";
+import { launchSession, pollSession, collectSession, stopSession } from "../runtime/session.js";
+import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
+import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
+import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
+import { approveMilestone } from "../milestones/approve_milestone.js";
+import { recordAgentMistake } from "../eval/mistake_loop.js";
+import { readYamlFile } from "../store/yaml.js";
+import { ReviewYaml } from "../schemas/review.js";
+import { validateHelpRequestMarkdown } from "../help/help_request.js";
+import { parseFrontMatter } from "../artifacts/frontmatter.js";
+
+export class RpcUserError extends Error {
+  override name = "RpcUserError";
+}
+
+const WorkspaceOpenParams = z.object({
+  workspace_dir: z.string().min(1)
+});
+
+const WorkspaceValidateParams = WorkspaceOpenParams;
+
+const WorkspaceInitParams = z.object({
+  workspace_dir: z.string().min(1),
+  company_name: z.string().min(1).default("AgentCompany"),
+  force: z.boolean().default(false)
+});
+
+const RunCreateParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  agent_id: z.string().min(1),
+  provider: z.string().min(1)
+});
+
+const SessionLaunchParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  run_id: z.string().min(1),
+  argv: z.array(z.string().min(1)).min(1),
+  repo_id: z.string().min(1).optional(),
+  workdir_rel: z.string().min(1).optional(),
+  task_id: z.string().min(1).optional(),
+  milestone_id: z.string().min(1).optional(),
+  stdin_text: z.string().optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  session_ref: z.string().min(1).optional()
+});
+
+const SessionSingleParams = z.object({
+  session_ref: z.string().min(1)
+});
+
+const RunListParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional()
+});
+
+const RunReplayParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  run_id: z.string().min(1),
+  tail: z.number().int().positive().optional()
+});
+
+const InboxListParams = z.object({
+  workspace_dir: z.string().min(1),
+  limit: z.number().int().positive().max(1000).default(200)
+});
+
+const MemoryProposeParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  title: z.string().min(1),
+  target_file: z.string().min(1).optional(),
+  under_heading: z.string().min(1),
+  insert_lines: z.array(z.string().min(1)).min(1),
+  visibility: z.enum(["private_agent", "team", "managers", "org"]),
+  produced_by: z.string().min(1),
+  run_id: z.string().min(1),
+  context_pack_id: z.string().min(1),
+  evidence: z.array(z.string().min(1)).optional()
+});
+
+const MemoryApproveParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  artifact_id: z.string().min(1),
+  actor_id: z.string().min(1),
+  actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  actor_team_id: z.string().min(1).optional(),
+  notes: z.string().optional()
+});
+
+const MilestoneApproveParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  task_id: z.string().min(1),
+  milestone_id: z.string().min(1),
+  report_artifact_id: z.string().min(1),
+  actor_id: z.string().min(1),
+  actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  actor_team_id: z.string().min(1).optional(),
+  notes: z.string().optional()
+});
+
+const AgentRecordMistakeParams = z.object({
+  workspace_dir: z.string().min(1),
+  worker_agent_id: z.string().min(1),
+  manager_actor_id: z.string().min(1),
+  manager_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  mistake_key: z.string().min(1),
+  summary: z.string().min(1),
+  prevention_rule: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  run_id: z.string().min(1).optional(),
+  task_id: z.string().min(1).optional(),
+  milestone_id: z.string().min(1).optional(),
+  evidence_artifact_ids: z.array(z.string().min(1)).optional(),
+  promote_threshold: z.number().int().min(1).optional()
+});
+
+async function listReviews(workspaceDir: string, limit: number): Promise<unknown[]> {
+  const dir = path.join(workspaceDir, "inbox/reviews");
+  let entries: string[] = [];
+  try {
+    entries = (await fs.readdir(dir))
+      .filter((f) => f.endsWith(".yaml"))
+      .sort()
+      .reverse()
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+
+  const out: unknown[] = [];
+  for (const f of entries) {
+    try {
+      const parsed = ReviewYaml.parse(await readYamlFile(path.join(dir, f)));
+      out.push(parsed);
+    } catch {
+      // best-effort
+    }
+  }
+  return out;
+}
+
+async function listHelpRequests(workspaceDir: string, limit: number): Promise<unknown[]> {
+  const dir = path.join(workspaceDir, "inbox/help_requests");
+  let entries: string[] = [];
+  try {
+    entries = (await fs.readdir(dir))
+      .filter((f) => f.endsWith(".md"))
+      .sort()
+      .reverse()
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+
+  const out: unknown[] = [];
+  for (const f of entries) {
+    const abs = path.join(dir, f);
+    try {
+      const md = await fs.readFile(abs, { encoding: "utf8" });
+      const valid = validateHelpRequestMarkdown(md);
+      if (!valid.ok) continue;
+      const fm = parseFrontMatter(md);
+      if (!fm.ok) continue;
+      out.push(fm.frontmatter);
+    } catch {
+      // best-effort
+    }
+  }
+  return out;
+}
+
+export async function routeRpcMethod(method: string, params: unknown): Promise<unknown> {
+  switch (method) {
+    case "workspace.open": {
+      const p = WorkspaceOpenParams.parse(params);
+      const res = await validateWorkspace(p.workspace_dir);
+      return {
+        workspace_dir: p.workspace_dir,
+        valid: res.ok,
+        issues: res.ok ? [] : res.issues
+      };
+    }
+    case "workspace.init": {
+      const p = WorkspaceInitParams.parse(params);
+      await initWorkspace({
+        root_dir: p.workspace_dir,
+        company_name: p.company_name,
+        force: p.force
+      });
+      return { ok: true };
+    }
+    case "workspace.validate": {
+      const p = WorkspaceValidateParams.parse(params);
+      return validateWorkspace(p.workspace_dir);
+    }
+    case "run.create": {
+      const p = RunCreateParams.parse(params);
+      return createRun({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        agent_id: p.agent_id,
+        provider: p.provider
+      });
+    }
+    case "session.launch": {
+      const p = SessionLaunchParams.parse(params);
+      return launchSession({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        run_id: p.run_id,
+        argv: p.argv,
+        repo_id: p.repo_id,
+        workdir_rel: p.workdir_rel,
+        task_id: p.task_id,
+        milestone_id: p.milestone_id,
+        stdin_text: p.stdin_text,
+        env: p.env,
+        session_ref: p.session_ref
+      });
+    }
+    case "session.poll": {
+      const p = SessionSingleParams.parse(params);
+      return pollSession(p.session_ref);
+    }
+    case "session.collect": {
+      const p = SessionSingleParams.parse(params);
+      return collectSession(p.session_ref);
+    }
+    case "session.stop": {
+      const p = SessionSingleParams.parse(params);
+      return stopSession(p.session_ref);
+    }
+    case "run.list": {
+      const p = RunListParams.parse(params);
+      return listRuns({ workspace_dir: p.workspace_dir, project_id: p.project_id });
+    }
+    case "run.replay": {
+      const p = RunReplayParams.parse(params);
+      const eventsPath = path.join(
+        p.workspace_dir,
+        "work/projects",
+        p.project_id,
+        "runs",
+        p.run_id,
+        "events.jsonl"
+      );
+      const lines = await readEventsJsonl(eventsPath);
+      const parsed = lines
+        .filter((l): l is { ok: true; event: any } => l.ok)
+        .map((l) => l.event);
+      return {
+        run_id: p.run_id,
+        project_id: p.project_id,
+        events: p.tail ? parsed.slice(-p.tail) : parsed,
+        parse_issues: lines.filter((l) => !l.ok)
+      };
+    }
+    case "inbox.list_reviews": {
+      const p = InboxListParams.parse(params);
+      return listReviews(p.workspace_dir, p.limit);
+    }
+    case "inbox.list_help_requests": {
+      const p = InboxListParams.parse(params);
+      return listHelpRequests(p.workspace_dir, p.limit);
+    }
+    case "memory.propose_delta": {
+      const p = MemoryProposeParams.parse(params);
+      return proposeMemoryDelta({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        title: p.title,
+        target_file: p.target_file,
+        under_heading: p.under_heading,
+        insert_lines: p.insert_lines,
+        visibility: p.visibility,
+        produced_by: p.produced_by,
+        run_id: p.run_id,
+        context_pack_id: p.context_pack_id,
+        evidence: p.evidence
+      });
+    }
+    case "memory.approve_delta": {
+      const p = MemoryApproveParams.parse(params);
+      return approveMemoryDelta({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        artifact_id: p.artifact_id,
+        actor_id: p.actor_id,
+        actor_role: p.actor_role,
+        actor_team_id: p.actor_team_id,
+        notes: p.notes
+      });
+    }
+    case "milestone.approve": {
+      const p = MilestoneApproveParams.parse(params);
+      return approveMilestone({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        task_id: p.task_id,
+        milestone_id: p.milestone_id,
+        report_artifact_id: p.report_artifact_id,
+        actor_id: p.actor_id,
+        actor_role: p.actor_role,
+        actor_team_id: p.actor_team_id,
+        notes: p.notes
+      });
+    }
+    case "agent.record_mistake": {
+      const p = AgentRecordMistakeParams.parse(params);
+      return recordAgentMistake(p);
+    }
+    default:
+      throw new RpcUserError(`Unknown method: ${method}`);
+  }
+}
+

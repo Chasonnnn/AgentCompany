@@ -30,6 +30,7 @@ import { scaffoldProjectIntake } from "./pipeline/intake_scaffold.js";
 import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 import { runPlanningPipeline } from "./pipeline/plan_run.js";
 import { recordAgentMistake } from "./eval/mistake_loop.js";
+import { runJsonRpcServer } from "./server/main.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -87,6 +88,15 @@ program
       process.stderr.write("VALIDATION FAILED\n");
       for (const i of res.issues) process.stderr.write(`- ${i.message}\n`);
       process.exitCode = 2;
+    });
+  });
+
+program
+  .command("server:start")
+  .description("Start the local JSON-RPC control-plane server over stdio")
+  .action(async () => {
+    await runAction(async () => {
+      await runJsonRpcServer();
     });
   });
 

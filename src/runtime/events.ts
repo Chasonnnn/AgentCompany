@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { writeFileAtomic } from "../store/fs.js";
+import { publishRuntimeEvent } from "./event_bus.js";
 
 export type EventVisibility = "private_agent" | "team" | "managers" | "org";
 
@@ -30,6 +31,7 @@ export async function appendEventJsonl<TPayload>(
 ): Promise<void> {
   const line = `${JSON.stringify(ev)}\n`;
   await fs.appendFile(eventsFilePath, line, { encoding: "utf8" });
+  publishRuntimeEvent({ events_file_path: eventsFilePath, event: ev });
 }
 
 export async function ensureRunFiles(runDir: string): Promise<{ eventsPath: string }> {
@@ -41,4 +43,3 @@ export async function ensureRunFiles(runDir: string): Promise<{ eventsPath: stri
   }
   return { eventsPath };
 }
-

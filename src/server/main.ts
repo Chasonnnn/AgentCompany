@@ -1,0 +1,185 @@
+import readline from "node:readline";
+import process from "node:process";
+import path from "node:path";
+import { z } from "zod";
+import {
+  error,
+  isNotification,
+  isRequest,
+  success,
+  type JsonRpcId,
+  type JsonRpcNotification,
+  type JsonRpcRequest
+} from "./protocol.js";
+import { routeRpcMethod, RpcUserError } from "./router.js";
+import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
+
+type StdioLike = {
+  stdin: NodeJS.ReadableStream;
+  stdout: NodeJS.WritableStream;
+  stderr: NodeJS.WritableStream;
+};
+
+type Subscription = {
+  subscription_id: string;
+  project_id?: string;
+  run_id?: string;
+  event_types?: string[];
+  last_ack_ts_monotonic_ms?: number;
+};
+
+const EventsSubscribeParams = z.object({
+  subscription_id: z.string().min(1).optional(),
+  project_id: z.string().min(1).optional(),
+  run_id: z.string().min(1).optional(),
+  event_types: z.array(z.string().min(1)).optional()
+});
+
+const EventsUnsubscribeParams = z.object({
+  subscription_id: z.string().min(1)
+});
+
+const EventsAckParams = z.object({
+  subscription_id: z.string().min(1),
+  last_ack_ts_monotonic_ms: z.number().int().nonnegative().optional()
+});
+
+function writeJsonLine(out: NodeJS.WritableStream, obj: unknown): void {
+  out.write(`${JSON.stringify(obj)}\n`);
+}
+
+function sendNotification(out: NodeJS.WritableStream, method: string, params: unknown): void {
+  const n: JsonRpcNotification = { jsonrpc: "2.0", method, params };
+  writeJsonLine(out, n);
+}
+
+function projectFromEventsPath(eventsPath: string): string | undefined {
+  const normalized = eventsPath.split(path.sep).join("/");
+  const m = normalized.match(/\/work\/projects\/([^/]+)\/runs\/[^/]+\/events\.jsonl$/);
+  return m?.[1];
+}
+
+function matchesSubscription(sub: Subscription, msg: { project_id?: string; event: any }): boolean {
+  if (sub.project_id && msg.project_id !== sub.project_id) return false;
+  if (sub.run_id && msg.event?.run_id !== sub.run_id) return false;
+  if (sub.event_types?.length) {
+    const t = String(msg.event?.type ?? "");
+    if (!sub.event_types.includes(t)) return false;
+  }
+  return true;
+}
+
+async function handleEventsMethod(
+  req: JsonRpcRequest,
+  subscriptions: Map<string, Subscription>,
+  out: NodeJS.WritableStream
+): Promise<boolean> {
+  if (req.method === "events.subscribe") {
+    const p = EventsSubscribeParams.parse(req.params);
+    const id = p.subscription_id ?? `sub_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    const sub: Subscription = {
+      subscription_id: id,
+      project_id: p.project_id,
+      run_id: p.run_id,
+      event_types: p.event_types
+    };
+    subscriptions.set(id, sub);
+    writeJsonLine(out, success(req.id, { subscription_id: id }));
+    return true;
+  }
+  if (req.method === "events.unsubscribe") {
+    const p = EventsUnsubscribeParams.parse(req.params);
+    const removed = subscriptions.delete(p.subscription_id);
+    writeJsonLine(out, success(req.id, { removed }));
+    return true;
+  }
+  if (req.method === "events.ack") {
+    const p = EventsAckParams.parse(req.params);
+    const sub = subscriptions.get(p.subscription_id);
+    if (!sub) {
+      writeJsonLine(out, error(req.id, -32000, `Unknown subscription_id: ${p.subscription_id}`));
+      return true;
+    }
+    sub.last_ack_ts_monotonic_ms = p.last_ack_ts_monotonic_ms;
+    writeJsonLine(out, success(req.id, { ok: true }));
+    return true;
+  }
+  return false;
+}
+
+async function handleRequest(
+  req: JsonRpcRequest,
+  io: StdioLike,
+  subscriptions: Map<string, Subscription>
+): Promise<void> {
+  try {
+    if (await handleEventsMethod(req, subscriptions, io.stdout)) return;
+    const result = await routeRpcMethod(req.method, req.params);
+    writeJsonLine(io.stdout, success(req.id, result));
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      writeJsonLine(io.stdout, error(req.id, -32602, "Invalid params", e.issues));
+      return;
+    }
+    if (e instanceof RpcUserError) {
+      writeJsonLine(io.stdout, error(req.id, -32601, e.message));
+      return;
+    }
+    const err = e instanceof Error ? e : new Error(String(e));
+    writeJsonLine(io.stdout, error(req.id, -32000, err.message));
+  }
+}
+
+export async function runJsonRpcServer(io: StdioLike = {
+  stdin: process.stdin,
+  stdout: process.stdout,
+  stderr: process.stderr
+}): Promise<void> {
+  const subscriptions = new Map<string, Subscription>();
+
+  const unsub = subscribeRuntimeEvents((msg) => {
+    const project_id = projectFromEventsPath(msg.events_file_path);
+    const ev = msg.event as any;
+    for (const sub of subscriptions.values()) {
+      if (!matchesSubscription(sub, { project_id, event: ev })) continue;
+      sendNotification(io.stdout, "events.notification", {
+        subscription_id: sub.subscription_id,
+        project_id: project_id ?? null,
+        event: ev
+      });
+    }
+  });
+
+  const rl = readline.createInterface({ input: io.stdin, crlfDelay: Infinity });
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      writeJsonLine(io.stdout, error(null, -32700, "Parse error"));
+      continue;
+    }
+
+    if (isNotification(parsed)) {
+      // v1: ignore incoming notifications.
+      continue;
+    }
+    if (!isRequest(parsed)) {
+      writeJsonLine(io.stdout, error(null, -32600, "Invalid Request"));
+      continue;
+    }
+    await handleRequest(parsed, io, subscriptions);
+  }
+  unsub();
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runJsonRpcServer().catch((e) => {
+    const err = e instanceof Error ? e : new Error(String(e));
+    process.stderr.write(`ERROR: ${err.message}\n`);
+    process.exitCode = 1;
+  });
+}
+
