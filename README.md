@@ -55,6 +55,11 @@ Execute a run command (writes `provider.raw` events and updates `run.yaml` statu
 node dist/cli.js run:execute /path/to/workspace --project "$PROJECT_ID" --run <run_id> --argv node -e "console.log('hello')"
 ```
 
+Pipe stdin from a file (useful for CLIs that accept prompts on stdin):
+```bash
+node dist/cli.js run:execute /path/to/workspace --project "$PROJECT_ID" --run <run_id> --argv codex exec --json - --stdin-file /path/to/prompt.txt
+```
+
 Create a task and add a milestone:
 ```bash
 TASK_ID=$(node dist/cli.js task:new /path/to/workspace --project "$PROJECT_ID" --title "Run Monitor v0")
