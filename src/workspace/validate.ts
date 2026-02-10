@@ -15,6 +15,7 @@ import { REQUIRED_DIRS, REQUIRED_FILES } from "./layout.js";
 import { validateTaskMarkdown } from "../work/task_markdown.js";
 import { validateMarkdownArtifact } from "../artifacts/markdown.js";
 import { parseMemoryDeltaMarkdown } from "../memory/memory_delta.js";
+import { ReviewYaml } from "../schemas/review.js";
 
 export type ValidationIssue = {
   code: string;
@@ -75,6 +76,27 @@ export async function validateWorkspace(rootDir: string): Promise<ValidationResu
       if (e instanceof z.ZodError) issues.push(...zodIssuesToIssues("company/policy.yaml", e));
       else issues.push({ code: "parse_error", message: `company/policy.yaml: ${(e as Error).message}` });
     }
+  }
+
+  // Validate review records.
+  const reviewsDir = path.join(rootDir, "inbox/reviews");
+  try {
+    const entries = await fs.readdir(reviewsDir, { withFileTypes: true });
+    for (const ent of entries) {
+      if (!ent.isFile()) continue;
+      if (!ent.name.endsWith(".yaml")) continue;
+      const rel = path.join("inbox/reviews", ent.name);
+      const p = path.join(rootDir, rel);
+      try {
+        const doc = await readYamlFile(p);
+        ReviewYaml.parse(doc);
+      } catch (e) {
+        if (e instanceof z.ZodError) issues.push(...zodIssuesToIssues(rel, e));
+        else issues.push({ code: "parse_error", message: `${rel}: ${(e as Error).message}`, path: rel });
+      }
+    }
+  } catch {
+    // If the directory doesn't exist, REQUIRED_DIRS will already report it.
   }
 
   const machinePath = path.join(rootDir, ".local/machine.yaml");
