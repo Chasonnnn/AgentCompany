@@ -46,8 +46,9 @@ node dist/cli.js pipeline:intake /path/to/workspace --name "Project X" --ceo <ce
 Create org structure:
 ```bash
 TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Payments")
-node dist/cli.js agent:new /path/to/workspace --name "Payments Manager" --role manager --provider codex --team "$TEAM_ID"
+MANAGER_ID=$(node dist/cli.js agent:new /path/to/workspace --name "Payments Manager" --role manager --provider codex --team "$TEAM_ID")
 PROJECT_ID=$(node dist/cli.js project:new /path/to/workspace --name "Project X")
+node dist/cli.js agent:refresh-context /path/to/workspace --agent "$MANAGER_ID"
 ```
 
 Create a run (run.yaml + events.jsonl + context pack skeleton):

@@ -20,6 +20,7 @@ import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
 import { approveMilestone } from "../milestones/approve_milestone.js";
 import { recordAgentMistake } from "../eval/mistake_loop.js";
+import { refreshAgentContextIndex } from "../eval/agent_context_index.js";
 import { readYamlFile } from "../store/yaml.js";
 import { ReviewYaml } from "../schemas/review.js";
 import { validateHelpRequestMarkdown } from "../help/help_request.js";
@@ -168,6 +169,14 @@ const AgentRecordMistakeParams = z.object({
   milestone_id: z.string().min(1).optional(),
   evidence_artifact_ids: z.array(z.string().min(1)).optional(),
   promote_threshold: z.number().int().min(1).optional()
+});
+
+const AgentRefreshContextParams = z.object({
+  workspace_dir: z.string().min(1),
+  agent_id: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  max_tasks: z.number().int().positive().max(200).optional(),
+  max_scope_paths: z.number().int().positive().max(500).optional()
 });
 
 const AdapterStatusParams = z.object({
@@ -461,6 +470,16 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     case "agent.record_mistake": {
       const p = AgentRecordMistakeParams.parse(params);
       return recordAgentMistake(p);
+    }
+    case "agent.refresh_context": {
+      const p = AgentRefreshContextParams.parse(params);
+      return refreshAgentContextIndex({
+        workspace_dir: p.workspace_dir,
+        agent_id: p.agent_id,
+        project_id: p.project_id,
+        max_tasks: p.max_tasks,
+        max_scope_paths: p.max_scope_paths
+      });
     }
     case "adapter.status": {
       const p = AdapterStatusParams.parse(params);

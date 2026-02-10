@@ -131,6 +131,27 @@ describe("server router", () => {
     expect(Array.isArray(ui.review_inbox.pending)).toBe(true);
   });
 
+  test("agent.refresh_context updates agent guidance context index", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+
+    const res = (await routeRpcMethod("agent.refresh_context", {
+      workspace_dir: dir,
+      agent_id
+    })) as any;
+    expect(res.agent_id).toBe(agent_id);
+    expect(typeof res.agents_md_relpath).toBe("string");
+    expect(typeof res.reference_count).toBe("number");
+  });
+
   test("artifact.read returns artifact content when policy allows", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });

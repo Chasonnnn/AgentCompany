@@ -32,6 +32,7 @@ import { scaffoldProjectIntake } from "./pipeline/intake_scaffold.js";
 import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 import { runPlanningPipeline } from "./pipeline/plan_run.js";
 import { recordAgentMistake } from "./eval/mistake_loop.js";
+import { refreshAgentContextIndex } from "./eval/agent_context_index.js";
 import { runJsonRpcServer } from "./server/main.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
@@ -342,6 +343,45 @@ program
           milestone_id: opts.milestone,
           evidence_artifact_ids: opts.evidence.length ? opts.evidence : undefined,
           promote_threshold: opts.threshold
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("agent:refresh-context")
+  .description(
+    "Refresh the managed context index section in an agent AGENTS.md from assigned task contracts"
+  )
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--agent <agent_id>", "Agent id", "")
+  .option("--project <project_id>", "Optional project id filter", undefined)
+  .option("--max-tasks <n>", "Maximum assigned tasks to include", (v) => parseInt(v, 10), 20)
+  .option(
+    "--max-scope-paths <n>",
+    "Maximum scoped task paths to include",
+    (v) => parseInt(v, 10),
+    40
+  )
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        agent: string;
+        project?: string;
+        maxTasks: number;
+        maxScopePaths: number;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.agent.trim()) throw new UserError("--agent is required");
+        const res = await refreshAgentContextIndex({
+          workspace_dir: workspaceDir,
+          agent_id: opts.agent,
+          project_id: opts.project,
+          max_tasks: opts.maxTasks,
+          max_scope_paths: opts.maxScopePaths
         });
         process.stdout.write(JSON.stringify(res, null, 2) + "\n");
       });
