@@ -16,6 +16,7 @@ import { validateTaskMarkdown } from "../work/task_markdown.js";
 import { validateMarkdownArtifact } from "../artifacts/markdown.js";
 import { parseMemoryDeltaMarkdown } from "../memory/memory_delta.js";
 import { ReviewYaml } from "../schemas/review.js";
+import { parseMilestoneReportMarkdown } from "../milestones/milestone_report.js";
 
 export type ValidationIssue = {
   code: string;
@@ -281,6 +282,15 @@ export async function validateWorkspace(rootDir: string): Promise<ValidationResu
                       path: parsed.frontmatter.patch_file
                     });
                   }
+                }
+              } else if (res.frontmatter.type === "milestone_report") {
+                const parsed = parseMilestoneReportMarkdown(md);
+                if (!parsed.ok) {
+                  issues.push({
+                    code: "milestone_report_invalid",
+                    message: `${rel}: ${parsed.error}`,
+                    path: rel
+                  });
                 }
               }
             } catch (e) {

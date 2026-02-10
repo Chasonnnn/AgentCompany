@@ -20,6 +20,8 @@ import { MilestoneKind, MilestoneStatus, validateTaskMarkdown } from "./work/tas
 import { proposeMemoryDelta } from "./memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "./memory/approve_memory_delta.js";
 import { listRuns, readEventsJsonl } from "./runtime/run_queries.js";
+import { createMilestoneReportFile } from "./milestones/report_files.js";
+import { approveMilestone } from "./milestones/approve_milestone.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -486,6 +488,112 @@ program
           workspace_dir: workspaceDir,
           project_id: opts.project,
           artifact_id: opts.artifact,
+          actor_id: opts.actor,
+          actor_role: role,
+          notes: opts.notes
+        });
+        process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
+
+program
+  .command("milestone:report:new")
+  .description("Create a milestone_report artifact file under the project artifacts folder")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--task <task_id>", "Task id", "")
+  .option("--milestone <milestone_id>", "Milestone id", "")
+  .option("--title <title>", "Report title", "")
+  .option("--visibility <visibility>", "Visibility (private_agent|team|managers|org)", "team")
+  .option("--by <producer>", "Produced by (agent_id|human)", "human")
+  .option("--run <run_id>", "Run id", "run_manual")
+  .option("--ctx <context_pack_id>", "Context pack id", "ctx_manual")
+  .option("--evidence <artifact_id...>", "Evidence artifact ids", [])
+  .option("--tests <artifact_id...>", "Tests artifact ids", [])
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        task: string;
+        milestone: string;
+        title: string;
+        visibility: string;
+        by: string;
+        run: string;
+        ctx: string;
+        evidence: string[];
+        tests: string[];
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.task.trim()) throw new UserError("--task is required");
+        if (!opts.milestone.trim()) throw new UserError("--milestone is required");
+        if (!opts.title.trim()) throw new UserError("--title is required");
+        const visParsed = Visibility.safeParse(opts.visibility);
+        if (!visParsed.success) {
+          throw new UserError(
+            `Invalid visibility "${opts.visibility}". Valid: ${Visibility.options.join(", ")}`
+          );
+        }
+        const res = await createMilestoneReportFile(workspaceDir, {
+          title: opts.title,
+          visibility: visParsed.data,
+          produced_by: opts.by,
+          run_id: opts.run,
+          context_pack_id: opts.ctx,
+          project_id: opts.project,
+          task_id: opts.task,
+          milestone_id: opts.milestone,
+          evidence_artifacts: opts.evidence,
+          tests_artifacts: opts.tests.length ? opts.tests : undefined
+        });
+        process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
+
+program
+  .command("milestone:approve")
+  .description("Approve a milestone report; updates task milestone status and writes a review record")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--task <task_id>", "Task id", "")
+  .option("--milestone <milestone_id>", "Milestone id", "")
+  .option("--report <artifact_id>", "milestone_report artifact id (art_...)", "")
+  .option("--actor <actor_id>", "Actor id (human or agent id)", "human")
+  .option("--role <role>", "Actor role (human|ceo|director|manager|worker)", "human")
+  .option("--notes <notes>", "Approval notes", "")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        task: string;
+        milestone: string;
+        report: string;
+        actor: string;
+        role: string;
+        notes: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.task.trim()) throw new UserError("--task is required");
+        if (!opts.milestone.trim()) throw new UserError("--milestone is required");
+        if (!opts.report.trim()) throw new UserError("--report is required");
+        const role = opts.role as any;
+        if (!["human", "ceo", "director", "manager", "worker"].includes(role)) {
+          throw new UserError('Invalid --role. Valid: human, ceo, director, manager, worker');
+        }
+        const res = await approveMilestone({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          task_id: opts.task,
+          milestone_id: opts.milestone,
+          report_artifact_id: opts.report,
           actor_id: opts.actor,
           actor_role: role,
           notes: opts.notes

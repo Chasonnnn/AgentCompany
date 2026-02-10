@@ -211,3 +211,38 @@ export function addMilestoneToTaskMarkdown(
   return { ok: true, markdown: rebuilt, milestone_id: milestoneId };
 }
 
+export type SetMilestoneStatusResult =
+  | { ok: true; markdown: string }
+  | { ok: false; error: string };
+
+export function setTaskMilestoneStatus(
+  markdown: string,
+  milestone_id: string,
+  status: z.infer<typeof MilestoneStatus>
+): SetMilestoneStatusResult {
+  const parsed = parseFrontMatter(markdown);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+
+  let fm: TaskFrontMatter;
+  try {
+    fm = TaskFrontMatter.parse(parsed.frontmatter);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+
+  const idx = fm.milestones.findIndex((m) => m.id === milestone_id);
+  if (idx === -1) return { ok: false, error: `Milestone not found: ${milestone_id}` };
+
+  fm.milestones = fm.milestones.map((m) => (m.id === milestone_id ? { ...m, status } : m));
+
+  if (fm.milestones.length > 0 && fm.milestones.every((m) => m.status === "done")) {
+    if (fm.status !== "canceled") fm.status = "done";
+  } else if (fm.status === "done") {
+    // If a milestone is moved out of done, reflect that at the task level.
+    fm.status = "in_progress";
+  }
+
+  const fmText = YAML.stringify(fm, { aliasDuplicateObjects: false }).trimEnd();
+  const rebuilt = `---\n${fmText}\n---\n${parsed.body.startsWith("\n") ? parsed.body : `\n${parsed.body}`}`;
+  return { ok: true, markdown: rebuilt };
+}
