@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import fs from "node:fs/promises";
+import path from "node:path";
 import process from "node:process";
 import { initWorkspace } from "./workspace/init.js";
 import { validateWorkspace } from "./workspace/validate.js";
@@ -18,6 +19,7 @@ import { createTaskFile, addTaskMilestone } from "./work/tasks.js";
 import { MilestoneKind, MilestoneStatus, validateTaskMarkdown } from "./work/task_markdown.js";
 import { proposeMemoryDelta } from "./memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "./memory/approve_memory_delta.js";
+import { listRuns, readEventsJsonl } from "./runtime/run_queries.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -199,6 +201,58 @@ program
           workdir_rel: opts.subdir
         });
         process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
+
+program
+  .command("run:list")
+  .description("List runs (best-effort) for a project or entire workspace")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id (optional)", undefined)
+  .action(async (workspaceDir: string, opts: { project?: string }) => {
+    await runAction(async () => {
+      const runs = await listRuns({ workspace_dir: workspaceDir, project_id: opts.project });
+      process.stdout.write(JSON.stringify(runs, null, 2) + "\n");
+    });
+  });
+
+program
+  .command("run:replay")
+  .description("Replay a run timeline from events.jsonl")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--run <run_id>", "Run id", "")
+  .option("--tail <n>", "Show only the last N events", (v) => parseInt(v, 10), undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project: string; run: string; tail?: number }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.run.trim()) throw new UserError("--run is required");
+        const eventsPath = path.join(
+          workspaceDir,
+          "work/projects",
+          opts.project,
+          "runs",
+          opts.run,
+          "events.jsonl"
+        );
+        const lines = await readEventsJsonl(eventsPath);
+        const slice = opts.tail && opts.tail > 0 ? lines.slice(-opts.tail) : lines;
+        for (const l of slice) {
+          if (!l.ok) {
+            process.stdout.write(`[parse_error] ${l.error}: ${l.raw}\n`);
+            continue;
+          }
+          const ev = l.event;
+          const ts = String(ev.ts_wallclock ?? "");
+          const type = String(ev.type ?? "");
+          const actor = String(ev.actor ?? "");
+          process.stdout.write(`${ts} ${type} actor=${actor}\n`);
+        }
       });
     }
   );
