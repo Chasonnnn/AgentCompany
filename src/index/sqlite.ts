@@ -35,6 +35,21 @@ export type RebuildIndexResult = RebuildCounters & {
   db_path: string;
 };
 
+export type SyncIndexResult = {
+  db_path: string;
+  db_created: boolean;
+  runs_upserted: number;
+  runs_deleted: number;
+  events_indexed: number;
+  events_deleted: number;
+  event_parse_errors_indexed: number;
+  event_parse_errors_deleted: number;
+  reviews_upserted: number;
+  reviews_deleted: number;
+  help_requests_upserted: number;
+  help_requests_deleted: number;
+};
+
 export type IndexedRun = {
   project_id: string;
   run_id: string;
@@ -132,6 +147,20 @@ async function openExistingDb(workspaceDir: string): Promise<DbWithPath> {
   return { db, dbPath };
 }
 
+async function openIndexDb(workspaceDir: string): Promise<DbWithPath & { created: boolean }> {
+  const { DatabaseSync } = await loadSqliteModule();
+  const dbPath = indexDbPath(workspaceDir);
+  await fs.mkdir(path.dirname(dbPath), { recursive: true });
+  let created = false;
+  try {
+    await fs.access(dbPath);
+  } catch {
+    created = true;
+  }
+  const db = new DatabaseSync(dbPath);
+  return { db, dbPath, created };
+}
+
 function createSchema(db: DatabaseSync): void {
   db.exec(`
 CREATE TABLE IF NOT EXISTS runs (
@@ -209,6 +238,12 @@ function parseJsonLine(line: string): { ok: true; value: any } | { ok: false; er
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+function changesOf(runResult: unknown): number {
+  if (!runResult || typeof runResult !== "object") return 0;
+  const v = (runResult as { changes?: unknown }).changes;
+  return typeof v === "number" ? v : 0;
 }
 
 async function listDirectoryNames(absDir: string): Promise<string[]> {
@@ -409,6 +444,351 @@ export async function rebuildSqliteIndex(workspaceDir: string): Promise<RebuildI
 
     return {
       db_path: dbPath,
+      ...counters
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export async function syncSqliteIndex(workspaceDir: string): Promise<SyncIndexResult> {
+  const { db, dbPath, created } = await openIndexDb(workspaceDir);
+  const counters: Omit<SyncIndexResult, "db_path" | "db_created"> = {
+    runs_upserted: 0,
+    runs_deleted: 0,
+    events_indexed: 0,
+    events_deleted: 0,
+    event_parse_errors_indexed: 0,
+    event_parse_errors_deleted: 0,
+    reviews_upserted: 0,
+    reviews_deleted: 0,
+    help_requests_upserted: 0,
+    help_requests_deleted: 0
+  };
+
+  try {
+    createSchema(db);
+
+    const upsertRun = db.prepare(`
+      INSERT INTO runs (
+        project_id, run_id, created_at, status, provider, agent_id, context_pack_id, events_relpath
+      ) VALUES (
+        :project_id, :run_id, :created_at, :status, :provider, :agent_id, :context_pack_id, :events_relpath
+      )
+      ON CONFLICT(project_id, run_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        status = excluded.status,
+        provider = excluded.provider,
+        agent_id = excluded.agent_id,
+        context_pack_id = excluded.context_pack_id,
+        events_relpath = excluded.events_relpath
+    `);
+
+    const upsertEvent = db.prepare(`
+      INSERT INTO events (
+        project_id, run_id, seq, type, ts_wallclock, ts_monotonic_ms, actor, session_ref, visibility, payload_json, raw_json
+      ) VALUES (
+        :project_id, :run_id, :seq, :type, :ts_wallclock, :ts_monotonic_ms, :actor, :session_ref, :visibility, :payload_json, :raw_json
+      )
+      ON CONFLICT(project_id, run_id, seq) DO UPDATE SET
+        type = excluded.type,
+        ts_wallclock = excluded.ts_wallclock,
+        ts_monotonic_ms = excluded.ts_monotonic_ms,
+        actor = excluded.actor,
+        session_ref = excluded.session_ref,
+        visibility = excluded.visibility,
+        payload_json = excluded.payload_json,
+        raw_json = excluded.raw_json
+    `);
+
+    const upsertEventParseError = db.prepare(`
+      INSERT INTO event_parse_errors (project_id, run_id, seq, error, raw_line)
+      VALUES (:project_id, :run_id, :seq, :error, :raw_line)
+      ON CONFLICT(project_id, run_id, seq) DO UPDATE SET
+        error = excluded.error,
+        raw_line = excluded.raw_line
+    `);
+
+    const deleteRun = db.prepare(`
+      DELETE FROM runs
+      WHERE project_id = :project_id AND run_id = :run_id
+    `);
+    const deleteRunEvents = db.prepare(`
+      DELETE FROM events
+      WHERE project_id = :project_id AND run_id = :run_id
+    `);
+    const deleteRunParseErrors = db.prepare(`
+      DELETE FROM event_parse_errors
+      WHERE project_id = :project_id AND run_id = :run_id
+    `);
+    const deleteEventSeq = db.prepare(`
+      DELETE FROM events
+      WHERE project_id = :project_id AND run_id = :run_id AND seq = :seq
+    `);
+    const deleteParseErrorSeq = db.prepare(`
+      DELETE FROM event_parse_errors
+      WHERE project_id = :project_id AND run_id = :run_id AND seq = :seq
+    `);
+
+    const maxEventSeq = db.prepare(`
+      SELECT COALESCE(MAX(seq), 0) AS max_seq
+      FROM events
+      WHERE project_id = :project_id AND run_id = :run_id
+    `);
+    const maxParseErrorSeq = db.prepare(`
+      SELECT COALESCE(MAX(seq), 0) AS max_seq
+      FROM event_parse_errors
+      WHERE project_id = :project_id AND run_id = :run_id
+    `);
+
+    const upsertReview = db.prepare(`
+      INSERT INTO reviews (
+        review_id, created_at, decision, actor_id, actor_role, subject_kind, subject_artifact_id, project_id, notes
+      ) VALUES (
+        :review_id, :created_at, :decision, :actor_id, :actor_role, :subject_kind, :subject_artifact_id, :project_id, :notes
+      )
+      ON CONFLICT(review_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        decision = excluded.decision,
+        actor_id = excluded.actor_id,
+        actor_role = excluded.actor_role,
+        subject_kind = excluded.subject_kind,
+        subject_artifact_id = excluded.subject_artifact_id,
+        project_id = excluded.project_id,
+        notes = excluded.notes
+    `);
+    const deleteReview = db.prepare(`
+      DELETE FROM reviews
+      WHERE review_id = :review_id
+    `);
+
+    const upsertHelpRequest = db.prepare(`
+      INSERT INTO help_requests (
+        help_request_id, created_at, title, visibility, requester, target_manager, project_id, share_pack_id
+      ) VALUES (
+        :help_request_id, :created_at, :title, :visibility, :requester, :target_manager, :project_id, :share_pack_id
+      )
+      ON CONFLICT(help_request_id) DO UPDATE SET
+        created_at = excluded.created_at,
+        title = excluded.title,
+        visibility = excluded.visibility,
+        requester = excluded.requester,
+        target_manager = excluded.target_manager,
+        project_id = excluded.project_id,
+        share_pack_id = excluded.share_pack_id
+    `);
+    const deleteHelpRequest = db.prepare(`
+      DELETE FROM help_requests
+      WHERE help_request_id = :help_request_id
+    `);
+
+    const existingRuns = new Set(
+      (
+        db.prepare(`SELECT project_id, run_id FROM runs`).all() as Array<{
+          project_id: string;
+          run_id: string;
+        }>
+      ).map((r) => `${r.project_id}::${r.run_id}`)
+    );
+    const existingReviewIds = new Set(
+      (
+        db.prepare(`SELECT review_id FROM reviews`).all() as Array<{
+          review_id: string;
+        }>
+      ).map((r) => r.review_id)
+    );
+    const existingHelpRequestIds = new Set(
+      (
+        db.prepare(`SELECT help_request_id FROM help_requests`).all() as Array<{
+          help_request_id: string;
+        }>
+      ).map((r) => r.help_request_id)
+    );
+
+    const seenRuns = new Set<string>();
+    const seenReviewIds = new Set<string>();
+    const seenHelpRequestIds = new Set<string>();
+
+    db.exec("BEGIN");
+    try {
+      const projectIds = await listDirectoryNames(path.join(workspaceDir, "work/projects"));
+      for (const projectId of projectIds) {
+        const runsDir = path.join(workspaceDir, "work/projects", projectId, "runs");
+        const runIds = await listDirectoryNames(runsDir);
+        for (const runId of runIds) {
+          const runYamlPath = path.join(runsDir, runId, "run.yaml");
+          let run: RunYaml;
+          try {
+            run = RunYaml.parse(await readYamlFile(runYamlPath));
+          } catch {
+            continue;
+          }
+          const runKey = `${projectId}::${run.id}`;
+          seenRuns.add(runKey);
+
+          upsertRun.run({
+            project_id: projectId,
+            run_id: run.id,
+            created_at: run.created_at,
+            status: run.status,
+            provider: run.provider,
+            agent_id: run.agent_id,
+            context_pack_id: run.context_pack_id,
+            events_relpath: run.events_relpath
+          });
+          counters.runs_upserted += 1;
+
+          const eventsAbs = path.join(runsDir, runId, "events.jsonl");
+          let text = "";
+          try {
+            text = await fs.readFile(eventsAbs, { encoding: "utf8" });
+          } catch {
+            continue;
+          }
+          const lines = text.split("\n").filter((l) => l.trim().length > 0);
+          const maxEvent = (
+            maxEventSeq.get({ project_id: projectId, run_id: run.id }) as { max_seq: number }
+          ).max_seq;
+          const maxErr = (
+            maxParseErrorSeq.get({ project_id: projectId, run_id: run.id }) as { max_seq: number }
+          ).max_seq;
+          const maxIndexed = Math.max(Number(maxEvent ?? 0), Number(maxErr ?? 0));
+
+          let startSeq = maxIndexed + 1;
+          if (maxIndexed > lines.length) {
+            counters.events_deleted += changesOf(
+              deleteRunEvents.run({ project_id: projectId, run_id: run.id })
+            );
+            counters.event_parse_errors_deleted += changesOf(
+              deleteRunParseErrors.run({ project_id: projectId, run_id: run.id })
+            );
+            startSeq = 1;
+          }
+
+          for (let seq = startSeq; seq <= lines.length; seq += 1) {
+            const line = lines[seq - 1]!;
+            const parsed = parseJsonLine(line);
+            if (!parsed.ok) {
+              counters.events_deleted += changesOf(
+                deleteEventSeq.run({ project_id: projectId, run_id: run.id, seq })
+              );
+              upsertEventParseError.run({
+                project_id: projectId,
+                run_id: run.id,
+                seq,
+                error: parsed.error,
+                raw_line: line
+              });
+              counters.event_parse_errors_indexed += 1;
+              continue;
+            }
+
+            counters.event_parse_errors_deleted += changesOf(
+              deleteParseErrorSeq.run({ project_id: projectId, run_id: run.id, seq })
+            );
+            const ev =
+              parsed.value && typeof parsed.value === "object" ? (parsed.value as any) : undefined;
+            const payload = ev && Object.hasOwn(ev, "payload") ? ev.payload : null;
+            upsertEvent.run({
+              project_id: projectId,
+              run_id: run.id,
+              seq,
+              type: typeof ev?.type === "string" ? ev.type : "unknown",
+              ts_wallclock: typeof ev?.ts_wallclock === "string" ? ev.ts_wallclock : null,
+              ts_monotonic_ms:
+                typeof ev?.ts_monotonic_ms === "number" ? Math.floor(ev.ts_monotonic_ms) : null,
+              actor: typeof ev?.actor === "string" ? ev.actor : null,
+              session_ref: typeof ev?.session_ref === "string" ? ev.session_ref : null,
+              visibility: typeof ev?.visibility === "string" ? ev.visibility : null,
+              payload_json: JSON.stringify(payload),
+              raw_json: line
+            });
+            counters.events_indexed += 1;
+          }
+        }
+      }
+
+      for (const key of existingRuns) {
+        if (seenRuns.has(key)) continue;
+        const [project_id, run_id] = key.split("::");
+        counters.events_deleted += changesOf(deleteRunEvents.run({ project_id, run_id }));
+        counters.event_parse_errors_deleted += changesOf(
+          deleteRunParseErrors.run({ project_id, run_id })
+        );
+        counters.runs_deleted += changesOf(deleteRun.run({ project_id, run_id }));
+      }
+
+      const reviewFiles = await listFiles(path.join(workspaceDir, "inbox/reviews"), ".yaml");
+      for (const file of reviewFiles) {
+        const abs = path.join(workspaceDir, "inbox/reviews", file);
+        let review: ReviewYaml;
+        try {
+          review = ReviewYaml.parse(await readYamlFile(abs));
+        } catch {
+          continue;
+        }
+        seenReviewIds.add(review.id);
+        upsertReview.run({
+          review_id: review.id,
+          created_at: review.created_at,
+          decision: review.decision,
+          actor_id: review.actor_id,
+          actor_role: review.actor_role,
+          subject_kind: review.subject.kind,
+          subject_artifact_id: review.subject.artifact_id,
+          project_id: review.subject.project_id,
+          notes: review.notes ?? null
+        });
+        counters.reviews_upserted += 1;
+      }
+
+      for (const reviewId of existingReviewIds) {
+        if (seenReviewIds.has(reviewId)) continue;
+        counters.reviews_deleted += changesOf(deleteReview.run({ review_id: reviewId }));
+      }
+
+      const helpFiles = await listFiles(path.join(workspaceDir, "inbox/help_requests"), ".md");
+      for (const file of helpFiles) {
+        const abs = path.join(workspaceDir, "inbox/help_requests", file);
+        let markdown = "";
+        try {
+          markdown = await fs.readFile(abs, { encoding: "utf8" });
+        } catch {
+          continue;
+        }
+        const validated = validateHelpRequestMarkdown(markdown);
+        if (!validated.ok) continue;
+        const fm = validated.frontmatter;
+        seenHelpRequestIds.add(fm.id);
+        upsertHelpRequest.run({
+          help_request_id: fm.id,
+          created_at: fm.created_at,
+          title: fm.title,
+          visibility: fm.visibility,
+          requester: fm.requester,
+          target_manager: fm.target_manager,
+          project_id: fm.project_id ?? null,
+          share_pack_id: fm.share_pack_id ?? null
+        });
+        counters.help_requests_upserted += 1;
+      }
+
+      for (const helpRequestId of existingHelpRequestIds) {
+        if (seenHelpRequestIds.has(helpRequestId)) continue;
+        counters.help_requests_deleted += changesOf(
+          deleteHelpRequest.run({ help_request_id: helpRequestId })
+        );
+      }
+
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+
+    return {
+      db_path: dbPath,
+      db_created: created,
       ...counters
     };
   } finally {

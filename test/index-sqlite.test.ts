@@ -13,6 +13,7 @@ import { approveMemoryDelta } from "../src/memory/approve_memory_delta.js";
 import { createHelpRequestFile } from "../src/help/help_request_files.js";
 import {
   rebuildSqliteIndex,
+  syncSqliteIndex,
   listIndexedRuns,
   listIndexedEvents,
   listIndexedEventParseErrors,
@@ -156,5 +157,58 @@ describe("sqlite index cache", () => {
 
     const stats = await readIndexStats(dir);
     expect(stats.event_parse_errors).toBeGreaterThanOrEqual(1);
+  });
+
+  test("sync incrementally indexes appended runs/events and removes deleted runs", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+
+    const runA = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
+    await executeCommandRun({
+      workspace_dir: dir,
+      project_id,
+      run_id: runA.run_id,
+      argv: [process.execPath, "-e", "console.log('A')"]
+    });
+    await rebuildSqliteIndex(dir);
+
+    const runB = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
+    await executeCommandRun({
+      workspace_dir: dir,
+      project_id,
+      run_id: runB.run_id,
+      argv: [process.execPath, "-e", "console.log('B')"]
+    });
+
+    const sync1 = await syncSqliteIndex(dir);
+    expect(sync1.runs_upserted).toBeGreaterThanOrEqual(2);
+    const runsAfterSync = await listIndexedRuns({ workspace_dir: dir, project_id, limit: 10 });
+    expect(runsAfterSync.some((r) => r.run_id === runB.run_id)).toBe(true);
+
+    const runADir = path.join(dir, "work/projects", project_id, "runs", runA.run_id);
+    await fs.rm(runADir, { recursive: true, force: true });
+    const sync2 = await syncSqliteIndex(dir);
+    expect(sync2.runs_deleted).toBeGreaterThanOrEqual(1);
+    const runsAfterDelete = await listIndexedRuns({ workspace_dir: dir, project_id, limit: 10 });
+    expect(runsAfterDelete.some((r) => r.run_id === runA.run_id)).toBe(false);
   });
 });
