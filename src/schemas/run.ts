@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { IsoDateTime, SchemaVersion } from "./common.js";
 
-export const RunStatus = z.enum(["running", "ended", "failed"]);
+export const RunStatus = z.enum(["running", "ended", "failed", "stopped"]);
 
 export const CommandRunSpec = z
   .object({

@@ -25,6 +25,7 @@ export type ExecuteCommandArgs = {
   milestone_id?: string;
   env?: Record<string, string>;
   stdin_text?: string;
+  abort_signal?: AbortSignal;
 };
 
 export type ExecuteCommandResult = {
@@ -350,6 +351,27 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     stdio: [args.stdin_text === undefined ? "ignore" : "pipe", "pipe", "pipe"]
   });
 
+  let stopRequested = false;
+  const abortHandler = (): void => {
+    stopRequested = true;
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
+    setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+    }, 1500).unref();
+  };
+  if (args.abort_signal) {
+    if (args.abort_signal.aborted) abortHandler();
+    else args.abort_signal.addEventListener("abort", abortHandler, { once: true });
+  }
+
   if (args.stdin_text !== undefined && child.stdin) {
     child.stdin.write(args.stdin_text, "utf8");
     child.stdin.end();
@@ -405,8 +427,12 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     // 'close' fires after stdio streams are drained.
     child.on("close", (code, signal) => resolve({ exit_code: code, signal }));
   });
+  if (args.abort_signal) {
+    args.abort_signal.removeEventListener("abort", abortHandler);
+  }
 
   const endedAt = nowIso();
+  const stopped = stopRequested;
   const ok = exitRes.exit_code === 0;
 
   writer.write(
@@ -417,10 +443,11 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       session_ref: sessionRef,
       actor: "system",
       visibility: "org",
-      type: ok ? "run.ended" : "run.failed",
+      type: stopped ? "run.stopped" : ok ? "run.ended" : "run.failed",
       payload: {
         exit_code: exitRes.exit_code,
-        signal: exitRes.signal
+        signal: exitRes.signal,
+        stopped
       }
     })
   );
@@ -432,7 +459,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
 
   await writeYamlFile(runYamlPath, {
     ...runDoc,
-    status: ok ? "ended" : "failed",
+    status: stopped ? "stopped" : ok ? "ended" : "failed",
     spec: {
       kind: "command",
       argv: args.argv,
