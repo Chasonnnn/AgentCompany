@@ -109,11 +109,13 @@ program
   .description("Run workspace health checks (schema, providers, repos, index, worktree references)")
   .argument("<dir>", "Workspace root directory")
   .option("--rebuild-index", "Rebuild SQLite index as part of health checks", false)
-  .action(async (dir: string, opts: { rebuildIndex: boolean }) => {
+  .option("--sync-index", "Incrementally sync SQLite index as part of health checks", false)
+  .action(async (dir: string, opts: { rebuildIndex: boolean; syncIndex: boolean }) => {
     await runAction(async () => {
       const report = await doctorWorkspace({
         workspace_dir: dir,
-        rebuild_index: opts.rebuildIndex
+        rebuild_index: opts.rebuildIndex,
+        sync_index: opts.syncIndex
       });
       process.stdout.write(JSON.stringify(report, null, 2) + "\n");
       if (!report.ok) process.exitCode = 2;

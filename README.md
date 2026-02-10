@@ -93,6 +93,7 @@ node dist/cli.js workspace:validate /path/to/workspace
 Run workspace health checks (optionally rebuilding index cache):
 ```bash
 node dist/cli.js workspace:doctor /path/to/workspace --rebuild-index
+node dist/cli.js workspace:doctor /path/to/workspace --sync-index
 ```
 
 Run monitor helpers:
