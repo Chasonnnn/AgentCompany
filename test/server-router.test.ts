@@ -46,5 +46,16 @@ describe("server router", () => {
     })) as any[];
     expect(runs.some((r) => r.run_id === run.run_id)).toBe(true);
   });
-});
 
+  test("adapter.status returns codex/claude adapter states", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const adapters = (await routeRpcMethod("adapter.status", {
+      workspace_dir: dir
+    })) as any[];
+    const names = adapters.map((a) => a.name);
+    expect(names).toContain("codex_app_server");
+    expect(names).toContain("codex_cli");
+    expect(names).toContain("claude_cli");
+  });
+});

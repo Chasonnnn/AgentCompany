@@ -14,6 +14,7 @@ import { readYamlFile } from "../store/yaml.js";
 import { ReviewYaml } from "../schemas/review.js";
 import { validateHelpRequestMarkdown } from "../help/help_request.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
+import { listAdapterStatuses } from "../adapters/registry.js";
 
 export class RpcUserError extends Error {
   override name = "RpcUserError";
@@ -123,6 +124,10 @@ const AgentRecordMistakeParams = z.object({
   milestone_id: z.string().min(1).optional(),
   evidence_artifact_ids: z.array(z.string().min(1)).optional(),
   promote_threshold: z.number().int().min(1).optional()
+});
+
+const AdapterStatusParams = z.object({
+  workspace_dir: z.string().min(1)
 });
 
 async function listReviews(workspaceDir: string, limit: number): Promise<unknown[]> {
@@ -320,8 +325,11 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       const p = AgentRecordMistakeParams.parse(params);
       return recordAgentMistake(p);
     }
+    case "adapter.status": {
+      const p = AdapterStatusParams.parse(params);
+      return listAdapterStatuses(p.workspace_dir);
+    }
     default:
       throw new RpcUserError(`Unknown method: ${method}`);
   }
 }
-
