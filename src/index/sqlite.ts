@@ -45,6 +45,28 @@ export type IndexedRun = {
   context_pack_id: string;
 };
 
+export type IndexedEvent = {
+  project_id: string;
+  run_id: string;
+  seq: number;
+  type: string;
+  ts_wallclock: string | null;
+  ts_monotonic_ms: number | null;
+  actor: string | null;
+  session_ref: string | null;
+  visibility: string | null;
+  payload_json: string;
+  raw_json: string;
+};
+
+export type IndexedEventParseError = {
+  project_id: string;
+  run_id: string;
+  seq: number;
+  error: string;
+  raw_line: string;
+};
+
 export type IndexedReview = {
   review_id: string;
   created_at: string;
@@ -422,6 +444,16 @@ export type ListIndexedReviewsArgs = {
   limit?: number;
 };
 
+export type ListIndexedEventsArgs = {
+  workspace_dir: string;
+  project_id?: string;
+  run_id?: string;
+  type?: string;
+  since_seq?: number;
+  limit?: number;
+  order?: "asc" | "desc";
+};
+
 export async function listIndexedReviews(args: ListIndexedReviewsArgs): Promise<IndexedReview[]> {
   const { db } = await openExistingDb(args.workspace_dir);
   try {
@@ -454,6 +486,56 @@ export async function listIndexedReviews(args: ListIndexedReviewsArgs): Promise<
       LIMIT :limit
     `;
     return db.prepare(sql).all(params) as IndexedReview[];
+  } finally {
+    db.close();
+  }
+}
+
+export async function listIndexedEvents(args: ListIndexedEventsArgs): Promise<IndexedEvent[]> {
+  const { db } = await openExistingDb(args.workspace_dir);
+  try {
+    const where: string[] = [];
+    const params: Record<string, SQLInputValue> = {};
+    if (args.project_id) {
+      where.push("project_id = :project_id");
+      params.project_id = args.project_id;
+    }
+    if (args.run_id) {
+      where.push("run_id = :run_id");
+      params.run_id = args.run_id;
+    }
+    if (args.type) {
+      where.push("type = :type");
+      params.type = args.type;
+    }
+    if (args.since_seq !== undefined) {
+      const since = Math.max(0, Math.floor(args.since_seq));
+      where.push("seq > :since_seq");
+      params.since_seq = since;
+    }
+    const limit = Math.max(1, Math.min(args.limit ?? 500, 5000));
+    params.limit = limit;
+    const order = args.order === "asc" ? "ASC" : "DESC";
+
+    const sql = `
+      SELECT
+        project_id,
+        run_id,
+        seq,
+        type,
+        ts_wallclock,
+        ts_monotonic_ms,
+        actor,
+        session_ref,
+        visibility,
+        payload_json,
+        raw_json
+      FROM events
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY ts_wallclock ${order}, seq ${order}
+      LIMIT :limit
+    `;
+    return db.prepare(sql).all(params) as IndexedEvent[];
   } finally {
     db.close();
   }
@@ -499,6 +581,39 @@ export async function listIndexedHelpRequests(
       LIMIT :limit
     `;
     return db.prepare(sql).all(params) as IndexedHelpRequest[];
+  } finally {
+    db.close();
+  }
+}
+
+export async function listIndexedEventParseErrors(args: {
+  workspace_dir: string;
+  project_id?: string;
+  run_id?: string;
+  limit?: number;
+}): Promise<IndexedEventParseError[]> {
+  const { db } = await openExistingDb(args.workspace_dir);
+  try {
+    const where: string[] = [];
+    const params: Record<string, SQLInputValue> = {};
+    if (args.project_id) {
+      where.push("project_id = :project_id");
+      params.project_id = args.project_id;
+    }
+    if (args.run_id) {
+      where.push("run_id = :run_id");
+      params.run_id = args.run_id;
+    }
+    const limit = Math.max(1, Math.min(args.limit ?? 200, 5000));
+    params.limit = limit;
+    const sql = `
+      SELECT project_id, run_id, seq, error, raw_line
+      FROM event_parse_errors
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY run_id DESC, seq DESC
+      LIMIT :limit
+    `;
+    return db.prepare(sql).all(params) as IndexedEventParseError[];
   } finally {
     db.close();
   }

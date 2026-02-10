@@ -14,6 +14,8 @@ import { createHelpRequestFile } from "../src/help/help_request_files.js";
 import {
   rebuildSqliteIndex,
   listIndexedRuns,
+  listIndexedEvents,
+  listIndexedEventParseErrors,
   listIndexedReviews,
   listIndexedHelpRequests,
   readIndexStats,
@@ -99,6 +101,15 @@ describe("sqlite index cache", () => {
     const runs = await listIndexedRuns({ workspace_dir: dir, project_id });
     expect(runs.some((r) => r.run_id === run_id)).toBe(true);
 
+    const events = await listIndexedEvents({
+      workspace_dir: dir,
+      project_id,
+      run_id,
+      limit: 500
+    });
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events.some((e) => e.type === "run.started")).toBe(true);
+
     const reviews = await listIndexedReviews({ workspace_dir: dir, project_id });
     expect(reviews.some((r) => r.subject_kind === "memory_delta")).toBe(true);
 
@@ -135,6 +146,13 @@ describe("sqlite index cache", () => {
 
     const rebuilt = await rebuildSqliteIndex(dir);
     expect(rebuilt.event_parse_errors).toBeGreaterThanOrEqual(1);
+
+    const errors = await listIndexedEventParseErrors({
+      workspace_dir: dir,
+      project_id,
+      run_id
+    });
+    expect(errors.length).toBeGreaterThanOrEqual(1);
 
     const stats = await readIndexStats(dir);
     expect(stats.event_parse_errors).toBeGreaterThanOrEqual(1);
