@@ -29,6 +29,7 @@ import { demoInit } from "./demo/demo_init.js";
 import { scaffoldProjectIntake } from "./pipeline/intake_scaffold.js";
 import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 import { runPlanningPipeline } from "./pipeline/plan_run.js";
+import { recordAgentMistake } from "./eval/mistake_loop.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -234,6 +235,72 @@ program
           team_id: opts.team
         });
         process.stdout.write(`${agent_id}\n`);
+      });
+    }
+  );
+
+program
+  .command("agent:record-mistake")
+  .description(
+    "Record a repeated worker mistake (manager action) and auto-promote a rule to worker AGENTS.md after threshold"
+  )
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--worker <agent_id>", "Worker agent id", "")
+  .option("--manager <actor_id>", "Manager actor id", "")
+  .option("--manager-role <role>", "Manager actor role (human|ceo|director|manager)", "manager")
+  .option("--key <mistake_key>", "Stable mistake key", "")
+  .option("--summary <summary>", "Human-readable mistake summary", "")
+  .option("--rule <prevention_rule>", "Rule to add into worker AGENTS.md on repeat", "")
+  .option("--project <project_id>", "Project id (optional; used for event logging)", undefined)
+  .option("--run <run_id>", "Run id (optional; used for event logging)", undefined)
+  .option("--task <task_id>", "Task id (optional)", undefined)
+  .option("--milestone <milestone_id>", "Milestone id (optional)", undefined)
+  .option("--evidence <artifact_ids...>", "Evidence artifact ids (optional)", [])
+  .option("--threshold <n>", "Promotion threshold (default 3)", (v) => parseInt(v, 10), 3)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        worker: string;
+        manager: string;
+        managerRole: string;
+        key: string;
+        summary: string;
+        rule: string;
+        project?: string;
+        run?: string;
+        task?: string;
+        milestone?: string;
+        evidence: string[];
+        threshold: number;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.worker.trim()) throw new UserError("--worker is required");
+        if (!opts.manager.trim()) throw new UserError("--manager is required");
+        if (!opts.key.trim()) throw new UserError("--key is required");
+        if (!opts.summary.trim()) throw new UserError("--summary is required");
+        if (!opts.rule.trim()) throw new UserError("--rule is required");
+        const role = opts.managerRole as any;
+        if (!["human", "ceo", "director", "manager"].includes(role)) {
+          throw new UserError("Invalid --manager-role. Valid: human, ceo, director, manager");
+        }
+        const res = await recordAgentMistake({
+          workspace_dir: workspaceDir,
+          worker_agent_id: opts.worker,
+          manager_actor_id: opts.manager,
+          manager_role: role,
+          mistake_key: opts.key,
+          summary: opts.summary,
+          prevention_rule: opts.rule,
+          project_id: opts.project,
+          run_id: opts.run,
+          task_id: opts.task,
+          milestone_id: opts.milestone,
+          evidence_artifact_ids: opts.evidence.length ? opts.evidence : undefined,
+          promote_threshold: opts.threshold
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
       });
     }
   );
