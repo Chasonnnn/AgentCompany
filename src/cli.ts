@@ -31,6 +31,13 @@ import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 import { runPlanningPipeline } from "./pipeline/plan_run.js";
 import { recordAgentMistake } from "./eval/mistake_loop.js";
 import { runJsonRpcServer } from "./server/main.js";
+import {
+  rebuildSqliteIndex,
+  readIndexStats,
+  listIndexedRuns,
+  listIndexedReviews,
+  listIndexedHelpRequests
+} from "./index/sqlite.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -418,6 +425,106 @@ program
       process.stdout.write(JSON.stringify(runs, null, 2) + "\n");
     });
   });
+
+program
+  .command("index:rebuild")
+  .description("Rebuild SQLite index cache from canonical filesystem artifacts")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .action(async (workspaceDir: string) => {
+    await runAction(async () => {
+      const res = await rebuildSqliteIndex(workspaceDir);
+      process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+    });
+  });
+
+program
+  .command("index:stats")
+  .description("Show SQLite index table counts")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .action(async (workspaceDir: string) => {
+    await runAction(async () => {
+      const stats = await readIndexStats(workspaceDir);
+      process.stdout.write(JSON.stringify(stats, null, 2) + "\n");
+    });
+  });
+
+program
+  .command("index:runs")
+  .description("List indexed runs from SQLite cache")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id filter", undefined)
+  .option("--status <status>", "Status filter (running|ended|failed|stopped)", undefined)
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project?: string; status?: string; limit: number }
+    ) => {
+      await runAction(async () => {
+        if (opts.status && !["running", "ended", "failed", "stopped"].includes(opts.status)) {
+          throw new UserError("Invalid --status. Valid: running, ended, failed, stopped");
+        }
+        const rows = await listIndexedRuns({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          status: opts.status,
+          limit: opts.limit
+        });
+        process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("index:reviews")
+  .description("List indexed review records from SQLite cache")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id filter", undefined)
+  .option("--decision <decision>", "Decision filter (approved|denied)", undefined)
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project?: string; decision?: string; limit: number }
+    ) => {
+      await runAction(async () => {
+        if (opts.decision && !["approved", "denied"].includes(opts.decision)) {
+          throw new UserError("Invalid --decision. Valid: approved, denied");
+        }
+        const rows = await listIndexedReviews({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          decision: opts.decision as "approved" | "denied" | undefined,
+          limit: opts.limit
+        });
+        process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("index:help")
+  .description("List indexed help requests from SQLite cache")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id filter", undefined)
+  .option("--target <manager_id>", "Target manager filter", undefined)
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project?: string; target?: string; limit: number }
+    ) => {
+      await runAction(async () => {
+        const rows = await listIndexedHelpRequests({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          target_manager: opts.target,
+          limit: opts.limit
+        });
+        process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+      });
+    }
+  );
 
 program
   .command("run:replay")

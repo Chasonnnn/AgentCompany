@@ -96,6 +96,15 @@ node dist/cli.js run:list /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --tail 50
 ```
 
+SQLite cache/index helpers:
+```bash
+node dist/cli.js index:rebuild /path/to/workspace
+node dist/cli.js index:stats /path/to/workspace
+node dist/cli.js index:runs /path/to/workspace --project "$PROJECT_ID" --status ended
+node dist/cli.js index:reviews /path/to/workspace --project "$PROJECT_ID"
+node dist/cli.js index:help /path/to/workspace --project "$PROJECT_ID"
+```
+
 Cross-team sharing:
 ```bash
 node dist/cli.js sharepack:create /path/to/workspace --project "$PROJECT_ID" --by human
