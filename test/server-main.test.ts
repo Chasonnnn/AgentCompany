@@ -139,6 +139,16 @@ describe("JSON-RPC server", () => {
     expect(["ended", "failed", "stopped"]).toContain(collected.result.status);
     expect(collected.result.events_relpath).toBe(`runs/${runId}/events.jsonl`);
 
+    sendReq(input, 5, "index.sync_worker_flush", {});
+    const flushed = await parser.waitFor((m) => m.id === 5);
+    expect(flushed.result.enabled).toBe(true);
+    expect(flushed.result.pending_workspaces).toBe(0);
+
+    sendReq(input, 6, "index.sync_worker_status", {});
+    const status = await parser.waitFor((m) => m.id === 6);
+    expect(status.result.enabled).toBe(true);
+    expect(status.result.total_notify_calls).toBeGreaterThanOrEqual(1);
+
     input.end();
     await serverPromise;
   });

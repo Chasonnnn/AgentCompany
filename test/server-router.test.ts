@@ -70,6 +70,13 @@ describe("server router", () => {
       limit: 100
     })) as any[];
     expect(indexedEvents.some((e) => e.type === "run.started")).toBe(true);
+
+    const workerStatus = (await routeRpcMethod("index.sync_worker_status", {})) as any;
+    expect(typeof workerStatus.enabled).toBe("boolean");
+    expect(typeof workerStatus.pending_workspaces).toBe("number");
+
+    const workerFlush = (await routeRpcMethod("index.sync_worker_flush", {})) as any;
+    expect(typeof workerFlush.enabled).toBe("boolean");
   });
 
   test("adapter.status returns codex/claude adapter states", async () => {

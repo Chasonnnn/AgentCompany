@@ -15,6 +15,7 @@ import { routeRpcMethod, RpcUserError } from "./router.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
 import { listIndexedEvents, syncSqliteIndex } from "../index/sqlite.js";
 import { createIndexSyncWorker } from "../index/sync_worker.js";
+import { registerIndexSyncWorker } from "../runtime/index_sync_service.js";
 
 type StdioLike = {
   stdin: NodeJS.ReadableStream;
@@ -189,6 +190,7 @@ export async function runJsonRpcServer(io: StdioLike = {
       io.stderr.write(`[index-sync-worker] ${workspaceDir}: ${msg}\n`);
     }
   });
+  registerIndexSyncWorker(syncWorker);
 
   const unsub = subscribeRuntimeEvents((msg) => {
     const project_id = projectFromEventsPath(msg.events_file_path);
@@ -230,7 +232,11 @@ export async function runJsonRpcServer(io: StdioLike = {
     }
   } finally {
     unsub();
-    await syncWorker.close();
+    try {
+      await syncWorker.close();
+    } finally {
+      registerIndexSyncWorker(null);
+    }
   }
 }
 

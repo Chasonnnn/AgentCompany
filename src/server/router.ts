@@ -15,6 +15,7 @@ import {
 import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { buildUiSnapshot } from "../runtime/ui_bundle.js";
+import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/index_sync_service.js";
 import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
@@ -186,6 +187,8 @@ const AdapterStatusParams = z.object({
 const IndexRebuildParams = z.object({
   workspace_dir: z.string().min(1)
 });
+
+const EmptyParams = z.object({}).passthrough();
 
 const IndexListRunsParams = z.object({
   workspace_dir: z.string().min(1),
@@ -496,6 +499,14 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     case "index.stats": {
       const p = IndexRebuildParams.parse(params);
       return readIndexStats(p.workspace_dir);
+    }
+    case "index.sync_worker_status": {
+      EmptyParams.parse((params ?? {}) as unknown);
+      return readIndexSyncWorkerStatus();
+    }
+    case "index.sync_worker_flush": {
+      EmptyParams.parse((params ?? {}) as unknown);
+      return flushIndexSyncWorker();
     }
     case "index.list_runs": {
       const p = IndexListRunsParams.parse(params);

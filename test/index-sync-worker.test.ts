@@ -88,4 +88,30 @@ describe("index sync worker", () => {
     const delta = callTimes[1]! - callTimes[0]!;
     expect(delta).toBeGreaterThanOrEqual(35);
   });
+
+  test("status reports queue and sync metrics", async () => {
+    const worker = createIndexSyncWorker({
+      sync: async (workspaceDir) => {
+        if (workspaceDir.endsWith("/fail")) throw new Error("boom");
+      },
+      debounce_ms: 1,
+      min_interval_ms: 0
+    });
+
+    worker.notify("/tmp/ws-ok");
+    worker.notify("/tmp/ws-fail/fail");
+    await worker.flush();
+    const status = worker.status();
+    await worker.close();
+
+    expect(status.closed).toBe(false);
+    expect(status.pending_workspaces).toBe(0);
+    expect(status.total_notify_calls).toBe(2);
+    expect(status.total_batches).toBeGreaterThanOrEqual(1);
+    expect(status.total_workspace_sync_attempts).toBe(2);
+    expect(status.total_workspace_sync_errors).toBe(1);
+    expect(status.last_error_message).toContain("boom");
+    expect(status.last_error_workspace).toBe("/tmp/ws-fail/fail");
+    expect(status.last_run_at_ms).not.toBeNull();
+  });
 });
