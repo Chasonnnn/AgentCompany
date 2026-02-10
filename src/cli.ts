@@ -225,6 +225,7 @@ program
   .option("--project <project_id>", "Project id", "")
   .option("--run <run_id>", "Run id", "")
   .option("--argv <argv...>", "Command argv", [])
+  .option("--stdin-file <path>", "Read stdin content from a file and pipe to the command", undefined)
   .option("--repo <repo_id>", "Repo id (resolves via .local/machine.yaml)", undefined)
   .option("--subdir <workdir_rel>", "Workdir relative to repo root", undefined)
   .action(
@@ -234,6 +235,7 @@ program
         project: string;
         run: string;
         argv: string[];
+        stdinFile?: string;
         repo?: string;
         subdir?: string;
       }
@@ -242,11 +244,15 @@ program
         if (!opts.project.trim()) throw new UserError("--project is required");
         if (!opts.run.trim()) throw new UserError("--run is required");
         if (!opts.argv.length) throw new UserError("--argv is required (use --argv cmd arg1 arg2)");
+        const stdinText = opts.stdinFile
+          ? await fs.readFile(opts.stdinFile, { encoding: "utf8" })
+          : undefined;
         const res = await executeCommandRun({
           workspace_dir: workspaceDir,
           project_id: opts.project,
           run_id: opts.run,
           argv: opts.argv,
+          stdin_text: stdinText,
           repo_id: opts.repo,
           workdir_rel: opts.subdir
         });
