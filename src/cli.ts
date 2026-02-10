@@ -7,6 +7,7 @@ import { initWorkspace } from "./workspace/init.js";
 import { validateWorkspace } from "./workspace/validate.js";
 import { doctorWorkspace } from "./workspace/doctor.js";
 import { ArtifactType, newArtifactMarkdown, validateMarkdownArtifact } from "./artifacts/markdown.js";
+import { readArtifactWithPolicy } from "./artifacts/read_artifact.js";
 import { writeFileAtomic } from "./store/fs.js";
 import { Visibility } from "./schemas/common.js";
 import { createTeam } from "./org/teams.js";
@@ -1228,6 +1229,48 @@ program
         });
         process.stdout.write(JSON.stringify(res, null, 2) + "\n");
         if (!res.ok) process.exitCode = 2;
+      });
+    }
+  );
+
+program
+  .command("artifact:read")
+  .description("Read a project artifact with policy enforcement (supports policy.denied audit events)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--artifact <artifact_id>", "Artifact id (art_...)", "")
+  .option("--actor <actor_id>", "Actor id (human or agent id)", "human")
+  .option("--role <role>", "Actor role (human|ceo|director|manager|worker)", "human")
+  .option("--team <team_id>", "Actor team id (optional)", undefined)
+  .option("--run <run_id>", "Audit run id (optional; enables policy.denied event logging)", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        artifact: string;
+        actor: string;
+        role: string;
+        team?: string;
+        run?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.artifact.trim()) throw new UserError("--artifact is required");
+        if (!["human", "ceo", "director", "manager", "worker"].includes(opts.role)) {
+          throw new UserError("Invalid --role. Valid: human, ceo, director, manager, worker");
+        }
+        const res = await readArtifactWithPolicy({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          artifact_id: opts.artifact,
+          actor_id: opts.actor,
+          actor_role: opts.role as "human" | "ceo" | "director" | "manager" | "worker",
+          actor_team_id: opts.team,
+          run_id: opts.run
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
       });
     }
   );

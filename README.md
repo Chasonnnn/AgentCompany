@@ -123,6 +123,7 @@ Create and validate an artifact template:
 ```bash
 node dist/cli.js artifact:new proposal /tmp/proposal.md --title "Payments Proposal" --visibility managers --by agent_mgr_payments --run run_123 --ctx ctx_123
 node dist/cli.js artifact:validate /tmp/proposal.md
+node dist/cli.js artifact:read /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --actor human --role human
 ```
 
 Debugging:
