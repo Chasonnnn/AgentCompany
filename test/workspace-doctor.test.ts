@@ -9,6 +9,7 @@ import { createTeam } from "../src/org/teams.js";
 import { createAgent } from "../src/org/agents.js";
 import { createProject } from "../src/work/projects.js";
 import { createRun } from "../src/runtime/run.js";
+import { indexDbPath } from "../src/index/sqlite.js";
 
 async function mkTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-"));
@@ -96,5 +97,34 @@ describe("workspace doctor", () => {
     const idx = report.checks.find((c) => c.id === "index.rebuild");
     expect(idx?.status).toBe("warn");
     expect(idx?.message.toLowerCase()).toContain("stale");
+  });
+
+  test("sync-index mode creates/updates index without full rebuild", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+
+    await setProviderBin(dir, "codex", process.execPath);
+    await setProviderBin(dir, "claude", process.execPath);
+
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
+
+    const report = await doctorWorkspace({ workspace_dir: dir, sync_index: true });
+    const idx = report.checks.find((c) => c.id === "index.sync");
+    expect(idx).toBeDefined();
+    await fs.access(indexDbPath(dir));
   });
 });

@@ -4,7 +4,12 @@ import type { Dirent, Stats } from "node:fs";
 import { validateWorkspace } from "./validate.js";
 import { readMachineConfig } from "../machine/machine.js";
 import { listAdapterStatuses } from "../adapters/registry.js";
-import { indexDbPath, rebuildSqliteIndex, readIndexStats } from "../index/sqlite.js";
+import {
+  indexDbPath,
+  rebuildSqliteIndex,
+  readIndexStats,
+  syncSqliteIndex
+} from "../index/sqlite.js";
 import { pathExists } from "../store/fs.js";
 import { RunYaml } from "../schemas/run.js";
 import { readYamlFile } from "../store/yaml.js";
@@ -32,6 +37,7 @@ export type WorkspaceDoctorResult = {
 export type WorkspaceDoctorArgs = {
   workspace_dir: string;
   rebuild_index?: boolean;
+  sync_index?: boolean;
 };
 
 function isGitRepoDirMarker(name: string): boolean {
@@ -226,6 +232,31 @@ export async function doctorWorkspace(args: WorkspaceDoctorArgs): Promise<Worksp
         `events_indexed: ${rebuilt.events_indexed}`,
         `reviews_indexed: ${rebuilt.reviews_indexed}`,
         `help_requests_indexed: ${rebuilt.help_requests_indexed}`
+      ]
+    });
+  } else if (args.sync_index) {
+    const synced = await syncSqliteIndex(args.workspace_dir);
+    const stats = await readIndexStats(args.workspace_dir);
+    checks.push({
+      id: "index.sync",
+      status: stats.event_parse_errors > 0 ? "warn" : "pass",
+      message:
+        stats.event_parse_errors > 0
+          ? `Index synced with ${stats.event_parse_errors} event parse error(s).`
+          : "Index synced successfully.",
+      details: [
+        `db_path: ${synced.db_path}`,
+        `db_created: ${synced.db_created}`,
+        `runs_upserted: ${synced.runs_upserted}`,
+        `runs_deleted: ${synced.runs_deleted}`,
+        `events_indexed: ${synced.events_indexed}`,
+        `events_deleted: ${synced.events_deleted}`,
+        `event_parse_errors_indexed: ${synced.event_parse_errors_indexed}`,
+        `event_parse_errors_deleted: ${synced.event_parse_errors_deleted}`,
+        `reviews_upserted: ${synced.reviews_upserted}`,
+        `reviews_deleted: ${synced.reviews_deleted}`,
+        `help_requests_upserted: ${synced.help_requests_upserted}`,
+        `help_requests_deleted: ${synced.help_requests_deleted}`
       ]
     });
   } else {
