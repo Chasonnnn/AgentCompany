@@ -13,6 +13,7 @@ import {
 } from "./protocol.js";
 import { routeRpcMethod, RpcUserError } from "./router.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
+import { listIndexedEvents } from "../index/sqlite.js";
 
 type StdioLike = {
   stdin: NodeJS.ReadableStream;
@@ -30,9 +31,11 @@ type Subscription = {
 
 const EventsSubscribeParams = z.object({
   subscription_id: z.string().min(1).optional(),
+  workspace_dir: z.string().min(1).optional(),
   project_id: z.string().min(1).optional(),
   run_id: z.string().min(1).optional(),
-  event_types: z.array(z.string().min(1)).optional()
+  event_types: z.array(z.string().min(1)).optional(),
+  backfill_limit: z.number().int().positive().max(5000).optional()
 });
 
 const EventsUnsubscribeParams = z.object({
@@ -85,6 +88,34 @@ async function handleEventsMethod(
     };
     subscriptions.set(id, sub);
     writeJsonLine(out, success(req.id, { subscription_id: id }));
+
+    if (p.workspace_dir && p.backfill_limit) {
+      try {
+        const events = await listIndexedEvents({
+          workspace_dir: p.workspace_dir,
+          project_id: p.project_id,
+          run_id: p.run_id,
+          limit: p.backfill_limit,
+          order: "asc"
+        });
+        for (const e of events) {
+          let ev: unknown;
+          try {
+            ev = JSON.parse(e.raw_json);
+          } catch {
+            continue;
+          }
+          if (!matchesSubscription(sub, { project_id: e.project_id, event: ev })) continue;
+          sendNotification(out, "events.notification", {
+            subscription_id: sub.subscription_id,
+            project_id: e.project_id,
+            event: ev
+          });
+        }
+      } catch {
+        // Best-effort: backfill should not block a live subscription.
+      }
+    }
     return true;
   }
   if (req.method === "events.unsubscribe") {
@@ -182,4 +213,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   });
 }
-

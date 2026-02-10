@@ -7,6 +7,9 @@ import { initWorkspace } from "../src/workspace/init.js";
 import { createProject } from "../src/work/projects.js";
 import { createTeam } from "../src/org/teams.js";
 import { createAgent } from "../src/org/agents.js";
+import { createRun } from "../src/runtime/run.js";
+import { executeCommandRun } from "../src/runtime/execute_command.js";
+import { rebuildSqliteIndex } from "../src/index/sqlite.js";
 import { runJsonRpcServer } from "../src/server/main.js";
 
 async function mkTmpDir(): Promise<string> {
@@ -140,5 +143,65 @@ describe("JSON-RPC server", () => {
     input.end();
     await serverPromise;
   });
-});
 
+  test("events.subscribe supports indexed backfill replay", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+
+    const created = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "cmd"
+    });
+    const runId = created.run_id;
+    await executeCommandRun({
+      workspace_dir: dir,
+      project_id,
+      run_id: runId,
+      argv: [process.execPath, "-e", "console.log('backfill')"]
+    });
+    await rebuildSqliteIndex(dir);
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const stderr = new PassThrough();
+    const parser = setupOutputParser(output);
+
+    const serverPromise = runJsonRpcServer({
+      stdin: input,
+      stdout: output,
+      stderr
+    });
+
+    sendReq(input, 10, "events.subscribe", {
+      subscription_id: "sub_backfill",
+      workspace_dir: dir,
+      project_id,
+      run_id: runId,
+      backfill_limit: 20
+    });
+    const sub = await parser.waitFor((m) => m.id === 10);
+    expect(sub.result.subscription_id).toBe("sub_backfill");
+
+    const notif = await parser.waitFor(
+      (m) =>
+        m.method === "events.notification" &&
+        m.params?.subscription_id === "sub_backfill" &&
+        m.params?.event?.run_id === runId
+    );
+    expect(typeof notif.params.event.type).toBe("string");
+
+    input.end();
+    await serverPromise;
+  });
+});
