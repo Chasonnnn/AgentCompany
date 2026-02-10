@@ -5,7 +5,8 @@ import { newId } from "../core/ids.js";
 import { nowIso } from "../core/time.js";
 import { writeFileAtomic } from "../store/fs.js";
 import { readYamlFile, writeYamlFile } from "../store/yaml.js";
-import { evaluatePolicy, type ActorRole } from "../policy/policy.js";
+import { type ActorRole } from "../policy/policy.js";
+import { enforcePolicy } from "../policy/enforce.js";
 import { newEnvelope, appendEventJsonl } from "../runtime/events.js";
 import { parseMemoryDeltaMarkdown } from "./memory_delta.js";
 
@@ -57,18 +58,20 @@ export async function approveMemoryDelta(
   ensureWorkspaceRelative(parsed.frontmatter.target_file);
   ensureWorkspaceRelative(parsed.frontmatter.patch_file);
 
-  const policy = evaluatePolicy(
-    { actor_id: args.actor_id, role: args.actor_role, team_id: args.actor_team_id },
-    "approve",
-    {
+  const policy = await enforcePolicy({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    run_id: parsed.frontmatter.run_id,
+    actor_id: args.actor_id,
+    actor_role: args.actor_role,
+    actor_team_id: args.actor_team_id,
+    action: "approve",
+    resource: {
       resource_id: parsed.frontmatter.id,
       visibility: parsed.frontmatter.visibility,
       kind: "memory_delta"
     }
-  );
-  if (!policy.allowed) {
-    throw new Error(`Policy denied approval: ${policy.rule_id} (${policy.reason})`);
-  }
+  });
 
   const targetAbs = path.join(args.workspace_dir, parsed.frontmatter.target_file);
   const patchAbs = path.join(args.workspace_dir, parsed.frontmatter.patch_file);
@@ -148,4 +151,3 @@ export async function approveMemoryDelta(
 
   return { review_id: reviewId, decision: "approved" };
 }
-

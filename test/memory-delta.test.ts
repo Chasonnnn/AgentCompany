@@ -117,6 +117,9 @@ describe("memory deltas", () => {
       context_pack_id
     });
 
+    const memoryPath = path.join(dir, "work/projects", project_id, "memory.md");
+    const beforeMemory = await fs.readFile(memoryPath, { encoding: "utf8" });
+
     await expect(
       approveMemoryDelta({
         workspace_dir: dir,
@@ -126,6 +129,23 @@ describe("memory deltas", () => {
         actor_role: "worker"
       })
     ).rejects.toThrow(/Policy denied approval/);
+
+    const afterMemory = await fs.readFile(memoryPath, { encoding: "utf8" });
+    expect(afterMemory).toBe(beforeMemory);
+
+    const reviewsDir = path.join(dir, "inbox/reviews");
+    const reviewFiles = await fs.readdir(reviewsDir);
+    expect(reviewFiles.some((f) => f.endsWith(".yaml"))).toBe(false);
+
+    const eventsPath = path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl");
+    const evs = await readJsonl(eventsPath);
+    expect(
+      evs.some(
+        (e) =>
+          e.type === "policy.denied" &&
+          e.payload?.action === "approve" &&
+          e.payload?.resource_id === proposed.artifact_id
+      )
+    ).toBe(true);
   });
 });
-

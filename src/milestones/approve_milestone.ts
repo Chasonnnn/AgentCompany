@@ -4,7 +4,8 @@ import { newId } from "../core/ids.js";
 import { nowIso } from "../core/time.js";
 import { writeFileAtomic } from "../store/fs.js";
 import { writeYamlFile } from "../store/yaml.js";
-import { evaluatePolicy, type ActorRole } from "../policy/policy.js";
+import { type ActorRole } from "../policy/policy.js";
+import { enforcePolicy } from "../policy/enforce.js";
 import { appendEventJsonl, newEnvelope } from "../runtime/events.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
 import { TaskFrontMatter, setTaskMilestoneStatus } from "../work/task_markdown.js";
@@ -80,19 +81,21 @@ export async function approveMilestone(args: ApproveMilestoneArgs): Promise<Appr
     throw new Error("Milestone report milestone_id mismatch");
   }
 
-  const policy = evaluatePolicy(
-    { actor_id: args.actor_id, role: args.actor_role, team_id: args.actor_team_id },
-    "approve",
-    {
+  const policy = await enforcePolicy({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    run_id: reportParsed.frontmatter.run_id,
+    actor_id: args.actor_id,
+    actor_role: args.actor_role,
+    actor_team_id: args.actor_team_id,
+    action: "approve",
+    resource: {
       resource_id: reportParsed.frontmatter.id,
       visibility: reportParsed.frontmatter.visibility,
       kind: "milestone_report",
       team_id: taskFm.team_id
     }
-  );
-  if (!policy.allowed) {
-    throw new Error(`Policy denied approval: ${policy.rule_id} (${policy.reason})`);
-  }
+  });
 
   const requiresPatch = milestone.evidence?.requires_patch ?? (milestone.kind === "coding");
   const requiresTests = milestone.evidence?.requires_tests ?? (milestone.kind === "coding");
@@ -190,4 +193,3 @@ export async function approveMilestone(args: ApproveMilestoneArgs): Promise<Appr
     milestone_status: newMilestone.status
   };
 }
-
