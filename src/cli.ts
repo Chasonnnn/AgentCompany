@@ -34,6 +34,8 @@ import { runPlanningPipeline } from "./pipeline/plan_run.js";
 import { recordAgentMistake } from "./eval/mistake_loop.js";
 import { runJsonRpcServer } from "./server/main.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
+import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
+import { buildUiSnapshot } from "./runtime/ui_bundle.js";
 import {
   rebuildSqliteIndex,
   syncSqliteIndex,
@@ -650,6 +652,77 @@ program
           workspace_dir: workspaceDir,
           project_id: opts.project,
           limit: opts.limit,
+          refresh_index: opts.refreshIndex,
+          sync_index: opts.syncIndex
+        });
+        process.stdout.write(JSON.stringify(snapshot, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("inbox:snapshot")
+  .description("Build an indexed review inbox snapshot (pending approvals + recent decisions)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id filter", undefined)
+  .option("--pending-limit <n>", "Max pending rows", (v) => parseInt(v, 10), 200)
+  .option("--decisions-limit <n>", "Max recent decision rows", (v) => parseInt(v, 10), 200)
+  .option("--refresh-index", "Rebuild index before generating snapshot", false)
+  .option("--no-sync-index", "Skip incremental index sync before generating snapshot")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project?: string;
+        pendingLimit: number;
+        decisionsLimit: number;
+        refreshIndex: boolean;
+        syncIndex: boolean;
+      }
+    ) => {
+      await runAction(async () => {
+        const snapshot = await buildReviewInboxSnapshot({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          pending_limit: opts.pendingLimit,
+          decisions_limit: opts.decisionsLimit,
+          refresh_index: opts.refreshIndex,
+          sync_index: opts.syncIndex
+        });
+        process.stdout.write(JSON.stringify(snapshot, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("ui:snapshot")
+  .description("Build a thin UI bundle snapshot (run monitor + review inbox)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id filter", undefined)
+  .option("--monitor-limit <n>", "Max run monitor rows", (v) => parseInt(v, 10), 200)
+  .option("--pending-limit <n>", "Max pending inbox rows", (v) => parseInt(v, 10), 200)
+  .option("--decisions-limit <n>", "Max recent decision rows", (v) => parseInt(v, 10), 200)
+  .option("--refresh-index", "Rebuild index before generating snapshot", false)
+  .option("--no-sync-index", "Skip incremental index sync before generating snapshot")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project?: string;
+        monitorLimit: number;
+        pendingLimit: number;
+        decisionsLimit: number;
+        refreshIndex: boolean;
+        syncIndex: boolean;
+      }
+    ) => {
+      await runAction(async () => {
+        const snapshot = await buildUiSnapshot({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          monitor_limit: opts.monitorLimit,
+          pending_limit: opts.pendingLimit,
+          decisions_limit: opts.decisionsLimit,
           refresh_index: opts.refreshIndex,
           sync_index: opts.syncIndex
         });

@@ -114,6 +114,23 @@ describe("server router", () => {
     expect(typeof monitor.index_synced).toBe("boolean");
   });
 
+  test("inbox.snapshot and ui.snapshot return thin UI payloads", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+
+    const inbox = (await routeRpcMethod("inbox.snapshot", {
+      workspace_dir: dir
+    })) as any;
+    expect(Array.isArray(inbox.pending)).toBe(true);
+    expect(Array.isArray(inbox.recent_decisions)).toBe(true);
+
+    const ui = (await routeRpcMethod("ui.snapshot", {
+      workspace_dir: dir
+    })) as any;
+    expect(Array.isArray(ui.monitor.rows)).toBe(true);
+    expect(Array.isArray(ui.review_inbox.pending)).toBe(true);
+  });
+
   test("artifact.read returns artifact content when policy allows", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });

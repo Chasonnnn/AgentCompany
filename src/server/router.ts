@@ -13,6 +13,8 @@ import {
   listSessions
 } from "../runtime/session.js";
 import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
+import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
+import { buildUiSnapshot } from "../runtime/ui_bundle.js";
 import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
@@ -218,6 +220,25 @@ const MonitorSnapshotParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1).optional(),
   limit: z.number().int().positive().max(5000).optional(),
+  refresh_index: z.boolean().optional(),
+  sync_index: z.boolean().optional()
+});
+
+const InboxSnapshotParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  pending_limit: z.number().int().positive().max(5000).optional(),
+  decisions_limit: z.number().int().positive().max(5000).optional(),
+  refresh_index: z.boolean().optional(),
+  sync_index: z.boolean().optional()
+});
+
+const UiSnapshotParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  monitor_limit: z.number().int().positive().max(5000).optional(),
+  pending_limit: z.number().int().positive().max(5000).optional(),
+  decisions_limit: z.number().int().positive().max(5000).optional(),
   refresh_index: z.boolean().optional(),
   sync_index: z.boolean().optional()
 });
@@ -511,6 +532,29 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         workspace_dir: p.workspace_dir,
         project_id: p.project_id,
         limit: p.limit,
+        refresh_index: p.refresh_index,
+        sync_index: p.sync_index
+      });
+    }
+    case "inbox.snapshot": {
+      const p = InboxSnapshotParams.parse(params);
+      return buildReviewInboxSnapshot({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        pending_limit: p.pending_limit,
+        decisions_limit: p.decisions_limit,
+        refresh_index: p.refresh_index,
+        sync_index: p.sync_index
+      });
+    }
+    case "ui.snapshot": {
+      const p = UiSnapshotParams.parse(params);
+      return buildUiSnapshot({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        monitor_limit: p.monitor_limit,
+        pending_limit: p.pending_limit,
+        decisions_limit: p.decisions_limit,
         refresh_index: p.refresh_index,
         sync_index: p.sync_index
       });

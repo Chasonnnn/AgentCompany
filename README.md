@@ -114,6 +114,8 @@ node dist/cli.js index:events /path/to/workspace --project "$PROJECT_ID" --run <
 node dist/cli.js index:event-errors /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID" --no-sync-index
+node dist/cli.js inbox:snapshot /path/to/workspace --project "$PROJECT_ID"
+node dist/cli.js ui:snapshot /path/to/workspace --project "$PROJECT_ID"
 ```
 
 Cross-team sharing:
