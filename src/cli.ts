@@ -36,6 +36,7 @@ import { runJsonRpcServer } from "./server/main.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import {
   rebuildSqliteIndex,
+  syncSqliteIndex,
   readIndexStats,
   listIndexedRuns,
   listIndexedEvents,
@@ -459,6 +460,17 @@ program
   });
 
 program
+  .command("index:sync")
+  .description("Incrementally sync SQLite index cache from canonical filesystem artifacts")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .action(async (workspaceDir: string) => {
+    await runAction(async () => {
+      const res = await syncSqliteIndex(workspaceDir);
+      process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+    });
+  });
+
+program
   .command("index:stats")
   .description("Show SQLite index table counts")
   .argument("<workspace_dir>", "Workspace root directory")
@@ -625,17 +637,19 @@ program
   .option("--project <project_id>", "Project id filter", undefined)
   .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
   .option("--refresh-index", "Rebuild index before generating snapshot", false)
+  .option("--no-sync-index", "Skip incremental index sync before generating snapshot")
   .action(
     async (
       workspaceDir: string,
-      opts: { project?: string; limit: number; refreshIndex: boolean }
+      opts: { project?: string; limit: number; refreshIndex: boolean; syncIndex: boolean }
     ) => {
       await runAction(async () => {
         const snapshot = await buildRunMonitorSnapshot({
           workspace_dir: workspaceDir,
           project_id: opts.project,
           limit: opts.limit,
-          refresh_index: opts.refreshIndex
+          refresh_index: opts.refreshIndex,
+          sync_index: opts.syncIndex
         });
         process.stdout.write(JSON.stringify(snapshot, null, 2) + "\n");
       });
