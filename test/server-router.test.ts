@@ -52,6 +52,11 @@ describe("server router", () => {
     })) as any;
     expect(rebuilt.runs_indexed).toBeGreaterThanOrEqual(1);
 
+    const synced = (await routeRpcMethod("index.sync", {
+      workspace_dir: dir
+    })) as any;
+    expect(typeof synced.db_path).toBe("string");
+
     const indexedRuns = (await routeRpcMethod("index.list_runs", {
       workspace_dir: dir,
       project_id
@@ -104,6 +109,8 @@ describe("server router", () => {
       workspace_dir: dir
     })) as any;
     expect(Array.isArray(monitor.rows)).toBe(true);
+    expect(typeof monitor.index_rebuilt).toBe("boolean");
+    expect(typeof monitor.index_synced).toBe("boolean");
   });
 
   test("artifact.read returns artifact content when policy allows", async () => {

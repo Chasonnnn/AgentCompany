@@ -26,6 +26,7 @@ import { readArtifactWithPolicy } from "../artifacts/read_artifact.js";
 import { listAdapterStatuses } from "../adapters/registry.js";
 import {
   rebuildSqliteIndex,
+  syncSqliteIndex,
   listIndexedRuns,
   listIndexedEvents,
   listIndexedEventParseErrors,
@@ -216,7 +217,8 @@ const MonitorSnapshotParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1).optional(),
   limit: z.number().int().positive().max(5000).optional(),
-  refresh_index: z.boolean().optional()
+  refresh_index: z.boolean().optional(),
+  sync_index: z.boolean().optional()
 });
 
 async function listReviews(workspaceDir: string, limit: number): Promise<unknown[]> {
@@ -445,6 +447,10 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       const p = IndexRebuildParams.parse(params);
       return rebuildSqliteIndex(p.workspace_dir);
     }
+    case "index.sync": {
+      const p = IndexRebuildParams.parse(params);
+      return syncSqliteIndex(p.workspace_dir);
+    }
     case "index.stats": {
       const p = IndexRebuildParams.parse(params);
       return readIndexStats(p.workspace_dir);
@@ -503,7 +509,8 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         workspace_dir: p.workspace_dir,
         project_id: p.project_id,
         limit: p.limit,
-        refresh_index: p.refresh_index
+        refresh_index: p.refresh_index,
+        sync_index: p.sync_index
       });
     }
     default:
