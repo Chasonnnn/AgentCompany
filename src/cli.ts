@@ -27,6 +27,7 @@ import { createHelpRequestFile } from "./help/help_request_files.js";
 import { validateHelpRequestMarkdown } from "./help/help_request.js";
 import { demoInit } from "./demo/demo_init.js";
 import { scaffoldProjectIntake } from "./pipeline/intake_scaffold.js";
+import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 
 class UserError extends Error {
   override name = "UserError";
@@ -799,6 +800,67 @@ program
         });
         await writeFileAtomic(file, md);
         process.stdout.write(`Wrote ${file}\n`);
+      });
+    }
+  );
+
+program
+  .command("artifact:fill")
+  .description(
+    "Fill an existing project artifact using a provider CLI (creates a run + overwrites the artifact)"
+  )
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--artifact <artifact_id>", "Artifact id (art_...)", "")
+  .option("--agent <agent_id>", "Agent id", "")
+  .option("--provider <provider>", "Override provider (defaults to agent.yaml)", undefined)
+  .option("--model <model>", "Provider model (optional)", undefined)
+  .option("--prompt <text>", "Extra prompt/instructions", "")
+  .option("--prompt-file <path>", "Read extra prompt/instructions from a file", undefined)
+  .option("--repo <repo_id>", "Repo id (optional; snapshots into context pack)", undefined)
+  .option("--subdir <workdir_rel>", "Workdir relative to repo root", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        artifact: string;
+        agent: string;
+        provider?: string;
+        model?: string;
+        prompt: string;
+        promptFile?: string;
+        repo?: string;
+        subdir?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.artifact.trim()) throw new UserError("--artifact is required");
+        if (!opts.agent.trim()) throw new UserError("--agent is required");
+
+        const hasInline = Boolean(opts.prompt?.trim());
+        const hasFile = Boolean(opts.promptFile?.trim());
+        if (hasInline && hasFile) {
+          throw new UserError("Provide only one of --prompt or --prompt-file");
+        }
+        const extra = hasFile
+          ? await fs.readFile(opts.promptFile!, { encoding: "utf8" })
+          : (opts.prompt ?? "");
+
+        const res = await fillArtifactWithProvider({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          artifact_id: opts.artifact,
+          agent_id: opts.agent,
+          provider: opts.provider,
+          model: opts.model,
+          prompt: extra,
+          repo_id: opts.repo,
+          workdir_rel: opts.subdir
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+        if (!res.ok) process.exitCode = 2;
       });
     }
   );
