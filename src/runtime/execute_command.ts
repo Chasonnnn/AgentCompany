@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { nowIso } from "../core/time.js";
 import { newId } from "../core/ids.js";
 import { readYamlFile, writeYamlFile } from "../store/yaml.js";
+import type { BudgetThreshold } from "../schemas/budget.js";
 import { MachineYaml } from "../schemas/machine.js";
 import { RunYaml } from "../schemas/run.js";
 import { newEnvelope } from "./events.js";
@@ -13,6 +14,8 @@ import { ContextPackManifestYaml } from "../schemas/context_pack.js";
 import { writeFileAtomic } from "../store/fs.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
 import { TaskFrontMatter } from "../work/task_markdown.js";
+import { computeRunUsageCostUsd } from "./cost.js";
+import { evaluateBudgetForCompletedRun } from "./budget.js";
 import {
   extractUsageFromJsonLine,
   splitCompleteLines,
@@ -30,8 +33,11 @@ export type ExecuteCommandArgs = {
   workdir_rel?: string;
   task_id?: string;
   milestone_id?: string;
+  budget?: BudgetThreshold;
   env?: Record<string, string>;
   stdin_text?: string;
+  session_ref?: string;
+  on_child_spawn?: (args: { pid: number; stop_marker_relpath: string }) => void;
   abort_signal?: AbortSignal;
 };
 
@@ -198,7 +204,9 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   if (args.stdin_text !== undefined) {
     await writeFileAtomic(path.join(outputsDir, "stdin.txt"), args.stdin_text);
   }
-  const sessionRef = `local_${args.run_id}`;
+  const sessionRef = args.session_ref ?? `local_${args.run_id}`;
+  const stopMarkerRelpath = path.join("runs", args.run_id, "outputs", "stop_requested.flag");
+  const stopMarkerAbs = path.join(runDir, "outputs", "stop_requested.flag");
   const writer = createEventWriter(eventsPath);
   const worktree = await resolveExecutionWorktree({
     workspace_dir: args.workspace_dir,
@@ -230,6 +238,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       milestone_id: args.milestone_id,
       worktree_relpath: worktree.worktree_relpath,
       worktree_branch: worktree.worktree_branch,
+      budget: args.budget,
       env: args.env,
       stdin_relpath: stdinRelpath
     }
@@ -357,6 +366,12 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     env: { ...process.env, ...(args.env ?? {}) },
     stdio: [args.stdin_text === undefined ? "ignore" : "pipe", "pipe", "pipe"]
   });
+  if (typeof child.pid === "number" && child.pid > 0) {
+    args.on_child_spawn?.({
+      pid: child.pid,
+      stop_marker_relpath: stopMarkerRelpath
+    });
+  }
 
   const reportedUsageCandidates: RunUsageSummary[] = [];
   const seenUsageSignatures = new Set<string>();
@@ -407,6 +422,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   let stopRequested = false;
   const abortHandler = (): void => {
     stopRequested = true;
+    void writeFileAtomic(stopMarkerAbs, nowIso()).catch(() => {});
     try {
       child.kill("SIGTERM");
     } catch {
@@ -505,14 +521,18 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   }
 
   const endedAt = nowIso();
-  const stopped = stopRequested;
+  const stopMarkerExists = await fs
+    .access(stopMarkerAbs)
+    .then(() => true)
+    .catch(() => false);
+  const stopped = stopRequested || stopMarkerExists;
   const ok = exitRes.exit_code === 0;
 
   // Flush any trailing partial lines for usage parsing.
   if (stdoutUsageBuffer.trim().length > 0) parseUsageFromTextLines(stdoutUsageBuffer);
   if (stderrUsageBuffer.trim().length > 0) parseUsageFromTextLines(stderrUsageBuffer);
 
-  const finalUsage =
+  const usageBase =
     selectPreferredUsage(reportedUsageCandidates) ??
     estimateUsageFromChars({
       provider: runDoc.provider,
@@ -520,7 +540,20 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       stdout_chars: stdoutChars,
       stderr_chars: stderrChars
     });
-  if (finalUsage.source === "estimated_chars") {
+  const usageCost = computeRunUsageCostUsd({
+    usage: usageBase,
+    provider: runDoc.provider,
+    machine: machineDoc
+  });
+  const finalUsage = {
+    ...usageBase,
+    cost_usd: usageCost.cost_usd ?? undefined,
+    cost_currency: usageCost.cost_usd === null ? undefined : usageCost.currency,
+    cost_source: usageCost.source,
+    cost_rate_card_provider: usageCost.rate_card_provider
+  };
+
+  if (usageBase.source === "estimated_chars") {
     writer.write(
       newEnvelope({
         schema_version: 1,
@@ -530,7 +563,26 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
         actor: "system",
         visibility: "org",
         type: "usage.estimated",
-        payload: finalUsage
+        payload: usageBase
+      })
+    );
+  }
+  if (usageCost.cost_usd !== null) {
+    writer.write(
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: endedAt,
+        run_id: args.run_id,
+        session_ref: sessionRef,
+        actor: "system",
+        visibility: "org",
+        type: "usage.cost_computed",
+        payload: {
+          cost_usd: usageCost.cost_usd,
+          currency: usageCost.currency,
+          source: usageCost.source,
+          rate_card_provider: usageCost.rate_card_provider ?? null
+        }
       })
     );
   }
@@ -538,6 +590,68 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     path.join(outputsDir, "token_usage.json"),
     `${JSON.stringify(finalUsage, null, 2)}\n`
   );
+
+  const specDoc = {
+    kind: "command" as const,
+    argv: args.argv,
+    repo_id: args.repo_id,
+    workdir_rel: args.workdir_rel,
+    task_id: args.task_id,
+    milestone_id: args.milestone_id,
+    worktree_relpath: worktree.worktree_relpath,
+    worktree_branch: worktree.worktree_branch,
+    budget: args.budget,
+    env: args.env,
+    stdin_relpath: stdinRelpath
+  };
+  const provisionalStatus = stopped ? "stopped" : ok ? "ended" : "failed";
+  await writeYamlFile(runYamlPath, {
+    ...runDoc,
+    status: provisionalStatus,
+    ended_at: endedAt,
+    usage: finalUsage,
+    spec: specDoc
+  });
+
+  const budgetEval = await evaluateBudgetForCompletedRun({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    run_id: args.run_id,
+    task_id: args.task_id,
+    run_budget: args.budget
+  }).catch(() => ({ alerts: [], exceeded: [] }));
+
+  for (const finding of budgetEval.alerts) {
+    writer.write(
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: endedAt,
+        run_id: args.run_id,
+        session_ref: sessionRef,
+        actor: "system",
+        visibility: "org",
+        type: "budget.alert",
+        payload: finding
+      })
+    );
+  }
+  for (const finding of budgetEval.exceeded) {
+    writer.write(
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: endedAt,
+        run_id: args.run_id,
+        session_ref: sessionRef,
+        actor: "system",
+        visibility: "org",
+        type: "budget.exceeded",
+        payload: finding
+      })
+    );
+  }
+
+  const finalStatus =
+    provisionalStatus === "ended" && budgetEval.exceeded.length > 0 ? "failed" : provisionalStatus;
 
   writer.write(
     newEnvelope({
@@ -547,11 +661,12 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       session_ref: sessionRef,
       actor: "system",
       visibility: "org",
-      type: stopped ? "run.stopped" : ok ? "run.ended" : "run.failed",
+      type: finalStatus === "stopped" ? "run.stopped" : finalStatus === "ended" ? "run.ended" : "run.failed",
       payload: {
         exit_code: exitRes.exit_code,
         signal: exitRes.signal,
-        stopped
+        stopped: finalStatus === "stopped",
+        budget_exceeded: budgetEval.exceeded.length > 0
       }
     })
   );
@@ -561,24 +676,15 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   await new Promise<void>((resolve) => stdoutStream.end(() => resolve()));
   await new Promise<void>((resolve) => stderrStream.end(() => resolve()));
 
-  await writeYamlFile(runYamlPath, {
-    ...runDoc,
-    status: stopped ? "stopped" : ok ? "ended" : "failed",
-    ended_at: endedAt,
-    usage: finalUsage,
-    spec: {
-      kind: "command",
-      argv: args.argv,
-      repo_id: args.repo_id,
-      workdir_rel: args.workdir_rel,
-      task_id: args.task_id,
-      milestone_id: args.milestone_id,
-      worktree_relpath: worktree.worktree_relpath,
-      worktree_branch: worktree.worktree_branch,
-      env: args.env,
-      stdin_relpath: stdinRelpath
-    }
-  });
+  if (finalStatus !== provisionalStatus) {
+    await writeYamlFile(runYamlPath, {
+      ...runDoc,
+      status: finalStatus,
+      ended_at: endedAt,
+      usage: finalUsage,
+      spec: specDoc
+    });
+  }
 
   return exitRes;
 }

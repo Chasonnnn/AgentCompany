@@ -257,7 +257,8 @@ function usageFromRunSummary(args: {
         ? "provider-reported token usage from runtime events"
         : args.run_usage.estimate_method ?? ESTIMATE_METHOD,
     source: args.run_usage.source,
-    confidence: args.run_usage.confidence
+    confidence: args.run_usage.confidence,
+    estimated_cost_usd: args.run_usage.cost_usd ?? null
   };
 }
 
@@ -288,7 +289,7 @@ function summarizeUsage(items: UsageEstimateItem[]): PlanningPipelineResult["usa
           : ESTIMATE_METHOD,
     confidence: hasReported && hasEstimated ? "medium" : hasReported ? "high" : "low",
     estimated_total_tokens: items.reduce((n, item) => n + item.estimated_total_tokens, 0),
-    estimated_cost_usd: null,
+    estimated_cost_usd: items.reduce((n, item) => n + (item.estimated_cost_usd ?? 0), 0),
     by_run: items
   };
 }

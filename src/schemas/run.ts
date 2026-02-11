@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { IsoDateTime, SchemaVersion } from "./common.js";
+import { BudgetThreshold } from "./budget.js";
 
 export const RunStatus = z.enum(["running", "ended", "failed", "stopped"]);
 
@@ -17,7 +18,11 @@ export const RunUsageSummary = z
     output_tokens: z.number().int().nonnegative().optional(),
     reasoning_output_tokens: z.number().int().nonnegative().optional(),
     total_tokens: z.number().int().nonnegative(),
-    captured_from_event_type: z.string().min(1).optional()
+    captured_from_event_type: z.string().min(1).optional(),
+    cost_usd: z.number().finite().nonnegative().optional(),
+    cost_currency: z.literal("USD").optional(),
+    cost_source: z.enum(["provider_rate_card", "no_rate_card"]).optional(),
+    cost_rate_card_provider: z.string().min(1).optional()
   })
   .strict();
 
@@ -31,8 +36,26 @@ export const CommandRunSpec = z
     milestone_id: z.string().min(1).optional(),
     worktree_relpath: z.string().min(1).optional(),
     worktree_branch: z.string().min(1).optional(),
+    budget: BudgetThreshold.optional(),
     env: z.record(z.string(), z.string()).optional(),
     stdin_relpath: z.string().min(1).optional()
+  })
+  .strict();
+
+export const CodexAppServerRunSpec = z
+  .object({
+    kind: z.literal("codex_app_server"),
+    prompt_relpath: z.string().min(1),
+    model: z.string().min(1).optional(),
+    repo_id: z.string().min(1).optional(),
+    workdir_rel: z.string().min(1).optional(),
+    task_id: z.string().min(1).optional(),
+    milestone_id: z.string().min(1).optional(),
+    worktree_relpath: z.string().min(1).optional(),
+    worktree_branch: z.string().min(1).optional(),
+    budget: BudgetThreshold.optional(),
+    thread_id: z.string().min(1).optional(),
+    turn_id: z.string().min(1).optional()
   })
   .strict();
 
@@ -49,7 +72,7 @@ export const RunYaml = z.object({
   usage: RunUsageSummary.optional(),
   context_pack_id: z.string().min(1),
   events_relpath: z.string().min(1),
-  spec: CommandRunSpec.optional()
+  spec: z.union([CommandRunSpec, CodexAppServerRunSpec]).optional()
 });
 
 export type RunYaml = z.infer<typeof RunYaml>;

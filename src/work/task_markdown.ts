@@ -3,6 +3,7 @@ import YAML from "yaml";
 import { newId } from "../core/ids.js";
 import { nowIso } from "../core/time.js";
 import { Visibility } from "../schemas/common.js";
+import { BudgetThreshold } from "../schemas/budget.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
 
 export const TaskStatus = z.enum([
@@ -58,6 +59,7 @@ export const TaskFrontMatter = z
     team_id: z.string().min(1).optional(),
     assignee_agent_id: z.string().min(1).optional(),
     scope: TaskScope.optional(),
+    budget: BudgetThreshold.optional(),
     deliverables: z.array(z.string().min(1)).optional(),
     acceptance_criteria: z.array(z.string().min(1)).optional(),
     milestones: z.array(TaskMilestone)

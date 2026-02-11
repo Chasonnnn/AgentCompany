@@ -50,6 +50,7 @@ export type RunMonitorRow = {
     total_tokens: number;
     input_tokens?: number;
     output_tokens?: number;
+    cost_usd?: number;
   };
 };
 
@@ -79,7 +80,8 @@ async function readRunUsage(
       confidence: run.usage.confidence,
       total_tokens: run.usage.total_tokens,
       input_tokens: run.usage.input_tokens,
-      output_tokens: run.usage.output_tokens
+      output_tokens: run.usage.output_tokens,
+      cost_usd: run.usage.cost_usd
     };
   } catch {
     return undefined;

@@ -69,7 +69,8 @@ async function ensureMachineOverlay(workspaceDir: string): Promise<void> {
     schema_version: 1,
     type: "machine",
     repo_roots: {},
-    provider_bins: {}
+    provider_bins: {},
+    provider_pricing_usd_per_1k_tokens: {}
   });
 }
 
