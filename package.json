@@ -10,7 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.conf.json",
+    "tauri:build": "tauri build --config src-tauri/tauri.conf.json"
   },
   "dependencies": {
     "commander": "^14.0.0",
@@ -21,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "@tauri-apps/cli": "^2.2.5",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   }

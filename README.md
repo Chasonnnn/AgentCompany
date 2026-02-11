@@ -7,6 +7,7 @@ Local-first macOS "agent org" PM tool.
 Prereqs:
 - Node.js 24+
 - `pnpm`
+- Rust toolchain (`rustup`, `cargo`) for desktop builds
 
 Install:
 ```bash
@@ -21,6 +22,17 @@ pnpm build
 Run the CLI:
 ```bash
 node dist/cli.js --help
+```
+
+Run the desktop shell (Tauri, no Docker):
+```bash
+pnpm build
+pnpm tauri:dev
+```
+
+If the desktop shell cannot find the CLI bundle automatically, set:
+```bash
+export AGENTCOMPANY_CLI_PATH=/absolute/path/to/AgentCompany/dist/cli.js
 ```
 
 Start the local JSON-RPC server (stdio transport):
@@ -123,6 +135,11 @@ node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor human --role manager --json
 node dist/cli.js ui:web /path/to/workspace --project "$PROJECT_ID" --actor human --role manager --port 8787
 ```
+
+Desktop shell behavior:
+- The Tauri app starts/stops the existing `ui:web` process.
+- The app embeds the Manager Web UI in a native window.
+- This keeps the architecture local-first and protocol/event-log based without introducing Docker.
 
 Cross-team sharing:
 ```bash
