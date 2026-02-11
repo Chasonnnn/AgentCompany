@@ -23,10 +23,38 @@ async function isExecutableAvailable(bin: string): Promise<boolean> {
   });
 }
 
+async function supportsCodexAppServer(bin: string): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const p = spawn(bin, ["app-server", "--help"], {
+      stdio: ["ignore", "ignore", "ignore"]
+    });
+    const timer = setTimeout(() => {
+      try {
+        p.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      resolve(false);
+    }, 4000);
+    p.on("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+    p.on("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code === 0);
+    });
+  });
+}
+
 export async function listAdapterStatuses(workspaceDir: string): Promise<AdapterStatus[]> {
   const codexResolved = await resolveProviderBin(workspaceDir, "codex");
+  const codexAppResolved = await resolveProviderBin(workspaceDir, "codex_app_server");
   const claudeResolved = await resolveProviderBin(workspaceDir, "claude");
   const codexCliAvailable = await isExecutableAvailable(codexResolved.bin);
+  const codexAppBinAvailable = await isExecutableAvailable(codexAppResolved.bin);
+  const codexAppServerAvailable =
+    codexAppBinAvailable && (await supportsCodexAppServer(codexAppResolved.bin));
   const claudeCliAvailable = await isExecutableAvailable(claudeResolved.bin);
 
   const codexCli = codexCliAdapterStatus(
@@ -39,8 +67,12 @@ export async function listAdapterStatuses(workspaceDir: string): Promise<Adapter
   );
 
   const codexAppServer = codexAppServerAdapterStatus(
-    false,
-    codexCliAvailable ? "app-server adapter contract is not wired yet" : codexCli.reason
+    codexAppServerAvailable,
+    codexAppServerAvailable
+      ? undefined
+      : codexAppBinAvailable
+        ? `codex app-server command unavailable for binary: ${codexAppResolved.bin}`
+        : `codex binary not found: ${codexAppResolved.bin}`
   );
 
   return [codexAppServer, codexCli, claudeCli];

@@ -18,6 +18,8 @@ export type ResolvedDriver = {
 export function resolveDriverName(provider: string): DriverName {
   switch (provider) {
     case "codex":
+    case "codex_app_server":
+    case "codex-app-server":
       return "codex";
     case "claude":
       return "claude";
@@ -26,7 +28,9 @@ export function resolveDriverName(provider: string): DriverName {
     case "claude-code":
       return "claude";
     default:
-      throw new Error(`Unknown provider "${provider}". Supported: codex, claude`);
+      throw new Error(
+        `Unknown provider "${provider}". Supported: codex, codex_app_server, claude`
+      );
   }
 }
 
@@ -50,4 +54,3 @@ export function getDriver(name: DriverName): ResolvedDriver {
     }
   }
 }
-
