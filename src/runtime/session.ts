@@ -2,14 +2,20 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { readYamlFile, writeYamlFile } from "../store/yaml.js";
-import { ensureDir } from "../store/fs.js";
+import { ensureDir, writeFileAtomic } from "../store/fs.js";
 import { RunYaml } from "../schemas/run.js";
 import { executeCommandRun, type ExecuteCommandArgs, type ExecuteCommandResult } from "./execute_command.js";
+import {
+  executeCodexAppServerRun,
+  type ExecuteCodexAppServerResult
+} from "./execute_codex_app_server.js";
 
 export type SessionStatus = "running" | "ended" | "failed" | "stopped";
 
 export type LaunchSessionArgs = ExecuteCommandArgs & {
   session_ref?: string;
+  prompt_text?: string;
+  model?: string;
 };
 
 export type SessionPollResult = {
@@ -38,6 +44,11 @@ export type SessionListItem = SessionPollResult & {
   workspace_dir: string;
   started_at_ms: number;
   ended_at_ms?: number;
+  mode: "command" | "codex_app_server";
+  pid?: number;
+  stop_marker_relpath?: string;
+  protocol_thread_id?: string;
+  protocol_turn_id?: string;
 };
 
 export type SessionLookup = {
@@ -51,11 +62,16 @@ type SessionRecord = {
   status: SessionStatus;
   abort_controller: AbortController;
   promise: Promise<void>;
-  result: ExecuteCommandResult | null;
+  result: ExecuteCommandResult | ExecuteCodexAppServerResult | null;
   error?: string;
   workspace_dir: string;
   started_at_ms: number;
   ended_at_ms?: number;
+  mode: "command" | "codex_app_server";
+  pid?: number;
+  stop_marker_relpath?: string;
+  protocol_thread_id?: string;
+  protocol_turn_id?: string;
 };
 
 const PersistedSessionRecord = z.object({
@@ -70,7 +86,12 @@ const PersistedSessionRecord = z.object({
   signal: z.string().nullable(),
   error: z.string().optional(),
   started_at_ms: z.number().int().nonnegative(),
-  ended_at_ms: z.number().int().nonnegative().optional()
+  ended_at_ms: z.number().int().nonnegative().optional(),
+  mode: z.enum(["command", "codex_app_server"]).default("command"),
+  pid: z.number().int().positive().optional(),
+  stop_marker_relpath: z.string().min(1).optional(),
+  protocol_thread_id: z.string().min(1).optional(),
+  protocol_turn_id: z.string().min(1).optional()
 });
 
 const SESSIONS = new Map<string, SessionRecord>();
@@ -98,7 +119,12 @@ function toListItem(rec: SessionRecord): SessionListItem {
     signal: rec.result?.signal ?? null,
     error: rec.error,
     started_at_ms: rec.started_at_ms,
-    ended_at_ms: rec.ended_at_ms
+    ended_at_ms: rec.ended_at_ms,
+    mode: rec.mode,
+    pid: rec.pid,
+    stop_marker_relpath: rec.stop_marker_relpath,
+    protocol_thread_id: rec.protocol_thread_id,
+    protocol_turn_id: rec.protocol_turn_id
   };
 }
 
@@ -131,6 +157,10 @@ async function readRunStatus(
   return run.status;
 }
 
+function isCodexAppServerProvider(provider: string): boolean {
+  return provider === "codex_app_server" || provider === "codex-app-server";
+}
+
 async function persistSessionItem(item: SessionListItem): Promise<void> {
   await ensureDir(sessionsDir(item.workspace_dir));
   await writeYamlFile(sessionRecordPath(item.workspace_dir, item.session_ref), {
@@ -145,7 +175,12 @@ async function persistSessionItem(item: SessionListItem): Promise<void> {
     signal: item.signal,
     error: item.error,
     started_at_ms: item.started_at_ms,
-    ended_at_ms: item.ended_at_ms
+    ended_at_ms: item.ended_at_ms,
+    mode: item.mode,
+    pid: item.pid,
+    stop_marker_relpath: item.stop_marker_relpath,
+    protocol_thread_id: item.protocol_thread_id,
+    protocol_turn_id: item.protocol_turn_id
   });
 }
 
@@ -166,7 +201,12 @@ async function loadPersistedSession(
       signal: rec.signal,
       error: rec.error,
       started_at_ms: rec.started_at_ms,
-      ended_at_ms: rec.ended_at_ms
+      ended_at_ms: rec.ended_at_ms,
+      mode: rec.mode,
+      pid: rec.pid,
+      stop_marker_relpath: rec.stop_marker_relpath,
+      protocol_thread_id: rec.protocol_thread_id,
+      protocol_turn_id: rec.protocol_turn_id
     };
   } catch {
     return null;
@@ -234,6 +274,11 @@ async function resolveSessionSnapshot(
 }
 
 export async function launchSession(args: LaunchSessionArgs): Promise<{ session_ref: string }> {
+  const runDoc = RunYaml.parse(
+    await readYamlFile(runYamlPath(args.workspace_dir, args.project_id, args.run_id))
+  );
+  const protocolMode = isCodexAppServerProvider(runDoc.provider);
+  const protocolPrompt = args.prompt_text ?? args.stdin_text;
   const sessionRef = args.session_ref ?? `local_${args.run_id}`;
   const existing = SESSIONS.get(sessionRef);
   if (existing && existing.status === "running") {
@@ -250,17 +295,54 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
     result: null,
     workspace_dir: args.workspace_dir,
     promise: Promise.resolve(),
-    started_at_ms: Date.now()
+    started_at_ms: Date.now(),
+    mode: protocolMode ? "codex_app_server" : "command"
   };
   SESSIONS.set(sessionRef, rec);
   await persistSessionItem(toListItem(rec));
 
   rec.promise = (async () => {
     try {
-      rec.result = await executeCommandRun({
-        ...args,
-        abort_signal: abortController.signal
-      });
+      if (protocolMode) {
+        if (!protocolPrompt || !protocolPrompt.trim()) {
+          throw new Error(
+            "prompt_text (or stdin_text) is required for codex_app_server session launches"
+          );
+        }
+        rec.result = await executeCodexAppServerRun({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          run_id: args.run_id,
+          prompt_text: protocolPrompt,
+          model: args.model,
+          repo_id: args.repo_id,
+          workdir_rel: args.workdir_rel,
+          task_id: args.task_id,
+          milestone_id: args.milestone_id,
+          budget: args.budget,
+          env: args.env,
+          session_ref: sessionRef,
+          on_state_update: ({ pid, stop_marker_relpath, thread_id, turn_id }) => {
+            if (pid !== undefined) rec.pid = pid;
+            if (stop_marker_relpath !== undefined) rec.stop_marker_relpath = stop_marker_relpath;
+            if (thread_id !== undefined) rec.protocol_thread_id = thread_id;
+            if (turn_id !== undefined) rec.protocol_turn_id = turn_id;
+            void persistSessionItem(toListItem(rec)).catch(() => {});
+          },
+          abort_signal: abortController.signal
+        });
+      } else {
+        rec.result = await executeCommandRun({
+          ...args,
+          session_ref: sessionRef,
+          on_child_spawn: ({ pid, stop_marker_relpath }) => {
+            rec.pid = pid;
+            rec.stop_marker_relpath = stop_marker_relpath;
+            void persistSessionItem(toListItem(rec)).catch(() => {});
+          },
+          abort_signal: abortController.signal
+        });
+      }
       rec.status = await readRunStatus(args.workspace_dir, args.project_id, args.run_id);
     } catch (e) {
       rec.status = "failed";
@@ -331,6 +413,39 @@ export async function stopSession(
 
   const persisted = await resolveSessionSnapshot(session_ref, lookup);
   if (persisted.status === "running") {
+    if (persisted.pid) {
+      const stopMarkerRel =
+        persisted.stop_marker_relpath ??
+        path.join("runs", persisted.run_id, "outputs", "stop_requested.flag");
+      const stopMarkerAbs = path.join(
+        persisted.workspace_dir,
+        "work/projects",
+        persisted.project_id,
+        stopMarkerRel
+      );
+      await writeFileAtomic(stopMarkerAbs, new Date().toISOString()).catch(() => {});
+      try {
+        process.kill(persisted.pid, "SIGTERM");
+        setTimeout(() => {
+          try {
+            process.kill(persisted.pid!, "SIGKILL");
+          } catch {
+            // already exited
+          }
+        }, 1500).unref();
+        return {
+          ...toPollResult(persisted),
+          error: "Stop signal sent to detached session process."
+        };
+      } catch (e) {
+        return {
+          ...toPollResult(persisted),
+          error: `Failed to stop detached session pid=${persisted.pid}: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        };
+      }
+    }
     return {
       ...toPollResult(persisted),
       error:
