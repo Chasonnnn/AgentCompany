@@ -257,6 +257,12 @@ button:disabled {
   color: #f2a39a;
 }
 
+.status-pill.warn {
+  border-color: #a5762c;
+  background: #3a2a13;
+  color: #f2c578;
+}
+
 .status-card a {
   color: #8ecff0;
   word-break: break-all;

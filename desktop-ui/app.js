@@ -13,10 +13,12 @@ const colleagueList = document.getElementById("desktopColleagueList");
 const pendingCountEl = document.getElementById("desktopPendingCount");
 const runsCountEl = document.getElementById("desktopRunsCount");
 const decisionsCountEl = document.getElementById("desktopDecisionsCount");
+const parseStateEl = document.getElementById("desktopParseState");
 
 let currentServerUrl = null;
 let latestSnapshot = null;
 let snapshotPollTimer = null;
+let snapshotPollTick = 0;
 let currentView = {
   pane: "pending",
   colleague_id: null
@@ -55,6 +57,21 @@ function setCounts(pending = 0, runs = 0, decisions = 0) {
   pendingCountEl.textContent = String(pending);
   runsCountEl.textContent = String(runs);
   decisionsCountEl.textContent = String(decisions);
+}
+
+function setParseState(parseSummary) {
+  const hasErrors = !!parseSummary?.has_parse_errors;
+  if (!hasErrors) {
+    parseStateEl.textContent = "none";
+    parseStateEl.classList.remove("warn");
+    return;
+  }
+  const total =
+    Number(parseSummary?.pending_with_errors ?? 0) +
+    Number(parseSummary?.decisions_with_errors ?? 0);
+  const max = Number(parseSummary?.max_parse_error_count ?? 0);
+  parseStateEl.textContent = `alerts ${total} (max ${max})`;
+  parseStateEl.classList.add("warn");
 }
 
 function setColleaguePlaceholder(message = "Start a session to load colleagues.") {
@@ -136,6 +153,7 @@ function applyView(nextPane, nextColleagueId = null) {
 function clearSnapshotUI() {
   latestSnapshot = null;
   setCounts(0, 0, 0);
+  setParseState(null);
   setColleaguePlaceholder();
   setActiveNav();
 }
@@ -226,6 +244,18 @@ async function fetchUiSnapshot(url) {
   return await res.json();
 }
 
+async function fetchMonitorSnapshot(url) {
+  const res = await fetch(`${url}/api/monitor/snapshot`, { method: "GET" });
+  if (!res.ok) throw new Error(`monitor snapshot failed: ${res.status}`);
+  return await res.json();
+}
+
+async function fetchInboxSnapshot(url) {
+  const res = await fetch(`${url}/api/inbox/snapshot`, { method: "GET" });
+  if (!res.ok) throw new Error(`inbox snapshot failed: ${res.status}`);
+  return await res.json();
+}
+
 function renderColleagues(snapshot) {
   const colleagues = snapshot?.colleagues || [];
   if (!colleagues.length) {
@@ -273,14 +303,34 @@ function renderSidebar(snapshot) {
     snapshot?.monitor?.rows?.length ?? 0,
     snapshot?.review_inbox?.recent_decisions?.length ?? 0
   );
+  setParseState(snapshot?.review_inbox?.parse_errors);
   renderColleagues(snapshot);
   setActiveNav();
 }
 
-async function refreshSnapshotSidebar() {
+async function refreshSnapshotSidebar(options = {}) {
   if (!currentServerUrl) return;
   try {
-    const snap = await fetchUiSnapshot(currentServerUrl);
+    const includeColleagues = options.includeColleagues === true;
+    const [monitor, inbox, fullUi] = await Promise.all([
+      fetchMonitorSnapshot(currentServerUrl),
+      fetchInboxSnapshot(currentServerUrl),
+      includeColleagues ? fetchUiSnapshot(currentServerUrl) : Promise.resolve(null)
+    ]);
+    const snap = {
+      workspace_dir: fullUi?.workspace_dir ?? latestSnapshot?.workspace_dir ?? "",
+      generated_at: fullUi?.generated_at ?? new Date().toISOString(),
+      index_sync_worker:
+        fullUi?.index_sync_worker ??
+        latestSnapshot?.index_sync_worker ?? {
+          enabled: false,
+          pending_workspaces: 0
+        },
+      monitor,
+      review_inbox: inbox,
+      colleagues: fullUi?.colleagues ?? latestSnapshot?.colleagues ?? [],
+      comments: fullUi?.comments ?? latestSnapshot?.comments ?? []
+    };
     renderSidebar(snap);
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error));
@@ -290,7 +340,10 @@ async function refreshSnapshotSidebar() {
 function ensureSnapshotPolling() {
   if (snapshotPollTimer) return;
   snapshotPollTimer = setInterval(() => {
-    void refreshSnapshotSidebar();
+    snapshotPollTick += 1;
+    const includeColleagues =
+      snapshotPollTick % 6 === 0 || !(latestSnapshot?.colleagues?.length > 0);
+    void refreshSnapshotSidebar({ includeColleagues });
   }, 5000);
 }
 
@@ -310,7 +363,7 @@ async function refreshStatus() {
     }
     setStatus(`running (pid ${status.pid ?? "-"})`);
     setSessionUrl(status.url);
-    await refreshSnapshotSidebar();
+    await refreshSnapshotSidebar({ includeColleagues: true });
     setError("");
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error));
@@ -344,7 +397,8 @@ async function startSession() {
     await waitForHealth(url);
     setStatus(`running (pid ${status.pid ?? "-"})`);
     setSessionUrl(url, true);
-    await refreshSnapshotSidebar();
+    snapshotPollTick = 0;
+    await refreshSnapshotSidebar({ includeColleagues: true });
     setError("");
   } catch (error) {
     setStatus("error");
@@ -403,6 +457,7 @@ const saved = loadSession();
 if (saved) writeForm(saved);
 setColleaguePlaceholder();
 setCounts(0, 0, 0);
+setParseState(null);
 setActiveNav();
 ensureSnapshotPolling();
 void refreshStatus();
