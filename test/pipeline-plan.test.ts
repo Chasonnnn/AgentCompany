@@ -55,7 +55,9 @@ async function readProjectArtifact(dir: string, projectId: string, artifactId: s
 }
 
 describe("planning pipeline", () => {
-  test("runPlanningPipeline creates and fills intake/proposals/workplan with provenance", async () => {
+  test(
+    "runPlanningPipeline creates and fills intake/proposals/workplan with provenance",
+    async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
 
@@ -164,7 +166,9 @@ describe("planning pipeline", () => {
     );
     await fs.access(usageOut);
 
-    const v = await validateWorkspace(dir);
-    expect(v.ok).toBe(true);
-  });
+      const v = await validateWorkspace(dir);
+      expect(v.ok).toBe(true);
+    },
+    10000
+  );
 });

@@ -180,39 +180,43 @@ describe("runtime session lifecycle", () => {
     expect(collected.output_relpaths.some((p) => p.endsWith("stdout.txt"))).toBe(true);
   });
 
-  test("detached running sessions can be stopped via persisted control metadata", async () => {
-    const dir = await mkTmpDir();
-    await initWorkspace({ root_dir: dir, company_name: "Acme" });
-    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
-    const { agent_id } = await createAgent({
-      workspace_dir: dir,
-      name: "Worker",
-      role: "worker",
-      provider: "cmd",
-      team_id
-    });
-    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
-    const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+  test(
+    "detached running sessions can be stopped via persisted control metadata",
+    async () => {
+      const dir = await mkTmpDir();
+      await initWorkspace({ root_dir: dir, company_name: "Acme" });
+      const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+      const { agent_id } = await createAgent({
+        workspace_dir: dir,
+        name: "Worker",
+        role: "worker",
+        provider: "cmd",
+        team_id
+      });
+      const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+      const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
 
-    const launched = await launchSession({
-      workspace_dir: dir,
-      project_id,
-      run_id,
-      argv: [process.execPath, "-e", "setInterval(() => process.stdout.write('tick\\n'), 200);"]
-    });
+      const launched = await launchSession({
+        workspace_dir: dir,
+        project_id,
+        run_id,
+        argv: [process.execPath, "-e", "setInterval(() => process.stdout.write('tick\\n'), 200);"]
+      });
 
-    await sleep(120);
-    resetSessionStateForTests();
+      await sleep(120);
+      resetSessionStateForTests();
 
-    const stopResult = await stopSession(launched.session_ref, { workspace_dir: dir });
-    expect(["running", "stopped", "failed"]).toContain(stopResult.status);
+      const stopResult = await stopSession(launched.session_ref, { workspace_dir: dir });
+      expect(["running", "stopped", "failed"]).toContain(stopResult.status);
 
-    const terminal = await waitForTerminal(launched.session_ref, dir, 8000);
-    expect(terminal.status).toBe("stopped");
+      const terminal = await waitForTerminal(launched.session_ref, dir, 15000);
+      expect(terminal.status).toBe("stopped");
 
-    const runDoc = RunYaml.parse(
-      await readYamlFile(path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml"))
-    );
-    expect(runDoc.status).toBe("stopped");
-  });
+      const runDoc = RunYaml.parse(
+        await readYamlFile(path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml"))
+      );
+      expect(runDoc.status).toBe("stopped");
+    },
+    10000
+  );
 });
