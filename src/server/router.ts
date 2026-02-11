@@ -18,6 +18,7 @@ import { buildUiSnapshot } from "../runtime/ui_bundle.js";
 import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/index_sync_service.js";
 import { resolveInboxItem } from "../inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "../ui/resolve_and_snapshot.js";
+import { createComment, listComments } from "../comments/comment.js";
 import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
@@ -282,6 +283,26 @@ const UiResolveParams = z.object({
   decisions_limit: z.number().int().positive().max(5000).optional(),
   refresh_index: z.boolean().optional(),
   sync_index: z.boolean().optional()
+});
+
+const CommentAddParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  author_id: z.string().min(1),
+  author_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  body: z.string().min(1),
+  target_agent_id: z.string().min(1).optional(),
+  target_artifact_id: z.string().min(1).optional(),
+  target_run_id: z.string().min(1).optional(),
+  visibility: z.enum(["private_agent", "team", "managers", "org"]).optional()
+});
+
+const CommentListParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  target_agent_id: z.string().min(1).optional(),
+  target_artifact_id: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(5000).optional()
 });
 
 async function listReviews(workspaceDir: string, limit: number): Promise<unknown[]> {
@@ -638,6 +659,30 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         decisions_limit: p.decisions_limit,
         refresh_index: p.refresh_index,
         sync_index: p.sync_index
+      });
+    }
+    case "comment.add": {
+      const p = CommentAddParams.parse(params);
+      return createComment({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        author_id: p.author_id,
+        author_role: p.author_role,
+        body: p.body,
+        target_agent_id: p.target_agent_id,
+        target_artifact_id: p.target_artifact_id,
+        target_run_id: p.target_run_id,
+        visibility: p.visibility
+      });
+    }
+    case "comment.list": {
+      const p = CommentListParams.parse(params);
+      return listComments({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        target_agent_id: p.target_agent_id,
+        target_artifact_id: p.target_artifact_id,
+        limit: p.limit
       });
     }
     default:

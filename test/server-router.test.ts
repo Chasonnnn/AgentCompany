@@ -188,6 +188,42 @@ describe("server router", () => {
     ).toBe(false);
   });
 
+  test("comment.add and comment.list route to persisted comment store", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Platform" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+
+    const added = (await routeRpcMethod("comment.add", {
+      workspace_dir: dir,
+      project_id,
+      author_id: agent_id,
+      author_role: "manager",
+      body: "Please attach test evidence next pass.",
+      target_agent_id: agent_id,
+      visibility: "managers"
+    })) as any;
+    expect(typeof added.comment_id).toBe("string");
+    expect(added.comment?.target?.agent_id).toBe(agent_id);
+
+    const listed = (await routeRpcMethod("comment.list", {
+      workspace_dir: dir,
+      project_id,
+      target_agent_id: agent_id
+    })) as any[];
+    expect(Array.isArray(listed)).toBe(true);
+    expect(
+      listed.some((c) => c.id === added.comment_id && c.body === "Please attach test evidence next pass.")
+    ).toBe(true);
+  });
+
   test("agent.refresh_context updates agent guidance context index", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
