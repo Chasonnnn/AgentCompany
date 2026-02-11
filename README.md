@@ -29,6 +29,7 @@ Run the desktop shell (Tauri, no Docker):
 pnpm build
 pnpm tauri:dev
 ```
+`tauri:dev` runs in local mode (`--no-dev-server`) so it launches directly from bundled static frontend files.
 
 Check desktop prerequisites (Node/CLI bundle/Tauri CLI/Rust toolchain):
 ```bash

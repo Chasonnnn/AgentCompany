@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri:dev": "tauri dev --config src-tauri/tauri.conf.json",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.conf.json --no-dev-server",
     "tauri:build": "tauri build --config src-tauri/tauri.conf.json"
   },
   "dependencies": {
