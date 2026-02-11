@@ -20,6 +20,7 @@ export type IntakeScaffoldResult = {
   project_id: string;
   artifacts: {
     intake_brief_artifact_id: string;
+    clarifications_qa_artifact_id: string;
     workplan_artifact_id: string;
     manager_proposal_artifact_ids: Record<string, string>;
   };
@@ -62,6 +63,16 @@ export async function scaffoldProjectIntake(
     title: `Intake: ${args.project_name}`,
     visibility: "org",
     produced_by: args.ceo_agent_id,
+    run_id: "run_manual",
+    context_pack_id: "ctx_manual"
+  });
+  const clarifications = await createProjectArtifactFile({
+    workspace_dir: args.workspace_dir,
+    project_id: proj.project_id,
+    type: "clarifications_qa",
+    title: `Clarifications: ${args.project_name}`,
+    visibility: "org",
+    produced_by: args.director_agent_id,
     run_id: "run_manual",
     context_pack_id: "ctx_manual"
   });
@@ -158,6 +169,7 @@ export async function scaffoldProjectIntake(
   );
   await annotateTask(directorTaskPath, [
     `- milestone_id: \`${directorMs.milestone_id}\``,
+    `- required_artifact: clarifications_qa \`${clarifications.artifact_id}\` (${clarifications.artifact_relpath})`,
     `- required_artifact: workplan \`${workplan.artifact_id}\` (${workplan.artifact_relpath})`
   ]);
 
@@ -165,6 +177,7 @@ export async function scaffoldProjectIntake(
     project_id: proj.project_id,
     artifacts: {
       intake_brief_artifact_id: intake.artifact_id,
+      clarifications_qa_artifact_id: clarifications.artifact_id,
       workplan_artifact_id: workplan.artifact_id,
       manager_proposal_artifact_ids: managerProposalArtifacts
     },

@@ -33,6 +33,32 @@ export type PlanningPipelineResult = {
       context_pack_id: string;
     }
   >;
+  clarifications_qa: {
+    artifact_id: string;
+    run_id: string;
+    context_pack_id: string;
+  };
+  usage_estimate: {
+    source: "estimated_chars";
+    method: string;
+    confidence: "low";
+    estimated_total_tokens: number;
+    estimated_cost_usd: number | null;
+    by_run: Array<{
+      stage: "intake_brief" | "clarifications_qa" | "manager_proposal" | "workplan";
+      agent_id: string;
+      run_id: string;
+      context_pack_id: string;
+      prompt_chars: number;
+      output_chars: number;
+      estimated_input_tokens: number;
+      estimated_output_tokens: number;
+      estimated_total_tokens: number;
+      estimate_method: string;
+      confidence: "low";
+      estimated_cost_usd: number | null;
+    }>;
+  };
   workplan: {
     artifact_id: string;
     run_id: string;
@@ -74,11 +100,31 @@ function buildIntakePrompt(brief: string): string {
   ].join("\n");
 }
 
+function buildClarificationsPrompt(args: {
+  project_name: string;
+  intake_brief_artifact_md: string;
+}): string {
+  return [
+    `Project: ${args.project_name}`,
+    "You are the Director. Produce a clarification Q/A artifact to reduce ambiguity before manager proposals.",
+    "",
+    "Rules:",
+    "- Under ## Questions, list 3-7 concrete questions that materially affect plan quality.",
+    "- Under ## Answers, provide best-effort answers grounded in the intake brief.",
+    "- Mark any guessed answer as assumption using the phrase '(assumption)'.",
+    "- Keep this artifact concise and actionable.",
+    "",
+    "Intake brief:",
+    args.intake_brief_artifact_md.trim()
+  ].join("\n");
+}
+
 function buildManagerProposalPrompt(args: {
   project_name: string;
   manager_name: string;
   team_label: string;
   intake_brief_artifact_md: string;
+  clarifications_qa_artifact_md: string;
 }): string {
   return [
     `Project: ${args.project_name}`,
@@ -94,13 +140,17 @@ function buildManagerProposalPrompt(args: {
     "In your Risks section, include risks and mitigations.",
     "",
     "Intake brief (reference):",
-    args.intake_brief_artifact_md.trim()
+    args.intake_brief_artifact_md.trim(),
+    "",
+    "Director clarifications (reference):",
+    args.clarifications_qa_artifact_md.trim()
   ].join("\n");
 }
 
 function buildDirectorWorkplanPrompt(args: {
   project_name: string;
   intake_brief_artifact_md: string;
+  clarifications_qa_artifact_md: string;
   manager_proposals: Array<{ manager_label: string; proposal_md: string }>;
 }): string {
   const proposals = args.manager_proposals
@@ -114,15 +164,77 @@ function buildDirectorWorkplanPrompt(args: {
     "Requirements:",
     "- Breakdown: epics -> tasks -> milestones (clear, scoped, with acceptance criteria where possible).",
     "- Dependencies: cross-team dependencies and ordering constraints.",
-    "- Estimates: rough time estimates with confidence and method; token/cost optional but label the source (reported vs estimated).",
+    "- Estimates: rough time estimates with confidence and method.",
+    "- Token/cost estimate section: state whether numbers are reported or estimated; include confidence.",
     "- Optional: Mermaid Gantt if it improves clarity.",
     "",
     "Intake brief:",
     args.intake_brief_artifact_md.trim(),
     "",
+    "Director clarifications:",
+    args.clarifications_qa_artifact_md.trim(),
+    "",
     "Manager proposals:",
     proposals
   ].join("\n");
+}
+
+type UsageEstimateStage = "intake_brief" | "clarifications_qa" | "manager_proposal" | "workplan";
+
+type UsageEstimateItem = {
+  stage: UsageEstimateStage;
+  agent_id: string;
+  run_id: string;
+  context_pack_id: string;
+  prompt_chars: number;
+  output_chars: number;
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  estimated_total_tokens: number;
+  estimate_method: string;
+  confidence: "low";
+  estimated_cost_usd: number | null;
+};
+
+const ESTIMATE_METHOD = "estimated from character counts using tokens≈chars/4";
+
+function estimateUsage(args: {
+  stage: UsageEstimateStage;
+  agent_id: string;
+  run_id: string;
+  context_pack_id: string;
+  prompt: string;
+  output_markdown: string;
+}): UsageEstimateItem {
+  const promptChars = args.prompt.length;
+  const outputChars = args.output_markdown.length;
+  const inTok = Math.max(1, Math.ceil(promptChars / 4));
+  const outTok = Math.max(1, Math.ceil(outputChars / 4));
+  return {
+    stage: args.stage,
+    agent_id: args.agent_id,
+    run_id: args.run_id,
+    context_pack_id: args.context_pack_id,
+    prompt_chars: promptChars,
+    output_chars: outputChars,
+    estimated_input_tokens: inTok,
+    estimated_output_tokens: outTok,
+    estimated_total_tokens: inTok + outTok,
+    estimate_method: ESTIMATE_METHOD,
+    confidence: "low",
+    estimated_cost_usd: null
+  };
+}
+
+function summarizeUsage(items: UsageEstimateItem[]): PlanningPipelineResult["usage_estimate"] {
+  return {
+    source: "estimated_chars",
+    method: ESTIMATE_METHOD,
+    confidence: "low",
+    estimated_total_tokens: items.reduce((n, item) => n + item.estimated_total_tokens, 0),
+    estimated_cost_usd: null,
+    by_run: items
+  };
 }
 
 export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<PlanningPipelineResult> {
@@ -141,13 +253,16 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
     manager_agent_ids: args.manager_agent_ids
   });
 
+  const usage: UsageEstimateItem[] = [];
+
+  const intakePrompt = buildIntakePrompt(args.intake_brief);
   const intakeFill = await fillArtifactWithProvider({
     workspace_dir: args.workspace_dir,
     project_id: scaffold.project_id,
     artifact_id: scaffold.artifacts.intake_brief_artifact_id,
     agent_id: args.ceo_agent_id,
     model: args.model,
-    prompt: buildIntakePrompt(args.intake_brief)
+    prompt: intakePrompt
   });
   if (!intakeFill.ok) {
     throw new Error(`Failed to fill intake brief: ${intakeFill.error}`);
@@ -156,6 +271,47 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
     args.workspace_dir,
     scaffold.project_id,
     scaffold.artifacts.intake_brief_artifact_id
+  );
+  usage.push(
+    estimateUsage({
+      stage: "intake_brief",
+      agent_id: args.ceo_agent_id,
+      run_id: intakeFill.run_id,
+      context_pack_id: intakeFill.context_pack_id,
+      prompt: intakePrompt,
+      output_markdown: intakeMd
+    })
+  );
+
+  const clarificationsPrompt = buildClarificationsPrompt({
+    project_name: args.project_name,
+    intake_brief_artifact_md: intakeMd
+  });
+  const clarificationsFill = await fillArtifactWithProvider({
+    workspace_dir: args.workspace_dir,
+    project_id: scaffold.project_id,
+    artifact_id: scaffold.artifacts.clarifications_qa_artifact_id,
+    agent_id: args.director_agent_id,
+    model: args.model,
+    prompt: clarificationsPrompt
+  });
+  if (!clarificationsFill.ok) {
+    throw new Error(`Failed to fill clarifications: ${clarificationsFill.error}`);
+  }
+  const clarificationsMd = await readProjectArtifactMarkdown(
+    args.workspace_dir,
+    scaffold.project_id,
+    scaffold.artifacts.clarifications_qa_artifact_id
+  );
+  usage.push(
+    estimateUsage({
+      stage: "clarifications_qa",
+      agent_id: args.director_agent_id,
+      run_id: clarificationsFill.run_id,
+      context_pack_id: clarificationsFill.context_pack_id,
+      prompt: clarificationsPrompt,
+      output_markdown: clarificationsMd
+    })
   );
 
   const proposalResults: PlanningPipelineResult["manager_proposals"] = {};
@@ -171,18 +327,20 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
       throw new Error(`Internal error: missing proposal artifact id for manager ${managerId}`);
     }
 
+    const proposalPrompt = buildManagerProposalPrompt({
+      project_name: args.project_name,
+      manager_name: agent.name,
+      team_label: teamLabel,
+      intake_brief_artifact_md: intakeMd,
+      clarifications_qa_artifact_md: clarificationsMd
+    });
     const fill = await fillArtifactWithProvider({
       workspace_dir: args.workspace_dir,
       project_id: scaffold.project_id,
       artifact_id: proposalArtifactId,
       agent_id: managerId,
       model: args.model,
-      prompt: buildManagerProposalPrompt({
-        project_name: args.project_name,
-        manager_name: agent.name,
-        team_label: teamLabel,
-        intake_brief_artifact_md: intakeMd
-      })
+      prompt: proposalPrompt
     });
     if (!fill.ok) {
       throw new Error(`Failed to fill proposal for manager ${managerId}: ${fill.error}`);
@@ -199,27 +357,64 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
       scaffold.project_id,
       proposalArtifactId
     );
+    usage.push(
+      estimateUsage({
+        stage: "manager_proposal",
+        agent_id: managerId,
+        run_id: fill.run_id,
+        context_pack_id: fill.context_pack_id,
+        prompt: proposalPrompt,
+        output_markdown: proposalMd
+      })
+    );
     proposalsForDirector.push({
       manager_label: `Manager Proposal: ${agent.name} (${teamLabel})`,
       proposal_md: proposalMd
     });
   }
 
+  const workplanPrompt = buildDirectorWorkplanPrompt({
+    project_name: args.project_name,
+    intake_brief_artifact_md: intakeMd,
+    clarifications_qa_artifact_md: clarificationsMd,
+    manager_proposals: proposalsForDirector
+  });
   const workplanFill = await fillArtifactWithProvider({
     workspace_dir: args.workspace_dir,
     project_id: scaffold.project_id,
     artifact_id: scaffold.artifacts.workplan_artifact_id,
     agent_id: args.director_agent_id,
     model: args.model,
-    prompt: buildDirectorWorkplanPrompt({
-      project_name: args.project_name,
-      intake_brief_artifact_md: intakeMd,
-      manager_proposals: proposalsForDirector
-    })
+    prompt: workplanPrompt
   });
   if (!workplanFill.ok) {
     throw new Error(`Failed to fill workplan: ${workplanFill.error}`);
   }
+  const workplanMd = await readProjectArtifactMarkdown(
+    args.workspace_dir,
+    scaffold.project_id,
+    scaffold.artifacts.workplan_artifact_id
+  );
+  usage.push(
+    estimateUsage({
+      stage: "workplan",
+      agent_id: args.director_agent_id,
+      run_id: workplanFill.run_id,
+      context_pack_id: workplanFill.context_pack_id,
+      prompt: workplanPrompt,
+      output_markdown: workplanMd
+    })
+  );
+
+  const usageEstimate = summarizeUsage(usage);
+  const usageOutRel = path.join("runs", workplanFill.run_id, "outputs", "planning_usage_estimate.json");
+  const usageOutAbs = path.join(
+    args.workspace_dir,
+    "work/projects",
+    scaffold.project_id,
+    usageOutRel
+  );
+  await fs.writeFile(usageOutAbs, `${JSON.stringify(usageEstimate, null, 2)}\n`, { encoding: "utf8" });
 
   return {
     project_id: scaffold.project_id,
@@ -229,6 +424,12 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
       context_pack_id: intakeFill.context_pack_id
     },
     manager_proposals: proposalResults,
+    clarifications_qa: {
+      artifact_id: scaffold.artifacts.clarifications_qa_artifact_id,
+      run_id: clarificationsFill.run_id,
+      context_pack_id: clarificationsFill.context_pack_id
+    },
+    usage_estimate: usageEstimate,
     workplan: {
       artifact_id: scaffold.artifacts.workplan_artifact_id,
       run_id: workplanFill.run_id,
@@ -236,4 +437,3 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
     }
   };
 }
-

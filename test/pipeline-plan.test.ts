@@ -103,6 +103,7 @@ describe("planning pipeline", () => {
 
     expect(res.project_id.startsWith("proj_")).toBe(true);
     expect(res.intake_brief.run_id.startsWith("run_")).toBe(true);
+    expect(res.clarifications_qa.run_id.startsWith("run_")).toBe(true);
     expect(res.workplan.run_id.startsWith("run_")).toBe(true);
 
     const intakeMd = await readProjectArtifact(dir, res.project_id, res.intake_brief.artifact_id);
@@ -125,6 +126,20 @@ describe("planning pipeline", () => {
       }
     }
 
+    const clarificationsMd = await readProjectArtifact(
+      dir,
+      res.project_id,
+      res.clarifications_qa.artifact_id
+    );
+    const clarificationsVal = validateMarkdownArtifact(clarificationsMd);
+    expect(clarificationsVal.ok).toBe(true);
+    if (clarificationsVal.ok) {
+      expect(clarificationsVal.frontmatter.type).toBe("clarifications_qa");
+      expect(clarificationsVal.frontmatter.produced_by).toBe(director);
+      expect(clarificationsVal.frontmatter.run_id).toBe(res.clarifications_qa.run_id);
+      expect(clarificationsVal.frontmatter.context_pack_id).toBe(res.clarifications_qa.context_pack_id);
+    }
+
     const workplanMd = await readProjectArtifact(dir, res.project_id, res.workplan.artifact_id);
     const workplanVal = validateMarkdownArtifact(workplanMd);
     expect(workplanVal.ok).toBe(true);
@@ -134,8 +149,22 @@ describe("planning pipeline", () => {
       expect(workplanVal.frontmatter.context_pack_id).toBe(res.workplan.context_pack_id);
     }
 
+    expect(res.usage_estimate.source).toBe("estimated_chars");
+    expect(res.usage_estimate.confidence).toBe("low");
+    expect(res.usage_estimate.by_run.length).toBe(5);
+    expect(res.usage_estimate.estimated_total_tokens).toBeGreaterThan(0);
+    const usageOut = path.join(
+      dir,
+      "work/projects",
+      res.project_id,
+      "runs",
+      res.workplan.run_id,
+      "outputs",
+      "planning_usage_estimate.json"
+    );
+    await fs.access(usageOut);
+
     const v = await validateWorkspace(dir);
     expect(v.ok).toBe(true);
   });
 });
-

@@ -36,9 +36,16 @@ describe("pipeline intake scaffold", () => {
       `${res.artifacts.intake_brief_artifact_id}.md`
     );
     await fs.access(intakeArtifact);
+    const clarificationsArtifact = path.join(
+      dir,
+      "work/projects",
+      res.project_id,
+      "artifacts",
+      `${res.artifacts.clarifications_qa_artifact_id}.md`
+    );
+    await fs.access(clarificationsArtifact);
 
     const validate = await validateWorkspace(dir);
     expect(validate.ok).toBe(true);
   });
 });
-
