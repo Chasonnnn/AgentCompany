@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AgentCompany",
+  "version": "0.0.0",
+  "identifier": "com.agentcompany.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --dir .. build",
+    "beforeBuildCommand": "pnpm --dir .. build",
+    "frontendDist": "../desktop-ui"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AgentCompany",
+        "width": 1400,
+        "height": 920,
+        "minWidth": 980,
+        "minHeight": 700,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all"
+  }
+}

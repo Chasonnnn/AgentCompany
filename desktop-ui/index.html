@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentCompany Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="panel">
+        <h1>AgentCompany Desktop (Tauri)</h1>
+        <p class="muted">
+          Start a local Manager Web session and keep run monitoring + review inbox in a native shell.
+        </p>
+
+        <form id="session-form" class="grid">
+          <label>
+            Workspace Directory
+            <input id="workspace" name="workspace" type="text" placeholder="/absolute/path/to/workspace" required />
+          </label>
+
+          <label>
+            Project ID
+            <input id="project" name="project" type="text" placeholder="proj_..." required />
+          </label>
+
+          <label>
+            Actor ID
+            <input id="actor" name="actor" type="text" value="human" required />
+          </label>
+
+          <label>
+            Actor Role
+            <select id="role" name="role">
+              <option value="manager" selected>manager</option>
+              <option value="human">human</option>
+              <option value="director">director</option>
+              <option value="ceo">ceo</option>
+              <option value="worker">worker</option>
+            </select>
+          </label>
+
+          <label>
+            Team ID (optional)
+            <input id="team" name="team" type="text" placeholder="team_..." />
+          </label>
+
+          <label>
+            Port
+            <input id="port" name="port" type="number" min="1" max="65535" value="8787" />
+          </label>
+        </form>
+
+        <div class="actions">
+          <button id="start-btn" type="button">Start Session</button>
+          <button id="stop-btn" type="button" class="danger">Stop Session</button>
+          <button id="refresh-btn" type="button" class="secondary">Refresh Status</button>
+        </div>
+
+        <div class="status">
+          <div>
+            Status: <strong id="status-text">idle</strong>
+          </div>
+          <div>
+            URL: <a id="session-url" href="#" target="_blank" rel="noopener noreferrer">-</a>
+          </div>
+          <p id="error" class="error"></p>
+        </div>
+      </section>
+
+      <section class="viewer">
+        <iframe id="dashboard-frame" title="AgentCompany Manager Web" src="about:blank"></iframe>
+      </section>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
