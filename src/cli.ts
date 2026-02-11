@@ -37,6 +37,7 @@ import { resolveInboxItem } from "./inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "./ui/resolve_and_snapshot.js";
 import { buildManagerDashboardJson, runManagerDashboard } from "./ui/manager_dashboard.js";
 import { startUiWebServer } from "./ui/web_server.js";
+import { desktopDoctor } from "./ui/desktop_doctor.js";
 import { runJsonRpcServer } from "./server/main.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
@@ -128,6 +129,31 @@ program
       if (!report.ok) process.exitCode = 2;
     });
   });
+
+program
+  .command("desktop:doctor")
+  .description("Check local prerequisites for running the Tauri desktop shell")
+  .argument("[workspace_dir]", "Workspace root directory (optional)")
+  .option("--project <project_id>", "Project id (optional)", undefined)
+  .option("--cli-path <path>", "Explicit path to dist/cli.js (optional)", undefined)
+  .option("--node-bin <bin>", "Node binary override (optional)", undefined)
+  .action(
+    async (
+      workspaceDir: string | undefined,
+      opts: { project?: string; cliPath?: string; nodeBin?: string }
+    ) => {
+      await runAction(async () => {
+        const report = await desktopDoctor({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          cli_path: opts.cliPath,
+          node_bin: opts.nodeBin
+        });
+        process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+        if (!report.ok) process.exitCode = 2;
+      });
+    }
+  );
 
 program
   .command("server:start")
