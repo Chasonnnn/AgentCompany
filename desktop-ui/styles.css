@@ -1,11 +1,16 @@
 :root {
-  --bg: #0f172a;
-  --card: #111827;
-  --line: #334155;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --bad: #f87171;
+  --bg: #f4f7fb;
+  --sidebar: #121b2b;
+  --sidebar-accent: #1b2942;
+  --line: #d8e0ea;
+  --line-dark: #263754;
+  --text: #1d2735;
+  --text-soft: #5c6b7e;
+  --accent: #157fb0;
+  --accent-soft: #e7f4fb;
+  --card: #ffffff;
+  --bad: #ba4130;
+  --ok: #118060;
 }
 
 * {
@@ -14,53 +19,65 @@
 
 body {
   margin: 0;
-  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
   color: var(--text);
+  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
   background:
-    radial-gradient(circle at 10% 10%, #1e293b 0%, transparent 40%),
-    radial-gradient(circle at 90% 20%, #0b3a5b 0%, transparent 45%),
-    linear-gradient(180deg, #0f172a 0%, #0b1222 100%);
+    radial-gradient(1200px 420px at 25% -10%, #d6eaf8 0%, transparent 55%),
+    radial-gradient(900px 360px at 80% -10%, #dae7ff 0%, transparent 52%),
+    var(--bg);
 }
 
-.app {
+.shell {
   display: grid;
-  grid-template-columns: minmax(360px, 420px) 1fr;
-  gap: 12px;
+  grid-template-columns: 340px 1fr;
   min-height: 100vh;
-  padding: 12px;
 }
 
-.panel,
-.viewer {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: color-mix(in oklab, var(--card), black 8%);
-}
-
-.panel {
-  padding: 16px;
-}
-
-h1 {
-  margin: 0;
-  font-size: 1.35rem;
-}
-
-.muted {
-  color: var(--muted);
-  margin-top: 8px;
-  margin-bottom: 14px;
-}
-
-.grid {
+.sidebar {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--sidebar), #000 8%) 0%,
+      var(--sidebar) 100%
+    );
+  color: #d8e5f5;
+  border-right: 1px solid var(--line-dark);
+  padding: 18px 14px;
   display: grid;
+  grid-template-rows: auto auto auto auto auto 1fr;
   gap: 10px;
 }
 
-label {
-  display: grid;
-  gap: 6px;
+.workspace-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.workspace-sub {
+  color: #a8bfd8;
   font-size: 0.85rem;
+  margin-top: -6px;
+}
+
+.sidebar-section {
+  margin-top: 6px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: #88a5c3;
+}
+
+.form-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.77rem;
+  color: #c8d8ec;
 }
 
 input,
@@ -71,39 +88,42 @@ button {
 
 input,
 select {
-  border: 1px solid var(--line);
+  border: 1px solid #355179;
   border-radius: 8px;
-  padding: 8px 10px;
-  background: #0a1220;
-  color: var(--text);
+  padding: 7px 9px;
+  background: #0d1625;
+  color: #f0f6ff;
+}
+
+input::placeholder {
+  color: #8ca6c2;
 }
 
 .actions {
   display: flex;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 6px;
 }
 
 button {
-  border: 1px solid #1265a8;
-  background: linear-gradient(180deg, #0ea5e9, #0284c7);
-  color: #061623;
+  border: 1px solid #2f87b2;
+  background: linear-gradient(180deg, #36a1cf, #1e7fa8);
+  color: #062031;
   font-weight: 700;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 7px 9px;
   cursor: pointer;
 }
 
 button.secondary {
-  border-color: var(--line);
-  background: #1f2937;
-  color: var(--text);
+  border-color: #486284;
+  background: #1a273b;
+  color: #dbe8f6;
 }
 
 button.danger {
-  border-color: #7f1d1d;
-  background: #7f1d1d;
-  color: #fecaca;
+  border-color: #7b2f2f;
+  background: #7b2f2f;
+  color: #ffd6d0;
 }
 
 button:disabled {
@@ -111,43 +131,143 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.status {
-  margin-top: 14px;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
+.status-card {
+  margin-top: 2px;
+  border-top: 1px solid var(--line-dark);
+  padding-top: 10px;
   display: grid;
   gap: 6px;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  color: #bfd0e5;
 }
 
-.status a {
-  color: var(--accent);
+.status-pill {
+  display: inline-block;
+  border: 1px solid #486284;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-family: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  color: #dbe8f6;
+  background: #1b2a40;
+}
+
+.status-pill.running {
+  border-color: #1b8d6d;
+  background: #0f2e26;
+  color: #84dcc1;
+}
+
+.status-pill.error {
+  border-color: #a8483b;
+  background: #381a17;
+  color: #f2a39a;
+}
+
+.status-card a {
+  color: #8ecff0;
+  word-break: break-all;
 }
 
 .error {
-  color: var(--bad);
+  color: #f08d80;
   min-height: 1.2em;
   margin: 0;
 }
 
+.main-pane {
+  padding: 16px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  min-width: 0;
+}
+
+.topbar {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(6px);
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: 0.01em;
+}
+
+.muted {
+  color: var(--text-soft);
+  margin: 6px 0 0;
+  font-size: 0.88rem;
+}
+
+.badge-wrap {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #bfd9ea;
+  background: var(--accent-soft);
+  color: #1d4b63;
+  font-size: 0.72rem;
+  padding: 3px 9px;
+  font-family: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
 .viewer {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
   padding: 0;
   overflow: hidden;
+  min-width: 0;
 }
 
 #dashboard-frame {
   width: 100%;
-  height: calc(100vh - 26px);
+  height: calc(100vh - 118px);
   border: 0;
-  background: #ffffff;
+  background: #fff;
 }
 
 @media (max-width: 980px) {
-  .app {
+  .shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-dark);
+    grid-template-rows: auto auto auto auto auto auto;
+  }
+
+  .main-pane {
+    padding: 12px;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .badge-wrap {
+    justify-content: flex-start;
   }
 
   #dashboard-frame {
-    height: 70vh;
+    height: 64vh;
   }
 }

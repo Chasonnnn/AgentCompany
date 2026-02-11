@@ -7,14 +7,13 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="app">
-      <section class="panel">
-        <h1>AgentCompany Desktop (Tauri)</h1>
-        <p class="muted">
-          Start a local Manager Web session and keep run monitoring + review inbox in a native shell.
-        </p>
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="workspace-name">AgentCompany</div>
+        <div class="workspace-sub">Desktop Control Plane</div>
 
-        <form id="session-form" class="grid">
+        <div class="sidebar-section">Session Config</div>
+        <form id="session-form" class="form-grid">
           <label>
             Workspace Directory
             <input id="workspace" name="workspace" type="text" placeholder="/absolute/path/to/workspace" required />
@@ -52,25 +51,42 @@
           </label>
         </form>
 
+        <div class="sidebar-section">Controls</div>
         <div class="actions">
-          <button id="start-btn" type="button">Start Session</button>
-          <button id="stop-btn" type="button" class="danger">Stop Session</button>
-          <button id="refresh-btn" type="button" class="secondary">Refresh Status</button>
+          <button id="start-btn" type="button">Start</button>
+          <button id="stop-btn" type="button" class="danger">Stop</button>
+          <button id="refresh-btn" type="button" class="secondary">Refresh</button>
         </div>
 
-        <div class="status">
+        <div class="status-card">
           <div>
-            Status: <strong id="status-text">idle</strong>
+            Status: <strong id="status-text" class="status-pill">idle</strong>
           </div>
           <div>
             URL: <a id="session-url" href="#" target="_blank" rel="noopener noreferrer">-</a>
           </div>
           <p id="error" class="error"></p>
         </div>
-      </section>
+      </aside>
 
-      <section class="viewer">
-        <iframe id="dashboard-frame" title="AgentCompany Manager Web" src="about:blank"></iframe>
+      <section class="main-pane">
+        <header class="topbar">
+          <div>
+            <h1># manager-web-live</h1>
+            <p class="muted">
+              Local-first agent operations with replayable events and manager approvals.
+            </p>
+          </div>
+          <div class="badge-wrap">
+            <span class="badge">Threaded Ops</span>
+            <span class="badge">Review Inbox</span>
+            <span class="badge">Run Monitor</span>
+          </div>
+        </header>
+
+        <div class="viewer">
+          <iframe id="dashboard-frame" title="AgentCompany Manager Web" src="about:blank"></iframe>
+        </div>
       </section>
     </main>
 

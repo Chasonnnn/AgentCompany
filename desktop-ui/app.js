@@ -19,6 +19,9 @@ function setError(message) {
 
 function setStatus(text) {
   statusText.textContent = text;
+  statusText.classList.remove("running", "error");
+  if (text.startsWith("running")) statusText.classList.add("running");
+  if (text === "error") statusText.classList.add("error");
 }
 
 function setSessionUrl(url) {
