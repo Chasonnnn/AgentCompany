@@ -30,6 +30,11 @@ pnpm build
 pnpm tauri:dev
 ```
 
+Check desktop prerequisites (Node/CLI bundle/Tauri CLI/Rust toolchain):
+```bash
+node dist/cli.js desktop:doctor /path/to/workspace --project "$PROJECT_ID"
+```
+
 If the desktop shell cannot find the CLI bundle automatically, set:
 ```bash
 export AGENTCOMPANY_CLI_PATH=/absolute/path/to/AgentCompany/dist/cli.js
