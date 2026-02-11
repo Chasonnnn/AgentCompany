@@ -68,6 +68,17 @@ describe("ui web server", () => {
         true
       );
 
+      const monitorRes = await fetch(`${web.url}/api/monitor/snapshot`);
+      expect(monitorRes.status).toBe(200);
+      const monitor = (await monitorRes.json()) as any;
+      expect(Array.isArray(monitor.rows)).toBe(true);
+
+      const inboxRes = await fetch(`${web.url}/api/inbox/snapshot`);
+      expect(inboxRes.status).toBe(200);
+      const inbox = (await inboxRes.json()) as any;
+      expect(Array.isArray(inbox.pending)).toBe(true);
+      expect(Array.isArray(inbox.recent_decisions)).toBe(true);
+
       const resolveRes = await fetch(`${web.url}/api/ui/resolve`, {
         method: "POST",
         headers: { "content-type": "application/json" },

@@ -1,6 +1,8 @@
 import http from "node:http";
 import path from "node:path";
 import { buildUiSnapshot, type UiSnapshot } from "../runtime/ui_bundle.js";
+import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
+import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { resolveInboxAndBuildUiSnapshot } from "./resolve_and_snapshot.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
 import type { ActorRole } from "../policy/policy.js";
@@ -1073,6 +1075,33 @@ async function readSnapshot(args: UiWebServerArgs): Promise<UiSnapshot> {
   });
 }
 
+async function readMonitorSnapshot(
+  args: UiWebServerArgs,
+  overrides?: { refresh_index?: boolean; sync_index?: boolean }
+): Promise<Awaited<ReturnType<typeof buildRunMonitorSnapshot>>> {
+  return buildRunMonitorSnapshot({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    limit: args.monitor_limit,
+    refresh_index: overrides?.refresh_index ?? args.refresh_index,
+    sync_index: overrides?.sync_index ?? args.sync_index
+  });
+}
+
+async function readInboxSnapshot(
+  args: UiWebServerArgs,
+  overrides?: { refresh_index?: boolean; sync_index?: boolean }
+): Promise<Awaited<ReturnType<typeof buildReviewInboxSnapshot>>> {
+  return buildReviewInboxSnapshot({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    pending_limit: args.pending_limit,
+    decisions_limit: args.decisions_limit,
+    refresh_index: overrides?.refresh_index ?? args.refresh_index,
+    sync_index: overrides?.sync_index ?? args.sync_index
+  });
+}
+
 export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServer> {
   const host = args.host?.trim() || "127.0.0.1";
   const port = Number.isInteger(args.port) ? Number(args.port) : 8787;
@@ -1112,6 +1141,28 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
           sync_index: syncParam ?? args.sync_index
         });
         sendJson(res, 200, snap);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/monitor/snapshot") {
+        const refreshParam = parseBooleanParam(url.searchParams.get("refresh_index"));
+        const syncParam = parseBooleanParam(url.searchParams.get("sync_index"));
+        const monitor = await readMonitorSnapshot(args, {
+          refresh_index: refreshParam,
+          sync_index: syncParam
+        });
+        sendJson(res, 200, monitor);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/inbox/snapshot") {
+        const refreshParam = parseBooleanParam(url.searchParams.get("refresh_index"));
+        const syncParam = parseBooleanParam(url.searchParams.get("sync_index"));
+        const inbox = await readInboxSnapshot(args, {
+          refresh_index: refreshParam,
+          sync_index: syncParam
+        });
+        sendJson(res, 200, inbox);
         return;
       }
 
