@@ -199,6 +199,69 @@ function dashboardHtml(args: UiWebServerArgs): string {
       border-color: color-mix(in oklab, var(--brand), #fff 20%);
       color: #f5f9ff;
     }
+    .colleague-list {
+      display: grid;
+      gap: 2px;
+    }
+    .colleague-btn {
+      width: 100%;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #c8d7ea;
+      text-align: left;
+      border-radius: 8px;
+      padding: 7px 10px;
+      font: inherit;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .colleague-btn:hover {
+      background: color-mix(in oklab, var(--shell-accent), #fff 6%);
+      color: #f5f9ff;
+    }
+    .colleague-btn.active {
+      background: color-mix(in oklab, var(--shell-accent), #fff 10%);
+      border-color: color-mix(in oklab, var(--brand), #fff 20%);
+      color: #f5f9ff;
+    }
+    .colleague-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      flex: none;
+      background: #7389a7;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .dot.active { background: #31c48d; }
+    .dot.needs_review { background: #f6ad55; }
+    .dot.idle { background: #7389a7; }
+    .colleague-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .role-tag {
+      display: inline-flex;
+      margin-left: 6px;
+      border: 1px solid #385170;
+      border-radius: 999px;
+      padding: 0 5px;
+      font-size: 10px;
+      color: #a7bdd6;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-family: var(--mono);
+    }
     .count {
       border-radius: 999px;
       padding: 1px 7px;
@@ -337,6 +400,52 @@ function dashboardHtml(args: UiWebServerArgs): string {
       font-size: 11px;
       background: #f9fbfe;
     }
+    .pane-note {
+      margin: 0;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #f9fcff;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+    .timeline {
+      list-style: none;
+      margin: 0;
+      padding: 10px 12px 16px;
+      display: grid;
+      gap: 10px;
+    }
+    .msg {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 8px 10px;
+    }
+    .msg-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .msg-name {
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .msg-time {
+      color: var(--muted);
+      font-size: 11px;
+      font-family: var(--mono);
+    }
+    .msg-body {
+      font-size: 12px;
+      color: #253141;
+      line-height: 1.45;
+    }
+    .msg-body .mono {
+      font-size: 11px;
+    }
     .err { color: var(--bad); margin: 0; min-height: 1.3em; font-size: 12px; }
     @media (max-width: 980px) {
       .shell {
@@ -377,6 +486,9 @@ function dashboardHtml(args: UiWebServerArgs): string {
       <button class="channel-btn" data-tab-target="decisions" aria-selected="false">
         <span># recent-decisions</span><span class="count" id="summaryErrors">0</span>
       </button>
+
+      <div class="sidebar-section">Colleagues</div>
+      <div class="colleague-list" id="colleagueList"></div>
 
       <div class="sidebar-foot">
         <div id="syncState" class="sync-state"></div>
@@ -439,6 +551,16 @@ function dashboardHtml(args: UiWebServerArgs): string {
         </div>
       </section>
 
+      <section class="pane" data-pane="colleague">
+        <div class="card">
+          <h2 id="colleagueTitle">Colleague Thread</h2>
+          <p class="pane-note" id="colleagueMeta">Select a colleague from the sidebar.</p>
+          <div class="card-body">
+            <ul class="timeline" id="colleagueTimeline"></ul>
+          </div>
+        </div>
+      </section>
+
       <p id="error" class="err"></p>
     </main>
   </div>
@@ -455,6 +577,10 @@ function dashboardHtml(args: UiWebServerArgs): string {
     const summaryPending = document.getElementById('summaryPending');
     const summaryRuns = document.getElementById('summaryRuns');
     const summaryErrors = document.getElementById('summaryErrors');
+    const colleagueList = document.getElementById('colleagueList');
+    const colleagueTitle = document.getElementById('colleagueTitle');
+    const colleagueMeta = document.getElementById('colleagueMeta');
+    const colleagueTimeline = document.getElementById('colleagueTimeline');
     const pendingBody = document.getElementById('pendingBody');
     const decisionsBody = document.getElementById('decisionsBody');
     const runsBody = document.getElementById('runsBody');
@@ -463,6 +589,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
     const panes = Array.from(document.querySelectorAll('[data-pane]'));
 
     let state = null;
+    let selectedColleagueId = null;
 
     function esc(v) {
       return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
@@ -470,6 +597,19 @@ function dashboardHtml(args: UiWebServerArgs): string {
 
     function setError(msg) {
       errorEl.textContent = msg ? String(msg) : '';
+    }
+
+    function fmtTs(ts) {
+      if (!ts) return '-';
+      try {
+        return new Date(ts).toLocaleString();
+      } catch {
+        return String(ts);
+      }
+    }
+
+    function roleLabel(role) {
+      return String(role || 'agent').toUpperCase();
     }
 
     function activatePane(target) {
@@ -481,6 +621,129 @@ function dashboardHtml(args: UiWebServerArgs): string {
         btn.classList.toggle('active', active);
         btn.setAttribute('aria-selected', active ? 'true' : 'false');
       });
+    }
+
+    function setActiveColleagueNav(agentId, clearChannels = false) {
+      const buttons = Array.from(colleagueList.querySelectorAll('[data-colleague-id]'));
+      buttons.forEach((btn) => {
+        const active = btn.getAttribute('data-colleague-id') === agentId;
+        btn.classList.toggle('active', active);
+      });
+      if (clearChannels) {
+        tabButtons.forEach((btn) => {
+          btn.classList.remove('active');
+          btn.setAttribute('aria-selected', 'false');
+        });
+      }
+    }
+
+    function renderColleagueThread(snapshot, agentId) {
+      const colleague = (snapshot.colleagues || []).find((c) => c.agent_id === agentId);
+      if (!colleague) {
+        colleagueTitle.textContent = 'Colleague Thread';
+        colleagueMeta.textContent = 'Select a colleague from the sidebar.';
+        colleagueTimeline.innerHTML = '';
+        return;
+      }
+
+      colleagueTitle.textContent = '@' + colleague.name;
+      const teamText = colleague.team_name ? ('team=' + colleague.team_name) : 'team=unassigned';
+      colleagueMeta.textContent =
+        'role=' + colleague.role + ' · provider=' + colleague.provider + ' · ' + teamText + ' · status=' + colleague.status;
+
+      const runItems = (snapshot.monitor.rows || [])
+        .filter((r) => r.agent_id === agentId)
+        .map((r) => ({
+          ts: r.last_event?.ts_wallclock || r.created_at || '',
+          who: colleague.name,
+          body:
+            'Run ' +
+            '<span class=\"mono\">' + esc(r.run_id) + '</span>' +
+            ' is ' + esc(r.live_status || r.run_status || 'unknown') +
+            (r.last_event ? (' · last event ' + esc(r.last_event.type)) : '')
+        }));
+
+      const pendingItems = (snapshot.review_inbox.pending || [])
+        .filter((p) => p.produced_by === agentId)
+        .map((p) => ({
+          ts: p.created_at || '',
+          who: colleague.name,
+          body:
+            'Submitted ' + esc(p.artifact_type) +
+            ' <span class=\"mono\">' + esc(p.artifact_id) + '</span>' +
+            ' awaiting manager review.'
+        }));
+
+      const decisionItems = (snapshot.review_inbox.recent_decisions || [])
+        .filter((d) => d.actor_id === agentId)
+        .map((d) => ({
+          ts: d.created_at || '',
+          who: colleague.name,
+          body:
+            'Recorded decision <span class=\"mono\">' + esc(d.decision) +
+            '</span> for artifact <span class=\"mono\">' + esc(d.subject_artifact_id) + '</span>.'
+        }));
+
+      const items = [...runItems, ...pendingItems, ...decisionItems]
+        .sort((a, b) => String(a.ts).localeCompare(String(b.ts)))
+        .reverse();
+
+      if (items.length === 0) {
+        colleagueTimeline.innerHTML =
+          '<li class=\"msg\"><div class=\"msg-head\"><span class=\"msg-name\">' + esc(colleague.name) +
+          '</span><span class=\"msg-time\">now</span></div><div class=\"msg-body\">No recent activity for this colleague in the selected project.</div></li>';
+        return;
+      }
+
+      colleagueTimeline.innerHTML = items.map((item) => {
+        return '<li class=\"msg\">' +
+          '<div class=\"msg-head\">' +
+          '<span class=\"msg-name\">' + esc(item.who) + '</span>' +
+          '<span class=\"msg-time\">' + esc(fmtTs(item.ts)) + '</span>' +
+          '</div>' +
+          '<div class=\"msg-body\">' + item.body + '</div>' +
+          '</li>';
+      }).join('');
+    }
+
+    function renderColleagues(snapshot) {
+      const colleagues = snapshot.colleagues || [];
+      if (!colleagues.length) {
+        colleagueList.innerHTML = '<div class=\"pane-note\" style=\"border:0;background:transparent;padding:6px 2px;color:#9cb2cc;\">No agents found.</div>';
+        selectedColleagueId = null;
+        renderColleagueThread(snapshot, null);
+        return;
+      }
+
+      const known = colleagues.some((c) => c.agent_id === selectedColleagueId);
+      if (!known) selectedColleagueId = colleagues[0].agent_id;
+
+      colleagueList.innerHTML = colleagues.map((c) => {
+        const badge = c.pending_reviews > 0 ? c.pending_reviews : c.active_runs;
+        return '<button class=\"colleague-btn\" data-colleague-id=\"' + esc(c.agent_id) + '\">' +
+          '<span class=\"colleague-main\">' +
+          '<span class=\"dot ' + esc(c.status) + '\"></span>' +
+          '<span class=\"colleague-name\">@' + esc(c.name) + '<span class=\"role-tag\">' + esc(roleLabel(c.role)) + '</span></span>' +
+          '</span>' +
+          '<span class=\"count\">' + esc(String(badge || 0)) + '</span>' +
+          '</button>';
+      }).join('');
+
+      Array.from(colleagueList.querySelectorAll('[data-colleague-id]')).forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = btn.getAttribute('data-colleague-id');
+          if (!id) return;
+          selectedColleagueId = id;
+          setActiveColleagueNav(id, true);
+          activatePane('colleague');
+          renderColleagueThread(snapshot, id);
+        });
+      });
+
+      setActiveColleagueNav(selectedColleagueId);
+      if (panes.some((p) => p.classList.contains('active') && p.getAttribute('data-pane') === 'colleague')) {
+        renderColleagueThread(snapshot, selectedColleagueId);
+      }
     }
 
     function render(snapshot) {
@@ -528,6 +791,11 @@ function dashboardHtml(args: UiWebServerArgs): string {
           '<td>' + esc(r.parse_error_count) + '</td>' +
         '</tr>';
       }).join('');
+
+      renderColleagues(snapshot);
+      if (selectedColleagueId && panes.some((p) => p.classList.contains('active') && p.getAttribute('data-pane') === 'colleague')) {
+        renderColleagueThread(snapshot, selectedColleagueId);
+      }
     }
 
     async function fetchSnapshot() {
@@ -574,6 +842,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
       btn.addEventListener('click', () => {
         const target = btn.getAttribute('data-tab-target');
         if (!target) return;
+        setActiveColleagueNav(null);
         activatePane(target);
       });
     });
