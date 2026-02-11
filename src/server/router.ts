@@ -23,6 +23,7 @@ import { resolveInboxItem } from "../inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "../ui/resolve_and_snapshot.js";
 import { createComment, listComments } from "../comments/comment.js";
 import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
+import { replaySharePack } from "../share/replay.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
 import { approveMilestone } from "../milestones/approve_milestone.js";
@@ -142,6 +143,14 @@ const RunReplayParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
   run_id: z.string().min(1),
+  tail: z.number().int().positive().optional()
+});
+
+const SharePackReplayParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  share_pack_id: z.string().min(1),
+  run_id: z.string().min(1).optional(),
   tail: z.number().int().positive().optional()
 });
 
@@ -533,6 +542,16 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         events: p.tail ? parsed.slice(-p.tail) : parsed,
         parse_issues: lines.filter((l) => !l.ok)
       };
+    }
+    case "sharepack.replay": {
+      const p = SharePackReplayParams.parse(params);
+      return replaySharePack({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        share_pack_id: p.share_pack_id,
+        run_id: p.run_id,
+        tail: p.tail
+      });
     }
     case "inbox.list_reviews": {
       const p = InboxListParams.parse(params);

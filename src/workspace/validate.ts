@@ -441,6 +441,16 @@ export async function validateWorkspace(rootDir: string): Promise<ValidationResu
                 });
               }
             }
+            for (const inc of manifest.included_runs ?? []) {
+              const bundleAbs = path.join(rootDir, inc.bundle_relpath);
+              if (!(await pathExists(bundleAbs))) {
+                issues.push({
+                  code: "missing_file",
+                  message: `Missing bundled run event file: ${inc.bundle_relpath}`,
+                  path: inc.bundle_relpath
+                });
+              }
+            }
           } catch (e) {
             if (e instanceof z.ZodError) issues.push(...zodIssuesToIssues(manifestRel, e));
             else

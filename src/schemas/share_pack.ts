@@ -18,6 +18,15 @@ export const SharePackIncludedFile = z
   })
   .strict();
 
+export const SharePackIncludedRun = z
+  .object({
+    run_id: z.string().min(1),
+    source_relpath: z.string().min(1),
+    bundle_relpath: z.string().min(1),
+    included_event_count: z.number().int().nonnegative()
+  })
+  .strict();
+
 export const SharePackManifestYaml = z
   .object({
     schema_version: SchemaVersion,
@@ -28,9 +37,9 @@ export const SharePackManifestYaml = z
     created_by: z.string().min(1),
     visibility: Visibility,
     included_artifacts: z.array(SharePackIncludedArtifact),
-    included_files: z.array(SharePackIncludedFile).optional()
+    included_files: z.array(SharePackIncludedFile).optional(),
+    included_runs: z.array(SharePackIncludedRun).optional()
   })
   .strict();
 
 export type SharePackManifestYaml = z.infer<typeof SharePackManifestYaml>;
-

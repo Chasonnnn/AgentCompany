@@ -27,6 +27,7 @@ import { listRuns, readEventsJsonl } from "./runtime/run_queries.js";
 import { createMilestoneReportFile } from "./milestones/report_files.js";
 import { approveMilestone } from "./milestones/approve_milestone.js";
 import { createSharePack } from "./share/share_pack.js";
+import { replaySharePack } from "./share/replay.js";
 import { createHelpRequestFile } from "./help/help_request_files.js";
 import { validateHelpRequestMarkdown } from "./help/help_request.js";
 import { demoInit } from "./demo/demo_init.js";
@@ -1663,6 +1664,34 @@ program
       process.stdout.write(JSON.stringify(res) + "\n");
     });
   });
+
+program
+  .command("sharepack:replay")
+  .description("Replay bundled run events from a share pack")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--share <share_pack_id>", "Share pack id", "")
+  .option("--run <run_id>", "Run id included in share pack (optional)", undefined)
+  .option("--tail <n>", "Show only the last N events per run", (v) => parseInt(v, 10), undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project: string; share: string; run?: string; tail?: number }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.share.trim()) throw new UserError("--share is required");
+        const res = await replaySharePack({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          share_pack_id: opts.share,
+          run_id: opts.run,
+          tail: opts.tail
+        });
+        process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
 
 program
   .command("help:new")

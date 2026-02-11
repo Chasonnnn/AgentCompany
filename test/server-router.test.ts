@@ -9,6 +9,7 @@ import { createProject } from "../src/work/projects.js";
 import { newArtifactMarkdown } from "../src/artifacts/markdown.js";
 import { createRun } from "../src/runtime/run.js";
 import { proposeMemoryDelta } from "../src/memory/propose_memory_delta.js";
+import { createSharePack } from "../src/share/share_pack.js";
 import { routeRpcMethod } from "../src/server/router.js";
 
 async function mkTmpDir(): Promise<string> {
@@ -151,6 +152,71 @@ describe("server router", () => {
     expect(typeof ui.index_sync_worker.enabled).toBe("boolean");
     expect(Array.isArray(ui.monitor.rows)).toBe(true);
     expect(Array.isArray(ui.review_inbox.pending)).toBe(true);
+  });
+
+  test("sharepack.replay returns bundled run events", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
+    const artifact = newArtifactMarkdown({
+      type: "proposal",
+      title: "Share replay",
+      visibility: "managers",
+      produced_by: agent_id,
+      run_id: run.run_id,
+      context_pack_id: run.context_pack_id
+    });
+    await fs.writeFile(
+      path.join(dir, "work/projects", project_id, "artifacts", "art_share_replay.md"),
+      artifact,
+      { encoding: "utf8" }
+    );
+    await fs.appendFile(
+      path.join(dir, "work/projects", project_id, "runs", run.run_id, "events.jsonl"),
+      `${JSON.stringify({
+        schema_version: 1,
+        ts_wallclock: new Date().toISOString(),
+        ts_monotonic_ms: 1,
+        run_id: run.run_id,
+        session_ref: `local_${run.run_id}`,
+        actor: agent_id,
+        visibility: "managers",
+        type: "run.note",
+        payload: { text: "shared" }
+      })}\n`,
+      { encoding: "utf8" }
+    );
+    const share = await createSharePack({
+      workspace_dir: dir,
+      project_id,
+      created_by: "human"
+    });
+
+    const replay = (await routeRpcMethod("sharepack.replay", {
+      workspace_dir: dir,
+      project_id,
+      share_pack_id: share.share_pack_id,
+      run_id: run.run_id
+    })) as any;
+    expect(replay.share_pack_id).toBe(share.share_pack_id);
+    expect(Array.isArray(replay.runs)).toBe(true);
+    expect(replay.runs).toHaveLength(1);
+    expect(Array.isArray(replay.runs[0].events)).toBe(true);
+    expect(replay.runs[0].events.length).toBeGreaterThan(0);
   });
 
   test("ui.resolve returns decision result and refreshed snapshot", async () => {
