@@ -643,6 +643,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
     let state = null;
     let selectedColleagueId = null;
     let commentsRequestSeq = 0;
+    let thinPollTick = 0;
     const threadCommentsByAgent = new Map();
 
     function esc(v) {
@@ -952,13 +953,50 @@ function dashboardHtml(args: UiWebServerArgs): string {
       }
     }
 
-    async function fetchSnapshot() {
+    async function fetchFullSnapshot() {
       const res = await fetch('/api/ui/snapshot', { method: 'GET' });
       if (!res.ok) throw new Error('snapshot failed: ' + res.status);
-      const body = await res.json();
-      render(body);
+      return await res.json();
+    }
+
+    async function fetchMonitorSnapshot() {
+      const res = await fetch('/api/monitor/snapshot', { method: 'GET' });
+      if (!res.ok) throw new Error('monitor snapshot failed: ' + res.status);
+      return await res.json();
+    }
+
+    async function fetchInboxSnapshot() {
+      const res = await fetch('/api/inbox/snapshot', { method: 'GET' });
+      if (!res.ok) throw new Error('inbox snapshot failed: ' + res.status);
+      return await res.json();
+    }
+
+    function mergeThinSnapshot(monitor, inbox, full) {
+      return {
+        workspace_dir: full?.workspace_dir || state?.workspace_dir || '',
+        generated_at: full?.generated_at || new Date().toISOString(),
+        index_sync_worker: full?.index_sync_worker || state?.index_sync_worker || {
+          enabled: false,
+          pending_workspaces: 0
+        },
+        monitor,
+        review_inbox: inbox,
+        colleagues: full?.colleagues || state?.colleagues || [],
+        comments: full?.comments || state?.comments || []
+      };
+    }
+
+    async function fetchSnapshot(options = {}) {
+      const includeColleagues = options.includeColleagues === true;
+      const [monitor, inbox, full] = await Promise.all([
+        fetchMonitorSnapshot(),
+        fetchInboxSnapshot(),
+        includeColleagues ? fetchFullSnapshot() : Promise.resolve(null)
+      ]);
+      const merged = mergeThinSnapshot(monitor, inbox, full);
+      render(merged);
       setError('');
-      return body;
+      return merged;
     }
 
     async function resolve(decision, artifactId) {
@@ -1094,7 +1132,8 @@ function dashboardHtml(args: UiWebServerArgs): string {
 
     refreshBtn.addEventListener('click', async () => {
       try {
-        await fetchSnapshot();
+        thinPollTick = 0;
+        await fetchSnapshot({ includeColleagues: true });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -1135,7 +1174,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
 
       let es = null;
       try {
-        await fetchSnapshot();
+        await fetchSnapshot({ includeColleagues: true });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -1155,7 +1194,14 @@ function dashboardHtml(args: UiWebServerArgs): string {
       setInterval(async () => {
         if (es && es.readyState === 1) return;
         try {
-          await fetchSnapshot();
+          thinPollTick += 1;
+          const hasColleagues = Array.isArray(state?.colleagues) && state.colleagues.length > 0;
+          const viewingColleague = panes.some(
+            (p) => p.classList.contains('active') && p.getAttribute('data-pane') === 'colleague'
+          );
+          const includeColleagues =
+            viewingColleague || !hasColleagues || thinPollTick % 6 === 0;
+          await fetchSnapshot({ includeColleagues });
         } catch (e) {
           setError(e instanceof Error ? e.message : String(e));
         }

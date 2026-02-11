@@ -1,3 +1,5 @@
+import { mergeThinUiSnapshot, shouldIncludeColleaguesForTick } from "./thin_snapshot.js";
+
 const STORAGE_KEY = "agentcompany.desktop.session.v1";
 
 const form = document.getElementById("session-form");
@@ -317,20 +319,12 @@ async function refreshSnapshotSidebar(options = {}) {
       fetchInboxSnapshot(currentServerUrl),
       includeColleagues ? fetchUiSnapshot(currentServerUrl) : Promise.resolve(null)
     ]);
-    const snap = {
-      workspace_dir: fullUi?.workspace_dir ?? latestSnapshot?.workspace_dir ?? "",
-      generated_at: fullUi?.generated_at ?? new Date().toISOString(),
-      index_sync_worker:
-        fullUi?.index_sync_worker ??
-        latestSnapshot?.index_sync_worker ?? {
-          enabled: false,
-          pending_workspaces: 0
-        },
+    const snap = mergeThinUiSnapshot({
       monitor,
-      review_inbox: inbox,
-      colleagues: fullUi?.colleagues ?? latestSnapshot?.colleagues ?? [],
-      comments: fullUi?.comments ?? latestSnapshot?.comments ?? []
-    };
+      inbox,
+      fullUi,
+      previousSnapshot: latestSnapshot
+    });
     renderSidebar(snap);
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error));
@@ -341,8 +335,10 @@ function ensureSnapshotPolling() {
   if (snapshotPollTimer) return;
   snapshotPollTimer = setInterval(() => {
     snapshotPollTick += 1;
-    const includeColleagues =
-      snapshotPollTick % 6 === 0 || !(latestSnapshot?.colleagues?.length > 0);
+    const includeColleagues = shouldIncludeColleaguesForTick(
+      snapshotPollTick,
+      latestSnapshot?.colleagues?.length > 0
+    );
     void refreshSnapshotSidebar({ includeColleagues });
   }, 5000);
 }

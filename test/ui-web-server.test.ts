@@ -173,6 +173,8 @@ describe("ui web server", () => {
       expect(html).toContain("AgentCompany Manager Web");
       expect(html).toContain("Pending Approvals");
       expect(html).toContain("Run Monitor");
+      expect(html).toContain("/api/monitor/snapshot");
+      expect(html).toContain("/api/inbox/snapshot");
     } finally {
       await web.close();
     }
