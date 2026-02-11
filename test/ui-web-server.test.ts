@@ -119,6 +119,34 @@ describe("ui web server", () => {
           (c: any) => c.id === commentPayload.comment.id && c.body === "Looks good after revision."
         )
       ).toBe(true);
+
+      const runCommentRes = await fetch(`${web.url}/api/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target_agent_id: mgr.agent_id,
+          target_run_id: run_id,
+          body: "Link this note to run scope."
+        })
+      });
+      expect(runCommentRes.status).toBe(200);
+      const runCommentPayload = (await runCommentRes.json()) as any;
+      expect(runCommentPayload.comment?.target?.run_id).toBe(run_id);
+
+      const listCommentsRes = await fetch(
+        `${web.url}/api/comments?target_agent_id=${encodeURIComponent(mgr.agent_id)}&target_run_id=${encodeURIComponent(run_id)}`
+      );
+      expect(listCommentsRes.status).toBe(200);
+      const listedComments = (await listCommentsRes.json()) as any;
+      expect(Array.isArray(listedComments.comments)).toBe(true);
+      expect(
+        listedComments.comments.some(
+          (c: any) =>
+            c.id === runCommentPayload.comment.id &&
+            c.target?.agent_id === mgr.agent_id &&
+            c.target?.run_id === run_id
+        )
+      ).toBe(true);
     } finally {
       await web.close();
     }

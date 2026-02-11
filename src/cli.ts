@@ -888,6 +888,7 @@ program
   .option("--project <project_id>", "Project id", "")
   .option("--target-agent <agent_id>", "Filter by target agent id", undefined)
   .option("--target-artifact <artifact_id>", "Filter by target artifact id", undefined)
+  .option("--target-run <run_id>", "Filter by target run id", undefined)
   .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
   .action(
     async (
@@ -896,6 +897,7 @@ program
         project: string;
         targetAgent?: string;
         targetArtifact?: string;
+        targetRun?: string;
         limit: number;
       }
     ) => {
@@ -906,6 +908,7 @@ program
           project_id: opts.project,
           target_agent_id: opts.targetAgent,
           target_artifact_id: opts.targetArtifact,
+          target_run_id: opts.targetRun,
           limit: opts.limit
         });
         process.stdout.write(JSON.stringify(comments, null, 2) + "\n");

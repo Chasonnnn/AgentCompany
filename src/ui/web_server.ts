@@ -6,7 +6,7 @@ import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { resolveInboxAndBuildUiSnapshot } from "./resolve_and_snapshot.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
 import type { ActorRole } from "../policy/policy.js";
-import { createComment } from "../comments/comment.js";
+import { createComment, listComments } from "../comments/comment.js";
 import { createIndexSyncWorker } from "../index/sync_worker.js";
 import { syncSqliteIndex } from "../index/sqlite.js";
 import { registerIndexSyncWorker } from "../runtime/index_sync_service.js";
@@ -305,6 +305,9 @@ function dashboardHtml(args: UiWebServerArgs): string {
       font-size: 12px;
       color: #a7bdd6;
     }
+    .sync-state.warn {
+      color: #f6bf72;
+    }
     .btn {
       border: 1px solid var(--line);
       background: var(--card);
@@ -508,7 +511,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
         <span># run-monitor</span><span class="count" id="summaryRuns">0</span>
       </button>
       <button class="channel-btn" data-tab-target="decisions" aria-selected="false">
-        <span># recent-decisions</span><span class="count" id="summaryErrors">0</span>
+        <span># recent-decisions</span><span class="count" id="summaryDecisions">0</span>
       </button>
 
       <div class="sidebar-section">Colleagues</div>
@@ -516,6 +519,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
 
       <div class="sidebar-foot">
         <div id="syncState" class="sync-state"></div>
+        <div id="parseState" class="sync-state"></div>
         <button id="refreshBtn" class="btn">Refresh</button>
       </div>
     </aside>
@@ -585,6 +589,10 @@ function dashboardHtml(args: UiWebServerArgs): string {
               <input id="commentArtifactInput" type="text" placeholder="art_..." style="border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;" />
             </label>
             <label style="display:grid;gap:4px;font-size:11px;color:#54657a;">
+              Run ID (optional)
+              <input id="commentRunInput" type="text" placeholder="run_..." style="border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;" />
+            </label>
+            <label style="display:grid;gap:4px;font-size:11px;color:#54657a;">
               Reply
               <textarea id="commentBodyInput" rows="2" placeholder="Leave a note for this colleague..." style="border:1px solid var(--line);border-radius:8px;padding:8px 9px;font:inherit;resize:vertical;"></textarea>
             </label>
@@ -608,18 +616,20 @@ function dashboardHtml(args: UiWebServerArgs): string {
 
     const metaEl = document.getElementById('meta');
     const syncEl = document.getElementById('syncState');
+    const parseEl = document.getElementById('parseState');
     const errorEl = document.getElementById('error');
     const navProject = document.getElementById('navProject');
     const navActor = document.getElementById('navActor');
     const navRole = document.getElementById('navRole');
     const summaryPending = document.getElementById('summaryPending');
     const summaryRuns = document.getElementById('summaryRuns');
-    const summaryErrors = document.getElementById('summaryErrors');
+    const summaryDecisions = document.getElementById('summaryDecisions');
     const colleagueList = document.getElementById('colleagueList');
     const colleagueTitle = document.getElementById('colleagueTitle');
     const colleagueMeta = document.getElementById('colleagueMeta');
     const colleagueTimeline = document.getElementById('colleagueTimeline');
     const commentArtifactInput = document.getElementById('commentArtifactInput');
+    const commentRunInput = document.getElementById('commentRunInput');
     const commentBodyInput = document.getElementById('commentBodyInput');
     const commentSendBtn = document.getElementById('commentSendBtn');
     const commentState = document.getElementById('commentState');
@@ -632,6 +642,8 @@ function dashboardHtml(args: UiWebServerArgs): string {
 
     let state = null;
     let selectedColleagueId = null;
+    let commentsRequestSeq = 0;
+    const threadCommentsByAgent = new Map();
 
     function esc(v) {
       return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
@@ -657,6 +669,48 @@ function dashboardHtml(args: UiWebServerArgs): string {
 
     function roleLabel(role) {
       return String(role || 'agent').toUpperCase();
+    }
+
+    function currentCommentFilters() {
+      return {
+        artifact_id: commentArtifactInput.value.trim(),
+        run_id: commentRunInput.value.trim()
+      };
+    }
+
+    async function fetchThreadComments(agentId) {
+      if (!agentId) return [];
+      const params = new URLSearchParams();
+      params.set('target_agent_id', agentId);
+      params.set('limit', '400');
+      const filters = currentCommentFilters();
+      if (filters.artifact_id) params.set('target_artifact_id', filters.artifact_id);
+      if (filters.run_id) params.set('target_run_id', filters.run_id);
+
+      const seq = ++commentsRequestSeq;
+      const res = await fetch('/api/comments?' + params.toString(), { method: 'GET' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body && body.error ? body.error : 'comments failed: ' + res.status);
+      }
+      if (seq !== commentsRequestSeq) {
+        return threadCommentsByAgent.get(agentId) || [];
+      }
+      const comments = Array.isArray(body.comments) ? body.comments : [];
+      threadCommentsByAgent.set(agentId, comments);
+      return comments;
+    }
+
+    async function refreshThreadComments(agentId) {
+      if (!agentId) return;
+      try {
+        await fetchThreadComments(agentId);
+        if (state && selectedColleagueId === agentId) {
+          renderColleagueThread(state, agentId);
+        }
+      } catch (e) {
+        setCommentState(e instanceof Error ? e.message : String(e), true);
+      }
     }
 
     function activatePane(target) {
@@ -690,6 +744,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
         colleagueTitle.textContent = 'Colleague Thread';
         colleagueMeta.textContent = 'Select a colleague from the sidebar.';
         commentArtifactInput.value = '';
+        commentRunInput.value = '';
         commentBodyInput.value = '';
         commentBodyInput.disabled = true;
         commentSendBtn.disabled = true;
@@ -739,18 +794,28 @@ function dashboardHtml(args: UiWebServerArgs): string {
             '</span> for artifact <span class=\"mono\">' + esc(d.subject_artifact_id) + '</span>.'
         }));
 
-      const commentItems = (snapshot.comments || [])
-        .filter((c) => c.target && c.target.agent_id === agentId)
+      const seededComments = threadCommentsByAgent.get(agentId) ||
+        (snapshot.comments || []).filter((c) => c.target && c.target.agent_id === agentId);
+      const filters = currentCommentFilters();
+      const commentItems = seededComments
+        .filter((c) => {
+          if (filters.artifact_id && c.target?.artifact_id !== filters.artifact_id) return false;
+          if (filters.run_id && c.target?.run_id !== filters.run_id) return false;
+          return true;
+        })
         .map((c) => {
           const artifactNote = c.target.artifact_id
             ? ' on artifact <span class=\"mono\">' + esc(c.target.artifact_id) + '</span>'
+            : '';
+          const runNote = c.target.run_id
+            ? ' for run <span class=\"mono\">' + esc(c.target.run_id) + '</span>'
             : '';
           const escapedBody = esc(c.body).replace(/\\n/g, '<br>');
           return {
             ts: c.created_at || '',
             who: c.author_id === INIT.actor_id ? 'You' : c.author_id,
             body:
-              'Commented' + artifactNote +
+              'Commented' + artifactNote + runNote +
               ': ' + escapedBody
           };
         });
@@ -814,6 +879,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
           setActiveColleagueNav(id, true);
           activatePane('colleague');
           renderColleagueThread(snapshot, id);
+          void refreshThreadComments(id);
         });
       });
 
@@ -830,6 +896,16 @@ function dashboardHtml(args: UiWebServerArgs): string {
       navRole.textContent = INIT.actor_role;
       metaEl.textContent = 'updated ' + snapshot.generated_at + ' · replayable event log';
       syncEl.textContent = 'sync: ' + (snapshot.index_sync_worker.enabled ? 'on' : 'off') + ', pending=' + snapshot.index_sync_worker.pending_workspaces;
+      const parseSummary = snapshot.review_inbox.parse_errors || {
+        has_parse_errors: false,
+        pending_with_errors: 0,
+        decisions_with_errors: 0,
+        max_parse_error_count: 0
+      };
+      parseEl.textContent = parseSummary.has_parse_errors
+        ? 'parse alerts: pending=' + parseSummary.pending_with_errors + ', decisions=' + parseSummary.decisions_with_errors + ', max=' + parseSummary.max_parse_error_count
+        : 'parse alerts: none';
+      parseEl.classList.toggle('warn', !!parseSummary.has_parse_errors);
 
       const pending = snapshot.review_inbox.pending || [];
       summaryPending.textContent = String(pending.length);
@@ -847,7 +923,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
       }).join('');
 
       const decisions = snapshot.review_inbox.recent_decisions || [];
-      summaryErrors.textContent = String(decisions.length);
+      summaryDecisions.textContent = String(decisions.length);
       decisionsBody.innerHTML = decisions.map((d) => {
         return '<tr>' +
           '<td>' + esc(d.decision) + '</td>' +
@@ -872,6 +948,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
       renderColleagues(snapshot);
       if (selectedColleagueId && panes.some((p) => p.classList.contains('active') && p.getAttribute('data-pane') === 'colleague')) {
         renderColleagueThread(snapshot, selectedColleagueId);
+        void refreshThreadComments(selectedColleagueId);
       }
     }
 
@@ -910,6 +987,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
         return;
       }
       const artifactId = commentArtifactInput.value.trim();
+      const runId = commentRunInput.value.trim();
       setCommentState('Sending...');
       commentSendBtn.setAttribute('disabled', 'true');
       try {
@@ -919,6 +997,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
           body: JSON.stringify({
             target_agent_id: selectedColleagueId,
             target_artifact_id: artifactId || undefined,
+            target_run_id: runId || undefined,
             body: bodyText
           })
         });
@@ -934,6 +1013,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
           renderColleagueThread(payload.snapshot, selectedColleagueId);
           setActiveColleagueNav(selectedColleagueId, true);
         }
+        await refreshThreadComments(selectedColleagueId);
       } catch (e) {
         setCommentState(e instanceof Error ? e.message : String(e), true);
       } finally {
@@ -977,6 +1057,14 @@ function dashboardHtml(args: UiWebServerArgs): string {
       }
     });
 
+    const refreshThreadFromFilterChange = () => {
+      if (!selectedColleagueId || !state) return;
+      renderColleagueThread(state, selectedColleagueId);
+      void refreshThreadComments(selectedColleagueId);
+    };
+    commentArtifactInput.addEventListener('change', refreshThreadFromFilterChange);
+    commentRunInput.addEventListener('change', refreshThreadFromFilterChange);
+
     function applyExternalSelection(message) {
       if (!message || typeof message !== 'object') return;
       const pane = typeof message.pane === 'string' ? message.pane : '';
@@ -985,7 +1073,10 @@ function dashboardHtml(args: UiWebServerArgs): string {
         selectedColleagueId = colleagueId;
         setActiveColleagueNav(colleagueId, true);
         activatePane('colleague');
-        if (state) renderColleagueThread(state, colleagueId);
+        if (state) {
+          renderColleagueThread(state, colleagueId);
+          void refreshThreadComments(colleagueId);
+        }
         return;
       }
       if (pane === 'pending' || pane === 'runs' || pane === 'decisions') {
@@ -1052,6 +1143,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
       if (selectedColleagueId && state) {
         setActiveColleagueNav(selectedColleagueId, true);
         renderColleagueThread(state, selectedColleagueId);
+        void refreshThreadComments(selectedColleagueId);
       }
 
       try {
@@ -1262,6 +1354,28 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
           sync_index: true
         });
         sendJson(res, 200, { comment: created.comment, snapshot });
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/comments") {
+        const targetAgentId = url.searchParams.get("target_agent_id")?.trim() || undefined;
+        const targetArtifactId = url.searchParams.get("target_artifact_id")?.trim() || undefined;
+        const targetRunId = url.searchParams.get("target_run_id")?.trim() || undefined;
+        const limitRaw = url.searchParams.get("limit");
+        const limitParsed = limitRaw == null ? undefined : Number.parseInt(limitRaw, 10);
+        const limit =
+          typeof limitParsed === "number" && Number.isInteger(limitParsed) && limitParsed > 0
+            ? Math.min(limitParsed, 5000)
+            : undefined;
+        const comments = await listComments({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          target_agent_id: targetAgentId,
+          target_artifact_id: targetArtifactId,
+          target_run_id: targetRunId,
+          limit: limit ?? args.comments_limit
+        });
+        sendJson(res, 200, { comments });
         return;
       }
 

@@ -26,6 +26,7 @@ export type ListCommentsArgs = {
   project_id: string;
   target_agent_id?: string;
   target_artifact_id?: string;
+  target_run_id?: string;
   limit?: number;
 };
 
@@ -128,6 +129,7 @@ export async function listComments(args: ListCommentsArgs): Promise<CommentEntry
       if (c.target.project_id !== args.project_id) continue;
       if (args.target_agent_id && c.target.agent_id !== args.target_agent_id) continue;
       if (args.target_artifact_id && c.target.artifact_id !== args.target_artifact_id) continue;
+      if (args.target_run_id && c.target.run_id !== args.target_run_id) continue;
       out.push(c);
     } catch {
       // best-effort

@@ -302,6 +302,7 @@ const CommentListParams = z.object({
   project_id: z.string().min(1),
   target_agent_id: z.string().min(1).optional(),
   target_artifact_id: z.string().min(1).optional(),
+  target_run_id: z.string().min(1).optional(),
   limit: z.number().int().positive().max(5000).optional()
 });
 
@@ -682,6 +683,7 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         project_id: p.project_id,
         target_agent_id: p.target_agent_id,
         target_artifact_id: p.target_artifact_id,
+        target_run_id: p.target_run_id,
         limit: p.limit
       });
     }

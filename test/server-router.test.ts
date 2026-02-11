@@ -201,6 +201,12 @@ describe("server router", () => {
       team_id
     });
     const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "codex"
+    });
 
     const added = (await routeRpcMethod("comment.add", {
       workspace_dir: dir,
@@ -209,6 +215,7 @@ describe("server router", () => {
       author_role: "manager",
       body: "Please attach test evidence next pass.",
       target_agent_id: agent_id,
+      target_run_id: run.run_id,
       visibility: "managers"
     })) as any;
     expect(typeof added.comment_id).toBe("string");
@@ -223,6 +230,15 @@ describe("server router", () => {
     expect(
       listed.some((c) => c.id === added.comment_id && c.body === "Please attach test evidence next pass.")
     ).toBe(true);
+
+    const listedByRun = (await routeRpcMethod("comment.list", {
+      workspace_dir: dir,
+      project_id,
+      target_run_id: run.run_id,
+      limit: 50
+    })) as any[];
+    expect(Array.isArray(listedByRun)).toBe(true);
+    expect(listedByRun.some((c) => c.id === added.comment_id)).toBe(true);
   });
 
   test("agent.refresh_context updates agent guidance context index", async () => {

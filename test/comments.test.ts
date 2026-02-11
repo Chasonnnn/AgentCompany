@@ -53,6 +53,13 @@ describe("comments", () => {
     });
     expect(listed.some((c) => c.id === created.comment_id)).toBe(true);
 
+    const listedByRun = await listComments({
+      workspace_dir: dir,
+      project_id,
+      target_run_id: run.run_id
+    });
+    expect(listedByRun.some((c) => c.id === created.comment_id)).toBe(true);
+
     const eventsPath = path.join(
       dir,
       "work/projects",
