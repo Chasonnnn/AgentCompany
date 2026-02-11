@@ -4,6 +4,7 @@ import { buildUiSnapshot, type UiSnapshot } from "../runtime/ui_bundle.js";
 import { resolveInboxAndBuildUiSnapshot } from "./resolve_and_snapshot.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
 import type { ActorRole } from "../policy/policy.js";
+import { createComment } from "../comments/comment.js";
 
 export type UiWebServerArgs = {
   workspace_dir: string;
@@ -16,6 +17,7 @@ export type UiWebServerArgs = {
   monitor_limit?: number;
   pending_limit?: number;
   decisions_limit?: number;
+  comments_limit?: number;
   refresh_index?: boolean;
   sync_index?: boolean;
 };
@@ -31,6 +33,14 @@ type UiResolveBody = {
   artifact_id?: string;
   decision?: "approved" | "denied";
   notes?: string;
+};
+
+type UiCommentBody = {
+  body?: string;
+  target_agent_id?: string;
+  target_artifact_id?: string;
+  target_run_id?: string;
+  visibility?: "private_agent" | "team" | "managers" | "org";
 };
 
 function projectFromEventsPath(eventsPath: string): string | undefined {
@@ -555,6 +565,20 @@ function dashboardHtml(args: UiWebServerArgs): string {
         <div class="card">
           <h2 id="colleagueTitle">Colleague Thread</h2>
           <p class="pane-note" id="colleagueMeta">Select a colleague from the sidebar.</p>
+          <div class="pane-note" style="display:grid;gap:8px;">
+            <label style="display:grid;gap:4px;font-size:11px;color:#54657a;">
+              Artifact ID (optional)
+              <input id="commentArtifactInput" type="text" placeholder="art_..." style="border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;" />
+            </label>
+            <label style="display:grid;gap:4px;font-size:11px;color:#54657a;">
+              Reply
+              <textarea id="commentBodyInput" rows="2" placeholder="Leave a note for this colleague..." style="border:1px solid var(--line);border-radius:8px;padding:8px 9px;font:inherit;resize:vertical;"></textarea>
+            </label>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <span id="commentState" style="font-size:11px;color:#62778f;"></span>
+              <button id="commentSendBtn" class="btn">Send Note</button>
+            </div>
+          </div>
           <div class="card-body">
             <ul class="timeline" id="colleagueTimeline"></ul>
           </div>
@@ -581,6 +605,10 @@ function dashboardHtml(args: UiWebServerArgs): string {
     const colleagueTitle = document.getElementById('colleagueTitle');
     const colleagueMeta = document.getElementById('colleagueMeta');
     const colleagueTimeline = document.getElementById('colleagueTimeline');
+    const commentArtifactInput = document.getElementById('commentArtifactInput');
+    const commentBodyInput = document.getElementById('commentBodyInput');
+    const commentSendBtn = document.getElementById('commentSendBtn');
+    const commentState = document.getElementById('commentState');
     const pendingBody = document.getElementById('pendingBody');
     const decisionsBody = document.getElementById('decisionsBody');
     const runsBody = document.getElementById('runsBody');
@@ -597,6 +625,11 @@ function dashboardHtml(args: UiWebServerArgs): string {
 
     function setError(msg) {
       errorEl.textContent = msg ? String(msg) : '';
+    }
+
+    function setCommentState(msg, isError = false) {
+      commentState.textContent = msg ? String(msg) : '';
+      commentState.style.color = isError ? 'var(--bad)' : '#62778f';
     }
 
     function fmtTs(ts) {
@@ -642,9 +675,17 @@ function dashboardHtml(args: UiWebServerArgs): string {
       if (!colleague) {
         colleagueTitle.textContent = 'Colleague Thread';
         colleagueMeta.textContent = 'Select a colleague from the sidebar.';
+        commentArtifactInput.value = '';
+        commentBodyInput.value = '';
+        commentBodyInput.disabled = true;
+        commentSendBtn.disabled = true;
+        setCommentState('');
         colleagueTimeline.innerHTML = '';
         return;
       }
+
+      commentBodyInput.disabled = false;
+      commentSendBtn.disabled = false;
 
       colleagueTitle.textContent = '@' + colleague.name;
       const teamText = colleague.team_name ? ('team=' + colleague.team_name) : 'team=unassigned';
@@ -684,9 +725,31 @@ function dashboardHtml(args: UiWebServerArgs): string {
             '</span> for artifact <span class=\"mono\">' + esc(d.subject_artifact_id) + '</span>.'
         }));
 
-      const items = [...runItems, ...pendingItems, ...decisionItems]
+      const commentItems = (snapshot.comments || [])
+        .filter((c) => c.target && c.target.agent_id === agentId)
+        .map((c) => {
+          const artifactNote = c.target.artifact_id
+            ? ' on artifact <span class=\"mono\">' + esc(c.target.artifact_id) + '</span>'
+            : '';
+          const escapedBody = esc(c.body).replace(/\\n/g, '<br>');
+          return {
+            ts: c.created_at || '',
+            who: c.author_id === INIT.actor_id ? 'You' : c.author_id,
+            body:
+              'Commented' + artifactNote +
+              ': ' + escapedBody
+          };
+        });
+
+      const items = [...runItems, ...pendingItems, ...decisionItems, ...commentItems]
         .sort((a, b) => String(a.ts).localeCompare(String(b.ts)))
         .reverse();
+
+      const latestPendingArtifact = (snapshot.review_inbox.pending || [])
+        .find((p) => p.produced_by === agentId)?.artifact_id;
+      if (!commentArtifactInput.value.trim() && latestPendingArtifact) {
+        commentArtifactInput.value = latestPendingArtifact;
+      }
 
       if (items.length === 0) {
         colleagueTimeline.innerHTML =
@@ -822,6 +885,48 @@ function dashboardHtml(args: UiWebServerArgs): string {
       setError('');
     }
 
+    async function sendComment() {
+      if (!selectedColleagueId) {
+        setCommentState('Select a colleague first.', true);
+        return;
+      }
+      const bodyText = commentBodyInput.value.trim();
+      if (!bodyText) {
+        setCommentState('Reply text is required.', true);
+        return;
+      }
+      const artifactId = commentArtifactInput.value.trim();
+      setCommentState('Sending...');
+      commentSendBtn.setAttribute('disabled', 'true');
+      try {
+        const res = await fetch('/api/comments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            target_agent_id: selectedColleagueId,
+            target_artifact_id: artifactId || undefined,
+            body: bodyText
+          })
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(payload && payload.error ? payload.error : 'comment failed: ' + res.status);
+        }
+        commentBodyInput.value = '';
+        setCommentState('Note sent.');
+        if (payload.snapshot) {
+          render(payload.snapshot);
+          activatePane('colleague');
+          renderColleagueThread(payload.snapshot, selectedColleagueId);
+          setActiveColleagueNav(selectedColleagueId, true);
+        }
+      } catch (e) {
+        setCommentState(e instanceof Error ? e.message : String(e), true);
+      } finally {
+        commentSendBtn.removeAttribute('disabled');
+      }
+    }
+
     pendingBody.addEventListener('click', async (ev) => {
       const target = ev.target;
       if (!(target instanceof HTMLElement)) return;
@@ -845,6 +950,41 @@ function dashboardHtml(args: UiWebServerArgs): string {
         setActiveColleagueNav(null);
         activatePane(target);
       });
+    });
+
+    commentSendBtn.addEventListener('click', () => {
+      void sendComment();
+    });
+
+    commentBodyInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+        ev.preventDefault();
+        void sendComment();
+      }
+    });
+
+    function applyExternalSelection(message) {
+      if (!message || typeof message !== 'object') return;
+      const pane = typeof message.pane === 'string' ? message.pane : '';
+      const colleagueId = typeof message.colleague_id === 'string' ? message.colleague_id : null;
+      if (pane === 'colleague' && colleagueId) {
+        selectedColleagueId = colleagueId;
+        setActiveColleagueNav(colleagueId, true);
+        activatePane('colleague');
+        if (state) renderColleagueThread(state, colleagueId);
+        return;
+      }
+      if (pane === 'pending' || pane === 'runs' || pane === 'decisions') {
+        setActiveColleagueNav(null);
+        activatePane(pane);
+      }
+    }
+
+    window.addEventListener('message', (evt) => {
+      const data = evt.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type !== 'agentcompany.select') return;
+      applyExternalSelection(data);
     });
 
     refreshBtn.addEventListener('click', async () => {
@@ -873,12 +1013,31 @@ function dashboardHtml(args: UiWebServerArgs): string {
     }
 
     (async () => {
-      activatePane('pending');
+      commentBodyInput.disabled = true;
+      commentSendBtn.disabled = true;
+
+      const pageUrl = new URL(window.location.href);
+      const initialPane = pageUrl.searchParams.get('pane');
+      const initialColleagueId = pageUrl.searchParams.get('colleague_id');
+      if (initialPane === 'runs' || initialPane === 'decisions') {
+        activatePane(initialPane);
+      } else if (initialPane === 'colleague' && initialColleagueId) {
+        selectedColleagueId = initialColleagueId;
+        activatePane('colleague');
+      } else {
+        activatePane('pending');
+      }
+
       let es = null;
       try {
         await fetchSnapshot();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+      }
+
+      if (selectedColleagueId && state) {
+        setActiveColleagueNav(selectedColleagueId, true);
+        renderColleagueThread(state, selectedColleagueId);
       }
 
       try {
@@ -908,6 +1067,7 @@ async function readSnapshot(args: UiWebServerArgs): Promise<UiSnapshot> {
     monitor_limit: args.monitor_limit,
     pending_limit: args.pending_limit,
     decisions_limit: args.decisions_limit,
+    comments_limit: args.comments_limit,
     refresh_index: args.refresh_index,
     sync_index: args.sync_index
   });
@@ -947,6 +1107,7 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
           monitor_limit: args.monitor_limit,
           pending_limit: args.pending_limit,
           decisions_limit: args.decisions_limit,
+          comments_limit: args.comments_limit,
           refresh_index: refreshParam ?? args.refresh_index,
           sync_index: syncParam ?? args.sync_index
         });
@@ -982,6 +1143,48 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
           sync_index: true
         });
         sendJson(res, 200, result);
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/api/comments") {
+        const body = (await readJsonBody(req)) as UiCommentBody;
+        const text = body.body?.trim();
+        if (!text) {
+          sendJson(res, 400, { error: "body is required" });
+          return;
+        }
+        const targetAgentId = body.target_agent_id?.trim();
+        const targetArtifactId = body.target_artifact_id?.trim();
+        const targetRunId = body.target_run_id?.trim();
+        if (!targetAgentId && !targetArtifactId && !targetRunId) {
+          sendJson(res, 400, {
+            error: "at least one target is required (target_agent_id, target_artifact_id, target_run_id)"
+          });
+          return;
+        }
+
+        const created = await createComment({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          author_id: args.actor_id,
+          author_role: args.actor_role,
+          body: text,
+          target_agent_id: targetAgentId,
+          target_artifact_id: targetArtifactId,
+          target_run_id: targetRunId,
+          visibility: body.visibility
+        });
+        const snapshot = await buildUiSnapshot({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          monitor_limit: args.monitor_limit,
+          pending_limit: args.pending_limit,
+          decisions_limit: args.decisions_limit,
+          comments_limit: args.comments_limit,
+          refresh_index: false,
+          sync_index: true
+        });
+        sendJson(res, 200, { comment: created.comment, snapshot });
         return;
       }
 

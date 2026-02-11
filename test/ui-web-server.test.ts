@@ -87,6 +87,25 @@ describe("ui web server", () => {
           (d: any) => d.subject_artifact_id === proposed.artifact_id && d.decision === "denied"
         )
       ).toBe(true);
+
+      const commentRes = await fetch(`${web.url}/api/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target_agent_id: mgr.agent_id,
+          target_artifact_id: proposed.artifact_id,
+          body: "Looks good after revision."
+        })
+      });
+      expect(commentRes.status).toBe(200);
+      const commentPayload = (await commentRes.json()) as any;
+      expect(commentPayload.comment?.target?.artifact_id).toBe(proposed.artifact_id);
+      expect(commentPayload.comment?.target?.agent_id).toBe(mgr.agent_id);
+      expect(
+        commentPayload.snapshot.comments.some(
+          (c: any) => c.id === commentPayload.comment.id && c.body === "Looks good after revision."
+        )
+      ).toBe(true);
     } finally {
       await web.close();
     }
