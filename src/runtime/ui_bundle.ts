@@ -2,6 +2,7 @@ import { nowIso } from "../core/time.js";
 import { buildRunMonitorSnapshot, type RunMonitorSnapshot } from "./run_monitor.js";
 import { buildReviewInboxSnapshot, type ReviewInboxSnapshot } from "./review_inbox.js";
 import { readIndexSyncWorkerStatus, type IndexSyncServiceStatus } from "./index_sync_service.js";
+import { buildUiColleagues, type UiColleague } from "./colleagues.js";
 
 export type UiSnapshotArgs = {
   workspace_dir: string;
@@ -19,6 +20,7 @@ export type UiSnapshot = {
   index_sync_worker: IndexSyncServiceStatus;
   monitor: RunMonitorSnapshot;
   review_inbox: ReviewInboxSnapshot;
+  colleagues: UiColleague[];
 };
 
 export async function buildUiSnapshot(args: UiSnapshotArgs): Promise<UiSnapshot> {
@@ -40,12 +42,18 @@ export async function buildUiSnapshot(args: UiSnapshotArgs): Promise<UiSnapshot>
   // ui.snapshot performs index write paths once via monitor, then reuses indexed reads.
   reviewInbox.index_rebuilt = monitor.index_rebuilt;
   reviewInbox.index_synced = monitor.index_synced;
+  const colleagues = await buildUiColleagues({
+    workspace_dir: args.workspace_dir,
+    monitor,
+    review_inbox: reviewInbox
+  });
 
   return {
     workspace_dir: args.workspace_dir,
     generated_at: nowIso(),
     index_sync_worker: readIndexSyncWorkerStatus(),
     monitor,
-    review_inbox: reviewInbox
+    review_inbox: reviewInbox,
+    colleagues
   };
 }
