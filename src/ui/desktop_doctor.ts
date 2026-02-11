@@ -66,6 +66,43 @@ async function pathExecutable(absPath: string): Promise<boolean> {
   }
 }
 
+type PngCheck = {
+  ok: boolean;
+  width?: number;
+  height?: number;
+  color_type?: number;
+  reason?: string;
+};
+
+async function checkRgbaPng(absPath: string): Promise<PngCheck> {
+  let buf: Buffer;
+  try {
+    buf = await fs.readFile(absPath);
+  } catch (e) {
+    return {
+      ok: false,
+      reason: `unable to read file: ${e instanceof Error ? e.message : String(e)}`
+    };
+  }
+  if (buf.length < 33) return { ok: false, reason: "file is too small to be a valid PNG" };
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (!buf.subarray(0, 8).equals(sig)) return { ok: false, reason: "invalid PNG signature" };
+  if (buf.toString("ascii", 12, 16) !== "IHDR") return { ok: false, reason: "missing IHDR chunk" };
+  const width = buf.readUInt32BE(16);
+  const height = buf.readUInt32BE(20);
+  const colorType = buf.readUInt8(25);
+  if (colorType !== 6) {
+    return {
+      ok: false,
+      width,
+      height,
+      color_type: colorType,
+      reason: "PNG must be RGBA (color_type=6) for Tauri icons"
+    };
+  }
+  return { ok: true, width, height, color_type: colorType };
+}
+
 function trimOutput(v: string, max = 200): string {
   const s = v.trim();
   if (!s) return "";
@@ -209,6 +246,35 @@ export async function desktopDoctor(
     message: tauri.ok ? "Tauri CLI is available via pnpm." : "Tauri CLI is not available via pnpm.",
     details: [trimOutput(tauri.stdout), trimOutput(tauri.stderr), tauri.error ?? ""].filter(Boolean)
   });
+
+  const tauriConfig = path.join(cwd, "src-tauri", "tauri.conf.json");
+  const tauriConfigExists = await pathExists(tauriConfig);
+  checks.push({
+    id: "desktop.tauri_config",
+    status: tauriConfigExists ? "pass" : "fail",
+    message: tauriConfigExists
+      ? `Tauri config found: ${tauriConfig}`
+      : `Missing Tauri config at ${tauriConfig}`
+  });
+
+  const iconPath = path.join(cwd, "src-tauri", "icons", "icon.png");
+  if (!(await pathExists(iconPath))) {
+    checks.push({
+      id: "desktop.tauri_icon",
+      status: "fail",
+      message: `Missing required icon at ${iconPath}`
+    });
+  } else {
+    const png = await checkRgbaPng(iconPath);
+    checks.push({
+      id: "desktop.tauri_icon",
+      status: png.ok ? "pass" : "fail",
+      message: png.ok
+        ? `Tauri icon is present and RGBA (${png.width}x${png.height}).`
+        : `Tauri icon is invalid: ${png.reason}`,
+      details: png.ok ? undefined : [`icon_path: ${iconPath}`]
+    });
+  }
 
   const rustc = await probe("rustc", ["--version"]);
   checks.push({

@@ -116,4 +116,32 @@ describe("desktop doctor", () => {
     expect(projectCheck?.status).toBe("fail");
     expect(report.ok).toBe(false);
   });
+
+  test("fails when tauri config/assets are missing in cwd", async () => {
+    const dir = await mkTmpDir();
+    const cliPath = path.join(dir, "dist", "cli.js");
+    await fs.mkdir(path.dirname(cliPath), { recursive: true });
+    await fs.writeFile(cliPath, "#!/usr/bin/env node\n", { encoding: "utf8" });
+
+    const report = await desktopDoctor(
+      {
+        cli_path: cliPath,
+        node_bin: process.execPath
+      },
+      {
+        cwd: dir,
+        probe_command: stubProbe({
+          "rustc --version": { ok: true, stdout: "rustc 1.84.0" },
+          "cargo --version": { ok: true, stdout: "cargo 1.84.0" },
+          "pnpm exec tauri --version": { ok: true, stdout: "tauri-cli 2.10.0" }
+        })
+      }
+    );
+
+    const cfg = report.checks.find((c) => c.id === "desktop.tauri_config");
+    const icon = report.checks.find((c) => c.id === "desktop.tauri_icon");
+    expect(cfg?.status).toBe("fail");
+    expect(icon?.status).toBe("fail");
+    expect(report.ok).toBe(false);
+  });
 });
