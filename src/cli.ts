@@ -35,6 +35,7 @@ import { recordAgentMistake } from "./eval/mistake_loop.js";
 import { refreshAgentContextIndex } from "./eval/agent_context_index.js";
 import { resolveInboxItem } from "./inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "./ui/resolve_and_snapshot.js";
+import { createComment, listComments, type CreateCommentArgs } from "./comments/comment.js";
 import { buildManagerDashboardJson, runManagerDashboard } from "./ui/manager_dashboard.js";
 import { startUiWebServer } from "./ui/web_server.js";
 import { desktopDoctor } from "./ui/desktop_doctor.js";
@@ -809,6 +810,105 @@ program
           notes: opts.notes
         });
         process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("comment:add")
+  .description("Add a persisted colleague note/comment for an agent, artifact, or run")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--author <author_id>", "Author actor id (human or agent id)", "human")
+  .option("--role <role>", "Author role (human|ceo|director|manager|worker)", "manager")
+  .option("--body <text>", "Comment body", "")
+  .option("--target-agent <agent_id>", "Target colleague agent id", undefined)
+  .option("--target-artifact <artifact_id>", "Target artifact id", undefined)
+  .option("--target-run <run_id>", "Target run id", undefined)
+  .option(
+    "--visibility <visibility>",
+    "Visibility (private_agent|team|managers|org)",
+    "managers"
+  )
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        author: string;
+        role: string;
+        body: string;
+        targetAgent?: string;
+        targetArtifact?: string;
+        targetRun?: string;
+        visibility: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.body.trim()) throw new UserError("--body is required");
+        if (!opts.author.trim()) throw new UserError("--author is required");
+        const roleValues: CreateCommentArgs["author_role"][] = [
+          "human",
+          "ceo",
+          "director",
+          "manager",
+          "worker"
+        ];
+        if (!roleValues.includes(opts.role as CreateCommentArgs["author_role"])) {
+          throw new UserError("Invalid --role. Valid: human, ceo, director, manager, worker");
+        }
+        const visibilityParsed = Visibility.safeParse(opts.visibility);
+        if (!visibilityParsed.success) {
+          throw new UserError(
+            "Invalid --visibility. Valid: private_agent, team, managers, org"
+          );
+        }
+        const role = opts.role as CreateCommentArgs["author_role"];
+        const created = await createComment({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          author_id: opts.author,
+          author_role: role,
+          body: opts.body,
+          target_agent_id: opts.targetAgent,
+          target_artifact_id: opts.targetArtifact,
+          target_run_id: opts.targetRun,
+          visibility: visibilityParsed.data
+        });
+        process.stdout.write(JSON.stringify(created, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("comment:list")
+  .description("List persisted colleague comments for a project")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--target-agent <agent_id>", "Filter by target agent id", undefined)
+  .option("--target-artifact <artifact_id>", "Filter by target artifact id", undefined)
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        targetAgent?: string;
+        targetArtifact?: string;
+        limit: number;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        const comments = await listComments({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          target_agent_id: opts.targetAgent,
+          target_artifact_id: opts.targetArtifact,
+          limit: opts.limit
+        });
+        process.stdout.write(JSON.stringify(comments, null, 2) + "\n");
       });
     }
   );
