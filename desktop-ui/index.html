@@ -58,6 +58,25 @@
           <button id="refresh-btn" type="button" class="secondary">Refresh</button>
         </div>
 
+        <div class="sidebar-section">Channels</div>
+        <div class="channel-list">
+          <button class="channel-btn active" data-pane="pending">
+            <span># pending-approvals</span>
+            <span class="count" id="desktopPendingCount">0</span>
+          </button>
+          <button class="channel-btn" data-pane="runs">
+            <span># run-monitor</span>
+            <span class="count" id="desktopRunsCount">0</span>
+          </button>
+          <button class="channel-btn" data-pane="decisions">
+            <span># recent-decisions</span>
+            <span class="count" id="desktopDecisionsCount">0</span>
+          </button>
+        </div>
+
+        <div class="sidebar-section">Colleagues</div>
+        <div class="colleague-list" id="desktopColleagueList"></div>
+
         <div class="status-card">
           <div>
             Status: <strong id="status-text" class="status-pill">idle</strong>

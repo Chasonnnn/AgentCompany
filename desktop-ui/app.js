@@ -8,9 +8,36 @@ const statusText = document.getElementById("status-text");
 const sessionUrl = document.getElementById("session-url");
 const errorEl = document.getElementById("error");
 const frame = document.getElementById("dashboard-frame");
+const channelButtons = Array.from(document.querySelectorAll(".channel-btn[data-pane]"));
+const colleagueList = document.getElementById("desktopColleagueList");
+const pendingCountEl = document.getElementById("desktopPendingCount");
+const runsCountEl = document.getElementById("desktopRunsCount");
+const decisionsCountEl = document.getElementById("desktopDecisionsCount");
+
+let currentServerUrl = null;
+let latestSnapshot = null;
+let snapshotPollTimer = null;
+let currentView = {
+  pane: "pending",
+  colleague_id: null
+};
 
 function getInvoke() {
   return window.__TAURI__?.core?.invoke;
+}
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[c]));
+}
+
+function roleLabel(role) {
+  return String(role || "agent").toUpperCase();
 }
 
 function setError(message) {
@@ -24,16 +51,111 @@ function setStatus(text) {
   if (text === "error") statusText.classList.add("error");
 }
 
-function setSessionUrl(url) {
-  if (!url) {
-    sessionUrl.textContent = "-";
-    sessionUrl.setAttribute("href", "#");
+function setCounts(pending = 0, runs = 0, decisions = 0) {
+  pendingCountEl.textContent = String(pending);
+  runsCountEl.textContent = String(runs);
+  decisionsCountEl.textContent = String(decisions);
+}
+
+function setColleaguePlaceholder(message = "Start a session to load colleagues.") {
+  colleagueList.innerHTML =
+    `<div style="font-size:12px;color:#9cb2cc;padding:4px 2px;">${esc(message)}</div>`;
+}
+
+function setActiveNav() {
+  channelButtons.forEach((btn) => {
+    const pane = btn.getAttribute("data-pane");
+    const active = currentView.pane !== "colleague" && pane === currentView.pane;
+    btn.classList.toggle("active", active);
+  });
+
+  Array.from(colleagueList.querySelectorAll("[data-colleague-id]"))
+    .forEach((btn) => {
+      const active =
+        currentView.pane === "colleague" &&
+        btn.getAttribute("data-colleague-id") === currentView.colleague_id;
+      btn.classList.toggle("active", active);
+    });
+}
+
+function buildFrameUrl(baseUrl) {
+  const u = new URL(baseUrl);
+  u.searchParams.set("pane", currentView.pane);
+  if (currentView.pane === "colleague" && currentView.colleague_id) {
+    u.searchParams.set("colleague_id", currentView.colleague_id);
+  } else {
+    u.searchParams.delete("colleague_id");
+  }
+  return u.toString();
+}
+
+function postSelectionToFrame() {
+  const win = frame.contentWindow;
+  if (!win) return;
+  win.postMessage(
+    {
+      type: "agentcompany.select",
+      pane: currentView.pane,
+      colleague_id: currentView.colleague_id
+    },
+    "*"
+  );
+}
+
+function updateFrameSrc(force = false) {
+  if (!currentServerUrl) {
     frame.setAttribute("src", "about:blank");
     return;
   }
-  sessionUrl.textContent = url;
-  sessionUrl.setAttribute("href", url);
-  frame.setAttribute("src", url);
+  const target = buildFrameUrl(currentServerUrl);
+  if (force || frame.getAttribute("src") !== target) {
+    frame.setAttribute("src", target);
+  } else {
+    postSelectionToFrame();
+  }
+}
+
+function applyView(nextPane, nextColleagueId = null) {
+  if (nextPane === "colleague") {
+    currentView = {
+      pane: "colleague",
+      colleague_id: nextColleagueId || currentView.colleague_id
+    };
+  } else {
+    currentView = {
+      pane: nextPane,
+      colleague_id: null
+    };
+  }
+
+  setActiveNav();
+  updateFrameSrc();
+  postSelectionToFrame();
+}
+
+function clearSnapshotUI() {
+  latestSnapshot = null;
+  setCounts(0, 0, 0);
+  setColleaguePlaceholder();
+  setActiveNav();
+}
+
+function setSessionUrl(url, forceFrameReload = false) {
+  if (!url) {
+    currentServerUrl = null;
+    sessionUrl.textContent = "-";
+    sessionUrl.setAttribute("href", "#");
+    frame.setAttribute("src", "about:blank");
+    clearSnapshotUI();
+    return;
+  }
+
+  const asString = String(url);
+  const changed = currentServerUrl !== asString;
+  currentServerUrl = asString;
+  sessionUrl.textContent = asString;
+  sessionUrl.setAttribute("href", asString);
+  updateFrameSrc(forceFrameReload || changed);
 }
 
 function normalizeSession(raw) {
@@ -98,6 +220,80 @@ async function waitForHealth(url, timeoutMs = 12000) {
   throw new Error(`Timed out waiting for ${url}/api/health`);
 }
 
+async function fetchUiSnapshot(url) {
+  const res = await fetch(`${url}/api/ui/snapshot`, { method: "GET" });
+  if (!res.ok) throw new Error(`snapshot failed: ${res.status}`);
+  return await res.json();
+}
+
+function renderColleagues(snapshot) {
+  const colleagues = snapshot?.colleagues || [];
+  if (!colleagues.length) {
+    setColleaguePlaceholder("No colleagues found in this project.");
+    if (currentView.pane === "colleague") {
+      currentView = { pane: "pending", colleague_id: null };
+      updateFrameSrc();
+    }
+    return;
+  }
+
+  const hasCurrent = colleagues.some((c) => c.agent_id === currentView.colleague_id);
+  if (currentView.pane === "colleague" && !hasCurrent) {
+    currentView.colleague_id = colleagues[0].agent_id;
+  }
+
+  colleagueList.innerHTML = colleagues
+    .map((c) => {
+      const badge = c.pending_reviews > 0 ? c.pending_reviews : c.active_runs;
+      return (
+        `<button class="colleague-btn" data-colleague-id="${esc(c.agent_id)}">` +
+        `<span class="colleague-main">` +
+        `<span class="dot ${esc(c.status)}"></span>` +
+        `<span class="colleague-name">@${esc(c.name)}<span class="role-tag">${esc(roleLabel(c.role))}</span></span>` +
+        `</span>` +
+        `<span class="count">${esc(String(badge || 0))}</span>` +
+        `</button>`
+      );
+    })
+    .join("");
+
+  Array.from(colleagueList.querySelectorAll("[data-colleague-id]")).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-colleague-id");
+      if (!id) return;
+      applyView("colleague", id);
+    });
+  });
+}
+
+function renderSidebar(snapshot) {
+  latestSnapshot = snapshot;
+  setCounts(
+    snapshot?.review_inbox?.pending?.length ?? 0,
+    snapshot?.monitor?.rows?.length ?? 0,
+    snapshot?.review_inbox?.recent_decisions?.length ?? 0
+  );
+  renderColleagues(snapshot);
+  setActiveNav();
+}
+
+async function refreshSnapshotSidebar() {
+  if (!currentServerUrl) return;
+  try {
+    const snap = await fetchUiSnapshot(currentServerUrl);
+    renderSidebar(snap);
+  } catch (error) {
+    setError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function ensureSnapshotPolling() {
+  if (snapshotPollTimer) return;
+  snapshotPollTimer = setInterval(() => {
+    void refreshSnapshotSidebar();
+  }, 5000);
+}
+
 async function refreshStatus() {
   const invoke = getInvoke();
   if (!invoke) {
@@ -114,6 +310,7 @@ async function refreshStatus() {
     }
     setStatus(`running (pid ${status.pid ?? "-"})`);
     setSessionUrl(status.url);
+    await refreshSnapshotSidebar();
     setError("");
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error));
@@ -146,7 +343,8 @@ async function startSession() {
     if (!url) throw new Error("Manager Web did not return a URL");
     await waitForHealth(url);
     setStatus(`running (pid ${status.pid ?? "-"})`);
-    setSessionUrl(url);
+    setSessionUrl(url, true);
+    await refreshSnapshotSidebar();
     setError("");
   } catch (error) {
     setStatus("error");
@@ -168,6 +366,7 @@ async function stopSession() {
     await invoke("stop_manager_web");
     setStatus("idle");
     setSessionUrl(null);
+    currentView = { pane: "pending", colleague_id: null };
     setError("");
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error));
@@ -175,6 +374,18 @@ async function stopSession() {
     stopBtn.disabled = false;
   }
 }
+
+frame.addEventListener("load", () => {
+  postSelectionToFrame();
+});
+
+channelButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const pane = btn.getAttribute("data-pane");
+    if (!pane) return;
+    applyView(pane);
+  });
+});
 
 startBtn.addEventListener("click", () => {
   void startSession();
@@ -190,4 +401,8 @@ refreshBtn.addEventListener("click", () => {
 
 const saved = loadSession();
 if (saved) writeForm(saved);
+setColleaguePlaceholder();
+setCounts(0, 0, 0);
+setActiveNav();
+ensureSnapshotPolling();
 void refreshStatus();

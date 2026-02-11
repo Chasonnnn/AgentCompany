@@ -131,6 +131,99 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.channel-list,
+.colleague-list {
+  display: grid;
+  gap: 2px;
+}
+
+.channel-btn,
+.colleague-btn {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #c8d7ea;
+  text-align: left;
+  border-radius: 8px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.channel-btn:hover,
+.colleague-btn:hover {
+  background: color-mix(in oklab, var(--sidebar-accent), #fff 6%);
+  color: #f5f9ff;
+}
+
+.channel-btn.active,
+.colleague-btn.active {
+  background: color-mix(in oklab, var(--sidebar-accent), #fff 10%);
+  border-color: color-mix(in oklab, var(--accent), #fff 20%);
+  color: #f5f9ff;
+}
+
+.count {
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 0.7rem;
+  color: #d0dff1;
+  background: color-mix(in oklab, var(--sidebar-accent), #000 8%);
+  font-family: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+.colleague-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: none;
+  background: #7389a7;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.dot.active {
+  background: #31c48d;
+}
+
+.dot.needs_review {
+  background: #f6ad55;
+}
+
+.dot.idle {
+  background: #7389a7;
+}
+
+.colleague-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-tag {
+  display: inline-flex;
+  margin-left: 6px;
+  border: 1px solid #385170;
+  border-radius: 999px;
+  padding: 0 5px;
+  font-size: 10px;
+  color: #a7bdd6;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
 .status-card {
   margin-top: 2px;
   border-top: 1px solid var(--line-dark);
