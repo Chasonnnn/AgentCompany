@@ -13,6 +13,13 @@ import { ContextPackManifestYaml } from "../schemas/context_pack.js";
 import { writeFileAtomic } from "../store/fs.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
 import { TaskFrontMatter } from "../work/task_markdown.js";
+import {
+  extractUsageFromJsonLine,
+  splitCompleteLines,
+  estimateUsageFromChars,
+  selectPreferredUsage,
+  type RunUsageSummary
+} from "./token_usage.js";
 
 export type ExecuteCommandArgs = {
   workspace_dir: string;
@@ -351,6 +358,52 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     stdio: [args.stdin_text === undefined ? "ignore" : "pipe", "pipe", "pipe"]
   });
 
+  const reportedUsageCandidates: RunUsageSummary[] = [];
+  const seenUsageSignatures = new Set<string>();
+  let stdoutUsageBuffer = "";
+  let stderrUsageBuffer = "";
+  let stdoutChars = 0;
+  let stderrChars = 0;
+
+  function recordUsage(u: RunUsageSummary): void {
+    const sig = JSON.stringify({
+      source: u.source,
+      provider: u.provider ?? null,
+      input_tokens: u.input_tokens ?? null,
+      cached_input_tokens: u.cached_input_tokens ?? null,
+      output_tokens: u.output_tokens ?? null,
+      reasoning_output_tokens: u.reasoning_output_tokens ?? null,
+      total_tokens: u.total_tokens
+    });
+    if (seenUsageSignatures.has(sig)) return;
+    seenUsageSignatures.add(sig);
+    reportedUsageCandidates.push(u);
+    writer.write(
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: nowIso(),
+        run_id: args.run_id,
+        session_ref: sessionRef,
+        actor: "system",
+        visibility: "org",
+        type: "usage.reported",
+        payload: u
+      })
+    );
+  }
+
+  function parseUsageFromTextLines(text: string): void {
+    const lines = text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    for (const line of lines) {
+      for (const u of extractUsageFromJsonLine(line, runDoc.provider)) {
+        recordUsage(u);
+      }
+    }
+  }
+
   let stopRequested = false;
   const abortHandler = (): void => {
     stopRequested = true;
@@ -378,6 +431,8 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   }
 
   child.stdout?.on("data", (buf: Buffer) => {
+    const text = buf.toString("utf8");
+    stdoutChars += text.length;
     stdoutStream.write(buf);
     writer.write(
       newEnvelope({
@@ -390,13 +445,23 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
         type: "provider.raw",
         payload: {
           stream: "stdout",
-          chunk: buf.toString("utf8")
+          chunk: text
         }
       })
     );
+    stdoutUsageBuffer += text;
+    const parsed = splitCompleteLines(stdoutUsageBuffer);
+    stdoutUsageBuffer = parsed.rest;
+    for (const line of parsed.lines) {
+      for (const u of extractUsageFromJsonLine(line, runDoc.provider)) {
+        recordUsage(u);
+      }
+    }
   });
 
   child.stderr?.on("data", (buf: Buffer) => {
+    const text = buf.toString("utf8");
+    stderrChars += text.length;
     stderrStream.write(buf);
     writer.write(
       newEnvelope({
@@ -409,10 +474,18 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
         type: "provider.raw",
         payload: {
           stream: "stderr",
-          chunk: buf.toString("utf8")
+          chunk: text
         }
       })
     );
+    stderrUsageBuffer += text;
+    const parsed = splitCompleteLines(stderrUsageBuffer);
+    stderrUsageBuffer = parsed.rest;
+    for (const line of parsed.lines) {
+      for (const u of extractUsageFromJsonLine(line, runDoc.provider)) {
+        recordUsage(u);
+      }
+    }
   });
 
   const exitRes: ExecuteCommandResult = await new Promise((resolve, reject) => {
@@ -434,6 +507,37 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   const endedAt = nowIso();
   const stopped = stopRequested;
   const ok = exitRes.exit_code === 0;
+
+  // Flush any trailing partial lines for usage parsing.
+  if (stdoutUsageBuffer.trim().length > 0) parseUsageFromTextLines(stdoutUsageBuffer);
+  if (stderrUsageBuffer.trim().length > 0) parseUsageFromTextLines(stderrUsageBuffer);
+
+  const finalUsage =
+    selectPreferredUsage(reportedUsageCandidates) ??
+    estimateUsageFromChars({
+      provider: runDoc.provider,
+      stdin_chars: args.stdin_text?.length ?? 0,
+      stdout_chars: stdoutChars,
+      stderr_chars: stderrChars
+    });
+  if (finalUsage.source === "estimated_chars") {
+    writer.write(
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: endedAt,
+        run_id: args.run_id,
+        session_ref: sessionRef,
+        actor: "system",
+        visibility: "org",
+        type: "usage.estimated",
+        payload: finalUsage
+      })
+    );
+  }
+  await writeFileAtomic(
+    path.join(outputsDir, "token_usage.json"),
+    `${JSON.stringify(finalUsage, null, 2)}\n`
+  );
 
   writer.write(
     newEnvelope({
@@ -461,6 +565,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     ...runDoc,
     status: stopped ? "stopped" : ok ? "ended" : "failed",
     ended_at: endedAt,
+    usage: finalUsage,
     spec: {
       kind: "command",
       argv: args.argv,

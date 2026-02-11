@@ -1,3 +1,4 @@
+import path from "node:path";
 import { nowIso } from "../core/time.js";
 import { listSessions } from "./session.js";
 import {
@@ -9,6 +10,8 @@ import {
   syncSqliteIndex
 } from "../index/sqlite.js";
 import { pathExists } from "../store/fs.js";
+import { readYamlFile } from "../store/yaml.js";
+import { RunYaml } from "../schemas/run.js";
 
 export type RunMonitorSnapshotArgs = {
   workspace_dir: string;
@@ -41,6 +44,13 @@ export type RunMonitorRow = {
     visibility: string | null;
   };
   parse_error_count: number;
+  token_usage?: {
+    source: "provider_reported" | "estimated_chars";
+    confidence: "high" | "low";
+    total_tokens: number;
+    input_tokens?: number;
+    output_tokens?: number;
+  };
 };
 
 export type RunMonitorSnapshot = {
@@ -53,6 +63,27 @@ export type RunMonitorSnapshot = {
 
 function runKey(projectId: string, runId: string): string {
   return `${projectId}::${runId}`;
+}
+
+async function readRunUsage(
+  workspaceDir: string,
+  projectId: string,
+  runId: string
+): Promise<RunMonitorRow["token_usage"]> {
+  const p = path.join(workspaceDir, "work", "projects", projectId, "runs", runId, "run.yaml");
+  try {
+    const run = RunYaml.parse(await readYamlFile(p));
+    if (!run.usage) return undefined;
+    return {
+      source: run.usage.source,
+      confidence: run.usage.confidence,
+      total_tokens: run.usage.total_tokens,
+      input_tokens: run.usage.input_tokens,
+      output_tokens: run.usage.output_tokens
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Promise<RunMonitorSnapshot> {
@@ -169,6 +200,10 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     if (aTs !== bTs) return aTs < bTs ? 1 : -1;
     return a.run_id.localeCompare(b.run_id);
   });
+
+  for (const row of rows) {
+    row.token_usage = await readRunUsage(args.workspace_dir, row.project_id, row.run_id);
+  }
 
   return {
     workspace_dir: args.workspace_dir,

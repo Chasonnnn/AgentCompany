@@ -5,7 +5,7 @@ export const CODEX_CAPABILITIES: DriverCapabilities = {
   supports_streaming_events: true, // codex exec --json
   supports_resumable_session: true, // codex resume/fork exist
   supports_structured_output: true, // output schema + last message
-  supports_token_usage: false,
+  supports_token_usage: true,
   supports_patch_export: true,
   supports_interactive_approval_callbacks: false,
   supports_worktree_isolation: "recommended"
@@ -42,4 +42,3 @@ export function buildCodexExecCommand(args: {
     final_text_file_abs: lastMessagePath
   };
 }
-

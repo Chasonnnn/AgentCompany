@@ -5,6 +5,7 @@ import { fillArtifactWithProvider } from "./artifact_fill.js";
 import { readYamlFile } from "../store/yaml.js";
 import { AgentYaml } from "../schemas/agent.js";
 import { TeamYaml } from "../schemas/team.js";
+import { RunYaml, type RunUsageSummary as PersistedRunUsageSummary } from "../schemas/run.js";
 
 export type PlanningPipelineArgs = {
   workspace_dir: string;
@@ -39,9 +40,9 @@ export type PlanningPipelineResult = {
     context_pack_id: string;
   };
   usage_estimate: {
-    source: "estimated_chars";
+    source: "provider_reported" | "estimated_chars" | "mixed";
     method: string;
-    confidence: "low";
+    confidence: "high" | "medium" | "low";
     estimated_total_tokens: number;
     estimated_cost_usd: number | null;
     by_run: Array<{
@@ -55,7 +56,8 @@ export type PlanningPipelineResult = {
       estimated_output_tokens: number;
       estimated_total_tokens: number;
       estimate_method: string;
-      confidence: "low";
+      source: "provider_reported" | "estimated_chars";
+      confidence: "high" | "low";
       estimated_cost_usd: number | null;
     }>;
   };
@@ -192,7 +194,8 @@ type UsageEstimateItem = {
   estimated_output_tokens: number;
   estimated_total_tokens: number;
   estimate_method: string;
-  confidence: "low";
+  source: "provider_reported" | "estimated_chars";
+  confidence: "high" | "low";
   estimated_cost_usd: number | null;
 };
 
@@ -221,16 +224,69 @@ function estimateUsage(args: {
     estimated_output_tokens: outTok,
     estimated_total_tokens: inTok + outTok,
     estimate_method: ESTIMATE_METHOD,
+    source: "estimated_chars",
     confidence: "low",
     estimated_cost_usd: null
   };
 }
 
-function summarizeUsage(items: UsageEstimateItem[]): PlanningPipelineResult["usage_estimate"] {
+function usageFromRunSummary(args: {
+  stage: UsageEstimateStage;
+  agent_id: string;
+  run_id: string;
+  context_pack_id: string;
+  prompt: string;
+  output_markdown: string;
+  run_usage: PersistedRunUsageSummary;
+}): UsageEstimateItem {
+  const fallback = estimateUsage({
+    stage: args.stage,
+    agent_id: args.agent_id,
+    run_id: args.run_id,
+    context_pack_id: args.context_pack_id,
+    prompt: args.prompt,
+    output_markdown: args.output_markdown
+  });
   return {
-    source: "estimated_chars",
-    method: ESTIMATE_METHOD,
-    confidence: "low",
+    ...fallback,
+    estimated_input_tokens: args.run_usage.input_tokens ?? fallback.estimated_input_tokens,
+    estimated_output_tokens: args.run_usage.output_tokens ?? fallback.estimated_output_tokens,
+    estimated_total_tokens: args.run_usage.total_tokens,
+    estimate_method:
+      args.run_usage.source === "provider_reported"
+        ? "provider-reported token usage from runtime events"
+        : args.run_usage.estimate_method ?? ESTIMATE_METHOD,
+    source: args.run_usage.source,
+    confidence: args.run_usage.confidence
+  };
+}
+
+async function readRunUsage(
+  workspaceDir: string,
+  projectId: string,
+  runId: string
+): Promise<PersistedRunUsageSummary | undefined> {
+  const p = path.join(workspaceDir, "work/projects", projectId, "runs", runId, "run.yaml");
+  try {
+    const run = RunYaml.parse(await readYamlFile(p));
+    return run.usage;
+  } catch {
+    return undefined;
+  }
+}
+
+function summarizeUsage(items: UsageEstimateItem[]): PlanningPipelineResult["usage_estimate"] {
+  const hasReported = items.some((i) => i.source === "provider_reported");
+  const hasEstimated = items.some((i) => i.source === "estimated_chars");
+  return {
+    source: hasReported && hasEstimated ? "mixed" : hasReported ? "provider_reported" : "estimated_chars",
+    method:
+      hasReported && hasEstimated
+        ? "mixed provider-reported and estimated usage"
+        : hasReported
+          ? "provider-reported token usage from runtime events"
+          : ESTIMATE_METHOD,
+    confidence: hasReported && hasEstimated ? "medium" : hasReported ? "high" : "low",
     estimated_total_tokens: items.reduce((n, item) => n + item.estimated_total_tokens, 0),
     estimated_cost_usd: null,
     by_run: items
@@ -272,15 +328,26 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
     scaffold.project_id,
     scaffold.artifacts.intake_brief_artifact_id
   );
+  const intakeRunUsage = await readRunUsage(args.workspace_dir, scaffold.project_id, intakeFill.run_id);
   usage.push(
-    estimateUsage({
-      stage: "intake_brief",
-      agent_id: args.ceo_agent_id,
-      run_id: intakeFill.run_id,
-      context_pack_id: intakeFill.context_pack_id,
-      prompt: intakePrompt,
-      output_markdown: intakeMd
-    })
+    intakeRunUsage
+      ? usageFromRunSummary({
+          stage: "intake_brief",
+          agent_id: args.ceo_agent_id,
+          run_id: intakeFill.run_id,
+          context_pack_id: intakeFill.context_pack_id,
+          prompt: intakePrompt,
+          output_markdown: intakeMd,
+          run_usage: intakeRunUsage
+        })
+      : estimateUsage({
+          stage: "intake_brief",
+          agent_id: args.ceo_agent_id,
+          run_id: intakeFill.run_id,
+          context_pack_id: intakeFill.context_pack_id,
+          prompt: intakePrompt,
+          output_markdown: intakeMd
+        })
   );
 
   const clarificationsPrompt = buildClarificationsPrompt({
@@ -303,15 +370,30 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
     scaffold.project_id,
     scaffold.artifacts.clarifications_qa_artifact_id
   );
+  const clarificationsRunUsage = await readRunUsage(
+    args.workspace_dir,
+    scaffold.project_id,
+    clarificationsFill.run_id
+  );
   usage.push(
-    estimateUsage({
-      stage: "clarifications_qa",
-      agent_id: args.director_agent_id,
-      run_id: clarificationsFill.run_id,
-      context_pack_id: clarificationsFill.context_pack_id,
-      prompt: clarificationsPrompt,
-      output_markdown: clarificationsMd
-    })
+    clarificationsRunUsage
+      ? usageFromRunSummary({
+          stage: "clarifications_qa",
+          agent_id: args.director_agent_id,
+          run_id: clarificationsFill.run_id,
+          context_pack_id: clarificationsFill.context_pack_id,
+          prompt: clarificationsPrompt,
+          output_markdown: clarificationsMd,
+          run_usage: clarificationsRunUsage
+        })
+      : estimateUsage({
+          stage: "clarifications_qa",
+          agent_id: args.director_agent_id,
+          run_id: clarificationsFill.run_id,
+          context_pack_id: clarificationsFill.context_pack_id,
+          prompt: clarificationsPrompt,
+          output_markdown: clarificationsMd
+        })
   );
 
   const proposalResults: PlanningPipelineResult["manager_proposals"] = {};
@@ -357,15 +439,26 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
       scaffold.project_id,
       proposalArtifactId
     );
+    const proposalRunUsage = await readRunUsage(args.workspace_dir, scaffold.project_id, fill.run_id);
     usage.push(
-      estimateUsage({
-        stage: "manager_proposal",
-        agent_id: managerId,
-        run_id: fill.run_id,
-        context_pack_id: fill.context_pack_id,
-        prompt: proposalPrompt,
-        output_markdown: proposalMd
-      })
+      proposalRunUsage
+        ? usageFromRunSummary({
+            stage: "manager_proposal",
+            agent_id: managerId,
+            run_id: fill.run_id,
+            context_pack_id: fill.context_pack_id,
+            prompt: proposalPrompt,
+            output_markdown: proposalMd,
+            run_usage: proposalRunUsage
+          })
+        : estimateUsage({
+            stage: "manager_proposal",
+            agent_id: managerId,
+            run_id: fill.run_id,
+            context_pack_id: fill.context_pack_id,
+            prompt: proposalPrompt,
+            output_markdown: proposalMd
+          })
     );
     proposalsForDirector.push({
       manager_label: `Manager Proposal: ${agent.name} (${teamLabel})`,
@@ -395,15 +488,26 @@ export async function runPlanningPipeline(args: PlanningPipelineArgs): Promise<P
     scaffold.project_id,
     scaffold.artifacts.workplan_artifact_id
   );
+  const workplanRunUsage = await readRunUsage(args.workspace_dir, scaffold.project_id, workplanFill.run_id);
   usage.push(
-    estimateUsage({
-      stage: "workplan",
-      agent_id: args.director_agent_id,
-      run_id: workplanFill.run_id,
-      context_pack_id: workplanFill.context_pack_id,
-      prompt: workplanPrompt,
-      output_markdown: workplanMd
-    })
+    workplanRunUsage
+      ? usageFromRunSummary({
+          stage: "workplan",
+          agent_id: args.director_agent_id,
+          run_id: workplanFill.run_id,
+          context_pack_id: workplanFill.context_pack_id,
+          prompt: workplanPrompt,
+          output_markdown: workplanMd,
+          run_usage: workplanRunUsage
+        })
+      : estimateUsage({
+          stage: "workplan",
+          agent_id: args.director_agent_id,
+          run_id: workplanFill.run_id,
+          context_pack_id: workplanFill.context_pack_id,
+          prompt: workplanPrompt,
+          output_markdown: workplanMd
+        })
   );
 
   const usageEstimate = summarizeUsage(usage);

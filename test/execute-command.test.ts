@@ -56,6 +56,8 @@ describe("executeCommandRun", () => {
     const runDoc = RunYaml.parse(await readYamlFile(runYamlPath));
     expect(runDoc.status).toBe("ended");
     expect(runDoc.spec?.kind).toBe("command");
+    expect(runDoc.usage?.source).toBe("estimated_chars");
+    expect(runDoc.usage?.total_tokens).toBeGreaterThan(0);
 
     const eventsPath = path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl");
     const evs = await readJsonl(eventsPath);
@@ -67,6 +69,7 @@ describe("executeCommandRun", () => {
     expect(
       evs.some((e) => e.type === "provider.raw" && e.payload?.stream === "stderr" && String(e.payload?.chunk).includes("oops"))
     ).toBe(true);
+    expect(evs.some((e) => e.type === "usage.estimated")).toBe(true);
     expect(evs.some((e) => e.type === "run.ended")).toBe(true);
   });
 
@@ -136,5 +139,48 @@ describe("executeCommandRun", () => {
     const eventsPath = path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl");
     const evs = await readJsonl(eventsPath);
     expect(evs.some((e) => e.type === "run.failed")).toBe(true);
+  });
+
+  test("captures provider-reported token usage from JSONL output", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "codex" });
+
+    const res = await executeCommandRun({
+      workspace_dir: dir,
+      project_id,
+      run_id,
+      argv: [
+        process.execPath,
+        "-e",
+        [
+          "const obj={type:'turn.completed',tokenUsage:{input_tokens:100,output_tokens:20,cached_input_tokens:10,reasoning_output_tokens:5,total_tokens:135}};",
+          "process.stdout.write(JSON.stringify(obj)+'\\n');"
+        ].join("")
+      ]
+    });
+    expect(res.exit_code).toBe(0);
+
+    const runYamlPath = path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml");
+    const runDoc = RunYaml.parse(await readYamlFile(runYamlPath));
+    expect(runDoc.usage?.source).toBe("provider_reported");
+    expect(runDoc.usage?.confidence).toBe("high");
+    expect(runDoc.usage?.total_tokens).toBe(135);
+    expect(runDoc.usage?.input_tokens).toBe(100);
+    expect(runDoc.usage?.output_tokens).toBe(20);
+
+    const eventsPath = path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl");
+    const evs = await readJsonl(eventsPath);
+    expect(evs.some((e) => e.type === "usage.reported" && e.payload?.total_tokens === 135)).toBe(true);
+    expect(evs.some((e) => e.type === "usage.estimated")).toBe(false);
   });
 });

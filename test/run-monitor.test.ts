@@ -56,6 +56,7 @@ describe("run monitor snapshot", () => {
     expect(row).toBeDefined();
     expect(row?.last_event).toBeDefined();
     expect(row?.parse_error_count).toBeGreaterThanOrEqual(0);
+    expect(row?.token_usage?.total_tokens).toBeGreaterThan(0);
   });
 
   test("includes live session rows even before index refresh", async () => {
