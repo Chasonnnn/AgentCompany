@@ -95,95 +95,352 @@ function dashboardHtml(args: UiWebServerArgs): string {
   <title>AgentCompany Manager Dashboard</title>
   <style>
     :root {
-      --bg: #f5f7fa;
+      --bg: #f5f7fb;
+      --shell: #0f1726;
+      --shell-accent: #1f2b43;
       --card: #ffffff;
-      --ink: #14213d;
-      --muted: #5b6678;
-      --line: #d9e1ec;
-      --ok: #1b9e77;
-      --bad: #c0392b;
-      --brand: #1f6feb;
+      --ink: #1b2432;
+      --muted: #5b6879;
+      --line: #dbe2eb;
+      --ok: #0f8a65;
+      --bad: #b93f2e;
+      --brand: #1f8cb8;
+      --brand-soft: #e7f4fb;
+      --mono: "IBM Plex Mono", "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+      --sans: "IBM Plex Sans", "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: linear-gradient(180deg, #eef4ff 0%, var(--bg) 35%); color: var(--ink); font-family: "SF Mono", "Menlo", "Monaco", "Consolas", monospace; }
-    .wrap { max-width: 1280px; margin: 0 auto; padding: 24px; }
-    .top { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-    .title { font-size: 22px; font-weight: 700; }
-    .meta { color: var(--muted); font-size: 13px; }
-    .btn { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 8px 12px; cursor: pointer; font: inherit; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--sans);
+      background:
+        radial-gradient(1200px 420px at 30% -10%, #d9ecf8 0%, transparent 55%),
+        radial-gradient(900px 360px at 80% -5%, #dce8ff 0%, transparent 52%),
+        var(--bg);
+    }
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 0;
+    }
+    .sidebar {
+      background:
+        linear-gradient(180deg, color-mix(in oklab, var(--shell), #000 8%) 0%, var(--shell) 100%);
+      color: #dbe7f7;
+      padding: 18px 14px;
+      border-right: 1px solid #24324f;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .workspace-name {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .workspace-sub {
+      font-size: 12px;
+      color: #a7bdd6;
+      margin-top: -8px;
+    }
+    .sidebar-section {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #89a3c0;
+      margin-top: 4px;
+      margin-bottom: 2px;
+    }
+    .context-grid {
+      display: grid;
+      gap: 7px;
+      font-size: 12px;
+    }
+    .context-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: #b8cae1;
+    }
+    .context-row strong {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: #f1f7ff;
+      max-width: 160px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .channel-btn {
+      width: 100%;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #c8d7ea;
+      text-align: left;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .channel-btn:hover {
+      background: color-mix(in oklab, var(--shell-accent), #fff 6%);
+      color: #f5f9ff;
+    }
+    .channel-btn.active {
+      background: color-mix(in oklab, var(--shell-accent), #fff 10%);
+      border-color: color-mix(in oklab, var(--brand), #fff 20%);
+      color: #f5f9ff;
+    }
+    .count {
+      border-radius: 999px;
+      padding: 1px 7px;
+      font-size: 11px;
+      color: #d0dff1;
+      background: color-mix(in oklab, var(--shell-accent), #000 8%);
+      font-family: var(--mono);
+    }
+    .sidebar-foot {
+      margin-top: auto;
+      border-top: 1px solid #24324f;
+      padding-top: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .sync-state {
+      font-size: 12px;
+      color: #a7bdd6;
+    }
+    .btn {
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+    }
     .btn:hover { border-color: var(--brand); }
-    .grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; }
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-    .card h2 { margin: 0; padding: 12px 14px; font-size: 14px; background: #f8fbff; border-bottom: 1px solid var(--line); }
+    .main {
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 12px;
+      min-width: 0;
+    }
+    .top {
+      background: rgba(255, 255, 255, 0.72);
+      backdrop-filter: blur(6px);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.1;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 6px;
+      font-family: var(--mono);
+    }
+    .chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .chip {
+      background: var(--brand-soft);
+      color: #13425d;
+      border: 1px solid #bedef0;
+      border-radius: 999px;
+      font-size: 11px;
+      padding: 3px 9px;
+      font-family: var(--mono);
+    }
+    .pane {
+      display: none;
+      min-height: 0;
+    }
+    .pane.active { display: block; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      min-height: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    .card h2 {
+      margin: 0;
+      padding: 12px 14px;
+      font-size: 14px;
+      background: #f8fbff;
+      border-bottom: 1px solid var(--line);
+      letter-spacing: 0.02em;
+    }
+    .card-body {
+      overflow: auto;
+      max-height: calc(100vh - 190px);
+    }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { color: var(--muted); font-weight: 600; background: #fcfdff; }
+    th, td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      background: #fcfdff;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
     .act { display: flex; gap: 6px; }
-    .btn-ok { border-color: #b7e6d6; background: #ecfaf4; color: var(--ok); }
-    .btn-bad { border-color: #f2c2be; background: #fff2f0; color: var(--bad); }
-    .mono { font-family: inherit; }
-    .pill { display:inline-block; padding:2px 6px; border-radius:999px; border:1px solid var(--line); font-size:11px; }
-    .err { color: var(--bad); }
-    .muted { color: var(--muted); }
-    .small { font-size: 12px; }
+    .btn-ok {
+      border-color: #8cd7be;
+      background: #e8f8f0;
+      color: var(--ok);
+    }
+    .btn-bad {
+      border-color: #efb2aa;
+      background: #fff1ef;
+      color: var(--bad);
+    }
+    .mono { font-family: var(--mono); }
+    .pill {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 11px;
+      background: #f9fbfe;
+    }
+    .err { color: var(--bad); margin: 0; min-height: 1.3em; font-size: 12px; }
     @media (max-width: 980px) {
-      .grid { grid-template-columns: 1fr; }
-      .top { flex-direction: column; align-items: stretch; }
+      .shell {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+      }
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid #24324f;
+      }
+      .main { padding: 12px; }
+      .top { flex-direction: column; }
+      .chips { justify-content: flex-start; }
+      .card-body { max-height: 54vh; }
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="top">
-      <div>
-        <div class="title">AgentCompany Manager Web</div>
-        <div id="meta" class="meta"></div>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="workspace-name">AgentCompany</div>
+      <div class="workspace-sub">Manager Workspace</div>
+
+      <div class="sidebar-section">Context</div>
+      <div class="context-grid">
+        <div class="context-row"><span>Project</span><strong id="navProject">-</strong></div>
+        <div class="context-row"><span>Actor</span><strong id="navActor">-</strong></div>
+        <div class="context-row"><span>Role</span><strong id="navRole">-</strong></div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <span id="syncState" class="small muted"></span>
+
+      <div class="sidebar-section">Channels</div>
+      <button class="channel-btn active" data-tab-target="pending" aria-selected="true">
+        <span># pending-approvals</span><span class="count" id="summaryPending">0</span>
+      </button>
+      <button class="channel-btn" data-tab-target="runs" aria-selected="false">
+        <span># run-monitor</span><span class="count" id="summaryRuns">0</span>
+      </button>
+      <button class="channel-btn" data-tab-target="decisions" aria-selected="false">
+        <span># recent-decisions</span><span class="count" id="summaryErrors">0</span>
+      </button>
+
+      <div class="sidebar-foot">
+        <div id="syncState" class="sync-state"></div>
         <button id="refreshBtn" class="btn">Refresh</button>
       </div>
-    </div>
+    </aside>
 
-    <div class="grid">
-      <section class="card">
+    <main class="main">
+      <section class="top">
+        <div>
+          <h1 class="title">AgentCompany Manager Web</h1>
+          <div id="meta" class="meta"></div>
+        </div>
+        <div class="chips">
+          <span class="chip">Live Timeline</span>
+          <span class="chip">Artifact Governance</span>
+          <span class="chip">Local-First</span>
+        </div>
+      </section>
+
+      <section class="pane active" data-pane="pending">
+        <div class="card">
         <h2>Pending Approvals</h2>
-        <div style="overflow:auto; max-height:420px;">
+          <div class="card-body">
           <table>
             <thead>
               <tr><th>Artifact</th><th>Type</th><th>Title</th><th>Run</th><th>Actions</th></tr>
             </thead>
             <tbody id="pendingBody"></tbody>
           </table>
+          </div>
         </div>
       </section>
 
-      <section class="card">
-        <h2>Recent Decisions</h2>
-        <div style="overflow:auto; max-height:420px;">
-          <table>
-            <thead>
-              <tr><th>Decision</th><th>Artifact</th><th>Actor</th><th>When</th></tr>
-            </thead>
-            <tbody id="decisionsBody"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="card" style="grid-column: 1 / -1;">
-        <h2>Run Monitor</h2>
-        <div style="overflow:auto; max-height:360px;">
+      <section class="pane" data-pane="runs">
+        <div class="card">
+          <h2>Run Monitor</h2>
+          <div class="card-body">
           <table>
             <thead>
               <tr><th>Run</th><th>Status</th><th>Live</th><th>Last Event</th><th>Parse Errors</th></tr>
             </thead>
             <tbody id="runsBody"></tbody>
           </table>
+          </div>
         </div>
       </section>
-    </div>
 
-    <p id="error" class="err small"></p>
+      <section class="pane" data-pane="decisions">
+        <div class="card">
+          <h2>Recent Decisions</h2>
+          <div class="card-body">
+          <table>
+            <thead>
+              <tr><th>Decision</th><th>Artifact</th><th>Actor</th><th>When</th></tr>
+            </thead>
+            <tbody id="decisionsBody"></tbody>
+          </table>
+          </div>
+        </div>
+      </section>
+
+      <p id="error" class="err"></p>
+    </main>
   </div>
 
   <script>
@@ -192,10 +449,18 @@ function dashboardHtml(args: UiWebServerArgs): string {
     const metaEl = document.getElementById('meta');
     const syncEl = document.getElementById('syncState');
     const errorEl = document.getElementById('error');
+    const navProject = document.getElementById('navProject');
+    const navActor = document.getElementById('navActor');
+    const navRole = document.getElementById('navRole');
+    const summaryPending = document.getElementById('summaryPending');
+    const summaryRuns = document.getElementById('summaryRuns');
+    const summaryErrors = document.getElementById('summaryErrors');
     const pendingBody = document.getElementById('pendingBody');
     const decisionsBody = document.getElementById('decisionsBody');
     const runsBody = document.getElementById('runsBody');
     const refreshBtn = document.getElementById('refreshBtn');
+    const tabButtons = Array.from(document.querySelectorAll('[data-tab-target]'));
+    const panes = Array.from(document.querySelectorAll('[data-pane]'));
 
     let state = null;
 
@@ -207,12 +472,27 @@ function dashboardHtml(args: UiWebServerArgs): string {
       errorEl.textContent = msg ? String(msg) : '';
     }
 
+    function activatePane(target) {
+      panes.forEach((pane) => {
+        pane.classList.toggle('active', pane.getAttribute('data-pane') === target);
+      });
+      tabButtons.forEach((btn) => {
+        const active = btn.getAttribute('data-tab-target') === target;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+    }
+
     function render(snapshot) {
       state = snapshot;
-      metaEl.textContent = 'project=' + INIT.project_id + ' actor=' + INIT.actor_id + ' (' + INIT.actor_role + ') · updated ' + snapshot.generated_at;
+      navProject.textContent = INIT.project_id;
+      navActor.textContent = INIT.actor_id;
+      navRole.textContent = INIT.actor_role;
+      metaEl.textContent = 'updated ' + snapshot.generated_at + ' · replayable event log';
       syncEl.textContent = 'sync: ' + (snapshot.index_sync_worker.enabled ? 'on' : 'off') + ', pending=' + snapshot.index_sync_worker.pending_workspaces;
 
       const pending = snapshot.review_inbox.pending || [];
+      summaryPending.textContent = String(pending.length);
       pendingBody.innerHTML = pending.map((p) => {
         return '<tr>' +
           '<td class="mono">' + esc(p.artifact_id) + '</td>' +
@@ -227,6 +507,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
       }).join('');
 
       const decisions = snapshot.review_inbox.recent_decisions || [];
+      summaryErrors.textContent = String(decisions.length);
       decisionsBody.innerHTML = decisions.map((d) => {
         return '<tr>' +
           '<td>' + esc(d.decision) + '</td>' +
@@ -237,6 +518,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
       }).join('');
 
       const runs = snapshot.monitor.rows || [];
+      summaryRuns.textContent = String(runs.length);
       runsBody.innerHTML = runs.map((r) => {
         return '<tr>' +
           '<td class="mono">' + esc(r.run_id) + '</td>' +
@@ -288,6 +570,14 @@ function dashboardHtml(args: UiWebServerArgs): string {
       }
     });
 
+    tabButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const target = btn.getAttribute('data-tab-target');
+        if (!target) return;
+        activatePane(target);
+      });
+    });
+
     refreshBtn.addEventListener('click', async () => {
       try {
         await fetchSnapshot();
@@ -314,6 +604,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
     }
 
     (async () => {
+      activatePane('pending');
       let es = null;
       try {
         await fetchSnapshot();
