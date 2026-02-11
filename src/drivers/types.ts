@@ -16,5 +16,6 @@ export type BuiltCommand = {
   stdin_text?: string;
   // If set, read this file for the final model output; otherwise, use run outputs stdout.txt.
   final_text_file_abs?: string;
+  // Optional parser hint for stdout/stderr output when providers emit structured streams.
+  final_text_parser?: "claude_stream_json";
 };
-

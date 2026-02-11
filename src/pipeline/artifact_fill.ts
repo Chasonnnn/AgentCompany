@@ -12,6 +12,7 @@ import { getDriver } from "../drivers/registry.js";
 import { readYamlFile } from "../store/yaml.js";
 import { AgentYaml } from "../schemas/agent.js";
 import { newId } from "../core/ids.js";
+import { extractClaudeMarkdownFromStreamJson } from "../drivers/claude_stream_json.js";
 
 export type ArtifactFillArgs = {
   workspace_dir: string;
@@ -63,6 +64,15 @@ function buildFillPrompt(template: string, extra: string): string {
     "Template to fill (copy and complete):",
     template
   ].join("\n");
+}
+
+function parseGeneratedOutput(raw: string, parser?: "claude_stream_json"): string {
+  switch (parser) {
+    case "claude_stream_json":
+      return extractClaudeMarkdownFromStreamJson(raw);
+    default:
+      return raw;
+  }
 }
 
 async function readAgentProvider(workspaceDir: string, agentId: string): Promise<string> {
@@ -148,7 +158,8 @@ export async function fillArtifactWithProvider(args: ArtifactFillArgs): Promise<
 
     const stdoutPath = path.join(outputsDirAbs, "stdout.txt");
     const finalTextPath = built.final_text_file_abs ?? stdoutPath;
-    const generated = await fs.readFile(finalTextPath, { encoding: "utf8" });
+    const rawGenerated = await fs.readFile(finalTextPath, { encoding: "utf8" });
+    const generated = parseGeneratedOutput(rawGenerated, built.final_text_parser);
 
     const validated = validateMarkdownArtifact(generated);
     if (!validated.ok) {

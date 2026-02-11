@@ -39,9 +39,11 @@ describe("driver command builders", () => {
     expect(cmd.argv[0]).toBe("/bin/claude");
     expect(cmd.argv.includes("--print")).toBe(true);
     expect(cmd.argv.includes("--output-format")).toBe(true);
-    expect(cmd.argv.includes("text")).toBe(true);
+    expect(cmd.argv.includes("stream-json")).toBe(true);
+    expect(cmd.argv.includes("--include-partial-messages")).toBe(true);
     expect(cmd.argv.includes("--tools")).toBe(true);
     expect(cmd.argv.at(-1)).toBe("hi");
+    expect(cmd.final_text_parser).toBe("claude_stream_json");
   });
 
   test("claude supports optional model", () => {
@@ -56,4 +58,3 @@ describe("driver command builders", () => {
     expect(cmd.argv[i + 1]).toBe("claude-3-7-sonnet-latest");
   });
 });
-

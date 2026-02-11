@@ -5,7 +5,7 @@ export const CLAUDE_CAPABILITIES: DriverCapabilities = {
   // Our v0 command uses --no-session-persistence, so resuming is not supported in practice.
   supports_resumable_session: false,
   supports_structured_output: true, // --json-schema
-  supports_token_usage: false,
+  supports_token_usage: true,
   supports_patch_export: false,
   supports_interactive_approval_callbacks: false,
   supports_worktree_isolation: "unsupported"
@@ -21,7 +21,8 @@ export function buildClaudePrintCommand(args: {
     args.bin,
     "--print",
     "--output-format",
-    "text",
+    "stream-json",
+    "--include-partial-messages",
     "--no-session-persistence",
     "--permission-mode",
     "dontAsk",
@@ -32,5 +33,8 @@ export function buildClaudePrintCommand(args: {
   if (args.model) {
     argv.splice(1, 0, "--model", args.model);
   }
-  return { argv };
+  return {
+    argv,
+    final_text_parser: "claude_stream_json"
+  };
 }
