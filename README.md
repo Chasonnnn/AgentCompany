@@ -135,12 +135,21 @@ node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID" --no-sync-index
 node dist/cli.js inbox:snapshot /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js inbox:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor human --role manager
+node dist/cli.js comment:add /path/to/workspace --project "$PROJECT_ID" --author human --role manager --target-agent <agent_id> --body "Needs tests before merge"
+node dist/cli.js comment:list /path/to/workspace --project "$PROJECT_ID" --target-agent <agent_id> --target-run <run_id>
 node dist/cli.js ui:snapshot /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js ui:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor human --role manager
 node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor human --role manager
 node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor human --role manager --json
 node dist/cli.js ui:web /path/to/workspace --project "$PROJECT_ID" --actor human --role manager --port 8787
 ```
+
+Manager web thin APIs (for desktop/web sidebars):
+- `GET /api/monitor/snapshot`
+- `GET /api/inbox/snapshot`
+- `GET /api/comments?target_agent_id=<id>&target_artifact_id=<id>&target_run_id=<id>&limit=<n>`
+- `POST /api/comments`
+- `GET /api/ui/snapshot` (full snapshot; used periodically for colleague directory refresh)
 
 Desktop shell behavior:
 - The Tauri app starts/stops the existing `ui:web` process.
