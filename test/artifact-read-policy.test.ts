@@ -102,5 +102,14 @@ describe("artifact.read policy enforcement", () => {
     const parsed = await readEventsJsonl(eventsPath);
     const events = parsed.filter((p): p is { ok: true; event: any } => p.ok).map((p) => p.event);
     expect(events.some((e) => e.type === "policy.denied")).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.type === "policy.decision" &&
+          e.payload?.allowed === false &&
+          e.payload?.action === "read" &&
+          e.payload?.resource_id === artifactId
+      )
+    ).toBe(true);
   });
 });

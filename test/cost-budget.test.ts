@@ -12,6 +12,7 @@ import { readYamlFile, writeYamlFile } from "../src/store/yaml.js";
 import { RunYaml } from "../src/schemas/run.js";
 import { createTaskFile } from "../src/work/tasks.js";
 import { parseFrontMatter } from "../src/artifacts/frontmatter.js";
+import { buildRunMonitorSnapshot } from "../src/runtime/run_monitor.js";
 
 async function mkTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-"));
@@ -175,5 +176,25 @@ describe("cost accounting + budget enforcement", () => {
     );
     expect(events.some((e) => e.type === "budget.alert")).toBe(true);
     expect(events.some((e) => e.type === "budget.exceeded")).toBe(true);
+    expect(events.some((e) => e.type === "budget.decision")).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.type === "budget.decision" &&
+          e.payload?.result === "exceeded" &&
+          e.payload?.scope === "project"
+      )
+    ).toBe(true);
+
+    const snap = await buildRunMonitorSnapshot({
+      workspace_dir: dir,
+      project_id,
+      refresh_index: true
+    });
+    const row = snap.rows.find((r) => r.run_id === run_id);
+    expect(row).toBeDefined();
+    expect((row?.budget_alert_count ?? 0) > 0).toBe(true);
+    expect((row?.budget_exceeded_count ?? 0) > 0).toBe(true);
+    expect((row?.budget_decision_count ?? 0) > 0).toBe(true);
   });
 });

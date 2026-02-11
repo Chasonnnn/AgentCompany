@@ -147,5 +147,14 @@ describe("memory deltas", () => {
           e.payload?.resource_id === proposed.artifact_id
       )
     ).toBe(true);
+    expect(
+      evs.some(
+        (e) =>
+          e.type === "policy.decision" &&
+          e.payload?.allowed === false &&
+          e.payload?.action === "approve" &&
+          e.payload?.resource_id === proposed.artifact_id
+      )
+    ).toBe(true);
   });
 });

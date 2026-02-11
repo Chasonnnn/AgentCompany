@@ -20,6 +20,50 @@ export type EnforcePolicyArgs = {
   resource: Resource;
 };
 
+async function appendPolicyDecisionEvent(args: {
+  workspace_dir: string;
+  project_id: string;
+  run_id: string;
+  actor_id: string;
+  action: PolicyAction;
+  resource: Resource;
+  policy: PolicyDecision;
+}): Promise<void> {
+  const eventsAbs = path.join(
+    args.workspace_dir,
+    "work/projects",
+    args.project_id,
+    "runs",
+    args.run_id,
+    "events.jsonl"
+  );
+  try {
+    await appendEventJsonl(
+      eventsAbs,
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: nowIso(),
+        run_id: args.run_id,
+        session_ref: `local_${args.run_id}`,
+        actor: args.actor_id,
+        visibility: "managers",
+        type: "policy.decision",
+        payload: {
+          allowed: args.policy.allowed,
+          rule_id: args.policy.rule_id,
+          reason: args.policy.reason,
+          action: args.action,
+          resource_id: args.resource.resource_id,
+          resource_kind: args.resource.kind ?? null,
+          resource_visibility: args.resource.visibility
+        }
+      })
+    );
+  } catch {
+    // Best-effort: policy evaluation should not fail solely due to audit logging.
+  }
+}
+
 async function appendPolicyDeniedEvent(args: {
   workspace_dir: string;
   project_id: string;
@@ -68,6 +112,17 @@ export async function enforcePolicy(args: EnforcePolicyArgs): Promise<PolicyDeci
     args.action,
     args.resource
   );
+  if (args.run_id) {
+    await appendPolicyDecisionEvent({
+      workspace_dir: args.workspace_dir,
+      project_id: args.project_id,
+      run_id: args.run_id,
+      actor_id: args.actor_id,
+      action: args.action,
+      resource: args.resource,
+      policy: decision
+    });
+  }
   if (decision.allowed) return decision;
 
   if (args.run_id) {
@@ -84,4 +139,3 @@ export async function enforcePolicy(args: EnforcePolicyArgs): Promise<PolicyDeci
   const actionLabel = args.action === "approve" ? "approval" : args.action;
   throw new Error(`Policy denied ${actionLabel}: ${decision.rule_id} (${decision.reason})`);
 }
-

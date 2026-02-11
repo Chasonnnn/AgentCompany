@@ -19,7 +19,12 @@ export type BudgetFinding = {
   actual: number;
 };
 
+export type BudgetDecision = BudgetFinding & {
+  result: "ok" | "alert" | "exceeded";
+};
+
 export type BudgetEvaluation = {
+  decisions: BudgetDecision[];
   alerts: BudgetFinding[];
   exceeded: BudgetFinding[];
 };
@@ -45,6 +50,7 @@ function applyBudgetThreshold(
   budget: BudgetThreshold,
   totals: UsageTotals
 ): BudgetEvaluation {
+  const decisions: BudgetDecision[] = [];
   const alerts: BudgetFinding[] = [];
   const exceeded: BudgetFinding[] = [];
 
@@ -62,7 +68,6 @@ function applyBudgetThreshold(
 
   for (const c of checks) {
     if (c.threshold === undefined) continue;
-    if (c.actual < c.threshold) continue;
     const finding: BudgetFinding = {
       scope,
       metric: c.metric,
@@ -70,11 +75,20 @@ function applyBudgetThreshold(
       threshold: c.threshold,
       actual: c.actual
     };
-    if (c.severity === "hard") exceeded.push(finding);
-    else alerts.push(finding);
+    if (c.actual >= c.threshold) {
+      if (c.severity === "hard") {
+        exceeded.push(finding);
+        decisions.push({ ...finding, result: "exceeded" });
+      } else {
+        alerts.push(finding);
+        decisions.push({ ...finding, result: "alert" });
+      }
+    } else {
+      decisions.push({ ...finding, result: "ok" });
+    }
   }
 
-  return { alerts, exceeded };
+  return { decisions, alerts, exceeded };
 }
 
 async function readProjectBudget(workspaceDir: string, projectId: string): Promise<BudgetThreshold | undefined> {
@@ -136,7 +150,7 @@ export async function evaluateBudgetForCompletedRun(args: {
   task_id?: string;
   run_budget?: BudgetThreshold;
 }): Promise<BudgetEvaluation> {
-  const evalOut: BudgetEvaluation = { alerts: [], exceeded: [] };
+  const evalOut: BudgetEvaluation = { decisions: [], alerts: [], exceeded: [] };
   const runYamlPath = path.join(
     args.workspace_dir,
     "work/projects",
@@ -149,6 +163,7 @@ export async function evaluateBudgetForCompletedRun(args: {
 
   if (args.run_budget) {
     const runEval = applyBudgetThreshold("run", args.run_budget, usageToTotals(currentRun.usage));
+    evalOut.decisions.push(...runEval.decisions);
     evalOut.alerts.push(...runEval.alerts);
     evalOut.exceeded.push(...runEval.exceeded);
   }
@@ -157,6 +172,7 @@ export async function evaluateBudgetForCompletedRun(args: {
   if (projectBudget) {
     const allRuns = await listRunDocs(args.workspace_dir, args.project_id);
     const projectEval = applyBudgetThreshold("project", projectBudget, sumTotals(allRuns));
+    evalOut.decisions.push(...projectEval.decisions);
     evalOut.alerts.push(...projectEval.alerts);
     evalOut.exceeded.push(...projectEval.exceeded);
   }
@@ -169,6 +185,7 @@ export async function evaluateBudgetForCompletedRun(args: {
       const allRuns = await listRunDocs(args.workspace_dir, args.project_id);
       const taskRuns = allRuns.filter((run) => run.spec?.task_id === args.task_id);
       const taskEval = applyBudgetThreshold("task", taskBudget, sumTotals(taskRuns));
+      evalOut.decisions.push(...taskEval.decisions);
       evalOut.alerts.push(...taskEval.alerts);
       evalOut.exceeded.push(...taskEval.exceeded);
     }

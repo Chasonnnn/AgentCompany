@@ -129,6 +129,13 @@ export type IndexedRunParseErrorCount = {
   parse_error_count: number;
 };
 
+export type IndexedRunEventTypeCount = {
+  project_id: string;
+  run_id: string;
+  type: string;
+  event_count: number;
+};
+
 export type IndexedArtifact = {
   project_id: string;
   artifact_id: string;
@@ -1364,6 +1371,42 @@ export async function listIndexedRunParseErrorCounts(args: {
       LIMIT :limit
     `;
     return db.prepare(sql).all(params) as IndexedRunParseErrorCount[];
+  } finally {
+    db.close();
+  }
+}
+
+export async function listIndexedRunEventTypeCounts(args: {
+  workspace_dir: string;
+  project_id?: string;
+  types: string[];
+  limit?: number;
+}): Promise<IndexedRunEventTypeCount[]> {
+  if (args.types.length === 0) return [];
+  const { db } = await openExistingDb(args.workspace_dir);
+  try {
+    const params: Record<string, SQLInputValue> = {};
+    const where: string[] = [];
+    if (args.project_id) {
+      where.push("project_id = :project_id");
+      params.project_id = args.project_id;
+    }
+    const typePlaceholders = args.types.map((_, idx) => `:type_${idx}`);
+    for (const [idx, type] of args.types.entries()) {
+      params[`type_${idx}`] = type;
+    }
+    where.push(`type IN (${typePlaceholders.join(", ")})`);
+    const limit = Math.max(1, Math.min(args.limit ?? 5000, 20000));
+    params.limit = limit;
+    const sql = `
+      SELECT project_id, run_id, type, COUNT(*) AS event_count
+      FROM events
+      WHERE ${where.join(" AND ")}
+      GROUP BY project_id, run_id, type
+      ORDER BY event_count DESC, run_id DESC
+      LIMIT :limit
+    `;
+    return db.prepare(sql).all(params) as IndexedRunEventTypeCount[];
   } finally {
     db.close();
   }

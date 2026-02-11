@@ -5,6 +5,7 @@ import {
   indexDbPath,
   listIndexedRuns,
   listIndexedRunLastEvents,
+  listIndexedRunEventTypeCounts,
   listIndexedRunParseErrorCounts,
   rebuildSqliteIndex,
   syncSqliteIndex
@@ -44,6 +45,11 @@ export type RunMonitorRow = {
     visibility: string | null;
   };
   parse_error_count: number;
+  policy_decision_count: number;
+  policy_denied_count: number;
+  budget_decision_count: number;
+  budget_alert_count: number;
+  budget_exceeded_count: number;
   token_usage?: {
     source: "provider_reported" | "estimated_chars";
     confidence: "high" | "low";
@@ -102,7 +108,7 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     indexSynced = true;
   }
 
-  const [runs, lastEvents, parseErrors] = await Promise.all([
+  const [runs, lastEvents, parseErrors, eventTypeCounts] = await Promise.all([
     listIndexedRuns({
       workspace_dir: args.workspace_dir,
       project_id: args.project_id,
@@ -117,6 +123,18 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
       workspace_dir: args.workspace_dir,
       project_id: args.project_id,
       limit
+    }),
+    listIndexedRunEventTypeCounts({
+      workspace_dir: args.workspace_dir,
+      project_id: args.project_id,
+      types: [
+        "policy.decision",
+        "policy.denied",
+        "budget.decision",
+        "budget.alert",
+        "budget.exceeded"
+      ],
+      limit: limit * 8
     })
   ]);
 
@@ -127,6 +145,32 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
   const parseCountByRun = new Map<string, number>();
   for (const e of parseErrors) {
     parseCountByRun.set(runKey(e.project_id, e.run_id), e.parse_error_count);
+  }
+  const eventCountsByRun = new Map<
+    string,
+    {
+      policy_decision_count: number;
+      policy_denied_count: number;
+      budget_decision_count: number;
+      budget_alert_count: number;
+      budget_exceeded_count: number;
+    }
+  >();
+  for (const row of eventTypeCounts) {
+    const key = runKey(row.project_id, row.run_id);
+    const curr = eventCountsByRun.get(key) ?? {
+      policy_decision_count: 0,
+      policy_denied_count: 0,
+      budget_decision_count: 0,
+      budget_alert_count: 0,
+      budget_exceeded_count: 0
+    };
+    if (row.type === "policy.decision") curr.policy_decision_count = row.event_count;
+    else if (row.type === "policy.denied") curr.policy_denied_count = row.event_count;
+    else if (row.type === "budget.decision") curr.budget_decision_count = row.event_count;
+    else if (row.type === "budget.alert") curr.budget_alert_count = row.event_count;
+    else if (row.type === "budget.exceeded") curr.budget_exceeded_count = row.event_count;
+    eventCountsByRun.set(key, curr);
   }
 
   const sessions = await listSessions({
@@ -146,6 +190,7 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     seen.add(key);
     const session = sessionByRun.get(key);
     const last = lastByRun.get(key);
+    const counts = eventCountsByRun.get(key);
     rows.push({
       project_id: run.project_id,
       run_id: run.run_id,
@@ -170,7 +215,12 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
             visibility: last.visibility
           }
         : undefined,
-      parse_error_count: parseCountByRun.get(key) ?? 0
+      parse_error_count: parseCountByRun.get(key) ?? 0,
+      policy_decision_count: counts?.policy_decision_count ?? 0,
+      policy_denied_count: counts?.policy_denied_count ?? 0,
+      budget_decision_count: counts?.budget_decision_count ?? 0,
+      budget_alert_count: counts?.budget_alert_count ?? 0,
+      budget_exceeded_count: counts?.budget_exceeded_count ?? 0
     });
   }
 
@@ -178,6 +228,7 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
   for (const session of sessions) {
     const key = runKey(session.project_id, session.run_id);
     if (seen.has(key)) continue;
+    const counts = eventCountsByRun.get(key);
     rows.push({
       project_id: session.project_id,
       run_id: session.run_id,
@@ -189,7 +240,12 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
       live_error: session.error,
       session_started_at_ms: session.started_at_ms,
       session_ended_at_ms: session.ended_at_ms,
-      parse_error_count: parseCountByRun.get(key) ?? 0
+      parse_error_count: parseCountByRun.get(key) ?? 0,
+      policy_decision_count: counts?.policy_decision_count ?? 0,
+      policy_denied_count: counts?.policy_denied_count ?? 0,
+      budget_decision_count: counts?.budget_decision_count ?? 0,
+      budget_alert_count: counts?.budget_alert_count ?? 0,
+      budget_exceeded_count: counts?.budget_exceeded_count ?? 0
     });
   }
 

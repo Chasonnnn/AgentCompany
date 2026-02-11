@@ -57,6 +57,11 @@ describe("run monitor snapshot", () => {
     expect(row?.last_event).toBeDefined();
     expect(row?.parse_error_count).toBeGreaterThanOrEqual(0);
     expect(row?.token_usage?.total_tokens).toBeGreaterThan(0);
+    expect(row?.policy_decision_count).toBeGreaterThanOrEqual(0);
+    expect(row?.policy_denied_count).toBeGreaterThanOrEqual(0);
+    expect(row?.budget_decision_count).toBeGreaterThanOrEqual(0);
+    expect(row?.budget_alert_count).toBeGreaterThanOrEqual(0);
+    expect(row?.budget_exceeded_count).toBeGreaterThanOrEqual(0);
   });
 
   test("includes live session rows even before index refresh", async () => {

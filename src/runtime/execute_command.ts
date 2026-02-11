@@ -619,7 +619,22 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     run_id: args.run_id,
     task_id: args.task_id,
     run_budget: args.budget
-  }).catch(() => ({ alerts: [], exceeded: [] }));
+  }).catch(() => ({ decisions: [], alerts: [], exceeded: [] }));
+
+  for (const decision of budgetEval.decisions) {
+    writer.write(
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: endedAt,
+        run_id: args.run_id,
+        session_ref: sessionRef,
+        actor: "system",
+        visibility: "org",
+        type: "budget.decision",
+        payload: decision
+      })
+    );
+  }
 
   for (const finding of budgetEval.alerts) {
     writer.write(

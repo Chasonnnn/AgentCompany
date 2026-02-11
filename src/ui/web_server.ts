@@ -558,7 +558,7 @@ function dashboardHtml(args: UiWebServerArgs): string {
           <div class="card-body">
           <table>
             <thead>
-              <tr><th>Run</th><th>Status</th><th>Live</th><th>Last Event</th><th>Parse Errors</th></tr>
+              <tr><th>Run</th><th>Status</th><th>Live</th><th>Last Event</th><th>Parse Errors</th><th>Governance</th></tr>
             </thead>
             <tbody id="runsBody"></tbody>
           </table>
@@ -938,12 +938,19 @@ function dashboardHtml(args: UiWebServerArgs): string {
       const runs = snapshot.monitor.rows || [];
       summaryRuns.textContent = String(runs.length);
       runsBody.innerHTML = runs.map((r) => {
+        const governance =
+          'policy denied ' + esc(String(r.policy_denied_count || 0)) +
+          '/' + esc(String(r.policy_decision_count || 0)) +
+          ' · budget hard ' + esc(String(r.budget_exceeded_count || 0)) +
+          ', soft ' + esc(String(r.budget_alert_count || 0)) +
+          ' (' + esc(String(r.budget_decision_count || 0)) + ' decisions)';
         return '<tr>' +
           '<td class="mono">' + esc(r.run_id) + '</td>' +
           '<td>' + esc(r.run_status) + '</td>' +
           '<td>' + esc(r.live_status || '-') + '</td>' +
           '<td>' + esc(r.last_event ? r.last_event.type : '-') + '</td>' +
           '<td>' + esc(r.parse_error_count) + '</td>' +
+          '<td>' + governance + '</td>' +
         '</tr>';
       }).join('');
 
