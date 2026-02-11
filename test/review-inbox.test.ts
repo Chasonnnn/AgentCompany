@@ -83,6 +83,9 @@ describe("review inbox snapshot", () => {
     const pending = inboxBefore.pending.find((p) => p.artifact_id === delta.artifact_id);
     expect(pending).toBeDefined();
     expect(pending?.parse_error_count).toBeGreaterThanOrEqual(1);
+    expect(inboxBefore.parse_errors.has_parse_errors).toBe(true);
+    expect(inboxBefore.parse_errors.pending_with_errors).toBeGreaterThanOrEqual(1);
+    expect(inboxBefore.parse_errors.max_parse_error_count).toBeGreaterThanOrEqual(1);
 
     await approveMemoryDelta({
       workspace_dir: dir,
@@ -106,6 +109,8 @@ describe("review inbox snapshot", () => {
     );
     expect(decision).toBeDefined();
     expect(decision?.parse_error_count).toBeGreaterThanOrEqual(1);
+    expect(inboxAfter.parse_errors.has_parse_errors).toBe(true);
+    expect(inboxAfter.parse_errors.decisions_with_errors).toBeGreaterThanOrEqual(1);
 
     const ui = await buildUiSnapshot({
       workspace_dir: dir,
@@ -115,6 +120,7 @@ describe("review inbox snapshot", () => {
     expect(typeof ui.index_sync_worker.enabled).toBe("boolean");
     expect(Array.isArray(ui.monitor.rows)).toBe(true);
     expect(Array.isArray(ui.review_inbox.pending)).toBe(true);
+    expect(typeof ui.review_inbox.parse_errors.has_parse_errors).toBe("boolean");
     expect(ui.review_inbox.recent_decisions.some((d) => d.subject_artifact_id === delta.artifact_id)).toBe(true);
   });
 });

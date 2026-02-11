@@ -79,6 +79,7 @@ describe("ui web server", () => {
       const inbox = (await inboxRes.json()) as any;
       expect(Array.isArray(inbox.pending)).toBe(true);
       expect(Array.isArray(inbox.recent_decisions)).toBe(true);
+      expect(typeof inbox.parse_errors?.has_parse_errors).toBe("boolean");
 
       const resolveRes = await fetch(`${web.url}/api/ui/resolve`, {
         method: "POST",

@@ -132,6 +132,7 @@ describe("server router", () => {
     })) as any;
     expect(Array.isArray(inbox.pending)).toBe(true);
     expect(Array.isArray(inbox.recent_decisions)).toBe(true);
+    expect(typeof inbox.parse_errors?.has_parse_errors).toBe("boolean");
 
     const ui = (await routeRpcMethod("ui.snapshot", {
       workspace_dir: dir

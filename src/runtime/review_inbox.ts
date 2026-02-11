@@ -50,6 +50,12 @@ export type ReviewInboxSnapshot = {
   generated_at: string;
   index_rebuilt: boolean;
   index_synced: boolean;
+  parse_errors: {
+    has_parse_errors: boolean;
+    pending_with_errors: number;
+    decisions_with_errors: number;
+    max_parse_error_count: number;
+  };
   pending: ReviewInboxPendingItem[];
   recent_decisions: ReviewInboxDecisionItem[];
 };
@@ -121,11 +127,25 @@ export async function buildReviewInboxSnapshot(
       : 0
   }));
 
+  const pendingWithErrors = pendingItems.filter((p) => p.parse_error_count > 0).length;
+  const decisionsWithErrors = decisionItems.filter((d) => d.parse_error_count > 0).length;
+  const maxParseErrorCount = Math.max(
+    0,
+    ...pendingItems.map((p) => p.parse_error_count),
+    ...decisionItems.map((d) => d.parse_error_count)
+  );
+
   return {
     workspace_dir: args.workspace_dir,
     generated_at: nowIso(),
     index_rebuilt: indexRebuilt,
     index_synced: indexSynced,
+    parse_errors: {
+      has_parse_errors: maxParseErrorCount > 0,
+      pending_with_errors: pendingWithErrors,
+      decisions_with_errors: decisionsWithErrors,
+      max_parse_error_count: maxParseErrorCount
+    },
     pending: pendingItems,
     recent_decisions: decisionItems
   };
