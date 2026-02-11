@@ -64,6 +64,7 @@ describe("ui web server", () => {
       const snapRes = await fetch(`${web.url}/api/ui/snapshot`);
       expect(snapRes.status).toBe(200);
       const snap = (await snapRes.json()) as any;
+      expect(snap.index_sync_worker?.enabled).toBe(true);
       expect(snap.review_inbox.pending.some((p: any) => p.artifact_id === proposed.artifact_id)).toBe(
         true
       );

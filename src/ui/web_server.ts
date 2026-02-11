@@ -7,6 +7,9 @@ import { resolveInboxAndBuildUiSnapshot } from "./resolve_and_snapshot.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
 import type { ActorRole } from "../policy/policy.js";
 import { createComment } from "../comments/comment.js";
+import { createIndexSyncWorker } from "../index/sync_worker.js";
+import { syncSqliteIndex } from "../index/sqlite.js";
+import { registerIndexSyncWorker } from "../runtime/index_sync_service.js";
 
 export type UiWebServerArgs = {
   workspace_dir: string;
@@ -49,6 +52,15 @@ function projectFromEventsPath(eventsPath: string): string | undefined {
   const normalized = eventsPath.split(path.sep).join("/");
   const m = normalized.match(/\/work\/projects\/([^/]+)\/runs\/[^/]+\/events\.jsonl$/);
   return m?.[1];
+}
+
+function workspaceFromEventsPath(eventsPath: string): string | undefined {
+  const normalized = eventsPath.split(path.sep).join("/");
+  const m = normalized.match(/^(.*)\/work\/projects\/[^/]+\/runs\/[^/]+\/events\.jsonl$/);
+  if (!m?.[1]) return undefined;
+  const prefix = m[1];
+  if (!prefix) return undefined;
+  return eventsPath.includes(path.sep) ? prefix.split("/").join(path.sep) : prefix;
 }
 
 function sendJson(res: http.ServerResponse, statusCode: number, payload: unknown): void {
@@ -1105,6 +1117,20 @@ async function readInboxSnapshot(
 export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServer> {
   const host = args.host?.trim() || "127.0.0.1";
   const port = Number.isInteger(args.port) ? Number(args.port) : 8787;
+  const worker = createIndexSyncWorker({
+    debounce_ms: 250,
+    min_interval_ms: 1000,
+    sync: async (workspaceDir: string) => {
+      await syncSqliteIndex(workspaceDir);
+    }
+  });
+  registerIndexSyncWorker(worker);
+  worker.notify(args.workspace_dir);
+  const unsubWorker = subscribeRuntimeEvents((msg) => {
+    const workspaceDir = workspaceFromEventsPath(msg.events_file_path);
+    if (workspaceDir !== args.workspace_dir) return;
+    worker.notify(workspaceDir);
+  });
 
   const server = http.createServer(async (req, res) => {
     const method = req.method ?? "GET";
@@ -1299,17 +1325,27 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
     }
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (err: Error): void => {
-      server.off("error", onError);
-      reject(err);
-    };
-    server.once("error", onError);
-    server.listen(port, host, () => {
-      server.off("error", onError);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: Error): void => {
+        server.off("error", onError);
+        reject(err);
+      };
+      server.once("error", onError);
+      server.listen(port, host, () => {
+        server.off("error", onError);
+        resolve();
+      });
     });
-  });
+  } catch (e) {
+    unsubWorker();
+    try {
+      await worker.close();
+    } finally {
+      registerIndexSyncWorker(null);
+    }
+    throw e;
+  }
 
   const addr = server.address();
   if (!addr || typeof addr === "string") {
@@ -1325,12 +1361,18 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
     port: actualPort,
     url,
     close: async () => {
-      await new Promise<void>((resolve, reject) => {
-        server.close((err) => {
-          if (err) reject(err);
-          else resolve();
+      unsubWorker();
+      try {
+        await worker.close();
+      } finally {
+        registerIndexSyncWorker(null);
+        await new Promise<void>((resolve, reject) => {
+          server.close((err) => {
+            if (err) reject(err);
+            else resolve();
+          });
         });
-      });
+      }
     }
   };
 }
