@@ -26,6 +26,7 @@ export const RunYaml = z.object({
   agent_id: z.string().min(1),
   provider: z.string().min(1),
   created_at: IsoDateTime,
+  ended_at: IsoDateTime.optional(),
   status: RunStatus,
   context_pack_id: z.string().min(1),
   events_relpath: z.string().min(1),

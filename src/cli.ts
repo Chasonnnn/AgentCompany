@@ -6,6 +6,7 @@ import process from "node:process";
 import { initWorkspace } from "./workspace/init.js";
 import { validateWorkspace } from "./workspace/validate.js";
 import { doctorWorkspace } from "./workspace/doctor.js";
+import { exportWorkspace, importWorkspace } from "./workspace/export_import.js";
 import { ArtifactType, newArtifactMarkdown, validateMarkdownArtifact } from "./artifacts/markdown.js";
 import { readArtifactWithPolicy } from "./artifacts/read_artifact.js";
 import { writeFileAtomic } from "./store/fs.js";
@@ -16,6 +17,7 @@ import { createProject } from "./work/projects.js";
 import { AgentRole } from "./schemas/agent.js";
 import { createRun } from "./runtime/run.js";
 import { executeCommandRun } from "./runtime/execute_command.js";
+import { cleanupWorktrees } from "./runtime/worktree_cleanup.js";
 import { setProviderBin, setRepoRoot } from "./machine/machine.js";
 import { createTaskFile, addTaskMilestone } from "./work/tasks.js";
 import { MilestoneKind, MilestoneStatus, validateTaskMarkdown } from "./work/task_markdown.js";
@@ -130,6 +132,89 @@ program
       if (!report.ok) process.exitCode = 2;
     });
   });
+
+program
+  .command("workspace:export")
+  .description("Export canonical workspace content to a clean folder (git/cloud-sync friendly)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .argument("<out_dir>", "Output directory for exported workspace content")
+  .option("--include-local", "Include .local overlay in export", false)
+  .option("--force", "Replace non-empty destination directory", false)
+  .action(
+    async (
+      workspaceDir: string,
+      outDir: string,
+      opts: { includeLocal: boolean; force: boolean }
+    ) => {
+      await runAction(async () => {
+        const res = await exportWorkspace({
+          workspace_dir: workspaceDir,
+          out_dir: outDir,
+          include_local: opts.includeLocal,
+          force: opts.force
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("workspace:import")
+  .description("Import canonical workspace content from another local workspace folder")
+  .argument("<src_dir>", "Source workspace directory")
+  .argument("<workspace_dir>", "Destination workspace directory")
+  .option("--include-local", "Import .local overlay from source", false)
+  .option("--force", "Replace non-empty destination directory", false)
+  .action(
+    async (
+      srcDir: string,
+      workspaceDir: string,
+      opts: { includeLocal: boolean; force: boolean }
+    ) => {
+      await runAction(async () => {
+        const res = await importWorkspace({
+          src_dir: srcDir,
+          workspace_dir: workspaceDir,
+          include_local: opts.includeLocal,
+          force: opts.force
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+        if (!res.validation_ok) process.exitCode = 2;
+      });
+    }
+  );
+
+program
+  .command("worktree:cleanup")
+  .description("Cleanup ended/stopped/failed task worktrees by retention policy")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Limit cleanup to one project id", undefined)
+  .option(
+    "--max-age-hours <n>",
+    "Only cleanup runs older than this many hours (default: 72)",
+    (v) => parseFloat(v),
+    72
+  )
+  .option("--dry-run", "Report cleanup candidates without removing paths", false)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: { project?: string; maxAgeHours: number; dryRun: boolean }
+    ) => {
+      await runAction(async () => {
+        if (!Number.isFinite(opts.maxAgeHours) || opts.maxAgeHours < 0) {
+          throw new UserError("--max-age-hours must be a non-negative number");
+        }
+        const res = await cleanupWorktrees({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          max_age_hours: opts.maxAgeHours,
+          dry_run: opts.dryRun
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
 
 program
   .command("desktop:doctor")

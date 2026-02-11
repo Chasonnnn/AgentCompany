@@ -96,7 +96,7 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     parseCountByRun.set(runKey(e.project_id, e.run_id), e.parse_error_count);
   }
 
-  const sessions = listSessions({
+  const sessions = await listSessions({
     workspace_dir: args.workspace_dir,
     project_id: args.project_id
   });

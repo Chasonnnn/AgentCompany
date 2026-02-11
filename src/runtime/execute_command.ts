@@ -460,6 +460,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
   await writeYamlFile(runYamlPath, {
     ...runDoc,
     status: stopped ? "stopped" : ok ? "ended" : "failed",
+    ended_at: endedAt,
     spec: {
       kind: "command",
       argv: args.argv,

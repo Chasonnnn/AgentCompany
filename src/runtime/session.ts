@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { readYamlFile } from "../store/yaml.js";
+import { z } from "zod";
+import { readYamlFile, writeYamlFile } from "../store/yaml.js";
+import { ensureDir } from "../store/fs.js";
 import { RunYaml } from "../schemas/run.js";
 import { executeCommandRun, type ExecuteCommandArgs, type ExecuteCommandResult } from "./execute_command.js";
 
@@ -38,6 +40,10 @@ export type SessionListItem = SessionPollResult & {
   ended_at_ms?: number;
 };
 
+export type SessionLookup = {
+  workspace_dir?: string;
+};
+
 type SessionRecord = {
   session_ref: string;
   project_id: string;
@@ -52,10 +58,68 @@ type SessionRecord = {
   ended_at_ms?: number;
 };
 
+const PersistedSessionRecord = z.object({
+  schema_version: z.literal(1),
+  type: z.literal("session_record"),
+  session_ref: z.string().min(1),
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  run_id: z.string().min(1),
+  status: z.enum(["running", "ended", "failed", "stopped"]),
+  exit_code: z.number().int().nullable(),
+  signal: z.string().nullable(),
+  error: z.string().optional(),
+  started_at_ms: z.number().int().nonnegative(),
+  ended_at_ms: z.number().int().nonnegative().optional()
+});
+
 const SESSIONS = new Map<string, SessionRecord>();
 
 function runYamlPath(workspaceDir: string, projectId: string, runId: string): string {
   return path.join(workspaceDir, "work/projects", projectId, "runs", runId, "run.yaml");
+}
+
+function sessionsDir(workspaceDir: string): string {
+  return path.join(workspaceDir, ".local", "sessions");
+}
+
+function sessionRecordPath(workspaceDir: string, sessionRef: string): string {
+  return path.join(sessionsDir(workspaceDir), `${encodeURIComponent(sessionRef)}.yaml`);
+}
+
+function toListItem(rec: SessionRecord): SessionListItem {
+  return {
+    session_ref: rec.session_ref,
+    workspace_dir: rec.workspace_dir,
+    project_id: rec.project_id,
+    run_id: rec.run_id,
+    status: rec.status,
+    exit_code: rec.result?.exit_code ?? null,
+    signal: rec.result?.signal ?? null,
+    error: rec.error,
+    started_at_ms: rec.started_at_ms,
+    ended_at_ms: rec.ended_at_ms
+  };
+}
+
+function toPollResult(item: SessionListItem): SessionPollResult {
+  return {
+    session_ref: item.session_ref,
+    project_id: item.project_id,
+    run_id: item.run_id,
+    status: item.status,
+    exit_code: item.exit_code,
+    signal: item.signal,
+    error: item.error
+  };
+}
+
+function matchesSessionFilters(item: SessionListItem, filters: SessionListArgs): boolean {
+  if (filters.workspace_dir && item.workspace_dir !== filters.workspace_dir) return false;
+  if (filters.project_id && item.project_id !== filters.project_id) return false;
+  if (filters.run_id && item.run_id !== filters.run_id) return false;
+  if (filters.status && item.status !== filters.status) return false;
+  return true;
 }
 
 async function readRunStatus(
@@ -67,10 +131,106 @@ async function readRunStatus(
   return run.status;
 }
 
-function ensureSession(session_ref: string): SessionRecord {
-  const rec = SESSIONS.get(session_ref);
-  if (!rec) throw new Error(`Unknown session_ref: ${session_ref}`);
-  return rec;
+async function persistSessionItem(item: SessionListItem): Promise<void> {
+  await ensureDir(sessionsDir(item.workspace_dir));
+  await writeYamlFile(sessionRecordPath(item.workspace_dir, item.session_ref), {
+    schema_version: 1,
+    type: "session_record",
+    session_ref: item.session_ref,
+    workspace_dir: item.workspace_dir,
+    project_id: item.project_id,
+    run_id: item.run_id,
+    status: item.status,
+    exit_code: item.exit_code,
+    signal: item.signal,
+    error: item.error,
+    started_at_ms: item.started_at_ms,
+    ended_at_ms: item.ended_at_ms
+  });
+}
+
+async function loadPersistedSession(
+  workspaceDir: string,
+  sessionRef: string
+): Promise<SessionListItem | null> {
+  const p = sessionRecordPath(workspaceDir, sessionRef);
+  try {
+    const rec = PersistedSessionRecord.parse(await readYamlFile(p));
+    return {
+      session_ref: rec.session_ref,
+      workspace_dir: rec.workspace_dir,
+      project_id: rec.project_id,
+      run_id: rec.run_id,
+      status: rec.status,
+      exit_code: rec.exit_code,
+      signal: rec.signal,
+      error: rec.error,
+      started_at_ms: rec.started_at_ms,
+      ended_at_ms: rec.ended_at_ms
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function reconcilePersistedSession(item: SessionListItem): Promise<SessionListItem> {
+  if (item.status !== "running") return item;
+  try {
+    const run = RunYaml.parse(
+      await readYamlFile(runYamlPath(item.workspace_dir, item.project_id, item.run_id))
+    );
+    if (run.status !== "running") {
+      return {
+        ...item,
+        status: run.status,
+        ended_at_ms: item.ended_at_ms ?? (run.ended_at ? Date.parse(run.ended_at) : undefined)
+      };
+    }
+    return {
+      ...item,
+      error: item.error ?? "Session process is detached from this runtime (possible restart)."
+    };
+  } catch {
+    return item;
+  }
+}
+
+async function listPersistedSessions(workspaceDir: string): Promise<SessionListItem[]> {
+  let files: string[] = [];
+  try {
+    files = (await fs.readdir(sessionsDir(workspaceDir)))
+      .filter((f) => f.endsWith(".yaml"))
+      .sort();
+  } catch {
+    return [];
+  }
+
+  const out: SessionListItem[] = [];
+  for (const fileName of files) {
+    const rawRef = fileName.slice(0, -5);
+    const sessionRef = decodeURIComponent(rawRef);
+    const loaded = await loadPersistedSession(workspaceDir, sessionRef);
+    if (!loaded) continue;
+    out.push(await reconcilePersistedSession(loaded));
+  }
+  return out;
+}
+
+async function resolveSessionSnapshot(
+  session_ref: string,
+  lookup: SessionLookup
+): Promise<SessionListItem> {
+  const live = SESSIONS.get(session_ref);
+  if (live) return toListItem(live);
+
+  if (!lookup.workspace_dir) {
+    throw new Error(`Unknown session_ref: ${session_ref}. Provide workspace_dir for persisted lookup.`);
+  }
+  const persisted = await loadPersistedSession(lookup.workspace_dir, session_ref);
+  if (!persisted) {
+    throw new Error(`Unknown session_ref: ${session_ref}`);
+  }
+  return await reconcilePersistedSession(persisted);
 }
 
 export async function launchSession(args: LaunchSessionArgs): Promise<{ session_ref: string }> {
@@ -92,6 +252,9 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
     promise: Promise.resolve(),
     started_at_ms: Date.now()
   };
+  SESSIONS.set(sessionRef, rec);
+  await persistSessionItem(toListItem(rec));
+
   rec.promise = (async () => {
     try {
       rec.result = await executeCommandRun({
@@ -104,76 +267,106 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
       rec.error = e instanceof Error ? e.message : String(e);
     } finally {
       rec.ended_at_ms = Date.now();
+      await persistSessionItem(toListItem(rec));
     }
   })();
-  SESSIONS.set(sessionRef, rec);
 
   return { session_ref: sessionRef };
 }
 
-export function pollSession(session_ref: string): SessionPollResult {
-  const rec = ensureSession(session_ref);
-  return {
-    session_ref: rec.session_ref,
-    project_id: rec.project_id,
-    run_id: rec.run_id,
-    status: rec.status,
-    exit_code: rec.result?.exit_code ?? null,
-    signal: rec.result?.signal ?? null,
-    error: rec.error
-  };
+export async function pollSession(
+  session_ref: string,
+  lookup: SessionLookup = {}
+): Promise<SessionPollResult> {
+  const item = await resolveSessionSnapshot(session_ref, lookup);
+  return toPollResult(item);
 }
 
-export async function collectSession(session_ref: string): Promise<SessionCollectResult> {
-  const rec = ensureSession(session_ref);
-  await rec.promise;
-
-  const runDir = path.join(rec.workspace_dir, "work/projects", rec.project_id, "runs", rec.run_id);
+async function collectFromSessionItem(item: SessionListItem): Promise<SessionCollectResult> {
+  const runDir = path.join(item.workspace_dir, "work/projects", item.project_id, "runs", item.run_id);
   const outputsDir = path.join(runDir, "outputs");
   let outputRelpaths: string[] = [];
   try {
     const entries = await fs.readdir(outputsDir, { withFileTypes: true });
     outputRelpaths = entries
       .filter((e) => e.isFile())
-      .map((e) => path.join("runs", rec.run_id, "outputs", e.name))
+      .map((e) => path.join("runs", item.run_id, "outputs", e.name))
       .sort();
   } catch {
     // no outputs
   }
 
-  const p = pollSession(session_ref);
+  const poll = toPollResult(item);
   return {
-    ...p,
-    events_relpath: path.join("runs", rec.run_id, "events.jsonl"),
+    ...poll,
+    events_relpath: path.join("runs", item.run_id, "events.jsonl"),
     output_relpaths: outputRelpaths
   };
 }
 
-export function stopSession(session_ref: string): SessionPollResult {
-  const rec = ensureSession(session_ref);
-  if (rec.status === "running") {
-    rec.abort_controller.abort();
+export async function collectSession(
+  session_ref: string,
+  lookup: SessionLookup = {}
+): Promise<SessionCollectResult> {
+  const live = SESSIONS.get(session_ref);
+  if (live) {
+    await live.promise;
+    return collectFromSessionItem(toListItem(live));
   }
-  return pollSession(session_ref);
+  const persisted = await resolveSessionSnapshot(session_ref, lookup);
+  return collectFromSessionItem(persisted);
 }
 
-export function listSessions(filters: SessionListArgs = {}): SessionListItem[] {
-  const out: SessionListItem[] = [];
-  for (const rec of SESSIONS.values()) {
-    if (filters.workspace_dir && rec.workspace_dir !== filters.workspace_dir) continue;
-    if (filters.project_id && rec.project_id !== filters.project_id) continue;
-    if (filters.run_id && rec.run_id !== filters.run_id) continue;
-    if (filters.status && rec.status !== filters.status) continue;
-    out.push({
-      ...pollSession(rec.session_ref),
-      workspace_dir: rec.workspace_dir,
-      started_at_ms: rec.started_at_ms,
-      ended_at_ms: rec.ended_at_ms
-    });
+export async function stopSession(
+  session_ref: string,
+  lookup: SessionLookup = {}
+): Promise<SessionPollResult> {
+  const live = SESSIONS.get(session_ref);
+  if (live) {
+    if (live.status === "running") {
+      live.abort_controller.abort();
+    }
+    return pollSession(session_ref, lookup);
   }
+
+  const persisted = await resolveSessionSnapshot(session_ref, lookup);
+  if (persisted.status === "running") {
+    return {
+      ...toPollResult(persisted),
+      error:
+        persisted.error ??
+        "Cannot stop detached session: process handle is unavailable in this runtime."
+    };
+  }
+  return toPollResult(persisted);
+}
+
+export async function listSessions(filters: SessionListArgs = {}): Promise<SessionListItem[]> {
+  const outByRef = new Map<string, SessionListItem>();
+
+  for (const rec of SESSIONS.values()) {
+    const item = toListItem(rec);
+    if (!matchesSessionFilters(item, filters)) continue;
+    outByRef.set(item.session_ref, item);
+  }
+
+  if (filters.workspace_dir) {
+    const persisted = await listPersistedSessions(filters.workspace_dir);
+    for (const item of persisted) {
+      if (!matchesSessionFilters(item, filters)) continue;
+      if (!outByRef.has(item.session_ref)) outByRef.set(item.session_ref, item);
+    }
+  }
+
+  const out = [...outByRef.values()];
   out.sort((a, b) => {
     if (a.started_at_ms !== b.started_at_ms) return b.started_at_ms - a.started_at_ms;
     return a.session_ref.localeCompare(b.session_ref);
   });
   return out;
+}
+
+// Test helper: simulate runtime restart by clearing in-memory session process handles.
+export function resetSessionStateForTests(): void {
+  SESSIONS.clear();
 }

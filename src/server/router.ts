@@ -4,6 +4,7 @@ import { z } from "zod";
 import { initWorkspace } from "../workspace/init.js";
 import { validateWorkspace } from "../workspace/validate.js";
 import { doctorWorkspace } from "../workspace/doctor.js";
+import { exportWorkspace, importWorkspace } from "../workspace/export_import.js";
 import { createRun } from "../runtime/run.js";
 import {
   launchSession,
@@ -12,6 +13,7 @@ import {
   stopSession,
   listSessions
 } from "../runtime/session.js";
+import { cleanupWorktrees } from "../runtime/worktree_cleanup.js";
 import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { buildUiSnapshot } from "../runtime/ui_bundle.js";
@@ -64,6 +66,27 @@ const WorkspaceDoctorParams = z.object({
   sync_index: z.boolean().default(false)
 });
 
+const WorkspaceExportParams = z.object({
+  workspace_dir: z.string().min(1),
+  out_dir: z.string().min(1),
+  include_local: z.boolean().default(false),
+  force: z.boolean().default(false)
+});
+
+const WorkspaceImportParams = z.object({
+  src_dir: z.string().min(1),
+  workspace_dir: z.string().min(1),
+  include_local: z.boolean().default(false),
+  force: z.boolean().default(false)
+});
+
+const WorktreeCleanupParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  max_age_hours: z.number().nonnegative().optional(),
+  dry_run: z.boolean().default(false)
+});
+
 const RunCreateParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
@@ -86,7 +109,8 @@ const SessionLaunchParams = z.object({
 });
 
 const SessionSingleParams = z.object({
-  session_ref: z.string().min(1)
+  session_ref: z.string().min(1),
+  workspace_dir: z.string().min(1).optional()
 });
 
 const SessionListParams = z.object({
@@ -393,6 +417,33 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         sync_index: p.sync_index
       });
     }
+    case "workspace.export": {
+      const p = WorkspaceExportParams.parse(params);
+      return exportWorkspace({
+        workspace_dir: p.workspace_dir,
+        out_dir: p.out_dir,
+        include_local: p.include_local,
+        force: p.force
+      });
+    }
+    case "workspace.import": {
+      const p = WorkspaceImportParams.parse(params);
+      return importWorkspace({
+        src_dir: p.src_dir,
+        workspace_dir: p.workspace_dir,
+        include_local: p.include_local,
+        force: p.force
+      });
+    }
+    case "worktree.cleanup": {
+      const p = WorktreeCleanupParams.parse(params);
+      return cleanupWorktrees({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        max_age_hours: p.max_age_hours,
+        dry_run: p.dry_run
+      });
+    }
     case "run.create": {
       const p = RunCreateParams.parse(params);
       return createRun({
@@ -420,19 +471,19 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     }
     case "session.poll": {
       const p = SessionSingleParams.parse(params);
-      return pollSession(p.session_ref);
+      return pollSession(p.session_ref, { workspace_dir: p.workspace_dir });
     }
     case "session.collect": {
       const p = SessionSingleParams.parse(params);
-      return collectSession(p.session_ref);
+      return collectSession(p.session_ref, { workspace_dir: p.workspace_dir });
     }
     case "session.stop": {
       const p = SessionSingleParams.parse(params);
-      return stopSession(p.session_ref);
+      return stopSession(p.session_ref, { workspace_dir: p.workspace_dir });
     }
     case "session.list": {
       const p = SessionListParams.parse(params ?? {});
-      return listSessions(p);
+      return await listSessions(p);
     }
     case "run.list": {
       const p = RunListParams.parse(params);

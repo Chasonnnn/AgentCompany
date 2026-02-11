@@ -100,6 +100,17 @@ describe("server router", () => {
     expect(Array.isArray(sessions)).toBe(true);
   });
 
+  test("worktree.cleanup returns retention summary", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const out = (await routeRpcMethod("worktree.cleanup", {
+      workspace_dir: dir,
+      dry_run: true
+    })) as any;
+    expect(typeof out.scanned).toBe("number");
+    expect(Array.isArray(out.items)).toBe(true);
+  });
+
   test("workspace.doctor returns summary checks", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });

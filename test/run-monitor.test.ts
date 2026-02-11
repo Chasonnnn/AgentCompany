@@ -105,6 +105,6 @@ describe("run monitor snapshot", () => {
     expect(liveRow?.live_status).toBe("running");
     expect(liveRow?.session_ref).toBe(launched.session_ref);
 
-    stopSession(launched.session_ref);
+    await stopSession(launched.session_ref);
   });
 });
