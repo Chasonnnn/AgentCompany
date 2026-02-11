@@ -3,6 +3,7 @@ import path from "node:path";
 import { buildUiSnapshot, type UiSnapshot } from "../runtime/ui_bundle.js";
 import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
+import { buildUsageAnalyticsSnapshot } from "../runtime/usage_analytics.js";
 import { resolveInboxAndBuildUiSnapshot } from "./resolve_and_snapshot.js";
 import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
 import type { ActorRole } from "../policy/policy.js";
@@ -1327,6 +1328,25 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
           sync_index: syncParam
         });
         sendJson(res, 200, inbox);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/usage/analytics") {
+        const refreshParam = parseBooleanParam(url.searchParams.get("refresh_index"));
+        const syncParam = parseBooleanParam(url.searchParams.get("sync_index"));
+        const limitParam = url.searchParams.get("limit");
+        const parsedLimit = limitParam == null ? undefined : Number(limitParam);
+        const analytics = await buildUsageAnalyticsSnapshot({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          limit:
+            parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
+              ? Math.floor(parsedLimit)
+              : args.monitor_limit,
+          refresh_index: refreshParam ?? args.refresh_index,
+          sync_index: syncParam ?? args.sync_index
+        });
+        sendJson(res, 200, analytics);
         return;
       }
 

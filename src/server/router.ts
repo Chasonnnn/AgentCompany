@@ -17,6 +17,7 @@ import { cleanupWorktrees } from "../runtime/worktree_cleanup.js";
 import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { buildUiSnapshot } from "../runtime/ui_bundle.js";
+import { buildUsageAnalyticsSnapshot } from "../runtime/usage_analytics.js";
 import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/index_sync_service.js";
 import { resolveInboxItem } from "../inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "../ui/resolve_and_snapshot.js";
@@ -94,15 +95,27 @@ const RunCreateParams = z.object({
   provider: z.string().min(1)
 });
 
+const BudgetThresholdParams = z
+  .object({
+    soft_cost_usd: z.number().finite().nonnegative().optional(),
+    hard_cost_usd: z.number().finite().nonnegative().optional(),
+    soft_tokens: z.number().int().nonnegative().optional(),
+    hard_tokens: z.number().int().nonnegative().optional()
+  })
+  .strict();
+
 const SessionLaunchParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
   run_id: z.string().min(1),
-  argv: z.array(z.string().min(1)).min(1),
+  argv: z.array(z.string().min(1)).default([]),
   repo_id: z.string().min(1).optional(),
   workdir_rel: z.string().min(1).optional(),
   task_id: z.string().min(1).optional(),
   milestone_id: z.string().min(1).optional(),
+  prompt_text: z.string().optional(),
+  model: z.string().min(1).optional(),
+  budget: BudgetThresholdParams.optional(),
   stdin_text: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),
   session_ref: z.string().min(1).optional()
@@ -293,6 +306,14 @@ const UiSnapshotParams = z.object({
   sync_index: z.boolean().optional()
 });
 
+const UsageAnalyticsParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(5000).optional(),
+  refresh_index: z.boolean().optional(),
+  sync_index: z.boolean().optional()
+});
+
 const UiResolveParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
@@ -464,6 +485,9 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         workdir_rel: p.workdir_rel,
         task_id: p.task_id,
         milestone_id: p.milestone_id,
+        prompt_text: p.prompt_text,
+        model: p.model,
+        budget: p.budget,
         stdin_text: p.stdin_text,
         env: p.env,
         session_ref: p.session_ref
@@ -679,6 +703,16 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         project_id: p.project_id,
         pending_limit: p.pending_limit,
         decisions_limit: p.decisions_limit,
+        refresh_index: p.refresh_index,
+        sync_index: p.sync_index
+      });
+    }
+    case "usage.analytics": {
+      const p = UsageAnalyticsParams.parse(params);
+      return buildUsageAnalyticsSnapshot({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        limit: p.limit,
         refresh_index: p.refresh_index,
         sync_index: p.sync_index
       });
