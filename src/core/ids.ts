@@ -12,7 +12,8 @@ export type IdPrefix =
   | "ctx"
   | "share"
   | "rev"
-  | "help";
+  | "help"
+  | "cmt";
 
 export function newId(prefix: IdPrefix): `${IdPrefix}_${string}` {
   return `${prefix}_${ulid()}`;
@@ -21,4 +22,3 @@ export function newId(prefix: IdPrefix): `${IdPrefix}_${string}` {
 export function isIdWithPrefix(id: string, prefix: IdPrefix): boolean {
   return id.startsWith(`${prefix}_`) && id.length > `${prefix}_`.length;
 }
-

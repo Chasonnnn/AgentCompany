@@ -3,6 +3,7 @@ import { buildRunMonitorSnapshot, type RunMonitorSnapshot } from "./run_monitor.
 import { buildReviewInboxSnapshot, type ReviewInboxSnapshot } from "./review_inbox.js";
 import { readIndexSyncWorkerStatus, type IndexSyncServiceStatus } from "./index_sync_service.js";
 import { buildUiColleagues, type UiColleague } from "./colleagues.js";
+import { listComments, type CommentEntry } from "../comments/comment.js";
 
 export type UiSnapshotArgs = {
   workspace_dir: string;
@@ -10,6 +11,7 @@ export type UiSnapshotArgs = {
   monitor_limit?: number;
   pending_limit?: number;
   decisions_limit?: number;
+  comments_limit?: number;
   refresh_index?: boolean;
   sync_index?: boolean;
 };
@@ -21,6 +23,7 @@ export type UiSnapshot = {
   monitor: RunMonitorSnapshot;
   review_inbox: ReviewInboxSnapshot;
   colleagues: UiColleague[];
+  comments: CommentEntry[];
 };
 
 export async function buildUiSnapshot(args: UiSnapshotArgs): Promise<UiSnapshot> {
@@ -47,6 +50,14 @@ export async function buildUiSnapshot(args: UiSnapshotArgs): Promise<UiSnapshot>
     monitor,
     review_inbox: reviewInbox
   });
+  const comments =
+    args.project_id == null
+      ? []
+      : await listComments({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          limit: args.comments_limit
+        });
 
   return {
     workspace_dir: args.workspace_dir,
@@ -54,6 +65,7 @@ export async function buildUiSnapshot(args: UiSnapshotArgs): Promise<UiSnapshot>
     index_sync_worker: readIndexSyncWorkerStatus(),
     monitor,
     review_inbox: reviewInbox,
-    colleagues
+    colleagues,
+    comments
   };
 }
