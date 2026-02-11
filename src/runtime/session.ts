@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { nowIso } from "../core/time.js";
 import { readYamlFile, writeYamlFile } from "../store/yaml.js";
 import { ensureDir, writeFileAtomic } from "../store/fs.js";
 import { RunYaml } from "../schemas/run.js";
 import { executeCommandRun, type ExecuteCommandArgs, type ExecuteCommandResult } from "./execute_command.js";
+import { appendEventJsonl, newEnvelope } from "./events.js";
 import {
   executeCodexAppServerRun,
   type ExecuteCodexAppServerResult
@@ -46,6 +48,7 @@ export type SessionListItem = SessionPollResult & {
   ended_at_ms?: number;
   mode: "command" | "codex_app_server";
   pid?: number;
+  pid_claimed_at_ms?: number;
   stop_marker_relpath?: string;
   protocol_thread_id?: string;
   protocol_turn_id?: string;
@@ -69,6 +72,7 @@ type SessionRecord = {
   ended_at_ms?: number;
   mode: "command" | "codex_app_server";
   pid?: number;
+  pid_claimed_at_ms?: number;
   stop_marker_relpath?: string;
   protocol_thread_id?: string;
   protocol_turn_id?: string;
@@ -89,12 +93,14 @@ const PersistedSessionRecord = z.object({
   ended_at_ms: z.number().int().nonnegative().optional(),
   mode: z.enum(["command", "codex_app_server"]).default("command"),
   pid: z.number().int().positive().optional(),
+  pid_claimed_at_ms: z.number().int().nonnegative().optional(),
   stop_marker_relpath: z.string().min(1).optional(),
   protocol_thread_id: z.string().min(1).optional(),
   protocol_turn_id: z.string().min(1).optional()
 });
 
 const SESSIONS = new Map<string, SessionRecord>();
+const DETACHED_PID_REUSE_GUARD_MS = 30 * 60 * 1000;
 
 function runYamlPath(workspaceDir: string, projectId: string, runId: string): string {
   return path.join(workspaceDir, "work/projects", projectId, "runs", runId, "run.yaml");
@@ -122,6 +128,7 @@ function toListItem(rec: SessionRecord): SessionListItem {
     ended_at_ms: rec.ended_at_ms,
     mode: rec.mode,
     pid: rec.pid,
+    pid_claimed_at_ms: rec.pid_claimed_at_ms,
     stop_marker_relpath: rec.stop_marker_relpath,
     protocol_thread_id: rec.protocol_thread_id,
     protocol_turn_id: rec.protocol_turn_id
@@ -161,6 +168,77 @@ function isCodexAppServerProvider(provider: string): boolean {
   return provider === "codex_app_server" || provider === "codex-app-server";
 }
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code !== "ESRCH";
+  }
+}
+
+async function markOrphanedDetachedSession(item: SessionListItem): Promise<SessionListItem> {
+  const endedAt = nowIso();
+  const endedAtMs = Date.now();
+  const stopMarkerRel =
+    item.stop_marker_relpath ?? path.join("runs", item.run_id, "outputs", "stop_requested.flag");
+  const stopMarkerAbs = path.join(item.workspace_dir, "work/projects", item.project_id, stopMarkerRel);
+  const stopRequested = await fs
+    .access(stopMarkerAbs)
+    .then(() => true)
+    .catch(() => false);
+  const reconciledStatus: SessionStatus = stopRequested ? "stopped" : "failed";
+  const runPath = runYamlPath(item.workspace_dir, item.project_id, item.run_id);
+  try {
+    const run = RunYaml.parse(await readYamlFile(runPath));
+    if (run.status === "running") {
+      await writeYamlFile(runPath, { ...run, status: reconciledStatus, ended_at: endedAt });
+      const eventsPath = path.join(
+        item.workspace_dir,
+        "work/projects",
+        item.project_id,
+        "runs",
+        item.run_id,
+        "events.jsonl"
+      );
+      await appendEventJsonl(
+        eventsPath,
+        newEnvelope({
+          schema_version: 1,
+          ts_wallclock: endedAt,
+          run_id: item.run_id,
+          session_ref: item.session_ref,
+          actor: "system",
+          visibility: "org",
+          type: reconciledStatus === "stopped" ? "run.stopped" : "run.failed",
+          payload: {
+            exit_code: null,
+            signal: null,
+            stopped: reconciledStatus === "stopped",
+            orphaned: true
+          }
+        })
+      ).catch(() => {});
+    }
+  } catch {
+    // If run.yaml is unreadable, still reconcile the detached session record itself.
+  }
+
+  const reconciled: SessionListItem = {
+    ...item,
+    status: reconciledStatus,
+    ended_at_ms: item.ended_at_ms ?? endedAtMs,
+    error:
+      item.error ??
+      (reconciledStatus === "stopped"
+        ? "Reconciled detached stop request after process exit."
+        : "Reconciled orphaned detached session (pid not running).")
+  };
+  await persistSessionItem(reconciled);
+  return reconciled;
+}
+
 async function persistSessionItem(item: SessionListItem): Promise<void> {
   await ensureDir(sessionsDir(item.workspace_dir));
   await writeYamlFile(sessionRecordPath(item.workspace_dir, item.session_ref), {
@@ -178,6 +256,7 @@ async function persistSessionItem(item: SessionListItem): Promise<void> {
     ended_at_ms: item.ended_at_ms,
     mode: item.mode,
     pid: item.pid,
+    pid_claimed_at_ms: item.pid_claimed_at_ms,
     stop_marker_relpath: item.stop_marker_relpath,
     protocol_thread_id: item.protocol_thread_id,
     protocol_turn_id: item.protocol_turn_id
@@ -204,6 +283,7 @@ async function loadPersistedSession(
       ended_at_ms: rec.ended_at_ms,
       mode: rec.mode,
       pid: rec.pid,
+      pid_claimed_at_ms: rec.pid_claimed_at_ms,
       stop_marker_relpath: rec.stop_marker_relpath,
       protocol_thread_id: rec.protocol_thread_id,
       protocol_turn_id: rec.protocol_turn_id
@@ -215,6 +295,9 @@ async function loadPersistedSession(
 
 async function reconcilePersistedSession(item: SessionListItem): Promise<SessionListItem> {
   if (item.status !== "running") return item;
+  if (item.pid && !isProcessAlive(item.pid)) {
+    return markOrphanedDetachedSession(item);
+  }
   try {
     const run = RunYaml.parse(
       await readYamlFile(runYamlPath(item.workspace_dir, item.project_id, item.run_id))
@@ -323,7 +406,10 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
           env: args.env,
           session_ref: sessionRef,
           on_state_update: ({ pid, stop_marker_relpath, thread_id, turn_id }) => {
-            if (pid !== undefined) rec.pid = pid;
+            if (pid !== undefined) {
+              rec.pid = pid;
+              rec.pid_claimed_at_ms = Date.now();
+            }
             if (stop_marker_relpath !== undefined) rec.stop_marker_relpath = stop_marker_relpath;
             if (thread_id !== undefined) rec.protocol_thread_id = thread_id;
             if (turn_id !== undefined) rec.protocol_turn_id = turn_id;
@@ -337,6 +423,7 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
           session_ref: sessionRef,
           on_child_spawn: ({ pid, stop_marker_relpath }) => {
             rec.pid = pid;
+            rec.pid_claimed_at_ms = Date.now();
             rec.stop_marker_relpath = stop_marker_relpath;
             void persistSessionItem(toListItem(rec)).catch(() => {});
           },
@@ -414,6 +501,20 @@ export async function stopSession(
   const persisted = await resolveSessionSnapshot(session_ref, lookup);
   if (persisted.status === "running") {
     if (persisted.pid) {
+      if (!isProcessAlive(persisted.pid)) {
+        const reconciled = await markOrphanedDetachedSession(persisted);
+        return toPollResult(reconciled);
+      }
+      if (
+        persisted.pid_claimed_at_ms !== undefined &&
+        Date.now() - persisted.pid_claimed_at_ms > DETACHED_PID_REUSE_GUARD_MS
+      ) {
+        return {
+          ...toPollResult(persisted),
+          error:
+            "Refusing to signal detached session pid: fingerprint is stale and PID may have been reused. Relaunch session control to proceed safely."
+        };
+      }
       const stopMarkerRel =
         persisted.stop_marker_relpath ??
         path.join("runs", persisted.run_id, "outputs", "stop_requested.flag");

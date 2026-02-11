@@ -15,7 +15,7 @@ import {
   listSessions,
   resetSessionStateForTests
 } from "../src/runtime/session.js";
-import { readYamlFile } from "../src/store/yaml.js";
+import { readYamlFile, writeYamlFile } from "../src/store/yaml.js";
 import { RunYaml } from "../src/schemas/run.js";
 
 async function mkTmpDir(): Promise<string> {
@@ -39,6 +39,10 @@ async function waitForTerminal(
     if (Date.now() > end) throw new Error(`Timed out waiting for session: ${sessionRef}`);
     await sleep(30);
   }
+}
+
+function sessionRecordPath(workspaceDir: string, sessionRef: string): string {
+  return path.join(workspaceDir, ".local", "sessions", `${encodeURIComponent(sessionRef)}.yaml`);
 }
 
 describe("runtime session lifecycle", () => {
@@ -219,4 +223,128 @@ describe("runtime session lifecycle", () => {
     },
     10000
   );
+
+  test("persisted detached session records include pid fingerprint metadata", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+
+    const launched = await launchSession({
+      workspace_dir: dir,
+      project_id,
+      run_id,
+      argv: [process.execPath, "-e", "setInterval(() => process.stdout.write('tick\\n'), 200);"]
+    });
+    await sleep(120);
+
+    const persisted = (await readYamlFile(sessionRecordPath(dir, launched.session_ref))) as Record<
+      string,
+      unknown
+    >;
+    expect(typeof persisted.pid).toBe("number");
+    expect(typeof persisted.pid_claimed_at_ms).toBe("number");
+
+    await stopSession(launched.session_ref, { workspace_dir: dir });
+    await waitForTerminal(launched.session_ref, dir, 15000);
+  });
+
+  test(
+    "detached stop refuses stale pid claims to reduce pid reuse risk",
+    async () => {
+      const dir = await mkTmpDir();
+      await initWorkspace({ root_dir: dir, company_name: "Acme" });
+      const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+      const { agent_id } = await createAgent({
+        workspace_dir: dir,
+        name: "Worker",
+        role: "worker",
+        provider: "cmd",
+        team_id
+      });
+      const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+      const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+
+      const launched = await launchSession({
+        workspace_dir: dir,
+        project_id,
+        run_id,
+        argv: [process.execPath, "-e", "setInterval(() => process.stdout.write('tick\\n'), 200);"]
+      });
+      await sleep(120);
+      resetSessionStateForTests();
+
+      const p = sessionRecordPath(dir, launched.session_ref);
+      const rec = (await readYamlFile(p)) as Record<string, unknown>;
+      await writeYamlFile(p, {
+        ...rec,
+        pid_claimed_at_ms: Date.now() - 31 * 60 * 1000
+      });
+
+      const stopRes = await stopSession(launched.session_ref, { workspace_dir: dir });
+      expect(stopRes.status).toBe("running");
+      expect(stopRes.error ?? "").toMatch(/pid may have been reused/i);
+
+      const refreshed = (await readYamlFile(p)) as Record<string, unknown>;
+      const pid = refreshed.pid as number;
+      process.kill(pid, "SIGKILL");
+      await sleep(80);
+      const terminal = await waitForTerminal(launched.session_ref, dir, 15000);
+      expect(["failed", "stopped"]).toContain(terminal.status);
+    },
+    10000
+  );
+
+  test("reconciles orphaned detached sessions when pid no longer exists", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+
+    const launched = await launchSession({
+      workspace_dir: dir,
+      project_id,
+      run_id,
+      argv: [process.execPath, "-e", "setInterval(() => process.stdout.write('tick\\n'), 200);"]
+    });
+
+    await sleep(120);
+    const persisted = (await readYamlFile(sessionRecordPath(dir, launched.session_ref))) as Record<
+      string,
+      unknown
+    >;
+    const pid = persisted.pid as number;
+    expect(typeof pid).toBe("number");
+
+    process.kill(pid, "SIGKILL");
+    await sleep(80);
+    resetSessionStateForTests();
+
+    const polled = await pollSession(launched.session_ref, { workspace_dir: dir });
+    expect(polled.status).toBe("failed");
+    if (polled.error) {
+      expect(polled.error).toMatch(/orphaned detached session/i);
+    }
+
+    const runDoc = RunYaml.parse(
+      await readYamlFile(path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml"))
+    );
+    expect(runDoc.status).toBe("failed");
+  });
 });
