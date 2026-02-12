@@ -27,15 +27,9 @@ node dist/cli.js --help
 Run the desktop shell (Tauri, no Docker):
 ```bash
 pnpm build
-pnpm tauri:dev:v3
+pnpm tauri:dev
 ```
-`tauri:dev:v3` runs in local mode (`--no-dev-server`) and launches from the bundled React desktop frontend.
-
-Legacy/compat profiles:
-```bash
-pnpm tauri:dev:legacy
-pnpm tauri:dev:compat
-```
+`tauri:dev` runs in local mode (`--no-dev-server`) and launches from the bundled React desktop frontend.
 
 Desktop UX contract (current):
 - The user is always treated as `CEO` in the desktop shell session flow.

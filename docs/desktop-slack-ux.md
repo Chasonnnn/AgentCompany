@@ -11,8 +11,8 @@ This document defines the v3 desktop IA and visual direction for the React/Tauri
 
 ## Native Shell Behavior
 
-- macOS overlay title bar with hidden title and transparent window profile (`tauri.v3.conf.json`).
-- Compatibility profile (`tauri.compat.conf.json`) for reduced transparency or non-overlay fallback.
+- Native macOS framed title bar for reliable platform drag/resize behavior (`tauri.conf.json`).
+- UI retains restrained styling and compact hierarchy without depending on overlay title-bar tricks.
 - Explicit drag region in top header; all interactive controls marked non-drag.
 
 ## Layout IA
