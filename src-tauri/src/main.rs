@@ -26,6 +26,20 @@ struct StartManagerWebArgs {
   cli_path: Option<String>
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BootstrapWorkspaceArgs {
+  workspace_dir: String,
+  company_name: Option<String>,
+  project_name: Option<String>,
+  departments: Option<Vec<String>>,
+  include_ceo: Option<bool>,
+  include_director: Option<bool>,
+  force: Option<bool>,
+  node_bin: Option<String>,
+  cli_path: Option<String>
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ManagerWebStatus {
@@ -82,6 +96,13 @@ fn status_from_managed(p: &ManagedProcess) -> ManagerWebStatus {
 
 fn valid_actor_role(role: &str) -> bool {
   matches!(role, "human" | "ceo" | "director" | "manager" | "worker")
+}
+
+fn parse_cli_json_output(stdout: &[u8]) -> Result<serde_json::Value, String> {
+  let s = String::from_utf8(stdout.to_vec())
+    .map_err(|e| format!("CLI stdout is not valid UTF-8: {}", e))?;
+  serde_json::from_str::<serde_json::Value>(s.trim())
+    .map_err(|e| format!("CLI returned non-JSON output: {} (output: {})", e, s.trim()))
 }
 
 fn resolve_node_bin(explicit: Option<String>) -> String {
@@ -343,13 +364,77 @@ fn start_manager_web(
   Ok(status)
 }
 
+#[tauri::command]
+fn bootstrap_workspace(args: BootstrapWorkspaceArgs) -> Result<serde_json::Value, String> {
+  let workspace_dir = args.workspace_dir.trim();
+  if workspace_dir.is_empty() {
+    return Err("workspace_dir is required".to_string());
+  }
+
+  let node_bin = resolve_node_bin(args.node_bin);
+  let cli_path = resolve_cli_path(args.cli_path)?;
+
+  let mut command = Command::new(node_bin);
+  command.arg(cli_path).arg("workspace:bootstrap").arg(workspace_dir);
+
+  if let Some(name) = args.company_name {
+    let trimmed = name.trim();
+    if !trimmed.is_empty() {
+      command.arg("--name").arg(trimmed);
+    }
+  }
+  if let Some(project_name) = args.project_name {
+    let trimmed = project_name.trim();
+    if !trimmed.is_empty() {
+      command.arg("--project-name").arg(trimmed);
+    }
+  }
+
+  let departments = args.departments.unwrap_or_else(|| vec![]);
+  let normalized_departments: Vec<String> = departments
+    .into_iter()
+    .map(|d| d.trim().to_string())
+    .filter(|d| !d.is_empty())
+    .collect();
+  if !normalized_departments.is_empty() {
+    command.arg("--departments");
+    for dep in normalized_departments {
+      command.arg(dep);
+    }
+  }
+
+  if args.include_ceo == Some(false) {
+    command.arg("--no-ceo");
+  }
+  if args.include_director == Some(false) {
+    command.arg("--no-director");
+  }
+  if args.force.unwrap_or(false) {
+    command.arg("--force");
+  }
+
+  command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+  let output = command
+    .output()
+    .map_err(|e| format!("Failed to run workspace bootstrap: {}", e))?;
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    return Err(format!("Workspace bootstrap failed: {}", detail));
+  }
+
+  parse_cli_json_output(&output.stdout)
+}
+
 fn main() {
   tauri::Builder::default()
     .manage(UiProcessState::default())
     .invoke_handler(tauri::generate_handler![
       start_manager_web,
       stop_manager_web,
-      manager_web_status
+      manager_web_status,
+      bootstrap_workspace
     ])
     .run(tauri::generate_context!())
     .expect("error while running AgentCompany Desktop");
