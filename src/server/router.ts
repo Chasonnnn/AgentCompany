@@ -24,9 +24,28 @@ import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/inde
 import { resolveInboxItem } from "../inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "../ui/resolve_and_snapshot.js";
 import { createComment, listComments } from "../comments/comment.js";
+import { listAgents as listOrgAgents } from "../org/agents_list.js";
 import { listRuns } from "../runtime/run_queries.js";
 import { replayRun } from "../runtime/replay.js";
 import { replaySharePack } from "../share/replay.js";
+import { listProjects } from "../work/projects_list.js";
+import { createProjectWithDefaults } from "../work/projects_with_defaults.js";
+import { linkProjectRepo, readProjectRepoLinks } from "../work/project_repo_links.js";
+import { listTeams as listOrgTeams } from "../org/teams_list.js";
+import { listProjectTasks } from "../work/tasks_list.js";
+import { updateTaskPlan } from "../work/tasks_plan_update.js";
+import { buildWorkspaceHomeSnapshot } from "../runtime/workspace_home.js";
+import { buildPmSnapshot } from "../runtime/pm_snapshot.js";
+import { recommendTaskAllocations, applyTaskAllocations } from "../runtime/allocation_recommend.js";
+import {
+  listConversations,
+  createConversation,
+  listConversationMessages,
+  sendConversationMessage
+} from "../conversations/store.js";
+import { ensureProjectDefaults, ensureWorkspaceDefaults } from "../conversations/defaults.js";
+import { buildAgentProfileSnapshot } from "../runtime/agent_profile.js";
+import { buildResourcesSnapshot } from "../runtime/resources_snapshot.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
 import { approveMilestone } from "../milestones/approve_milestone.js";
@@ -372,6 +391,166 @@ const UsageAnalyticsParams = z.object({
   sync_index: z.boolean().optional()
 });
 
+const WorkspaceProjectsListParams = z.object({
+  workspace_dir: z.string().min(1)
+});
+
+const WorkspaceAgentsListParams = z.object({
+  workspace_dir: z.string().min(1),
+  role: z.enum(["ceo", "director", "manager", "worker"]).optional(),
+  team_id: z.string().min(1).optional()
+});
+
+const WorkspaceTeamsListParams = z.object({
+  workspace_dir: z.string().min(1)
+});
+
+const WorkspaceProjectCreateWithDefaultsParams = z.object({
+  workspace_dir: z.string().min(1),
+  name: z.string().min(1),
+  ceo_actor_id: z.string().min(1).optional(),
+  repo_ids: z.array(z.string().min(1)).optional()
+});
+
+const WorkspaceProjectLinkRepoParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  repo_id: z.string().min(1),
+  label: z.string().min(1).optional()
+});
+
+const WorkspaceHomeSnapshotParams = z.object({
+  workspace_dir: z.string().min(1)
+});
+
+const TaskScheduleParams = z
+  .object({
+    planned_start: z.string().min(1).optional(),
+    planned_end: z.string().min(1).optional(),
+    duration_days: z.number().int().positive().optional(),
+    depends_on_task_ids: z.array(z.string().min(1)).optional()
+  })
+  .strict();
+
+const TaskExecutionPlanParams = z
+  .object({
+    preferred_provider: z.string().min(1).optional(),
+    preferred_model: z.string().min(1).optional(),
+    preferred_agent_id: z.string().min(1).optional(),
+    token_budget_hint: z.number().int().nonnegative().optional(),
+    applied_by: z.string().min(1).optional(),
+    applied_at: z.string().min(1).optional()
+  })
+  .strict();
+
+const TaskListParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1)
+});
+
+const TaskUpdatePlanParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  task_id: z.string().min(1),
+  schedule: TaskScheduleParams.optional(),
+  execution_plan: TaskExecutionPlanParams.optional(),
+  clear_schedule: z.boolean().optional(),
+  clear_execution_plan: z.boolean().optional()
+});
+
+const PmSnapshotParams = z.object({
+  workspace_dir: z.string().min(1),
+  scope: z.enum(["workspace", "project"]),
+  project_id: z.string().min(1).optional()
+});
+
+const PmRecommendAllocationsParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1)
+});
+
+const PmApplyAllocationsParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  applied_by: z.string().min(1),
+  items: z
+    .array(
+      z.object({
+        task_id: z.string().min(1),
+        preferred_provider: z.string().min(1).optional(),
+        preferred_model: z.string().min(1).optional(),
+        preferred_agent_id: z.string().min(1).optional(),
+        token_budget_hint: z.number().int().nonnegative().optional()
+      })
+    )
+    .default([])
+});
+
+const ConversationListParams = z.object({
+  workspace_dir: z.string().min(1),
+  scope: z.enum(["workspace", "project"]),
+  project_id: z.string().min(1).optional()
+});
+
+const ConversationCreateChannelParams = z.object({
+  workspace_dir: z.string().min(1),
+  scope: z.enum(["workspace", "project"]),
+  project_id: z.string().min(1).optional(),
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  visibility: z.enum(["private_agent", "team", "managers", "org"]).optional(),
+  created_by: z.string().min(1),
+  participant_agent_ids: z.array(z.string().min(1)).optional(),
+  participant_team_ids: z.array(z.string().min(1)).optional()
+});
+
+const ConversationCreateDmParams = z.object({
+  workspace_dir: z.string().min(1),
+  scope: z.enum(["workspace", "project"]),
+  project_id: z.string().min(1).optional(),
+  created_by: z.string().min(1),
+  peer_agent_id: z.string().min(1),
+  visibility: z.enum(["private_agent", "team", "managers", "org"]).optional()
+});
+
+const ConversationMessagesListParams = z.object({
+  workspace_dir: z.string().min(1),
+  scope: z.enum(["workspace", "project"]),
+  project_id: z.string().min(1).optional(),
+  conversation_id: z.string().min(1),
+  limit: z.number().int().positive().max(5000).optional()
+});
+
+const ConversationMessageSendParams = z.object({
+  workspace_dir: z.string().min(1),
+  scope: z.enum(["workspace", "project"]),
+  project_id: z.string().min(1).optional(),
+  conversation_id: z.string().min(1),
+  author_id: z.string().min(1),
+  author_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  body: z.string().min(1),
+  kind: z.enum(["text", "system", "report"]).optional(),
+  visibility: z.enum(["private_agent", "team", "managers", "org"]).optional(),
+  mentions: z.array(z.string().min(1)).optional()
+});
+
+const ConversationMembersSyncParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  ceo_actor_id: z.string().min(1).optional()
+});
+
+const AgentProfileSnapshotParams = z.object({
+  workspace_dir: z.string().min(1),
+  agent_id: z.string().min(1),
+  project_id: z.string().min(1).optional()
+});
+
+const ResourcesSnapshotParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1).optional()
+});
+
 const UiResolveParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
@@ -532,6 +711,279 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         workspace_dir: p.workspace_dir,
         include_local: p.include_local,
         force: p.force
+      });
+    }
+    case "workspace.projects.list": {
+      const p = WorkspaceProjectsListParams.parse(params);
+      await ensureWorkspaceDefaults({ workspace_dir: p.workspace_dir });
+      const [projects, home, pm] = await Promise.all([
+        listProjects({ workspace_dir: p.workspace_dir }),
+        buildWorkspaceHomeSnapshot({ workspace_dir: p.workspace_dir }),
+        buildPmSnapshot({
+          workspace_dir: p.workspace_dir,
+          scope: "workspace"
+        })
+      ]);
+      const pendingByProject = new Map(home.projects.map((row) => [row.project_id, row.pending_reviews]));
+      const activeByProject = new Map(home.projects.map((row) => [row.project_id, row.active_runs]));
+      const pmByProject = new Map(pm.workspace.projects.map((row) => [row.project_id, row]));
+      return {
+        workspace_dir: p.workspace_dir,
+        projects: await Promise.all(
+          projects.map(async (proj) => {
+            const links = await readProjectRepoLinks({
+              workspace_dir: p.workspace_dir,
+              project_id: proj.project_id
+            });
+            const projectPm = pmByProject.get(proj.project_id);
+            return {
+              ...proj,
+              repo_links: links.repos,
+              pending_reviews: pendingByProject.get(proj.project_id) ?? 0,
+              active_runs: activeByProject.get(proj.project_id) ?? 0,
+              task_count: projectPm?.task_count ?? 0,
+              progress_pct: projectPm?.progress_pct ?? 0,
+              blocked_tasks: projectPm?.blocked_tasks ?? 0,
+              risk_flags: projectPm?.risk_flags ?? []
+            };
+          })
+        )
+      };
+    }
+    case "workspace.agents.list": {
+      const p = WorkspaceAgentsListParams.parse(params);
+      return listOrgAgents({
+        workspace_dir: p.workspace_dir,
+        role: p.role,
+        team_id: p.team_id
+      });
+    }
+    case "workspace.teams.list": {
+      const p = WorkspaceTeamsListParams.parse(params);
+      return listOrgTeams({
+        workspace_dir: p.workspace_dir
+      });
+    }
+    case "workspace.project.create_with_defaults": {
+      const p = WorkspaceProjectCreateWithDefaultsParams.parse(params);
+      return createProjectWithDefaults({
+        workspace_dir: p.workspace_dir,
+        name: p.name,
+        ceo_actor_id: p.ceo_actor_id,
+        repo_ids: p.repo_ids
+      });
+    }
+    case "workspace.project.link_repo": {
+      const p = WorkspaceProjectLinkRepoParams.parse(params);
+      const links = await linkProjectRepo({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        repo_id: p.repo_id,
+        label: p.label
+      });
+      return {
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        repos: links.repos
+      };
+    }
+    case "workspace.home.snapshot": {
+      const p = WorkspaceHomeSnapshotParams.parse(params);
+      const [home, pm] = await Promise.all([
+        buildWorkspaceHomeSnapshot({
+          workspace_dir: p.workspace_dir
+        }),
+        buildPmSnapshot({
+          workspace_dir: p.workspace_dir,
+          scope: "workspace"
+        })
+      ]);
+      return {
+        ...home,
+        pm: pm.workspace
+      };
+    }
+    case "task.list": {
+      const p = TaskListParams.parse(params);
+      const tasks = await listProjectTasks({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id
+      });
+      return {
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        tasks
+      };
+    }
+    case "task.update_plan": {
+      const p = TaskUpdatePlanParams.parse(params);
+      return updateTaskPlan({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        task_id: p.task_id,
+        schedule: p.schedule
+          ? {
+              ...p.schedule,
+              depends_on_task_ids: p.schedule.depends_on_task_ids ?? []
+            }
+          : undefined,
+        execution_plan: p.execution_plan,
+        clear_schedule: p.clear_schedule,
+        clear_execution_plan: p.clear_execution_plan
+      });
+    }
+    case "pm.snapshot": {
+      const p = PmSnapshotParams.parse(params);
+      if (p.scope === "project" && !p.project_id) {
+        throw new RpcUserError("project_id is required when scope=project");
+      }
+      return buildPmSnapshot({
+        workspace_dir: p.workspace_dir,
+        scope: p.scope,
+        project_id: p.project_id
+      });
+    }
+    case "pm.recommend_allocations": {
+      const p = PmRecommendAllocationsParams.parse(params);
+      return recommendTaskAllocations({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id
+      });
+    }
+    case "pm.apply_allocations": {
+      const p = PmApplyAllocationsParams.parse(params);
+      return applyTaskAllocations({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        applied_by: p.applied_by,
+        items: p.items
+      });
+    }
+    case "conversation.list": {
+      const p = ConversationListParams.parse(params);
+      if (p.scope === "project" && !p.project_id) {
+        throw new RpcUserError("project_id is required when scope=project");
+      }
+      if (p.scope === "project" && p.project_id) {
+        await ensureProjectDefaults({
+          workspace_dir: p.workspace_dir,
+          project_id: p.project_id
+        });
+      } else if (p.scope === "workspace") {
+        await ensureWorkspaceDefaults({ workspace_dir: p.workspace_dir });
+      }
+      return listConversations({
+        workspace_dir: p.workspace_dir,
+        scope: p.scope,
+        project_id: p.project_id
+      });
+    }
+    case "conversation.create_channel": {
+      const p = ConversationCreateChannelParams.parse(params);
+      if (p.scope === "project" && !p.project_id) {
+        throw new RpcUserError("project_id is required when scope=project");
+      }
+      return createConversation({
+        workspace_dir: p.workspace_dir,
+        scope: p.scope,
+        project_id: p.project_id,
+        kind: "channel",
+        name: p.name,
+        slug: p.slug,
+        visibility: p.visibility ?? "team",
+        created_by: p.created_by,
+        participants: {
+          agent_ids: p.participant_agent_ids ?? [],
+          team_ids: p.participant_team_ids ?? []
+        }
+      });
+    }
+    case "conversation.create_dm": {
+      const p = ConversationCreateDmParams.parse(params);
+      if (p.scope === "project" && !p.project_id) {
+        throw new RpcUserError("project_id is required when scope=project");
+      }
+      const existing = (
+        await listConversations({
+          workspace_dir: p.workspace_dir,
+          scope: p.scope,
+          project_id: p.project_id
+        })
+      ).find(
+        (c) =>
+          c.kind === "dm" &&
+          c.dm_peer_agent_id === p.peer_agent_id &&
+          c.participants.agent_ids.includes(p.created_by)
+      );
+      if (existing) return existing;
+      const slug = `dm-${p.peer_agent_id}`;
+      return createConversation({
+        workspace_dir: p.workspace_dir,
+        scope: p.scope,
+        project_id: p.project_id,
+        kind: "dm",
+        name: `DM: ${p.peer_agent_id}`,
+        slug,
+        visibility: p.visibility ?? "private_agent",
+        created_by: p.created_by,
+        participants: {
+          agent_ids: [...new Set([p.created_by, p.peer_agent_id])]
+        },
+        dm_peer_agent_id: p.peer_agent_id
+      });
+    }
+    case "conversation.messages.list": {
+      const p = ConversationMessagesListParams.parse(params);
+      if (p.scope === "project" && !p.project_id) {
+        throw new RpcUserError("project_id is required when scope=project");
+      }
+      return listConversationMessages({
+        workspace_dir: p.workspace_dir,
+        scope: p.scope,
+        project_id: p.project_id,
+        conversation_id: p.conversation_id,
+        limit: p.limit
+      });
+    }
+    case "conversation.message.send": {
+      const p = ConversationMessageSendParams.parse(params);
+      if (p.scope === "project" && !p.project_id) {
+        throw new RpcUserError("project_id is required when scope=project");
+      }
+      return sendConversationMessage({
+        workspace_dir: p.workspace_dir,
+        scope: p.scope,
+        project_id: p.project_id,
+        conversation_id: p.conversation_id,
+        body: p.body,
+        author_id: p.author_id,
+        author_role: p.author_role,
+        kind: p.kind,
+        visibility: p.visibility,
+        mentions: p.mentions
+      });
+    }
+    case "conversation.members.sync": {
+      const p = ConversationMembersSyncParams.parse(params);
+      return ensureProjectDefaults({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        ceo_actor_id: p.ceo_actor_id
+      });
+    }
+    case "agent.profile.snapshot": {
+      const p = AgentProfileSnapshotParams.parse(params);
+      return buildAgentProfileSnapshot({
+        workspace_dir: p.workspace_dir,
+        agent_id: p.agent_id,
+        project_id: p.project_id
+      });
+    }
+    case "resources.snapshot": {
+      const p = ResourcesSnapshotParams.parse(params);
+      return buildResourcesSnapshot({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id
       });
     }
     case "worktree.cleanup": {

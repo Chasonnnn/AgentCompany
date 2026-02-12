@@ -49,6 +49,7 @@ import { startUiWebServer } from "./ui/web_server.js";
 import { desktopDoctor } from "./ui/desktop_doctor.js";
 import { desktopReleaseDoctor } from "./ui/desktop_release_doctor.js";
 import { runJsonRpcServer } from "./server/main.js";
+import { routeRpcMethod } from "./server/router.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
 import { buildUiSnapshot } from "./runtime/ui_bundle.js";
@@ -367,6 +368,24 @@ program
   .action(async () => {
     await runAction(async () => {
       await runJsonRpcServer();
+    });
+  });
+
+program
+  .command("rpc:call")
+  .description("Call a JSON-RPC router method directly (without starting stdio server)")
+  .requiredOption("--method <name>", "RPC method name")
+  .option("--params <json>", "JSON object params", "{}")
+  .action(async (opts: { method: string; params: string }) => {
+    await runAction(async () => {
+      let params: unknown = {};
+      try {
+        params = JSON.parse(opts.params);
+      } catch (e) {
+        throw new UserError(`--params must be valid JSON: ${(e as Error).message}`);
+      }
+      const result = await routeRpcMethod(opts.method, params);
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
     });
   });
 
