@@ -45,6 +45,36 @@ describe("run replay modes", () => {
     expect(replay.verification_issues).toEqual([]);
   });
 
+  test("deterministic mode reports deterministic_ok for canonical events", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Platform" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "cmd"
+    });
+
+    const replay = await replayRun({
+      workspace_dir: dir,
+      project_id,
+      run_id: run.run_id,
+      mode: "deterministic"
+    });
+    expect(replay.mode).toBe("deterministic");
+    expect(replay.deterministic_ok).toBe(true);
+    expect(replay.live.available).toBe(false);
+  });
+
   test("verified mode reports verification issues for malformed-but-parseable events", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
@@ -134,5 +164,34 @@ describe("run replay modes", () => {
       mode: "raw"
     });
     expect(replay.parse_issues.length).toBeGreaterThan(0);
+  });
+
+  test("live mode includes live session metadata when available", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Platform" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "cmd"
+    });
+
+    const replay = await replayRun({
+      workspace_dir: dir,
+      project_id,
+      run_id: run.run_id,
+      mode: "live"
+    });
+    expect(replay.mode).toBe("live");
+    expect(typeof replay.live.available).toBe("boolean");
   });
 });

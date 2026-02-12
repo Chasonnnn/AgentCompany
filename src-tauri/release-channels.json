@@ -1,0 +1,14 @@
+{
+  "alpha": {
+    "endpoint": "https://updates.agentcompany.dev/alpha/latest.json",
+    "channel": "alpha"
+  },
+  "beta": {
+    "endpoint": "https://updates.agentcompany.dev/beta/latest.json",
+    "channel": "beta"
+  },
+  "stable": {
+    "endpoint": "https://updates.agentcompany.dev/stable/latest.json",
+    "channel": "stable"
+  }
+}

@@ -8,6 +8,7 @@ import { createAgent } from "../src/org/agents.js";
 import { createProject } from "../src/work/projects.js";
 import { createRun } from "../src/runtime/run.js";
 import { executeCommandRun } from "../src/runtime/execute_command.js";
+import { appendEventJsonl, newEnvelope } from "../src/runtime/events.js";
 import { buildRunMonitorSnapshot } from "../src/runtime/run_monitor.js";
 import { launchSession, stopSession } from "../src/runtime/session.js";
 
@@ -112,5 +113,78 @@ describe("run monitor snapshot", () => {
     expect(liveRow?.session_ref).toBe(launched.session_ref);
 
     await stopSession(launched.session_ref);
+  });
+
+  test("includes latest policy/budget explainability details", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id } = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "cmd"
+    });
+
+    const eventsPath = path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl");
+    await appendEventJsonl(
+      eventsPath,
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: new Date().toISOString(),
+        run_id,
+        session_ref: `local_${run_id}`,
+        actor: agent_id,
+        visibility: "managers",
+        type: "policy.denied",
+        payload: {
+          action: "read",
+          policy: {
+            allowed: false,
+            rule_id: "vis.team.mismatch",
+            reason: "team_mismatch"
+          }
+        }
+      })
+    );
+    await appendEventJsonl(
+      eventsPath,
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: new Date().toISOString(),
+        run_id,
+        session_ref: `local_${run_id}`,
+        actor: "system",
+        visibility: "org",
+        type: "budget.decision",
+        payload: {
+          scope: "run",
+          metric: "tokens",
+          severity: "soft",
+          threshold: 10,
+          actual: 12,
+          result: "alert"
+        }
+      })
+    );
+
+    const snap = await buildRunMonitorSnapshot({
+      workspace_dir: dir,
+      project_id,
+      refresh_index: true
+    });
+    const row = snap.rows.find((r) => r.run_id === run_id);
+    expect(row?.latest_policy_denied?.rule_id).toBe("vis.team.mismatch");
+    expect(row?.latest_policy_denied?.reason).toBe("team_mismatch");
+    expect(row?.latest_budget_decision?.scope).toBe("run");
+    expect(row?.latest_budget_decision?.result).toBe("alert");
   });
 });

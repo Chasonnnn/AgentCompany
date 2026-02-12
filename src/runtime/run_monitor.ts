@@ -6,6 +6,7 @@ import {
   listIndexedRuns,
   listIndexedRunLastEvents,
   listIndexedRunEventTypeCounts,
+  listIndexedRunLatestTypedEvents,
   listIndexedRunParseErrorCounts,
   rebuildSqliteIndex,
   syncSqliteIndex
@@ -50,6 +51,25 @@ export type RunMonitorRow = {
   budget_decision_count: number;
   budget_alert_count: number;
   budget_exceeded_count: number;
+  latest_policy_decision?: {
+    allowed?: boolean;
+    rule_id?: string;
+    reason?: string;
+    action?: string;
+  };
+  latest_policy_denied?: {
+    rule_id?: string;
+    reason?: string;
+    action?: string;
+  };
+  latest_budget_decision?: {
+    scope?: string;
+    metric?: string;
+    severity?: string;
+    result?: string;
+    actual?: number;
+    threshold?: number;
+  };
   token_usage?: {
     source: "provider_reported" | "estimated_chars";
     confidence: "high" | "low";
@@ -70,6 +90,18 @@ export type RunMonitorSnapshot = {
 
 function runKey(projectId: string, runId: string): string {
   return `${projectId}::${runId}`;
+}
+
+function parsePayload(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore malformed payload json
+  }
+  return null;
 }
 
 async function readRunUsage(
@@ -108,7 +140,7 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     indexSynced = true;
   }
 
-  const [runs, lastEvents, parseErrors, eventTypeCounts] = await Promise.all([
+  const [runs, lastEvents, parseErrors, eventTypeCounts, latestTyped] = await Promise.all([
     listIndexedRuns({
       workspace_dir: args.workspace_dir,
       project_id: args.project_id,
@@ -134,6 +166,12 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
         "budget.alert",
         "budget.exceeded"
       ],
+      limit: limit * 8
+    }),
+    listIndexedRunLatestTypedEvents({
+      workspace_dir: args.workspace_dir,
+      project_id: args.project_id,
+      types: ["policy.decision", "policy.denied", "budget.decision"],
       limit: limit * 8
     })
   ]);
@@ -172,6 +210,51 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     else if (row.type === "budget.exceeded") curr.budget_exceeded_count = row.event_count;
     eventCountsByRun.set(key, curr);
   }
+  const latestExplainByRun = new Map<
+    string,
+    {
+      latest_policy_decision?: RunMonitorRow["latest_policy_decision"];
+      latest_policy_denied?: RunMonitorRow["latest_policy_denied"];
+      latest_budget_decision?: RunMonitorRow["latest_budget_decision"];
+    }
+  >();
+  for (const row of latestTyped) {
+    const key = runKey(row.project_id, row.run_id);
+    const curr = latestExplainByRun.get(key) ?? {};
+    const payload = parsePayload(row.payload_json);
+    if (!payload) {
+      latestExplainByRun.set(key, curr);
+      continue;
+    }
+    if (row.type === "policy.decision") {
+      curr.latest_policy_decision = {
+        allowed: typeof payload.allowed === "boolean" ? payload.allowed : undefined,
+        rule_id: typeof payload.rule_id === "string" ? payload.rule_id : undefined,
+        reason: typeof payload.reason === "string" ? payload.reason : undefined,
+        action: typeof payload.action === "string" ? payload.action : undefined
+      };
+    } else if (row.type === "policy.denied") {
+      const policy =
+        payload.policy && typeof payload.policy === "object" && !Array.isArray(payload.policy)
+          ? (payload.policy as Record<string, unknown>)
+          : null;
+      curr.latest_policy_denied = {
+        rule_id: typeof policy?.rule_id === "string" ? policy.rule_id : undefined,
+        reason: typeof policy?.reason === "string" ? policy.reason : undefined,
+        action: typeof payload.action === "string" ? payload.action : undefined
+      };
+    } else if (row.type === "budget.decision") {
+      curr.latest_budget_decision = {
+        scope: typeof payload.scope === "string" ? payload.scope : undefined,
+        metric: typeof payload.metric === "string" ? payload.metric : undefined,
+        severity: typeof payload.severity === "string" ? payload.severity : undefined,
+        result: typeof payload.result === "string" ? payload.result : undefined,
+        actual: typeof payload.actual === "number" ? payload.actual : undefined,
+        threshold: typeof payload.threshold === "number" ? payload.threshold : undefined
+      };
+    }
+    latestExplainByRun.set(key, curr);
+  }
 
   const sessions = await listSessions({
     workspace_dir: args.workspace_dir,
@@ -191,6 +274,7 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     const session = sessionByRun.get(key);
     const last = lastByRun.get(key);
     const counts = eventCountsByRun.get(key);
+    const explain = latestExplainByRun.get(key);
     rows.push({
       project_id: run.project_id,
       run_id: run.run_id,
@@ -220,7 +304,10 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
       policy_denied_count: counts?.policy_denied_count ?? 0,
       budget_decision_count: counts?.budget_decision_count ?? 0,
       budget_alert_count: counts?.budget_alert_count ?? 0,
-      budget_exceeded_count: counts?.budget_exceeded_count ?? 0
+      budget_exceeded_count: counts?.budget_exceeded_count ?? 0,
+      latest_policy_decision: explain?.latest_policy_decision,
+      latest_policy_denied: explain?.latest_policy_denied,
+      latest_budget_decision: explain?.latest_budget_decision
     });
   }
 
@@ -229,6 +316,7 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     const key = runKey(session.project_id, session.run_id);
     if (seen.has(key)) continue;
     const counts = eventCountsByRun.get(key);
+    const explain = latestExplainByRun.get(key);
     rows.push({
       project_id: session.project_id,
       run_id: session.run_id,
@@ -245,7 +333,10 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
       policy_denied_count: counts?.policy_denied_count ?? 0,
       budget_decision_count: counts?.budget_decision_count ?? 0,
       budget_alert_count: counts?.budget_alert_count ?? 0,
-      budget_exceeded_count: counts?.budget_exceeded_count ?? 0
+      budget_exceeded_count: counts?.budget_exceeded_count ?? 0,
+      latest_policy_decision: explain?.latest_policy_decision,
+      latest_policy_denied: explain?.latest_policy_denied,
+      latest_budget_decision: explain?.latest_budget_decision
     });
   }
 

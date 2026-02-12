@@ -938,12 +938,29 @@ function dashboardHtml(args: UiWebServerArgs): string {
       const runs = snapshot.monitor.rows || [];
       summaryRuns.textContent = String(runs.length);
       runsBody.innerHTML = runs.map((r) => {
+        const policyDenied = r.latest_policy_denied;
+        const policyDecision = r.latest_policy_decision;
+        const budgetDecision = r.latest_budget_decision;
+        const policyExplain = policyDenied
+          ? 'deny ' + esc(String(policyDenied.rule_id || '?')) + '/' + esc(String(policyDenied.reason || '?'))
+          : policyDecision
+            ? (String(policyDecision.allowed) === 'false' ? 'deny' : 'allow') + ' ' +
+              esc(String(policyDecision.rule_id || '?')) + '/' + esc(String(policyDecision.reason || '?'))
+            : 'n/a';
+        const budgetExplain = budgetDecision
+          ? esc(String(budgetDecision.scope || '?')) + ':' +
+            esc(String(budgetDecision.metric || '?')) + ':' +
+            esc(String(budgetDecision.severity || '?')) + '=' +
+            esc(String(budgetDecision.result || '?'))
+          : 'n/a';
         const governance =
           'policy denied ' + esc(String(r.policy_denied_count || 0)) +
           '/' + esc(String(r.policy_decision_count || 0)) +
           ' · budget hard ' + esc(String(r.budget_exceeded_count || 0)) +
           ', soft ' + esc(String(r.budget_alert_count || 0)) +
-          ' (' + esc(String(r.budget_decision_count || 0)) + ' decisions)';
+          ' (' + esc(String(r.budget_decision_count || 0)) + ' decisions)' +
+          '<br><span class="mono">policy: ' + policyExplain +
+          ' · budget: ' + budgetExplain + '</span>';
         return '<tr>' +
           '<td class="mono">' + esc(r.run_id) + '</td>' +
           '<td>' + esc(r.run_status) + '</td>' +

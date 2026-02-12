@@ -2,12 +2,11 @@ import path from "node:path";
 import { SharePackManifestYaml } from "../schemas/share_pack.js";
 import { readYamlFile } from "../store/yaml.js";
 import { readEventsJsonl } from "../runtime/run_queries.js";
-import {
-  normalizeReplayMode,
-  type ReplayMode,
-  type ReplayParseIssue
-} from "../runtime/replay.js";
+import { type ReplayMode, type ReplayParseIssue } from "../runtime/replay.js";
 import { verifyReplayEvents, type ReplayVerificationIssue } from "../runtime/replay_verify.js";
+
+export const ShareReplayModes = ["raw", "verified", "deterministic"] as const;
+export type ShareReplayMode = (typeof ShareReplayModes)[number];
 
 export type ReplaySharePackArgs = {
   workspace_dir: string;
@@ -15,13 +14,13 @@ export type ReplaySharePackArgs = {
   share_pack_id: string;
   run_id?: string;
   tail?: number;
-  mode?: ReplayMode;
+  mode?: ShareReplayMode | ReplayMode;
 };
 
 export type ReplaySharePackResult = {
   share_pack_id: string;
   project_id: string;
-  mode: ReplayMode;
+  mode: ShareReplayMode;
   runs: Array<{
     run_id: string;
     source_relpath: string;
@@ -29,6 +28,7 @@ export type ReplaySharePackResult = {
     events: any[];
     parse_issues: ReplayParseIssue[];
     verification_issues: ReplayVerificationIssue[];
+    deterministic_ok: boolean;
   }>;
 };
 
@@ -38,8 +38,13 @@ function normalizeTail(tail: number | undefined): number | undefined {
   return tail;
 }
 
+function normalizeShareReplayMode(mode: ReplaySharePackArgs["mode"]): ShareReplayMode {
+  if (mode === "verified" || mode === "deterministic" || mode === "raw") return mode;
+  return "raw";
+}
+
 export async function replaySharePack(args: ReplaySharePackArgs): Promise<ReplaySharePackResult> {
-  const mode = normalizeReplayMode(args.mode);
+  const mode = normalizeShareReplayMode(args.mode);
   const manifestPath = path.join(
     args.workspace_dir,
     "work/projects",
@@ -75,17 +80,20 @@ export async function replaySharePack(args: ReplaySharePackArgs): Promise<Replay
       else parseIssues.push({ seq: i + 1, raw: line.raw, error: line.error });
     }
     const startSeq = tail && tail < parsed.length ? parsed.length - tail + 1 : 1;
+    const shouldVerify = mode === "verified" || mode === "deterministic";
     const verificationIssues =
-      mode === "verified"
+      shouldVerify
         ? verifyReplayEvents(parsed).filter((i) => i.seq >= startSeq)
         : [];
+    const deterministicOk = shouldVerify && parseIssues.length === 0 && verificationIssues.length === 0;
     outRuns.push({
       run_id: run.run_id,
       source_relpath: run.source_relpath,
       bundle_relpath: run.bundle_relpath,
       events: tail ? parsed.slice(-tail) : parsed,
       parse_issues: parseIssues,
-      verification_issues: verificationIssues
+      verification_issues: verificationIssues,
+      deterministic_ok: deterministicOk
     });
   }
 

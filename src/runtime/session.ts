@@ -5,9 +5,10 @@ import { nowIso } from "../core/time.js";
 import { readYamlFile, writeYamlFile } from "../store/yaml.js";
 import { ensureDir, writeFileAtomic } from "../store/fs.js";
 import { RunYaml } from "../schemas/run.js";
+import { AgentYaml } from "../schemas/agent.js";
 import { executeCommandRun, type ExecuteCommandArgs, type ExecuteCommandResult } from "./execute_command.js";
 import { appendEventJsonl, newEnvelope } from "./events.js";
-import { withLaunchLane } from "./launch_lane.js";
+import { withLaunchLane, type LaunchLanePriority } from "./launch_lane.js";
 import { transitionSessionStatus, type SessionStatus } from "./session_state.js";
 import {
   executeCodexAppServerRun,
@@ -18,6 +19,10 @@ export type LaunchSessionArgs = ExecuteCommandArgs & {
   session_ref?: string;
   prompt_text?: string;
   model?: string;
+  lane_priority?: LaunchLanePriority;
+  lane_workspace_limit?: number;
+  lane_provider_limit?: number;
+  lane_team_limit?: number;
 };
 
 export type SessionPollResult = {
@@ -172,6 +177,16 @@ async function readRunStatus(
 
 function isCodexAppServerProvider(provider: string): boolean {
   return provider === "codex_app_server" || provider === "codex-app-server";
+}
+
+async function readAgentTeamId(workspaceDir: string, agentId: string): Promise<string | undefined> {
+  const p = path.join(workspaceDir, "org", "agents", agentId, "agent.yaml");
+  try {
+    const doc = AgentYaml.parse(await readYamlFile(p));
+    return doc.team_id;
+  } catch {
+    return undefined;
+  }
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -379,10 +394,22 @@ async function resolveSessionSnapshot(
 }
 
 export async function launchSession(args: LaunchSessionArgs): Promise<{ session_ref: string }> {
-  return withLaunchLane(args.workspace_dir, async () => {
-    const runDoc = RunYaml.parse(
-      await readYamlFile(runYamlPath(args.workspace_dir, args.project_id, args.run_id))
-    );
+  const runDoc = RunYaml.parse(
+    await readYamlFile(runYamlPath(args.workspace_dir, args.project_id, args.run_id))
+  );
+  const agentTeamId = await readAgentTeamId(args.workspace_dir, runDoc.agent_id);
+
+  return withLaunchLane(
+    args.workspace_dir,
+    {
+      provider: runDoc.provider,
+      team_id: agentTeamId,
+      priority: args.lane_priority ?? "normal",
+      workspace_limit: args.lane_workspace_limit,
+      provider_limit: args.lane_provider_limit,
+      team_limit: args.lane_team_limit
+    },
+    async () => {
     const protocolMode = isCodexAppServerProvider(runDoc.provider);
     const protocolPrompt = args.prompt_text ?? args.stdin_text;
     const sessionRef = args.session_ref ?? `local_${args.run_id}`;
@@ -475,7 +502,8 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
     await persistSessionItem(toListItem(rec));
 
     return { session_ref: sessionRef };
-  });
+    }
+  );
 }
 
 export async function pollSession(
