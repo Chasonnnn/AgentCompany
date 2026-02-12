@@ -7,173 +7,159 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="slack-shell">
-      <aside class="workspace-rail">
-        <div class="workspace-avatar">AC</div>
-        <div class="workspace-label">AgentCompany</div>
-        <div class="workspace-pill">Ops</div>
-        <div class="rail-divider"></div>
-        <button id="start-btn" type="button" class="rail-action">Start</button>
-        <button id="stop-btn" type="button" class="rail-action danger">Stop</button>
-        <button id="refresh-btn" type="button" class="rail-action ghost">Sync</button>
-        <div class="rail-divider"></div>
-        <div class="status-stack">
-          <span id="status-text" class="status-pill">idle</span>
-          <span id="desktopParseState" class="status-pill">none</span>
-        </div>
+    <main class="ac-shell">
+      <aside class="project-rail">
+        <div class="brand-tile">AC</div>
+        <button class="rail-item active" data-rail-kind="workspace" id="workspaceRailBtn" type="button">
+          Home
+        </button>
+        <div id="projectRailList" class="rail-list"></div>
+        <button class="rail-item rail-add" id="projectAddBtn" type="button">+</button>
+        <div class="rail-spacer"></div>
+        <button class="rail-item" id="settingsBtn" type="button">⚙</button>
       </aside>
 
-      <aside class="channel-sidebar">
-        <header class="sidebar-top">
-          <h2 id="workspaceTitle">AgentCompany</h2>
-          <p id="workspaceSub">Local-first governed agent org</p>
+      <aside class="context-sidebar">
+        <header class="sidebar-header">
+          <h2 id="scopeTitle">Workspace Home</h2>
+          <p id="scopeSub">Projects, channels, and operational context</p>
         </header>
 
-        <section class="sidebar-group">
-          <h3>Channels</h3>
-          <div class="channel-list">
-            <button class="channel-btn active" data-pane="pending">
-              <span># pending-approvals</span>
-              <span class="count" id="desktopPendingCount">0</span>
-            </button>
-            <button class="channel-btn" data-pane="runs">
-              <span># run-monitor</span>
-              <span class="count" id="desktopRunsCount">0</span>
-            </button>
-            <button class="channel-btn" data-pane="decisions">
-              <span># recent-decisions</span>
-              <span class="count" id="desktopDecisionsCount">0</span>
-            </button>
+        <section class="sidebar-block">
+          <div class="block-title-row">
+            <h3>Home</h3>
           </div>
+          <button class="sidebar-item active" id="homeViewBtn" data-view-type="home" type="button">Home</button>
         </section>
 
-        <section class="sidebar-group">
-          <h3>Colleagues</h3>
-          <div class="colleague-list" id="desktopColleagueList"></div>
+        <section class="sidebar-block">
+          <div class="block-title-row">
+            <h3>Channels</h3>
+            <button class="mini-btn" id="addChannelBtn" type="button">+</button>
+          </div>
+          <div id="channelList" class="sidebar-list"></div>
         </section>
 
-        <section class="sidebar-group quick-setup">
-          <h3>Quick Setup</h3>
-          <div class="quick-fields">
-            <label>
-              Company
-              <input id="quickCompanyName" type="text" value="AgentCompany" />
-            </label>
-            <label>
-              Initial Project
-              <input id="quickProjectName" type="text" value="AgentCompany Ops" />
-            </label>
+        <section class="sidebar-block">
+          <div class="block-title-row">
+            <h3>DMs</h3>
+            <button class="mini-btn" id="addDmBtn" type="button">+</button>
           </div>
-          <div class="preset-wrap">
-            <div class="preset-title">Preset Departments</div>
-            <div id="departmentPresetList" class="preset-list"></div>
+          <div id="dmList" class="sidebar-list"></div>
+        </section>
+
+        <section class="sidebar-block">
+          <div class="block-title-row">
+            <h3>Views</h3>
           </div>
-          <div class="quick-options">
-            <label><input id="quickIncludeDirector" type="checkbox" checked /> Include Director</label>
-            <label><input id="quickForceReset" type="checkbox" /> Reset existing workspace</label>
-            <label><input id="quickAutoStart" type="checkbox" checked /> Auto-start session</label>
-          </div>
-          <button id="bootstrapBtn" type="button" class="secondary-btn quick-button">
-            Create Org from Presets
+          <button class="sidebar-item" id="activitiesViewBtn" data-view-type="activities" type="button">
+            Activities
           </button>
-          <p id="bootstrapStatus" class="quick-status"></p>
-        </section>
-
-        <section class="sidebar-group quick-setup">
-          <h3>Onboard Agent</h3>
-          <div class="quick-fields">
-            <label>
-              Agent Name
-              <input id="onboardAgentName" type="text" placeholder="Payments Worker 2" />
-            </label>
-            <label>
-              Role
-              <select id="onboardAgentRole">
-                <option value="worker" selected>worker</option>
-                <option value="manager">manager</option>
-                <option value="director">director</option>
-                <option value="ceo">ceo</option>
-              </select>
-            </label>
-            <label>
-              Provider
-              <input id="onboardAgentProvider" type="text" value="codex" placeholder="codex / claude_code / cmd" />
-            </label>
-            <label>
-              Team ID (optional)
-              <input id="onboardTeamId" type="text" placeholder="team_..." />
-            </label>
-            <label>
-              Team Name (create if Team ID empty)
-              <input id="onboardTeamName" type="text" placeholder="Payments" />
-            </label>
-          </div>
-          <button id="onboardAgentBtn" type="button" class="secondary-btn quick-button">
-            Onboard Agent
+          <button class="sidebar-item" id="resourcesViewBtn" data-view-type="resources" type="button">
+            Resources
           </button>
-          <p id="onboardAgentStatus" class="quick-status"></p>
         </section>
-
-        <details class="session-card" open>
-          <summary>Session Configuration</summary>
-          <form id="session-form" class="form-grid">
-            <label>
-              Workspace Directory
-              <input id="workspace" name="workspace" type="text" placeholder="/absolute/path/to/workspace" required />
-            </label>
-
-            <label>
-              Project ID
-              <input id="project" name="project" type="text" placeholder="proj_..." required />
-            </label>
-
-            <label>
-              CEO Actor ID
-              <input id="actor" name="actor" type="text" value="human_ceo" required />
-            </label>
-
-            <input id="role" name="role" type="hidden" value="ceo" />
-            <div class="fixed-role-note">Actor Role: <strong>ceo</strong> (fixed)</div>
-
-            <label>
-              Team ID (optional)
-              <input id="team" name="team" type="text" placeholder="team_..." />
-            </label>
-
-            <label>
-              Port
-              <input id="port" name="port" type="number" min="1" max="65535" value="8787" />
-            </label>
-          </form>
-          <div class="session-meta">
-            <div>URL: <a id="session-url" href="#" target="_blank" rel="noopener noreferrer">-</a></div>
-            <p id="error" class="error"></p>
-          </div>
-        </details>
       </aside>
 
-      <section class="thread-pane">
-        <header class="thread-header">
+      <section class="content-pane">
+        <header class="content-header">
           <div>
-            <h1 id="threadTitle"># pending-approvals</h1>
-            <p id="threadSubtitle">Manager approvals and operational updates.</p>
+            <h1 id="viewTitle">Workspace Home</h1>
+            <p id="viewSubtitle">Local-first governed agent workspace</p>
           </div>
-          <div class="thread-actions">
-            <button id="toggle-live-btn" type="button" class="secondary-btn">Live Ops View</button>
+          <div class="content-actions">
+            <button class="secondary-btn" id="syncBtn" type="button">Sync</button>
+            <button class="secondary-btn" id="liveOpsBtn" type="button">Live Ops</button>
           </div>
         </header>
 
-        <div id="thread-stream" class="thread-stream"></div>
+        <section id="contentBody" class="content-body"></section>
+
+        <form id="composerForm" class="composer hidden">
+          <textarea
+            id="composerInput"
+            placeholder="Send a message..."
+            rows="3"
+            maxlength="8000"
+          ></textarea>
+          <div class="composer-actions">
+            <span id="composerHint">Enter to send, Shift+Enter for newline</span>
+            <button id="sendBtn" type="submit" class="primary-btn">Send</button>
+          </div>
+        </form>
       </section>
 
-      <aside class="live-pane hidden" id="live-pane">
-        <header>
-          <h2>Live Ops Surface</h2>
-          <p>Embedded manager web for deep workflows.</p>
+      <aside class="details-pane">
+        <header class="details-header">
+          <h2>Participants</h2>
         </header>
-        <iframe id="dashboard-frame" title="AgentCompany Manager Web" src="about:blank"></iframe>
+        <div id="participantList" class="participant-list"></div>
       </aside>
     </main>
+
+    <dialog id="projectModal">
+      <form method="dialog" class="modal-form" id="projectForm">
+        <h3>Create Project</h3>
+        <label>
+          Project Name
+          <input id="projectNameInput" type="text" required placeholder="AgentCompany Revamp" />
+        </label>
+        <label>
+          Repo IDs (comma separated)
+          <input id="projectReposInput" type="text" placeholder="repo_main,repo_docs" />
+        </label>
+        <menu>
+          <button value="cancel" type="button" id="projectCancelBtn">Cancel</button>
+          <button value="default" type="submit">Create</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="settingsModal">
+      <form method="dialog" class="modal-form" id="settingsForm">
+        <h3>Workspace Settings</h3>
+        <label>
+          Workspace Directory
+          <input id="workspaceInput" type="text" placeholder="/absolute/path/to/workspace" required />
+        </label>
+        <label>
+          CEO Actor ID
+          <input id="actorInput" type="text" value="human_ceo" required />
+        </label>
+        <div class="inline-actions">
+          <button id="bootstrapBtn" type="button">Bootstrap Presets</button>
+          <button id="onboardBtn" type="button">Onboard Worker</button>
+        </div>
+        <p id="settingsStatus" class="status-note"></p>
+        <menu>
+          <button value="cancel" type="button" id="settingsCancelBtn">Close</button>
+          <button value="default" type="submit">Save + Refresh</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="profileModal">
+      <form method="dialog" class="modal-form profile-modal" id="profileForm">
+        <h3 id="profileName">Agent Profile</h3>
+        <p id="profileMeta"></p>
+        <div id="profileStats" class="profile-stats"></div>
+        <menu>
+          <button value="cancel" type="button" id="profileCloseBtn">Close</button>
+          <button value="default" type="button" id="profileMessageBtn">Message</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="liveOpsModal">
+      <form method="dialog" class="modal-form live-modal">
+        <h3>Live Ops Surface</h3>
+        <p class="status-note">Fallback manager web panel for deep operational workflows.</p>
+        <iframe id="liveOpsFrame" title="Live Ops Surface" src="about:blank"></iframe>
+        <menu>
+          <button value="cancel" type="button" id="liveOpsCloseBtn">Close</button>
+        </menu>
+      </form>
+    </dialog>
 
     <script src="./app.js" type="module"></script>
   </body>

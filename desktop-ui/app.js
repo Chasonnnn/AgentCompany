@@ -1,78 +1,84 @@
-import { mergeThinUiSnapshot, shouldIncludeColleaguesForTick } from "./thin_snapshot.js";
+const STORAGE_KEY = "agentcompany.desktop.session.slack.v1";
 
-const STORAGE_KEY = "agentcompany.desktop.session.v2";
+const workspaceRailBtn = document.getElementById("workspaceRailBtn");
+const projectRailList = document.getElementById("projectRailList");
+const projectAddBtn = document.getElementById("projectAddBtn");
+const settingsBtn = document.getElementById("settingsBtn");
+const scopeTitleEl = document.getElementById("scopeTitle");
+const scopeSubEl = document.getElementById("scopeSub");
+const homeViewBtn = document.getElementById("homeViewBtn");
+const channelListEl = document.getElementById("channelList");
+const dmListEl = document.getElementById("dmList");
+const addChannelBtn = document.getElementById("addChannelBtn");
+const addDmBtn = document.getElementById("addDmBtn");
+const activitiesViewBtn = document.getElementById("activitiesViewBtn");
+const resourcesViewBtn = document.getElementById("resourcesViewBtn");
+const viewTitleEl = document.getElementById("viewTitle");
+const viewSubtitleEl = document.getElementById("viewSubtitle");
+const syncBtn = document.getElementById("syncBtn");
+const liveOpsBtn = document.getElementById("liveOpsBtn");
+const contentBodyEl = document.getElementById("contentBody");
+const composerForm = document.getElementById("composerForm");
+const composerInput = document.getElementById("composerInput");
+const composerHint = document.getElementById("composerHint");
+const participantListEl = document.getElementById("participantList");
 
-const shell = document.querySelector(".slack-shell");
-const form = document.getElementById("session-form");
-const startBtn = document.getElementById("start-btn");
-const stopBtn = document.getElementById("stop-btn");
-const refreshBtn = document.getElementById("refresh-btn");
-const toggleLiveBtn = document.getElementById("toggle-live-btn");
-const statusText = document.getElementById("status-text");
-const parseStateEl = document.getElementById("desktopParseState");
-const sessionUrl = document.getElementById("session-url");
-const errorEl = document.getElementById("error");
-const frame = document.getElementById("dashboard-frame");
-const livePane = document.getElementById("live-pane");
-const threadTitleEl = document.getElementById("threadTitle");
-const threadSubtitleEl = document.getElementById("threadSubtitle");
-const threadStreamEl = document.getElementById("thread-stream");
-const workspaceTitleEl = document.getElementById("workspaceTitle");
-const workspaceSubEl = document.getElementById("workspaceSub");
-const channelButtons = Array.from(document.querySelectorAll(".channel-btn[data-pane]"));
-const colleagueList = document.getElementById("desktopColleagueList");
-const pendingCountEl = document.getElementById("desktopPendingCount");
-const runsCountEl = document.getElementById("desktopRunsCount");
-const decisionsCountEl = document.getElementById("desktopDecisionsCount");
+const projectModal = document.getElementById("projectModal");
+const projectForm = document.getElementById("projectForm");
+const projectNameInput = document.getElementById("projectNameInput");
+const projectReposInput = document.getElementById("projectReposInput");
+const projectCancelBtn = document.getElementById("projectCancelBtn");
+
+const settingsModal = document.getElementById("settingsModal");
+const settingsForm = document.getElementById("settingsForm");
+const workspaceInput = document.getElementById("workspaceInput");
+const actorInput = document.getElementById("actorInput");
+const settingsStatus = document.getElementById("settingsStatus");
 const bootstrapBtn = document.getElementById("bootstrapBtn");
-const bootstrapStatusEl = document.getElementById("bootstrapStatus");
-const quickCompanyNameInput = document.getElementById("quickCompanyName");
-const quickProjectNameInput = document.getElementById("quickProjectName");
-const quickIncludeDirectorInput = document.getElementById("quickIncludeDirector");
-const quickForceResetInput = document.getElementById("quickForceReset");
-const quickAutoStartInput = document.getElementById("quickAutoStart");
-const departmentPresetListEl = document.getElementById("departmentPresetList");
-const onboardAgentBtn = document.getElementById("onboardAgentBtn");
-const onboardAgentStatusEl = document.getElementById("onboardAgentStatus");
-const onboardAgentNameInput = document.getElementById("onboardAgentName");
-const onboardAgentRoleInput = document.getElementById("onboardAgentRole");
-const onboardAgentProviderInput = document.getElementById("onboardAgentProvider");
-const onboardTeamIdInput = document.getElementById("onboardTeamId");
-const onboardTeamNameInput = document.getElementById("onboardTeamName");
+const onboardBtn = document.getElementById("onboardBtn");
+const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 
-const DEPARTMENT_PRESETS = [
-  { key: "engineering", label: "Engineering", enabled: true },
-  { key: "product", label: "Product", enabled: true },
-  { key: "design", label: "Design", enabled: false },
-  { key: "operations", label: "Operations", enabled: true },
-  { key: "qa", label: "QA", enabled: false },
-  { key: "security", label: "Security", enabled: false },
-  { key: "data", label: "Data", enabled: false }
-];
+const profileModal = document.getElementById("profileModal");
+const profileNameEl = document.getElementById("profileName");
+const profileMetaEl = document.getElementById("profileMeta");
+const profileStatsEl = document.getElementById("profileStats");
+const profileCloseBtn = document.getElementById("profileCloseBtn");
+const profileMessageBtn = document.getElementById("profileMessageBtn");
 
-let currentServerUrl = null;
-let latestSnapshot = null;
-let snapshotPollTimer = null;
-let snapshotPollTick = 0;
-let liveVisible = false;
-let currentView = {
-  pane: "pending",
-  colleague_id: null
+const liveOpsModal = document.getElementById("liveOpsModal");
+const liveOpsFrame = document.getElementById("liveOpsFrame");
+const liveOpsCloseBtn = document.getElementById("liveOpsCloseBtn");
+
+const state = {
+  workspaceDir: "",
+  actorId: "human_ceo",
+  selectedRail: {
+    kind: "workspace",
+    projectId: null
+  },
+  selectedView: {
+    type: "conversation",
+    conversationId: null
+  },
+  projects: [],
+  agents: [],
+  conversationsWorkspace: [],
+  conversationsProject: [],
+  messages: [],
+  activitiesSnapshot: null,
+  resourcesSnapshot: null,
+  profileAgentId: null,
+  refreshBusy: false,
+  pollTimer: null
 };
 
 function getInvoke() {
-  // Tauri v1 global API surface.
   const v1Invoke = window.__TAURI__?.core?.invoke;
-  if (typeof v1Invoke === "function") {
-    return v1Invoke;
-  }
-
-  // Tauri v2 internal bridge surface (available in packaged/dev desktop runtime).
+  if (typeof v1Invoke === "function") return v1Invoke;
   const v2InternalInvoke = window.__TAURI_INTERNALS__?.invoke;
   if (typeof v2InternalInvoke === "function") {
     return (command, args = {}) => v2InternalInvoke(command, args);
   }
-
   return null;
 }
 
@@ -86,809 +92,841 @@ function esc(v) {
   }[c]));
 }
 
-function roleLabel(role) {
-  return String(role || "agent").toUpperCase();
-}
-
-function parseIsoToMs(value) {
-  if (!value) return 0;
-  const ms = Date.parse(String(value));
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-function formatTime(value) {
-  const ms = parseIsoToMs(value);
-  if (!ms) return "recent";
-  const d = new Date(ms);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
-function setError(message) {
-  errorEl.textContent = message ? String(message) : "";
-}
-
-function setBootstrapStatus(message, isError = false) {
-  if (!bootstrapStatusEl) return;
-  bootstrapStatusEl.textContent = message ? String(message) : "";
-  bootstrapStatusEl.classList.toggle("error", isError);
-}
-
-function setOnboardStatus(message, isError = false) {
-  if (!onboardAgentStatusEl) return;
-  onboardAgentStatusEl.textContent = message ? String(message) : "";
-  onboardAgentStatusEl.classList.toggle("error", isError);
-}
-
-function renderDepartmentPresetCheckboxes() {
-  if (!departmentPresetListEl) return;
-  departmentPresetListEl.innerHTML = DEPARTMENT_PRESETS
-    .map(
-      (preset) =>
-        `<label><input type="checkbox" data-preset-key="${esc(preset.key)}" ${
-          preset.enabled ? "checked" : ""
-        } />${esc(preset.label)}</label>`
-    )
-    .join("");
-}
-
-function readSelectedDepartmentPresets() {
-  return Array.from(document.querySelectorAll("[data-preset-key]"))
-    .filter((el) => el instanceof HTMLInputElement && el.checked)
-    .map((el) => String(el.getAttribute("data-preset-key") || "").trim())
-    .filter(Boolean);
-}
-
-function setStatus(text) {
-  statusText.textContent = text;
-  statusText.classList.remove("running", "error", "warn");
-  if (String(text).startsWith("running")) statusText.classList.add("running");
-  if (String(text).startsWith("error")) statusText.classList.add("error");
-}
-
-function setCounts(pending = 0, runs = 0, decisions = 0) {
-  pendingCountEl.textContent = String(pending);
-  runsCountEl.textContent = String(runs);
-  decisionsCountEl.textContent = String(decisions);
-}
-
-function setParseState(parseSummary) {
-  const hasErrors = !!parseSummary?.has_parse_errors;
-  parseStateEl.classList.remove("warn");
-  if (!hasErrors) {
-    parseStateEl.textContent = "none";
-    return;
-  }
-  const total =
-    Number(parseSummary?.pending_with_errors ?? 0) +
-    Number(parseSummary?.decisions_with_errors ?? 0);
-  const max = Number(parseSummary?.max_parse_error_count ?? 0);
-  parseStateEl.textContent = `alerts ${total}/${max}`;
-  parseStateEl.classList.add("warn");
-}
-
-function setColleaguePlaceholder(message = "Start a session to load colleagues.") {
-  colleagueList.innerHTML =
-    `<div style="font-size:12px;color:#98acc4;padding:3px 2px;">${esc(message)}</div>`;
-}
-
-function setActiveNav() {
-  channelButtons.forEach((btn) => {
-    const pane = btn.getAttribute("data-pane");
-    const active = currentView.pane !== "colleague" && pane === currentView.pane;
-    btn.classList.toggle("active", active);
-  });
-  Array.from(colleagueList.querySelectorAll("[data-colleague-id]")).forEach((btn) => {
-    const active =
-      currentView.pane === "colleague" &&
-      btn.getAttribute("data-colleague-id") === currentView.colleague_id;
-    btn.classList.toggle("active", active);
-  });
-}
-
-function readViewDescriptor() {
-  if (currentView.pane === "runs") {
-    return {
-      title: "# run-monitor",
-      subtitle: "Live and historical run telemetry with budget/policy explainability."
-    };
-  }
-  if (currentView.pane === "decisions") {
-    return {
-      title: "# recent-decisions",
-      subtitle: "Manager approvals and denials from governed workflow execution."
-    };
-  }
-  if (currentView.pane === "colleague" && currentView.colleague_id) {
-    const colleague =
-      latestSnapshot?.colleagues?.find((c) => c.agent_id === currentView.colleague_id) ?? null;
-    const name = colleague?.name ? `@${colleague.name}` : `@${currentView.colleague_id}`;
-    const role = colleague?.role ? ` (${roleLabel(colleague.role)})` : "";
-    return {
-      title: `${name}${role}`,
-      subtitle: "Colleague timeline across runs, approvals, and comments."
-    };
-  }
-  return {
-    title: "# pending-approvals",
-    subtitle: "Manager approvals queue for milestones and curated memory deltas."
+function saveSession() {
+  const payload = {
+    workspaceDir: state.workspaceDir,
+    actorId: state.actorId,
+    selectedRail: state.selectedRail,
+    selectedView: state.selectedView
   };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 }
 
-function buildPendingItems(snapshot) {
-  const pending = snapshot?.review_inbox?.pending ?? [];
-  return pending.map((p) => ({
-    id: `pending-${p.artifact_id}`,
-    ts: parseIsoToMs(p.created_at),
-    time: formatTime(p.created_at),
-    who: p.produced_by ? `@${p.produced_by}` : "@system",
-    title: `${p.artifact_type} -> ${p.title || p.artifact_id}`,
-    body: `Awaiting manager approval in project ${p.project_id}.`,
-    tags: [
-      p.visibility ? { text: p.visibility } : null,
-      p.run_id ? { text: `run:${p.run_id}` } : null,
-      p.parse_error_count > 0 ? { text: `parse:${p.parse_error_count}`, tone: "warn" } : null
-    ].filter(Boolean)
-  }));
-}
-
-function buildRunItems(snapshot) {
-  const rows = snapshot?.monitor?.rows ?? [];
-  return rows.map((r) => {
-    const status =
-      r.live_status === "running" ? "running" : r.run_status === "failed" ? "failed" : r.run_status;
-    return {
-      id: `run-${r.run_id}`,
-      ts: parseIsoToMs(r.last_event?.ts_wallclock || r.created_at),
-      time: formatTime(r.last_event?.ts_wallclock || r.created_at),
-      who: r.agent_id ? `@${r.agent_id}` : "@system",
-      title: `${r.run_id} (${status})`,
-      body:
-        `provider=${r.provider || "unknown"} · ` +
-        `last=${r.last_event?.type || "none"} · ` +
-        `policy_denied=${Number(r.policy_denied_count || 0)} · ` +
-        `budget_hard=${Number(r.budget_exceeded_count || 0)}`,
-      tags: [
-        { text: r.run_status, tone: r.run_status === "failed" ? "bad" : r.run_status === "ended" ? "good" : null },
-        r.live_status === "running" ? { text: "live", tone: "good" } : null,
-        r.token_usage?.total_tokens ? { text: `tok:${r.token_usage.total_tokens}` } : null,
-        typeof r.token_usage?.cost_usd === "number"
-          ? { text: `usd:${r.token_usage.cost_usd.toFixed(4)}` }
-          : null,
-        r.parse_error_count > 0 ? { text: `parse:${r.parse_error_count}`, tone: "warn" } : null
-      ].filter(Boolean)
-    };
-  });
-}
-
-function buildDecisionItems(snapshot) {
-  const rows = snapshot?.review_inbox?.recent_decisions ?? [];
-  return rows.map((d) => ({
-    id: `decision-${d.review_id}`,
-    ts: parseIsoToMs(d.created_at),
-    time: formatTime(d.created_at),
-    who: `@${d.actor_id}`,
-    title: `${d.decision.toUpperCase()} ${d.subject_kind} -> ${d.subject_artifact_id}`,
-    body: d.notes ? d.notes : `project=${d.project_id}`,
-    tags: [
-      d.actor_role ? { text: d.actor_role } : null,
-      d.artifact_type ? { text: d.artifact_type } : null,
-      d.run_id ? { text: `run:${d.run_id}` } : null,
-      d.parse_error_count > 0 ? { text: `parse:${d.parse_error_count}`, tone: "warn" } : null,
-      d.decision === "approved" ? { text: "approved", tone: "good" } : { text: "denied", tone: "bad" }
-    ].filter(Boolean)
-  }));
-}
-
-function buildColleagueItems(snapshot, colleagueId) {
-  const runItems = (snapshot?.monitor?.rows ?? [])
-    .filter((r) => r.agent_id === colleagueId)
-    .map((r) => ({
-      id: `colleague-run-${r.run_id}`,
-      ts: parseIsoToMs(r.last_event?.ts_wallclock || r.created_at),
-      time: formatTime(r.last_event?.ts_wallclock || r.created_at),
-      who: `@${colleagueId}`,
-      title: `Run ${r.run_id}`,
-      body: `${r.provider || "unknown"} · status=${r.run_status} · event=${r.last_event?.type || "none"}`,
-      tags: [
-        { text: r.run_status, tone: r.run_status === "failed" ? "bad" : r.run_status === "ended" ? "good" : null },
-        r.parse_error_count > 0 ? { text: `parse:${r.parse_error_count}`, tone: "warn" } : null
-      ].filter(Boolean)
-    }));
-
-  const decisionItems = (snapshot?.review_inbox?.recent_decisions ?? [])
-    .filter((d) => d.actor_id === colleagueId)
-    .map((d) => ({
-      id: `colleague-decision-${d.review_id}`,
-      ts: parseIsoToMs(d.created_at),
-      time: formatTime(d.created_at),
-      who: `@${colleagueId}`,
-      title: `${d.decision.toUpperCase()} ${d.subject_artifact_id}`,
-      body: d.notes || `role=${d.actor_role}`,
-      tags: [
-        { text: d.decision, tone: d.decision === "approved" ? "good" : "bad" },
-        d.subject_kind ? { text: d.subject_kind } : null
-      ].filter(Boolean)
-    }));
-
-  const commentItems = (snapshot?.comments ?? [])
-    .filter((c) => c.target?.agent_id === colleagueId)
-    .map((c) => ({
-      id: `colleague-comment-${c.id}`,
-      ts: parseIsoToMs(c.created_at),
-      time: formatTime(c.created_at),
-      who: `@${c.author_id}`,
-      title: `Comment for @${colleagueId}`,
-      body: c.body,
-      tags: [
-        c.author_role ? { text: c.author_role } : null,
-        c.visibility ? { text: c.visibility } : null
-      ].filter(Boolean)
-    }));
-
-  return [...runItems, ...decisionItems, ...commentItems];
-}
-
-function buildThreadItems(snapshot) {
-  if (!snapshot) return [];
-  if (currentView.pane === "runs") return buildRunItems(snapshot);
-  if (currentView.pane === "decisions") return buildDecisionItems(snapshot);
-  if (currentView.pane === "colleague" && currentView.colleague_id) {
-    return buildColleagueItems(snapshot, currentView.colleague_id);
-  }
-  return buildPendingItems(snapshot);
-}
-
-function renderThread(snapshot) {
-  const descriptor = readViewDescriptor();
-  threadTitleEl.textContent = descriptor.title;
-  threadSubtitleEl.textContent = descriptor.subtitle;
-
-  const items = buildThreadItems(snapshot).sort((a, b) => {
-    if (a.ts !== b.ts) return b.ts - a.ts;
-    return String(a.id).localeCompare(String(b.id));
-  });
-  if (!items.length) {
-    threadStreamEl.innerHTML =
-      '<div class="empty-thread">No activity yet for this channel. Start a session or refresh snapshots.</div>';
-    return;
-  }
-
-  threadStreamEl.innerHTML = items
-    .map((item) => {
-      const tagHtml = (item.tags ?? [])
-        .map((t) => {
-          const tone = t.tone ? ` ${esc(t.tone)}` : "";
-          return `<span class="tag${tone}">${esc(t.text)}</span>`;
-        })
-        .join("");
-      return (
-        `<article class="thread-item">` +
-        `<div class="thread-meta"><span class="thread-who">${esc(item.who)}</span><span class="thread-time">${esc(item.time)}</span></div>` +
-        `<h3 class="thread-title">${esc(item.title)}</h3>` +
-        `<p class="thread-body">${esc(item.body)}</p>` +
-        `<div class="tag-row">${tagHtml}</div>` +
-        `</article>`
-      );
-    })
-    .join("");
-}
-
-function renderColleagues(snapshot) {
-  const colleagues = snapshot?.colleagues || [];
-  if (!colleagues.length) {
-    setColleaguePlaceholder("No colleagues found in this project.");
-    if (currentView.pane === "colleague") {
-      currentView = { pane: "pending", colleague_id: null };
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    state.workspaceDir = String(parsed.workspaceDir || "");
+    state.actorId = String(parsed.actorId || "human_ceo");
+    if (parsed.selectedRail?.kind === "project" && parsed.selectedRail?.projectId) {
+      state.selectedRail = { kind: "project", projectId: String(parsed.selectedRail.projectId) };
     }
-    setActiveNav();
+    if (parsed.selectedView?.type === "activities" || parsed.selectedView?.type === "resources") {
+      state.selectedView = { type: parsed.selectedView.type, conversationId: null };
+    } else if (parsed.selectedView?.conversationId) {
+      state.selectedView = {
+        type: "conversation",
+        conversationId: String(parsed.selectedView.conversationId)
+      };
+    }
+  } catch {
+    // ignore malformed persisted session
+  }
+}
+
+function setSettingsStatus(msg) {
+  settingsStatus.textContent = msg || "";
+}
+
+function fmtDate(value) {
+  if (!value) return "recent";
+  const t = Date.parse(String(value));
+  if (!Number.isFinite(t)) return "recent";
+  return new Date(t).toLocaleString();
+}
+
+function slugify(input) {
+  return String(input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function currentScopeParams() {
+  if (state.selectedRail.kind === "project" && state.selectedRail.projectId) {
+    return {
+      scope: "project",
+      project_id: state.selectedRail.projectId
+    };
+  }
+  return { scope: "workspace" };
+}
+
+function getCurrentConversations() {
+  return state.selectedRail.kind === "project" ? state.conversationsProject : state.conversationsWorkspace;
+}
+
+function getConversationById(id) {
+  return getCurrentConversations().find((c) => c.id === id) || null;
+}
+
+function getHomeConversation() {
+  return getCurrentConversations().find((c) => c.slug === "home") || null;
+}
+
+function resolveAgent(agentId) {
+  if (agentId === state.actorId || agentId === "human_ceo") {
+    return { agent_id: agentId, name: "You", role: "ceo", provider: "manual" };
+  }
+  return state.agents.find((a) => a.agent_id === agentId) || null;
+}
+
+async function rpcCall(method, params = {}) {
+  const invoke = getInvoke();
+  if (!invoke) throw new Error("Tauri runtime not detected. Launch from desktop app.");
+  return invoke("rpc_call", {
+    args: {
+      method,
+      params
+    }
+  });
+}
+
+async function refreshProjectsAndAgents() {
+  const [projectsPayload, agents] = await Promise.all([
+    rpcCall("workspace.projects.list", {
+      workspace_dir: state.workspaceDir
+    }),
+    rpcCall("workspace.agents.list", {
+      workspace_dir: state.workspaceDir
+    })
+  ]);
+  state.projects = Array.isArray(projectsPayload?.projects) ? projectsPayload.projects : [];
+  state.agents = Array.isArray(agents) ? agents : [];
+
+  if (
+    state.selectedRail.kind === "project" &&
+    !state.projects.some((p) => p.project_id === state.selectedRail.projectId)
+  ) {
+    state.selectedRail = { kind: "workspace", projectId: null };
+  }
+  if (state.selectedRail.kind === "workspace" && !state.selectedRail.projectId && state.projects.length === 0) {
+    state.selectedView = { type: "conversation", conversationId: null };
+  }
+}
+
+async function refreshConversations() {
+  if (!state.workspaceDir) return;
+
+  state.conversationsWorkspace = await rpcCall("conversation.list", {
+    workspace_dir: state.workspaceDir,
+    scope: "workspace"
+  });
+
+  if (state.selectedRail.kind === "project" && state.selectedRail.projectId) {
+    state.conversationsProject = await rpcCall("conversation.list", {
+      workspace_dir: state.workspaceDir,
+      scope: "project",
+      project_id: state.selectedRail.projectId
+    });
+  } else {
+    state.conversationsProject = [];
+  }
+
+  const current = getCurrentConversations();
+  const activeConversation = state.selectedView.conversationId
+    ? current.find((c) => c.id === state.selectedView.conversationId)
+    : null;
+  if (state.selectedView.type === "conversation" && !activeConversation) {
+    const home = getHomeConversation();
+    state.selectedView = {
+      type: "conversation",
+      conversationId: home?.id ?? null
+    };
+  }
+}
+
+async function refreshCurrentViewData() {
+  if (!state.workspaceDir) return;
+  if (state.selectedView.type === "conversation" && state.selectedView.conversationId) {
+    const scope = currentScopeParams();
+    state.messages = await rpcCall("conversation.messages.list", {
+      workspace_dir: state.workspaceDir,
+      conversation_id: state.selectedView.conversationId,
+      ...scope,
+      limit: 300
+    });
+    state.activitiesSnapshot = null;
+    state.resourcesSnapshot = null;
     return;
   }
-
-  const hasCurrent = colleagues.some((c) => c.agent_id === currentView.colleague_id);
-  if (currentView.pane === "colleague" && !hasCurrent) {
-    currentView.colleague_id = colleagues[0].agent_id;
+  if (state.selectedView.type === "activities") {
+    state.activitiesSnapshot = await rpcCall("ui.snapshot", {
+      workspace_dir: state.workspaceDir,
+      project_id: state.selectedRail.projectId ?? undefined,
+      monitor_limit: 200,
+      pending_limit: 200,
+      decisions_limit: 200,
+      sync_index: true
+    });
+    state.resourcesSnapshot = null;
+    state.messages = [];
+    return;
   }
+  if (state.selectedView.type === "resources") {
+    state.resourcesSnapshot = await rpcCall("resources.snapshot", {
+      workspace_dir: state.workspaceDir,
+      project_id: state.selectedRail.projectId ?? undefined
+    });
+    state.activitiesSnapshot = null;
+    state.messages = [];
+  }
+}
 
-  colleagueList.innerHTML = colleagues
-    .map((c) => {
-      const badge = c.pending_reviews > 0 ? c.pending_reviews : c.active_runs;
+function renderProjectRail() {
+  workspaceRailBtn.classList.toggle("active", state.selectedRail.kind === "workspace");
+  projectRailList.innerHTML = state.projects
+    .map((p) => {
+      const active = state.selectedRail.kind === "project" && state.selectedRail.projectId === p.project_id;
+      const badge = p.pending_reviews > 0 ? p.pending_reviews : p.active_runs;
       return (
-        `<button class="colleague-btn" data-colleague-id="${esc(c.agent_id)}">` +
-        `<span class="colleague-main">` +
-        `<span class="dot ${esc(c.status)}"></span>` +
-        `<span class="colleague-name">@${esc(c.name)}<span class="role-tag">${esc(roleLabel(c.role))}</span></span>` +
-        `</span>` +
-        `<span class="count">${esc(String(badge || 0))}</span>` +
+        `<button class="rail-item ${active ? "active" : ""}" data-project-id="${esc(p.project_id)}" type="button">` +
+        `${esc((p.name || "").slice(0, 7) || "Project")}` +
+        `${badge > 0 ? ` <span class="item-badge">${badge}</span>` : ""}` +
         `</button>`
       );
     })
     .join("");
 
-  Array.from(colleagueList.querySelectorAll("[data-colleague-id]")).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.getAttribute("data-colleague-id");
+  Array.from(projectRailList.querySelectorAll("[data-project-id]")).forEach((el) => {
+    el.addEventListener("click", async () => {
+      const projectId = el.getAttribute("data-project-id");
+      if (!projectId) return;
+      state.selectedRail = { kind: "project", projectId };
+      const home = state.conversationsProject.find((c) => c.slug === "home");
+      state.selectedView = { type: "conversation", conversationId: home?.id ?? null };
+      await refreshAndRender();
+    });
+  });
+}
+
+function renderSidebar() {
+  const project =
+    state.selectedRail.kind === "project"
+      ? state.projects.find((p) => p.project_id === state.selectedRail.projectId)
+      : null;
+
+  scopeTitleEl.textContent = project ? project.name : "Workspace Home";
+  scopeSubEl.textContent = project
+    ? "Channels, DMs, activities, and resources"
+    : "Global home with cross-project visibility";
+
+  const conversations = getCurrentConversations();
+  const home = conversations.find((c) => c.slug === "home") || null;
+  homeViewBtn.classList.toggle("active", state.selectedView.type === "conversation" && state.selectedView.conversationId === home?.id);
+
+  const channels = conversations.filter((c) => c.kind === "channel");
+  channelListEl.innerHTML = channels.length
+    ? channels
+        .map((c) => {
+          const active = state.selectedView.type === "conversation" && state.selectedView.conversationId === c.id;
+          return `<button class="sidebar-item ${active ? "active" : ""}" data-conversation-id="${esc(c.id)}" type="button"># ${esc(c.slug)}</button>`;
+        })
+        .join("")
+    : `<div class="empty">No channels yet.</div>`;
+
+  const dms = conversations.filter((c) => c.kind === "dm");
+  dmListEl.innerHTML = dms.length
+    ? dms
+        .map((c) => {
+          const peer = resolveAgent(c.dm_peer_agent_id) || { name: c.dm_peer_agent_id || "DM" };
+          const active = state.selectedView.type === "conversation" && state.selectedView.conversationId === c.id;
+          return `<button class="sidebar-item ${active ? "active" : ""}" data-conversation-id="${esc(c.id)}" type="button">@${esc(peer.name)}</button>`;
+        })
+        .join("")
+    : `<div class="empty">No DMs yet.</div>`;
+
+  activitiesViewBtn.classList.toggle("active", state.selectedView.type === "activities");
+  resourcesViewBtn.classList.toggle("active", state.selectedView.type === "resources");
+
+  Array.from(document.querySelectorAll("[data-conversation-id]")).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-conversation-id");
       if (!id) return;
-      applyView("colleague", id);
+      state.selectedView = { type: "conversation", conversationId: id };
+      await refreshAndRenderCurrentView();
     });
   });
-  setActiveNav();
 }
 
-function renderSidebar(snapshot) {
-  latestSnapshot = snapshot;
-  setCounts(
-    snapshot?.review_inbox?.pending?.length ?? 0,
-    snapshot?.monitor?.rows?.length ?? 0,
-    snapshot?.review_inbox?.recent_decisions?.length ?? 0
-  );
-  setParseState(snapshot?.review_inbox?.parse_errors);
-  renderColleagues(snapshot);
-  renderThread(snapshot);
-
-  const workspaceDir = String(snapshot?.workspace_dir || "").trim();
-  const projectId = String(document.getElementById("project")?.value || "").trim();
-  workspaceTitleEl.textContent = projectId ? `Project ${projectId}` : "AgentCompany";
-  workspaceSubEl.textContent = workspaceDir || "Local-first governed agent org";
-}
-
-function postSelectionToFrame() {
-  const win = frame?.contentWindow;
-  if (!win) return;
-  win.postMessage(
-    {
-      type: "agentcompany.select",
-      pane: currentView.pane,
-      colleague_id: currentView.colleague_id
-    },
-    "*"
-  );
-}
-
-function buildFrameUrl(baseUrl) {
-  const u = new URL(baseUrl);
-  u.searchParams.set("pane", currentView.pane);
-  if (currentView.pane === "colleague" && currentView.colleague_id) {
-    u.searchParams.set("colleague_id", currentView.colleague_id);
-  } else {
-    u.searchParams.delete("colleague_id");
-  }
-  return u.toString();
-}
-
-function updateFrameSrc(force = false) {
-  if (!frame) return;
-  if (!currentServerUrl) {
-    frame.setAttribute("src", "about:blank");
+function renderParticipants(conversation) {
+  if (!conversation || !Array.isArray(conversation.participants?.agent_ids)) {
+    participantListEl.innerHTML = `<div class="empty">No participants.</div>`;
     return;
   }
-  const target = buildFrameUrl(currentServerUrl);
-  if (force || frame.getAttribute("src") !== target) {
-    frame.setAttribute("src", target);
-  } else {
-    postSelectionToFrame();
-  }
-}
-
-function applyView(nextPane, nextColleagueId = null) {
-  if (nextPane === "colleague") {
-    currentView = {
-      pane: "colleague",
-      colleague_id: nextColleagueId || currentView.colleague_id
-    };
-  } else {
-    currentView = {
-      pane: nextPane,
-      colleague_id: null
-    };
-  }
-  setActiveNav();
-  renderThread(latestSnapshot);
-  updateFrameSrc();
-  postSelectionToFrame();
-}
-
-function setSessionUrl(url, forceFrameReload = false) {
-  if (!url) {
-    currentServerUrl = null;
-    sessionUrl.textContent = "-";
-    sessionUrl.setAttribute("href", "#");
-    updateFrameSrc(true);
+  const ids = [...new Set(conversation.participants.agent_ids)].filter(Boolean);
+  if (!ids.length) {
+    participantListEl.innerHTML = `<div class="empty">No participants.</div>`;
     return;
   }
+  participantListEl.innerHTML = ids
+    .map((id) => {
+      const agent = resolveAgent(id);
+      const canOpen = String(id).startsWith("agent_");
+      return (
+        `<button class="participant-item" data-agent-id="${canOpen ? esc(id) : ""}" type="button">` +
+        `<div>${esc(agent?.name || id)}</div>` +
+        `<div class="meta">${esc(agent?.role || "participant")} · ${esc(agent?.provider || "manual")}</div>` +
+        `</button>`
+      );
+    })
+    .join("");
 
-  const next = String(url);
-  const changed = currentServerUrl !== next;
-  currentServerUrl = next;
-  sessionUrl.textContent = next;
-  sessionUrl.setAttribute("href", next);
-  updateFrameSrc(forceFrameReload || changed);
-}
-
-function normalizeSession(raw) {
-  const workspace_dir = String(raw.workspace || "").trim();
-  const project_id = String(raw.project || "").trim();
-  const actor_id = String(raw.actor || "human_ceo").trim() || "human_ceo";
-  const actor_role = "ceo";
-  const portNum = Number.parseInt(String(raw.port || "8787"), 10);
-  const port = Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535 ? portNum : 8787;
-
-  return {
-    workspace_dir,
-    project_id,
-    actor_id,
-    actor_role,
-    actor_team_id: undefined,
-    port,
-    host: "127.0.0.1"
-  };
-}
-
-function readForm() {
-  const fd = new FormData(form);
-  return normalizeSession(Object.fromEntries(fd.entries()));
-}
-
-function writeForm(session) {
-  document.getElementById("workspace").value = session.workspace_dir ?? "";
-  document.getElementById("project").value = session.project_id ?? "";
-  document.getElementById("actor").value = session.actor_id ?? "human_ceo";
-  document.getElementById("role").value = "ceo";
-  document.getElementById("team").value = "";
-  document.getElementById("port").value = String(session.port ?? 8787);
-}
-
-function saveSession(session) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-}
-
-function loadSession() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    return normalizeSession(JSON.parse(raw));
-  } catch {
-    return null;
-  }
-}
-
-async function waitForHealth(url, timeoutMs = 12000) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const res = await fetch(`${url}/api/health`, { method: "GET" });
-      if (res.ok) return;
-    } catch {
-      // Keep polling.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`Timed out waiting for ${url}/api/health`);
-}
-
-async function fetchUiSnapshot(url) {
-  const res = await fetch(`${url}/api/ui/snapshot`, { method: "GET" });
-  if (!res.ok) throw new Error(`snapshot failed: ${res.status}`);
-  return await res.json();
-}
-
-async function fetchMonitorSnapshot(url) {
-  const res = await fetch(`${url}/api/monitor/snapshot`, { method: "GET" });
-  if (!res.ok) throw new Error(`monitor snapshot failed: ${res.status}`);
-  return await res.json();
-}
-
-async function fetchInboxSnapshot(url) {
-  const res = await fetch(`${url}/api/inbox/snapshot`, { method: "GET" });
-  if (!res.ok) throw new Error(`inbox snapshot failed: ${res.status}`);
-  return await res.json();
-}
-
-async function refreshSnapshotSidebar(options = {}) {
-  if (!currentServerUrl) return;
-  const includeColleagues =
-    options.includeColleagues === true || currentView.pane === "colleague";
-  try {
-    const [monitor, inbox, fullUi] = await Promise.all([
-      fetchMonitorSnapshot(currentServerUrl),
-      fetchInboxSnapshot(currentServerUrl),
-      includeColleagues ? fetchUiSnapshot(currentServerUrl) : Promise.resolve(null)
-    ]);
-    const snap = mergeThinUiSnapshot({
-      monitor,
-      inbox,
-      fullUi,
-      previousSnapshot: latestSnapshot
+  Array.from(participantListEl.querySelectorAll("[data-agent-id]")).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const agentId = btn.getAttribute("data-agent-id");
+      if (!agentId) return;
+      await openProfile(agentId);
     });
-    renderSidebar(snap);
-    setError("");
-  } catch (error) {
-    setError(error instanceof Error ? error.message : String(error));
-  }
-}
-
-function ensureSnapshotPolling() {
-  if (snapshotPollTimer) return;
-  snapshotPollTimer = setInterval(() => {
-    snapshotPollTick += 1;
-    const includeColleagues =
-      currentView.pane === "colleague" ||
-      shouldIncludeColleaguesForTick(snapshotPollTick, latestSnapshot?.colleagues?.length > 0);
-    void refreshSnapshotSidebar({ includeColleagues });
-  }, 5000);
-}
-
-async function refreshStatus() {
-  const invoke = getInvoke();
-  if (!invoke) {
-    setStatus("browser mode");
-    setError("Tauri runtime not detected. Launch this page from the desktop app.");
-    renderThread(latestSnapshot);
-    return;
-  }
-  try {
-    const status = await invoke("manager_web_status");
-    if (!status?.running) {
-      setStatus("idle");
-      setSessionUrl(null);
-      return;
-    }
-    setStatus(`running (${status.pid ?? "-"})`);
-    setSessionUrl(status.url);
-    await refreshSnapshotSidebar({ includeColleagues: true });
-  } catch (error) {
-    setStatus("error");
-    setError(error instanceof Error ? error.message : String(error));
-  }
-}
-
-async function bootstrapWorkspaceFromPresets() {
-  const invoke = getInvoke();
-  if (!invoke) {
-    setBootstrapStatus("Tauri runtime not detected.", true);
-    return;
-  }
-
-  const workspaceDir = String(document.getElementById("workspace")?.value || "").trim();
-  if (!workspaceDir) {
-    setBootstrapStatus("Workspace directory is required before bootstrapping.", true);
-    return;
-  }
-
-  const departments = readSelectedDepartmentPresets();
-  if (!departments.length) {
-    setBootstrapStatus("Select at least one department preset.", true);
-    return;
-  }
-
-  const args = {
-    workspaceDir,
-    companyName: String(quickCompanyNameInput?.value || "AgentCompany").trim() || "AgentCompany",
-    projectName:
-      String(quickProjectNameInput?.value || "AgentCompany Ops").trim() || "AgentCompany Ops",
-    departments,
-    includeCeo: true,
-    includeDirector: Boolean(quickIncludeDirectorInput?.checked),
-    force: Boolean(quickForceResetInput?.checked)
-  };
-
-  bootstrapBtn.disabled = true;
-  setBootstrapStatus("Bootstrapping workspace...");
-  try {
-    const res = await invoke("bootstrap_workspace", { args });
-    const defaults = res?.default_session ?? {};
-    const projectId = String(defaults.project_id || res?.project_id || "").trim();
-    const actorId = String(res?.agents?.ceo_agent_id || defaults.actor_id || "human_ceo");
-
-    if (projectId) document.getElementById("project").value = projectId;
-    document.getElementById("actor").value = actorId;
-    document.getElementById("role").value = "ceo";
-    document.getElementById("team").value = "";
-
-    const session = readForm();
-    saveSession(session);
-    const deptCount = Array.isArray(res?.departments) ? res.departments.length : departments.length;
-    setBootstrapStatus(
-      `Created ${deptCount} departments, project ${projectId || "unknown"}, CEO actor ${actorId}.`
-    );
-    setError("");
-
-    if (quickAutoStartInput?.checked) {
-      await startSession();
-    }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    setBootstrapStatus(msg, true);
-  } finally {
-    bootstrapBtn.disabled = false;
-  }
-}
-
-async function onboardAgent() {
-  const invoke = getInvoke();
-  if (!invoke) {
-    setOnboardStatus("Tauri runtime not detected.", true);
-    return;
-  }
-
-  const workspaceDir = String(document.getElementById("workspace")?.value || "").trim();
-  if (!workspaceDir) {
-    setOnboardStatus("Workspace directory is required before onboarding agents.", true);
-    return;
-  }
-
-  const name = String(onboardAgentNameInput?.value || "").trim();
-  const role = String(onboardAgentRoleInput?.value || "").trim().toLowerCase();
-  const provider = String(onboardAgentProviderInput?.value || "").trim();
-  const teamId = String(onboardTeamIdInput?.value || "").trim();
-  const teamName = String(onboardTeamNameInput?.value || "").trim();
-
-  if (!name) {
-    setOnboardStatus("Agent name is required.", true);
-    return;
-  }
-  if (!provider) {
-    setOnboardStatus("Provider is required.", true);
-    return;
-  }
-  if (!["ceo", "director", "manager", "worker"].includes(role)) {
-    setOnboardStatus("Role must be one of: ceo, director, manager, worker.", true);
-    return;
-  }
-
-  onboardAgentBtn.disabled = true;
-  setOnboardStatus("Onboarding agent...");
-  try {
-    const res = await invoke("onboard_agent", {
-      args: {
-        workspaceDir,
-        name,
-        role,
-        provider,
-        teamId: teamId || undefined,
-        teamName: teamName || undefined
-      }
-    });
-    const createdTeam = Boolean(res?.created_team);
-    const createdTeamId = String(res?.team_id || teamId || "").trim();
-    if (!teamId && createdTeamId && onboardTeamIdInput) {
-      onboardTeamIdInput.value = createdTeamId;
-    }
-    setOnboardStatus(
-      `Onboarded ${name} (${role}) -> ${String(res?.agent_id || "unknown")}` +
-        (createdTeam ? ` in new team ${createdTeamId}` : createdTeamId ? ` in team ${createdTeamId}` : "")
-    );
-    if (onboardAgentNameInput) onboardAgentNameInput.value = "";
-    if (currentServerUrl) {
-      await refreshSnapshotSidebar({ includeColleagues: true });
-    }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    setOnboardStatus(msg, true);
-  } finally {
-    onboardAgentBtn.disabled = false;
-  }
-}
-
-async function startSession() {
-  const invoke = getInvoke();
-  if (!invoke) {
-    setError("Tauri runtime not detected.");
-    return;
-  }
-
-  const session = readForm();
-  if (!session.workspace_dir) {
-    setError("Workspace directory is required.");
-    return;
-  }
-  if (!session.project_id) {
-    setError("Project ID is required.");
-    return;
-  }
-
-  startBtn.disabled = true;
-  try {
-    saveSession(session);
-    setStatus("starting");
-    const status = await invoke("start_manager_web", { args: session });
-    const url = String(status?.url || "");
-    if (!url) throw new Error("Manager Web did not return a URL");
-    await waitForHealth(url);
-    setStatus(`running (${status.pid ?? "-"})`);
-    setSessionUrl(url, true);
-    snapshotPollTick = 0;
-    await refreshSnapshotSidebar({ includeColleagues: true });
-    if (liveVisible) updateFrameSrc(true);
-    setError("");
-  } catch (error) {
-    setStatus("error");
-    setError(error instanceof Error ? error.message : String(error));
-  } finally {
-    startBtn.disabled = false;
-  }
-}
-
-async function stopSession() {
-  const invoke = getInvoke();
-  if (!invoke) {
-    setError("Tauri runtime not detected.");
-    return;
-  }
-
-  stopBtn.disabled = true;
-  try {
-    await invoke("stop_manager_web");
-    setStatus("idle");
-    setSessionUrl(null);
-    latestSnapshot = null;
-    setCounts(0, 0, 0);
-    setParseState(null);
-    setColleaguePlaceholder();
-    renderThread(null);
-    currentView = { pane: "pending", colleague_id: null };
-    setActiveNav();
-    setError("");
-  } catch (error) {
-    setError(error instanceof Error ? error.message : String(error));
-  } finally {
-    stopBtn.disabled = false;
-  }
-}
-
-function toggleLivePane() {
-  liveVisible = !liveVisible;
-  livePane.classList.toggle("hidden", !liveVisible);
-  shell.classList.toggle("with-live", liveVisible);
-  if (liveVisible) updateFrameSrc(true);
-}
-
-frame.addEventListener("load", () => {
-  postSelectionToFrame();
-});
-
-channelButtons.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const pane = btn.getAttribute("data-pane");
-    if (!pane) return;
-    applyView(pane);
   });
+}
+
+function renderMessageView(conversation) {
+  const titlePrefix = conversation.kind === "channel" ? "#" : conversation.kind === "dm" ? "@" : "";
+  viewTitleEl.textContent = `${titlePrefix}${conversation.slug || conversation.name}`;
+  viewSubtitleEl.textContent = conversation.kind === "dm"
+    ? "Direct messages"
+    : "Threaded operational messages and updates";
+
+  if (!state.messages.length) {
+    contentBodyEl.innerHTML = `<div class="empty">No messages yet. Start the thread.</div>`;
+  } else {
+    contentBodyEl.innerHTML = state.messages
+      .map((m) => {
+        const agent = resolveAgent(m.author_id);
+        return (
+          `<article class="message-card">` +
+          `<div class="message-meta"><span class="message-author">${esc(agent?.name || m.author_id)}</span><span>${esc(fmtDate(m.created_at))}</span></div>` +
+          `<p class="message-body">${esc(m.body)}</p>` +
+          `</article>`
+        );
+      })
+      .join("");
+  }
+  composerForm.classList.remove("hidden");
+  composerHint.textContent = `Posting to ${conversation.slug || conversation.name}`;
+  renderParticipants(conversation);
+}
+
+function renderActivitiesView() {
+  viewTitleEl.textContent = "Activities";
+  viewSubtitleEl.textContent = "Approvals, run telemetry, and operational decisions";
+
+  const snap = state.activitiesSnapshot || {};
+  const pending = snap.review_inbox?.pending || [];
+  const decisions = snap.review_inbox?.recent_decisions || [];
+  const runs = snap.monitor?.rows || [];
+  const items = [];
+
+  for (const p of pending) {
+    items.push({
+      ts: p.created_at || "",
+      title: `Pending approval: ${p.artifact_type} ${p.artifact_id}`,
+      body: `${p.title || "Untitled"} · by ${p.produced_by || "unknown"}`
+    });
+  }
+  for (const d of decisions) {
+    items.push({
+      ts: d.created_at || "",
+      title: `${String(d.decision || "").toUpperCase()} ${d.subject_kind || "item"}`,
+      body: `${d.subject_artifact_id || ""} · actor=${d.actor_id || "unknown"}`
+    });
+  }
+  for (const r of runs) {
+    items.push({
+      ts: r.last_event?.ts_wallclock || r.created_at || "",
+      title: `Run ${r.run_id} (${r.run_status})`,
+      body: `${r.provider || "unknown"} · ${r.last_event?.type || "no events"}`
+    });
+  }
+
+  items.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+  if (!items.length) {
+    contentBodyEl.innerHTML = `<div class="empty">No activities yet.</div>`;
+  } else {
+    contentBodyEl.innerHTML = items
+      .slice(0, 200)
+      .map(
+        (i) =>
+          `<article class="activity-card"><div class="activity-meta"><span>${esc(i.title)}</span><span>${esc(fmtDate(i.ts))}</span></div><p class="activity-body">${esc(i.body)}</p></article>`
+      )
+      .join("");
+  }
+  composerForm.classList.add("hidden");
+
+  const colleagues = snap.colleagues || [];
+  participantListEl.innerHTML = colleagues.length
+    ? colleagues
+        .slice(0, 60)
+        .map(
+          (c) =>
+            `<button class="participant-item" data-agent-id="${esc(c.agent_id)}" type="button"><div>${esc(c.name)}</div><div class="meta">${esc(c.role)} · runs=${c.active_runs} · pending=${c.pending_reviews}</div></button>`
+        )
+        .join("")
+    : `<div class="empty">No active colleagues.</div>`;
+  Array.from(participantListEl.querySelectorAll("[data-agent-id]")).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const agentId = btn.getAttribute("data-agent-id");
+      if (!agentId) return;
+      await openProfile(agentId);
+    });
+  });
+}
+
+function renderResourcesView() {
+  viewTitleEl.textContent = "Resources";
+  viewSubtitleEl.textContent = "Token usage, workers, provider mix, and context-cycle telemetry";
+  const r = state.resourcesSnapshot;
+  if (!r) {
+    contentBodyEl.innerHTML = `<div class="empty">No resource data available.</div>`;
+    participantListEl.innerHTML = `<div class="empty">No participants.</div>`;
+    composerForm.classList.add("hidden");
+    return;
+  }
+
+  const kpis = [
+    ["Agents", r.totals.agents],
+    ["Workers", r.totals.workers],
+    ["Active Workers", r.totals.active_workers],
+    ["Runs Indexed", r.totals.runs_indexed],
+    ["Total Tokens", r.totals.total_tokens],
+    ["Total Cost (USD)", Number(r.totals.total_cost_usd || 0).toFixed(4)],
+    ["Context Cycles", r.totals.context_cycles_total],
+    ["Cycle Unknown Runs", r.totals.context_cycles_unknown_runs]
+  ];
+
+  const providerCards = (r.providers || [])
+    .map(
+      (p) =>
+        `<article class="resource-card"><div class="activity-title">${esc(p.provider)}</div><p class="activity-body">runs=${p.run_count} · tokens=${p.total_tokens} · usd=${Number(p.total_cost_usd || 0).toFixed(4)}</p></article>`
+    )
+    .join("");
+  const modelCards = (r.models || [])
+    .map(
+      (m) =>
+        `<article class="resource-card"><div class="activity-title">${esc(m.model)}</div><p class="activity-body">agents=${m.agent_count}</p></article>`
+    )
+    .join("");
+
+  contentBodyEl.innerHTML =
+    `<section class="resource-grid">` +
+    kpis
+      .map(
+        ([k, v]) =>
+          `<article class="kpi"><div class="kpi-label">${esc(k)}</div><div class="kpi-value">${esc(String(v))}</div></article>`
+      )
+      .join("") +
+    `</section>` +
+    `<section><h3>Providers</h3>${providerCards || `<div class="empty">No provider usage yet.</div>`}</section>` +
+    `<section><h3>Models</h3>${modelCards || `<div class="empty">No model metadata yet.</div>`}</section>`;
+  participantListEl.innerHTML = `<div class="empty">Select a channel or activity to inspect participants.</div>`;
+  composerForm.classList.add("hidden");
+}
+
+function renderCurrentView() {
+  if (!state.workspaceDir) {
+    viewTitleEl.textContent = "Workspace Not Connected";
+    viewSubtitleEl.textContent = "Open Settings and provide a workspace directory.";
+    contentBodyEl.innerHTML = `<div class="empty">Use the ⚙ button to configure your workspace and actor.</div>`;
+    participantListEl.innerHTML = `<div class="empty">No participants.</div>`;
+    composerForm.classList.add("hidden");
+    return;
+  }
+
+  if (state.selectedView.type === "activities") {
+    renderActivitiesView();
+    return;
+  }
+  if (state.selectedView.type === "resources") {
+    renderResourcesView();
+    return;
+  }
+  const conversation = getConversationById(state.selectedView.conversationId);
+  if (!conversation) {
+    contentBodyEl.innerHTML = `<div class="empty">Select a channel or DM.</div>`;
+    participantListEl.innerHTML = `<div class="empty">No participants.</div>`;
+    composerForm.classList.add("hidden");
+    return;
+  }
+  renderMessageView(conversation);
+}
+
+async function refreshAndRenderCurrentView() {
+  try {
+    await refreshCurrentViewData();
+    renderSidebar();
+    renderCurrentView();
+    saveSession();
+  } catch (e) {
+    contentBodyEl.innerHTML = `<div class="empty">Failed to refresh view: ${esc(e.message || e)}</div>`;
+  }
+}
+
+async function refreshAndRender() {
+  if (!state.workspaceDir || state.refreshBusy) {
+    renderProjectRail();
+    renderSidebar();
+    renderCurrentView();
+    return;
+  }
+  state.refreshBusy = true;
+  try {
+    await refreshProjectsAndAgents();
+    await refreshConversations();
+    await refreshCurrentViewData();
+  } catch (e) {
+    setSettingsStatus(`Refresh failed: ${e.message || e}`);
+  } finally {
+    state.refreshBusy = false;
+  }
+  renderProjectRail();
+  renderSidebar();
+  renderCurrentView();
+  saveSession();
+}
+
+async function openProfile(agentId) {
+  state.profileAgentId = agentId;
+  const profile = await rpcCall("agent.profile.snapshot", {
+    workspace_dir: state.workspaceDir,
+    agent_id: agentId,
+    project_id: state.selectedRail.projectId ?? undefined
+  });
+  profileNameEl.textContent = profile.agent.name;
+  const model = profile.agent.model_hint || `${profile.agent.provider} (default)`;
+  profileMetaEl.textContent =
+    `${profile.agent.role.toUpperCase()} · ${model} · tenure ${profile.agent.tenure_days} day(s)`;
+  const stats = [
+    ["Total Runs", profile.metrics.total_runs],
+    ["Running", profile.metrics.running_runs],
+    ["Ended", profile.metrics.ended_runs],
+    ["Failed", profile.metrics.failed_runs],
+    ["Tokens", profile.metrics.total_tokens],
+    ["Cost USD", Number(profile.metrics.total_cost_usd || 0).toFixed(4)],
+    [
+      "Context Cycles",
+      profile.metrics.context_cycles_count == null ? "unknown" : profile.metrics.context_cycles_count
+    ],
+    ["Cycle Source", profile.metrics.context_cycles_source]
+  ];
+  profileStatsEl.innerHTML = stats
+    .map(
+      ([k, v]) =>
+        `<article class="profile-stat"><div class="k">${esc(k)}</div><div class="v">${esc(String(v))}</div></article>`
+    )
+    .join("");
+  profileModal.showModal();
+}
+
+function parseRepoIds(raw) {
+  return String(raw || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+async function handleProjectCreate(ev) {
+  ev.preventDefault();
+  const name = projectNameInput.value.trim();
+  if (!name) return;
+  const repoIds = parseRepoIds(projectReposInput.value);
+  const created = await rpcCall("workspace.project.create_with_defaults", {
+    workspace_dir: state.workspaceDir,
+    name,
+    ceo_actor_id: state.actorId,
+    repo_ids: repoIds
+  });
+  projectModal.close();
+  state.selectedRail = { kind: "project", projectId: created.project_id };
+  state.selectedView = { type: "conversation", conversationId: null };
+  projectNameInput.value = "";
+  projectReposInput.value = "";
+  await refreshAndRender();
+}
+
+async function handleCreateChannel() {
+  if (!state.workspaceDir) return;
+  const name = prompt("Channel name (e.g. Security):");
+  if (!name || !name.trim()) return;
+  const slug = slugify(name);
+  if (!slug) return;
+  const scope = currentScopeParams();
+  const created = await rpcCall("conversation.create_channel", {
+    workspace_dir: state.workspaceDir,
+    ...scope,
+    name: name.trim(),
+    slug,
+    visibility: state.selectedRail.kind === "project" ? "team" : "managers",
+    created_by: state.actorId,
+    participant_agent_ids: [state.actorId]
+  });
+  state.selectedView = { type: "conversation", conversationId: created.id };
+  await refreshAndRender();
+}
+
+async function handleCreateDm() {
+  if (!state.workspaceDir) return;
+  const peers = state.agents.filter((a) => a.agent_id !== state.actorId && a.agent_id !== "human_ceo");
+  if (!peers.length) {
+    alert("No agents available for DM.");
+    return;
+  }
+  const pickPrompt =
+    "Enter an agent_id for DM:\n" +
+    peers
+      .slice(0, 40)
+      .map((a) => `${a.agent_id} (${a.name}, ${a.role})`)
+      .join("\n");
+  const chosen = prompt(pickPrompt);
+  if (!chosen) return;
+  const peerId = chosen.trim();
+  if (!peerId) return;
+  const scope = currentScopeParams();
+  const dm = await rpcCall("conversation.create_dm", {
+    workspace_dir: state.workspaceDir,
+    ...scope,
+    created_by: state.actorId,
+    peer_agent_id: peerId
+  });
+  state.selectedView = { type: "conversation", conversationId: dm.id };
+  await refreshAndRender();
+}
+
+async function openLiveOps() {
+  if (!state.workspaceDir) {
+    alert("Set a workspace first.");
+    return;
+  }
+  const projectId =
+    state.selectedRail.projectId || state.projects[0]?.project_id || null;
+  if (!projectId) {
+    alert("Create or select a project first.");
+    return;
+  }
+  const invoke = getInvoke();
+  if (!invoke) return;
+  const status = await invoke("start_manager_web", {
+    args: {
+      workspace_dir: state.workspaceDir,
+      project_id: projectId,
+      actor_id: state.actorId,
+      actor_role: "ceo",
+      sync_index: true
+    }
+  });
+  liveOpsFrame.src = status.url || "about:blank";
+  liveOpsModal.showModal();
+}
+
+async function handleBootstrap() {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  const workspaceDir = workspaceInput.value.trim();
+  if (!workspaceDir) return;
+  setSettingsStatus("Bootstrapping workspace presets...");
+  const res = await invoke("bootstrap_workspace", {
+    args: {
+      workspace_dir: workspaceDir,
+      company_name: "AgentCompany",
+      project_name: "AgentCompany Ops",
+      departments: ["engineering", "product", "operations"],
+      include_ceo: true,
+      include_director: true,
+      force: false
+    }
+  });
+  state.workspaceDir = workspaceDir;
+  state.actorId = res?.agents?.ceo_agent_id || actorInput.value.trim() || "human_ceo";
+  setSettingsStatus("Bootstrap complete.");
+  await refreshAndRender();
+}
+
+async function handleOnboard() {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  const workspaceDir = workspaceInput.value.trim();
+  if (!workspaceDir) return;
+  const name = prompt("Worker name:", "New Worker");
+  if (!name || !name.trim()) return;
+  const teamName = prompt("Team name (optional):", "");
+  setSettingsStatus("Onboarding agent...");
+  await invoke("onboard_agent", {
+    args: {
+      workspace_dir: workspaceDir,
+      name: name.trim(),
+      role: "worker",
+      provider: "codex",
+      team_name: teamName?.trim() || undefined
+    }
+  });
+  setSettingsStatus("Agent onboarded.");
+  await refreshAndRender();
+}
+
+workspaceRailBtn.addEventListener("click", async () => {
+  state.selectedRail = { kind: "workspace", projectId: null };
+  state.selectedView = { type: "conversation", conversationId: null };
+  await refreshAndRender();
 });
 
-startBtn.addEventListener("click", () => {
-  void startSession();
+homeViewBtn.addEventListener("click", async () => {
+  const home = getHomeConversation();
+  state.selectedView = { type: "conversation", conversationId: home?.id ?? null };
+  await refreshAndRenderCurrentView();
 });
 
-stopBtn.addEventListener("click", () => {
-  void stopSession();
+activitiesViewBtn.addEventListener("click", async () => {
+  state.selectedView = { type: "activities", conversationId: null };
+  await refreshAndRenderCurrentView();
 });
 
-refreshBtn.addEventListener("click", () => {
-  void refreshStatus();
+resourcesViewBtn.addEventListener("click", async () => {
+  state.selectedView = { type: "resources", conversationId: null };
+  await refreshAndRenderCurrentView();
 });
 
-toggleLiveBtn.addEventListener("click", () => {
-  toggleLivePane();
+projectAddBtn.addEventListener("click", () => {
+  if (!state.workspaceDir) {
+    settingsModal.showModal();
+    return;
+  }
+  projectModal.showModal();
 });
 
-bootstrapBtn?.addEventListener("click", () => {
-  void bootstrapWorkspaceFromPresets();
+settingsBtn.addEventListener("click", () => {
+  workspaceInput.value = state.workspaceDir;
+  actorInput.value = state.actorId;
+  settingsModal.showModal();
 });
 
-onboardAgentBtn?.addEventListener("click", () => {
-  void onboardAgent();
+projectCancelBtn.addEventListener("click", () => projectModal.close());
+settingsCancelBtn.addEventListener("click", () => settingsModal.close());
+profileCloseBtn.addEventListener("click", () => profileModal.close());
+liveOpsCloseBtn.addEventListener("click", () => liveOpsModal.close());
+
+addChannelBtn.addEventListener("click", async () => {
+  try {
+    await handleCreateChannel();
+  } catch (e) {
+    alert(`Failed to create channel: ${e.message || e}`);
+  }
 });
 
-const saved = loadSession();
-if (saved) writeForm(saved);
-renderDepartmentPresetCheckboxes();
-setColleaguePlaceholder();
-setCounts(0, 0, 0);
-setParseState(null);
-setBootstrapStatus("");
-setOnboardStatus("");
-setActiveNav();
-renderThread(null);
-ensureSnapshotPolling();
-void refreshStatus();
+addDmBtn.addEventListener("click", async () => {
+  try {
+    await handleCreateDm();
+  } catch (e) {
+    alert(`Failed to create DM: ${e.message || e}`);
+  }
+});
+
+syncBtn.addEventListener("click", async () => {
+  await refreshAndRender();
+});
+
+liveOpsBtn.addEventListener("click", async () => {
+  try {
+    await openLiveOps();
+  } catch (e) {
+    alert(`Failed to open Live Ops: ${e.message || e}`);
+  }
+});
+
+projectForm.addEventListener("submit", async (ev) => {
+  try {
+    await handleProjectCreate(ev);
+  } catch (e) {
+    alert(`Project creation failed: ${e.message || e}`);
+  }
+});
+
+settingsForm.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  state.workspaceDir = workspaceInput.value.trim();
+  state.actorId = actorInput.value.trim() || "human_ceo";
+  settingsModal.close();
+  await refreshAndRender();
+});
+
+bootstrapBtn.addEventListener("click", async () => {
+  try {
+    await handleBootstrap();
+  } catch (e) {
+    setSettingsStatus(`Bootstrap failed: ${e.message || e}`);
+  }
+});
+
+onboardBtn.addEventListener("click", async () => {
+  try {
+    await handleOnboard();
+  } catch (e) {
+    setSettingsStatus(`Onboard failed: ${e.message || e}`);
+  }
+});
+
+composerForm.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const body = composerInput.value.trim();
+  if (!body) return;
+  if (state.selectedView.type !== "conversation" || !state.selectedView.conversationId) return;
+  try {
+    const scope = currentScopeParams();
+    await rpcCall("conversation.message.send", {
+      workspace_dir: state.workspaceDir,
+      conversation_id: state.selectedView.conversationId,
+      author_id: state.actorId,
+      author_role: "ceo",
+      body,
+      ...scope
+    });
+    composerInput.value = "";
+    await refreshAndRenderCurrentView();
+  } catch (e) {
+    alert(`Message send failed: ${e.message || e}`);
+  }
+});
+
+composerInput.addEventListener("keydown", async (ev) => {
+  if (ev.key !== "Enter" || ev.shiftKey) return;
+  ev.preventDefault();
+  composerForm.requestSubmit();
+});
+
+profileMessageBtn.addEventListener("click", async () => {
+  if (!state.profileAgentId) return;
+  try {
+    const scope = currentScopeParams();
+    const dm = await rpcCall("conversation.create_dm", {
+      workspace_dir: state.workspaceDir,
+      created_by: state.actorId,
+      peer_agent_id: state.profileAgentId,
+      ...scope
+    });
+    profileModal.close();
+    state.selectedView = { type: "conversation", conversationId: dm.id };
+    await refreshAndRender();
+  } catch (e) {
+    alert(`Failed to open DM: ${e.message || e}`);
+  }
+});
+
+function startPolling() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(() => {
+    if (!state.workspaceDir || state.refreshBusy) return;
+    void refreshAndRender();
+  }, 15000);
+}
+
+loadSession();
+workspaceInput.value = state.workspaceDir;
+actorInput.value = state.actorId;
+renderProjectRail();
+renderSidebar();
+renderCurrentView();
+startPolling();
+if (state.workspaceDir) {
+  void refreshAndRender();
+}
