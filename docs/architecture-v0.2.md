@@ -84,3 +84,12 @@ Event appends:
   - `verified` (hash-chain checks)
   - `deterministic` (verified + deterministic_ok signal)
   - `live` (verified persisted events plus live session metadata when available)
+
+## Desktop Control Plane Contract
+
+- Desktop shell is local-first and launches/stops `ui:web` via Tauri commands.
+- Desktop session actor role is fixed to `ceo` (single human user model in v0).
+- Workspace bootstrap from presets always includes a CEO agent.
+- Desktop supports direct agent onboarding:
+  - create agent with role (`ceo|director|manager|worker`)
+  - attach to existing team or create a new team during onboarding
