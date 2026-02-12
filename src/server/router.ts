@@ -5,6 +5,7 @@ import { initWorkspace } from "../workspace/init.js";
 import { validateWorkspace } from "../workspace/validate.js";
 import { doctorWorkspace } from "../workspace/doctor.js";
 import { createWorkspaceDiagnosticsBundle } from "../workspace/diagnostics.js";
+import { migrateWorkspace } from "../workspace/migrate.js";
 import { exportWorkspace, importWorkspace } from "../workspace/export_import.js";
 import { createRun } from "../runtime/run.js";
 import {
@@ -80,6 +81,12 @@ const WorkspaceDiagnosticsParams = z.object({
   decisions_limit: z.number().int().positive().max(5000).optional()
 });
 
+const WorkspaceMigrateParams = z.object({
+  workspace_dir: z.string().min(1),
+  dry_run: z.boolean().default(false),
+  force: z.boolean().default(false)
+});
+
 const WorkspaceExportParams = z.object({
   workspace_dir: z.string().min(1),
   out_dir: z.string().min(1),
@@ -131,7 +138,11 @@ const SessionLaunchParams = z.object({
   budget: BudgetThresholdParams.optional(),
   stdin_text: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),
-  session_ref: z.string().min(1).optional()
+  session_ref: z.string().min(1).optional(),
+  lane_priority: z.enum(["high", "normal", "low"]).optional(),
+  lane_workspace_limit: z.number().int().positive().optional(),
+  lane_provider_limit: z.number().int().positive().optional(),
+  lane_team_limit: z.number().int().positive().optional()
 });
 
 const SessionSingleParams = z.object({
@@ -156,7 +167,7 @@ const RunReplayParams = z.object({
   project_id: z.string().min(1),
   run_id: z.string().min(1),
   tail: z.number().int().positive().optional(),
-  mode: z.enum(["raw", "verified"]).default("raw")
+  mode: z.enum(["raw", "verified", "deterministic", "live"]).default("raw")
 });
 
 const SharePackReplayParams = z.object({
@@ -165,7 +176,7 @@ const SharePackReplayParams = z.object({
   share_pack_id: z.string().min(1),
   run_id: z.string().min(1).optional(),
   tail: z.number().int().positive().optional(),
-  mode: z.enum(["raw", "verified"]).default("raw")
+  mode: z.enum(["raw", "verified", "deterministic"]).default("raw")
 });
 
 const InboxListParams = z.object({
@@ -473,6 +484,14 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         decisions_limit: p.decisions_limit
       });
     }
+    case "workspace.migrate": {
+      const p = WorkspaceMigrateParams.parse(params);
+      return migrateWorkspace({
+        workspace_dir: p.workspace_dir,
+        dry_run: p.dry_run,
+        force: p.force
+      });
+    }
     case "workspace.export": {
       const p = WorkspaceExportParams.parse(params);
       return exportWorkspace({
@@ -525,7 +544,11 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         budget: p.budget,
         stdin_text: p.stdin_text,
         env: p.env,
-        session_ref: p.session_ref
+        session_ref: p.session_ref,
+        lane_priority: p.lane_priority,
+        lane_workspace_limit: p.lane_workspace_limit,
+        lane_provider_limit: p.lane_provider_limit,
+        lane_team_limit: p.lane_team_limit
       });
     }
     case "session.poll": {

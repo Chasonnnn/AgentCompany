@@ -115,10 +115,23 @@ node dist/cli.js workspace:doctor /path/to/workspace --rebuild-index
 node dist/cli.js workspace:doctor /path/to/workspace --sync-index
 ```
 
+Export a diagnostics bundle (doctor + adapters + sessions + monitor + inbox snapshots):
+```bash
+node dist/cli.js workspace:diagnostics /path/to/workspace /tmp/agentcompany-diag
+```
+
+Apply workspace migrations (event envelope/schema upgrades):
+```bash
+node dist/cli.js workspace:migrate /path/to/workspace --dry-run
+node dist/cli.js workspace:migrate /path/to/workspace
+```
+
 Run monitor helpers:
 ```bash
 node dist/cli.js run:list /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --tail 50
+node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --mode deterministic
+node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --mode live
 ```
 
 SQLite cache/index helpers:
@@ -156,9 +169,15 @@ Desktop shell behavior:
 - The app embeds the Manager Web UI in a native window.
 - This keeps the architecture local-first and protocol/event-log based without introducing Docker.
 
+Desktop release readiness checks:
+```bash
+node dist/cli.js desktop:release-doctor
+```
+
 Cross-team sharing:
 ```bash
 node dist/cli.js sharepack:create /path/to/workspace --project "$PROJECT_ID" --by human
+node dist/cli.js sharepack:replay /path/to/workspace --project "$PROJECT_ID" --share <share_pack_id> --mode deterministic
 node dist/cli.js help:new /path/to/workspace --title "Need help reviewing this workplan" --requester human --target <manager_agent_id> --project "$PROJECT_ID" --visibility managers
 ```
 

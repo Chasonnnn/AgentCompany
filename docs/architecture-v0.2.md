@@ -6,7 +6,7 @@ This document clarifies the runtime architecture as implemented in v0.2.
 
 1. Ingress (`CLI` / JSON-RPC `server router` / UI action)
 2. Coordinator command pipeline
-3. Launch lane scheduler (per-workspace fairness queue)
+3. Launch lane scheduler (priority queue + workspace/provider/team concurrency limits)
 4. Policy gate (allow/deny + `policy.decision` audit)
 5. Budget preflight/advisory gate
 6. Session router (`launch/poll/collect/stop/list`)
@@ -79,3 +79,8 @@ Event appends:
 - Filesystem remains source of truth.
 - SQLite remains rebuildable cache/read model.
 - Governance, budgets, and replay all flow through the same event backbone.
+- Replay tiers are explicit:
+  - `raw` (fast parse)
+  - `verified` (hash-chain checks)
+  - `deterministic` (verified + deterministic_ok signal)
+  - `live` (verified persisted events plus live session metadata when available)

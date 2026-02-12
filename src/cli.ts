@@ -7,6 +7,7 @@ import { initWorkspace } from "./workspace/init.js";
 import { validateWorkspace } from "./workspace/validate.js";
 import { doctorWorkspace } from "./workspace/doctor.js";
 import { createWorkspaceDiagnosticsBundle } from "./workspace/diagnostics.js";
+import { migrateWorkspace } from "./workspace/migrate.js";
 import { exportWorkspace, importWorkspace } from "./workspace/export_import.js";
 import { ArtifactType, newArtifactMarkdown, validateMarkdownArtifact } from "./artifacts/markdown.js";
 import { readArtifactWithPolicy } from "./artifacts/read_artifact.js";
@@ -44,6 +45,7 @@ import { createComment, listComments, type CreateCommentArgs } from "./comments/
 import { buildManagerDashboardJson, runManagerDashboard } from "./ui/manager_dashboard.js";
 import { startUiWebServer } from "./ui/web_server.js";
 import { desktopDoctor } from "./ui/desktop_doctor.js";
+import { desktopReleaseDoctor } from "./ui/desktop_release_doctor.js";
 import { runJsonRpcServer } from "./server/main.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
@@ -178,6 +180,23 @@ program
   );
 
 program
+  .command("workspace:migrate")
+  .description("Apply canonical workspace migrations (schema/event format upgrades)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--dry-run", "Scan and report changes without writing", false)
+  .option("--force", "Re-run migration even if already marked as applied", false)
+  .action(async (workspaceDir: string, opts: { dryRun: boolean; force: boolean }) => {
+    await runAction(async () => {
+      const res = await migrateWorkspace({
+        workspace_dir: workspaceDir,
+        dry_run: opts.dryRun,
+        force: opts.force
+      });
+      process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+    });
+  });
+
+program
   .command("workspace:export")
   .description("Export canonical workspace content to a clean folder (git/cloud-sync friendly)")
   .argument("<workspace_dir>", "Workspace root directory")
@@ -284,6 +303,20 @@ program
       });
     }
   );
+
+program
+  .command("desktop:release-doctor")
+  .description("Check desktop release readiness (bundle/updater/channels/signing strategy)")
+  .option("--cwd <dir>", "Project root override (defaults to current working directory)", undefined)
+  .action(async (opts: { cwd?: string }) => {
+    await runAction(async () => {
+      const report = await desktopReleaseDoctor({
+        cwd: opts.cwd
+      });
+      process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+      if (!report.ok) process.exitCode = 2;
+    });
+  });
 
 program
   .command("server:start")
@@ -1313,7 +1346,7 @@ program
   .option("--project <project_id>", "Project id", "")
   .option("--run <run_id>", "Run id", "")
   .option("--tail <n>", "Show only the last N events", (v) => parseInt(v, 10), undefined)
-  .option("--mode <mode>", "Replay mode (raw|verified)", "raw")
+  .option("--mode <mode>", "Replay mode (raw|verified|deterministic|live)", "raw")
   .action(
     async (
       workspaceDir: string,
@@ -1322,15 +1355,16 @@ program
       await runAction(async () => {
         if (!opts.project.trim()) throw new UserError("--project is required");
         if (!opts.run.trim()) throw new UserError("--run is required");
-        if (opts.mode !== "raw" && opts.mode !== "verified") {
-          throw new UserError('Invalid --mode. Valid: raw, verified');
+        if (!["raw", "verified", "deterministic", "live"].includes(opts.mode)) {
+          throw new UserError("Invalid --mode. Valid: raw, verified, deterministic, live");
         }
+        const mode = opts.mode as "raw" | "verified" | "deterministic" | "live";
         const replay = await replayRun({
           workspace_dir: workspaceDir,
           project_id: opts.project,
           run_id: opts.run,
           tail: opts.tail,
-          mode: opts.mode
+          mode
         });
         for (const ev of replay.events) {
           if (!ev || typeof ev !== "object") {
@@ -1348,6 +1382,19 @@ program
         }
         for (const issue of replay.verification_issues) {
           process.stdout.write(`[verify_issue] seq=${issue.seq} ${issue.code}: ${issue.message}\n`);
+        }
+        if (mode === "deterministic") {
+          process.stdout.write(`[deterministic] ${replay.deterministic_ok ? "ok" : "not_ok"}\n`);
+        }
+        if (mode === "live") {
+          const live = replay.live;
+          process.stdout.write(
+            `[live] available=${live.available ? "yes" : "no"}${
+              live.session_ref ? ` session_ref=${live.session_ref}` : ""
+            }${live.status ? ` status=${live.status}` : ""}${
+              live.error ? ` error=${live.error}` : ""
+            }\n`
+          );
         }
       });
     }
@@ -1723,7 +1770,7 @@ program
   .option("--share <share_pack_id>", "Share pack id", "")
   .option("--run <run_id>", "Run id included in share pack (optional)", undefined)
   .option("--tail <n>", "Show only the last N events per run", (v) => parseInt(v, 10), undefined)
-  .option("--mode <mode>", "Replay mode (raw|verified)", "raw")
+  .option("--mode <mode>", "Replay mode (raw|verified|deterministic)", "raw")
   .action(
     async (
       workspaceDir: string,
@@ -1732,16 +1779,17 @@ program
       await runAction(async () => {
         if (!opts.project.trim()) throw new UserError("--project is required");
         if (!opts.share.trim()) throw new UserError("--share is required");
-        if (opts.mode !== "raw" && opts.mode !== "verified") {
-          throw new UserError('Invalid --mode. Valid: raw, verified');
+        if (!["raw", "verified", "deterministic"].includes(opts.mode)) {
+          throw new UserError("Invalid --mode. Valid: raw, verified, deterministic");
         }
+        const mode = opts.mode as "raw" | "verified" | "deterministic";
         const res = await replaySharePack({
           workspace_dir: workspaceDir,
           project_id: opts.project,
           share_pack_id: opts.share,
           run_id: opts.run,
           tail: opts.tail,
-          mode: opts.mode
+          mode
         });
         process.stdout.write(JSON.stringify(res) + "\n");
       });

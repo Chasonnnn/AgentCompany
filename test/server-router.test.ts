@@ -139,6 +139,17 @@ describe("server router", () => {
     expect(manifest.type).toBe("workspace_diagnostics");
   });
 
+  test("workspace.migrate runs migration dry-run", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const res = (await routeRpcMethod("workspace.migrate", {
+      workspace_dir: dir,
+      dry_run: true
+    })) as any;
+    expect(res.migration_id).toBe("2026-02-12-event-envelope-v1-backfill");
+    expect(res.dry_run).toBe(true);
+  });
+
   test("monitor.snapshot returns rows list", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
