@@ -78,6 +78,19 @@ PROJECT_ID=$(node dist/cli.js project:new /path/to/workspace --name "Project X")
 node dist/cli.js agent:refresh-context /path/to/workspace --agent "$MANAGER_ID"
 ```
 
+Run a governed self-improvement cycle for repeated worker mistakes:
+```bash
+node dist/cli.js agent:self-improve-cycle /path/to/workspace \
+  --project "$PROJECT_ID" \
+  --worker <worker_agent_id> \
+  --manager "$MANAGER_ID" \
+  --manager-role manager \
+  --key missing_tests_evidence \
+  --summary "Missing tests evidence in milestone report" \
+  --rule "Always attach tests artifact links before requesting approval." \
+  --proposal-threshold 3
+```
+
 Create a run (run.yaml + events.jsonl + context pack skeleton):
 ```bash
 node dist/cli.js run:new /path/to/workspace --project "$PROJECT_ID" --agent <agent_id> --provider codex

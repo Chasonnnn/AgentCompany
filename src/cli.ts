@@ -39,6 +39,7 @@ import { scaffoldProjectIntake } from "./pipeline/intake_scaffold.js";
 import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 import { runPlanningPipeline } from "./pipeline/plan_run.js";
 import { recordAgentMistake } from "./eval/mistake_loop.js";
+import { runSelfImproveCycle } from "./eval/self_improve_cycle.js";
 import { refreshAgentContextIndex } from "./eval/agent_context_index.js";
 import { resolveInboxItem } from "./inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "./ui/resolve_and_snapshot.js";
@@ -578,6 +579,98 @@ program
           milestone_id: opts.milestone,
           evidence_artifact_ids: opts.evidence.length ? opts.evidence : undefined,
           promote_threshold: opts.threshold
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("agent:self-improve-cycle")
+  .description(
+    "Run a governed self-improvement cycle: record repeated mistake, evaluate, and propose AGENTS.md memory delta for manager approval"
+  )
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--worker <agent_id>", "Worker agent id", "")
+  .option("--manager <actor_id>", "Manager actor id", "")
+  .option("--manager-role <role>", "Manager actor role (human|ceo|director|manager)", "manager")
+  .option("--key <mistake_key>", "Stable mistake key", "")
+  .option("--summary <summary>", "Human-readable mistake summary", "")
+  .option("--rule <prevention_rule>", "Rule to propose into worker AGENTS.md", "")
+  .option("--proposal-threshold <n>", "Repeats required before creating proposal", (v) => parseInt(v, 10), 3)
+  .option(
+    "--record-threshold <n>",
+    "Auto-promotion threshold for record step (default keeps direct edits disabled in this flow)",
+    (v) => parseInt(v, 10),
+    Number.MAX_SAFE_INTEGER
+  )
+  .option("--task <task_id>", "Task id (optional)", undefined)
+  .option("--milestone <milestone_id>", "Milestone id (optional)", undefined)
+  .option("--evidence <artifact_ids...>", "Evidence artifact ids (optional)", [])
+  .option(
+    "--eval-argv <argv...>",
+    "Evaluation command argv (defaults to a no-op Node command that closes the run cleanly)",
+    []
+  )
+  .option("--eval-repo <repo_id>", "Repo id for evaluation execution", undefined)
+  .option("--eval-subdir <workdir_rel>", "Workdir relative to repo root for evaluation execution", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        worker: string;
+        manager: string;
+        managerRole: string;
+        key: string;
+        summary: string;
+        rule: string;
+        proposalThreshold: number;
+        recordThreshold: number;
+        task?: string;
+        milestone?: string;
+        evidence: string[];
+        evalArgv: string[];
+        evalRepo?: string;
+        evalSubdir?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.worker.trim()) throw new UserError("--worker is required");
+        if (!opts.manager.trim()) throw new UserError("--manager is required");
+        if (!opts.key.trim()) throw new UserError("--key is required");
+        if (!opts.summary.trim()) throw new UserError("--summary is required");
+        if (!opts.rule.trim()) throw new UserError("--rule is required");
+        const role = opts.managerRole as any;
+        if (!["human", "ceo", "director", "manager"].includes(role)) {
+          throw new UserError("Invalid --manager-role. Valid: human, ceo, director, manager");
+        }
+        if (!Number.isInteger(opts.proposalThreshold) || opts.proposalThreshold < 1) {
+          throw new UserError("--proposal-threshold must be an integer >= 1");
+        }
+        if (!Number.isInteger(opts.recordThreshold) || opts.recordThreshold < 1) {
+          throw new UserError("--record-threshold must be an integer >= 1");
+        }
+
+        const res = await runSelfImproveCycle({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          worker_agent_id: opts.worker,
+          manager_actor_id: opts.manager,
+          manager_role: role,
+          mistake_key: opts.key,
+          summary: opts.summary,
+          prevention_rule: opts.rule,
+          proposal_threshold: opts.proposalThreshold,
+          promote_threshold: opts.recordThreshold,
+          task_id: opts.task,
+          milestone_id: opts.milestone,
+          evidence_artifact_ids: opts.evidence.length ? opts.evidence : undefined,
+          evaluation_argv: opts.evalArgv.length ? opts.evalArgv : undefined,
+          evaluation_repo_id: opts.evalRepo,
+          evaluation_workdir_rel: opts.evalSubdir
         });
         process.stdout.write(JSON.stringify(res, null, 2) + "\n");
       });

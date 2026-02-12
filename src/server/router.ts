@@ -31,6 +31,7 @@ import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
 import { approveMilestone } from "../milestones/approve_milestone.js";
 import { recordAgentMistake } from "../eval/mistake_loop.js";
+import { runSelfImproveCycle } from "../eval/self_improve_cycle.js";
 import { refreshAgentContextIndex } from "../eval/agent_context_index.js";
 import { readYamlFile } from "../store/yaml.js";
 import { ReviewYaml } from "../schemas/review.js";
@@ -258,6 +259,26 @@ const AgentRecordMistakeParams = z.object({
   milestone_id: z.string().min(1).optional(),
   evidence_artifact_ids: z.array(z.string().min(1)).optional(),
   promote_threshold: z.number().int().min(1).optional()
+});
+
+const AgentSelfImproveCycleParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  worker_agent_id: z.string().min(1),
+  manager_actor_id: z.string().min(1),
+  manager_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  mistake_key: z.string().min(1),
+  summary: z.string().min(1),
+  prevention_rule: z.string().min(1),
+  proposal_threshold: z.number().int().min(1).optional(),
+  promote_threshold: z.number().int().min(1).optional(),
+  evidence_artifact_ids: z.array(z.string().min(1)).optional(),
+  task_id: z.string().min(1).optional(),
+  milestone_id: z.string().min(1).optional(),
+  evaluation_argv: z.array(z.string().min(1)).optional(),
+  evaluation_repo_id: z.string().min(1).optional(),
+  evaluation_workdir_rel: z.string().min(1).optional(),
+  evaluation_env: z.record(z.string(), z.string()).optional()
 });
 
 const AgentRefreshContextParams = z.object({
@@ -667,6 +688,10 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     case "agent.record_mistake": {
       const p = AgentRecordMistakeParams.parse(params);
       return recordAgentMistake(p);
+    }
+    case "agent.self_improve_cycle": {
+      const p = AgentSelfImproveCycleParams.parse(params);
+      return runSelfImproveCycle(p);
     }
     case "agent.refresh_context": {
       const p = AgentRefreshContextParams.parse(params);

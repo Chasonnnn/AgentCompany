@@ -395,6 +395,51 @@ describe("server router", () => {
     expect(typeof res.reference_count).toBe("number");
   });
 
+  test("agent.self_improve_cycle records/evaluates and proposes governed AGENTS.md delta", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const manager = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "codex",
+      team_id
+    });
+    const worker = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+
+    const res = (await routeRpcMethod("agent.self_improve_cycle", {
+      workspace_dir: dir,
+      project_id,
+      worker_agent_id: worker.agent_id,
+      manager_actor_id: manager.agent_id,
+      manager_role: "manager",
+      mistake_key: "missing_patch",
+      summary: "Patch artifact missing in prior milestone submission",
+      prevention_rule: "Always attach patch artifact id before requesting approval.",
+      proposal_threshold: 1,
+      evaluation_argv: [process.execPath, "-e", "process.exit(0)"]
+    })) as any;
+
+    expect(res.status).toBe("proposal_created");
+    expect(typeof res.run_id).toBe("string");
+    expect(typeof res.evaluation_artifact_id).toBe("string");
+    expect(typeof res.memory_delta_artifact_id).toBe("string");
+
+    const inbox = (await routeRpcMethod("inbox.snapshot", {
+      workspace_dir: dir,
+      project_id
+    })) as any;
+    expect(inbox.pending.some((p: any) => p.artifact_id === res.memory_delta_artifact_id)).toBe(true);
+  });
+
   test("artifact.read returns artifact content when policy allows", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
