@@ -124,6 +124,21 @@ describe("server router", () => {
     expect(doctor.summary).toBeDefined();
   });
 
+  test("workspace.diagnostics exports a diagnostics bundle", async () => {
+    const dir = await mkTmpDir();
+    const out = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const diag = (await routeRpcMethod("workspace.diagnostics", {
+      workspace_dir: dir,
+      out_dir: out,
+      sync_index: true
+    })) as any;
+    expect(typeof diag.bundle_dir).toBe("string");
+    const manifestPath = path.join(diag.bundle_dir, diag.files.manifest);
+    const manifest = JSON.parse(await fs.readFile(manifestPath, { encoding: "utf8" })) as any;
+    expect(manifest.type).toBe("workspace_diagnostics");
+  });
+
   test("monitor.snapshot returns rows list", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
@@ -217,6 +232,36 @@ describe("server router", () => {
     expect(replay.runs).toHaveLength(1);
     expect(Array.isArray(replay.runs[0].events)).toBe(true);
     expect(replay.runs[0].events.length).toBeGreaterThan(0);
+  });
+
+  test("run.replay supports verified mode", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Ops" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "cmd"
+    });
+    const replay = (await routeRpcMethod("run.replay", {
+      workspace_dir: dir,
+      project_id,
+      run_id: run.run_id,
+      mode: "verified"
+    })) as any;
+    expect(replay.mode).toBe("verified");
+    expect(Array.isArray(replay.events)).toBe(true);
+    expect(Array.isArray(replay.parse_issues)).toBe(true);
+    expect(Array.isArray(replay.verification_issues)).toBe(true);
   });
 
   test("ui.resolve returns decision result and refreshed snapshot", async () => {

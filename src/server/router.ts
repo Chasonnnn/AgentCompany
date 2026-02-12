@@ -4,6 +4,7 @@ import { z } from "zod";
 import { initWorkspace } from "../workspace/init.js";
 import { validateWorkspace } from "../workspace/validate.js";
 import { doctorWorkspace } from "../workspace/doctor.js";
+import { createWorkspaceDiagnosticsBundle } from "../workspace/diagnostics.js";
 import { exportWorkspace, importWorkspace } from "../workspace/export_import.js";
 import { createRun } from "../runtime/run.js";
 import {
@@ -22,7 +23,8 @@ import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/inde
 import { resolveInboxItem } from "../inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "../ui/resolve_and_snapshot.js";
 import { createComment, listComments } from "../comments/comment.js";
-import { listRuns, readEventsJsonl } from "../runtime/run_queries.js";
+import { listRuns } from "../runtime/run_queries.js";
+import { replayRun } from "../runtime/replay.js";
 import { replaySharePack } from "../share/replay.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
@@ -66,6 +68,16 @@ const WorkspaceDoctorParams = z.object({
   workspace_dir: z.string().min(1),
   rebuild_index: z.boolean().default(false),
   sync_index: z.boolean().default(false)
+});
+
+const WorkspaceDiagnosticsParams = z.object({
+  workspace_dir: z.string().min(1),
+  out_dir: z.string().min(1),
+  rebuild_index: z.boolean().default(false),
+  sync_index: z.boolean().default(true),
+  monitor_limit: z.number().int().positive().max(5000).optional(),
+  pending_limit: z.number().int().positive().max(5000).optional(),
+  decisions_limit: z.number().int().positive().max(5000).optional()
 });
 
 const WorkspaceExportParams = z.object({
@@ -143,7 +155,8 @@ const RunReplayParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
   run_id: z.string().min(1),
-  tail: z.number().int().positive().optional()
+  tail: z.number().int().positive().optional(),
+  mode: z.enum(["raw", "verified"]).default("raw")
 });
 
 const SharePackReplayParams = z.object({
@@ -151,7 +164,8 @@ const SharePackReplayParams = z.object({
   project_id: z.string().min(1),
   share_pack_id: z.string().min(1),
   run_id: z.string().min(1).optional(),
-  tail: z.number().int().positive().optional()
+  tail: z.number().int().positive().optional(),
+  mode: z.enum(["raw", "verified"]).default("raw")
 });
 
 const InboxListParams = z.object({
@@ -447,6 +461,18 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         sync_index: p.sync_index
       });
     }
+    case "workspace.diagnostics": {
+      const p = WorkspaceDiagnosticsParams.parse(params);
+      return createWorkspaceDiagnosticsBundle({
+        workspace_dir: p.workspace_dir,
+        out_dir: p.out_dir,
+        rebuild_index: p.rebuild_index,
+        sync_index: p.sync_index,
+        monitor_limit: p.monitor_limit,
+        pending_limit: p.pending_limit,
+        decisions_limit: p.decisions_limit
+      });
+    }
     case "workspace.export": {
       const p = WorkspaceExportParams.parse(params);
       return exportWorkspace({
@@ -524,24 +550,13 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     }
     case "run.replay": {
       const p = RunReplayParams.parse(params);
-      const eventsPath = path.join(
-        p.workspace_dir,
-        "work/projects",
-        p.project_id,
-        "runs",
-        p.run_id,
-        "events.jsonl"
-      );
-      const lines = await readEventsJsonl(eventsPath);
-      const parsed = lines
-        .filter((l): l is { ok: true; event: any } => l.ok)
-        .map((l) => l.event);
-      return {
-        run_id: p.run_id,
+      return replayRun({
+        workspace_dir: p.workspace_dir,
         project_id: p.project_id,
-        events: p.tail ? parsed.slice(-p.tail) : parsed,
-        parse_issues: lines.filter((l) => !l.ok)
-      };
+        run_id: p.run_id,
+        tail: p.tail,
+        mode: p.mode
+      });
     }
     case "sharepack.replay": {
       const p = SharePackReplayParams.parse(params);
@@ -550,7 +565,8 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         project_id: p.project_id,
         share_pack_id: p.share_pack_id,
         run_id: p.run_id,
-        tail: p.tail
+        tail: p.tail,
+        mode: p.mode
       });
     }
     case "inbox.list_reviews": {

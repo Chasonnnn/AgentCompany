@@ -6,6 +6,7 @@ import process from "node:process";
 import { initWorkspace } from "./workspace/init.js";
 import { validateWorkspace } from "./workspace/validate.js";
 import { doctorWorkspace } from "./workspace/doctor.js";
+import { createWorkspaceDiagnosticsBundle } from "./workspace/diagnostics.js";
 import { exportWorkspace, importWorkspace } from "./workspace/export_import.js";
 import { ArtifactType, newArtifactMarkdown, validateMarkdownArtifact } from "./artifacts/markdown.js";
 import { readArtifactWithPolicy } from "./artifacts/read_artifact.js";
@@ -23,7 +24,8 @@ import { createTaskFile, addTaskMilestone } from "./work/tasks.js";
 import { MilestoneKind, MilestoneStatus, validateTaskMarkdown } from "./work/task_markdown.js";
 import { proposeMemoryDelta } from "./memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "./memory/approve_memory_delta.js";
-import { listRuns, readEventsJsonl } from "./runtime/run_queries.js";
+import { listRuns } from "./runtime/run_queries.js";
+import { replayRun } from "./runtime/replay.js";
 import { createMilestoneReportFile } from "./milestones/report_files.js";
 import { approveMilestone } from "./milestones/approve_milestone.js";
 import { createSharePack } from "./share/share_pack.js";
@@ -133,6 +135,47 @@ program
       if (!report.ok) process.exitCode = 2;
     });
   });
+
+program
+  .command("workspace:diagnostics")
+  .description("Export a diagnostics bundle (doctor + adapters + sessions + monitor + review inbox)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .argument("<out_dir>", "Output directory for diagnostics bundle")
+  .option("--rebuild-index", "Rebuild index during diagnostics collection", false)
+  .option("--no-sync-index", "Skip index sync during diagnostics collection")
+  .option("--monitor-limit <n>", "Max run monitor rows", (v) => parseInt(v, 10), 200)
+  .option("--pending-limit <n>", "Max pending approvals rows", (v) => parseInt(v, 10), 200)
+  .option("--decisions-limit <n>", "Max recent review decisions rows", (v) => parseInt(v, 10), 200)
+  .action(
+    async (
+      workspaceDir: string,
+      outDir: string,
+      opts: {
+        rebuildIndex: boolean;
+        syncIndex: boolean;
+        monitorLimit: number;
+        pendingLimit: number;
+        decisionsLimit: number;
+      }
+    ) => {
+      await runAction(async () => {
+        const limits = [opts.monitorLimit, opts.pendingLimit, opts.decisionsLimit];
+        if (limits.some((n) => !Number.isInteger(n) || n <= 0)) {
+          throw new UserError("--monitor-limit, --pending-limit, and --decisions-limit must be positive integers");
+        }
+        const res = await createWorkspaceDiagnosticsBundle({
+          workspace_dir: workspaceDir,
+          out_dir: outDir,
+          rebuild_index: opts.rebuildIndex,
+          sync_index: opts.syncIndex,
+          monitor_limit: opts.monitorLimit,
+          pending_limit: opts.pendingLimit,
+          decisions_limit: opts.decisionsLimit
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
 
 program
   .command("workspace:export")
@@ -1270,34 +1313,41 @@ program
   .option("--project <project_id>", "Project id", "")
   .option("--run <run_id>", "Run id", "")
   .option("--tail <n>", "Show only the last N events", (v) => parseInt(v, 10), undefined)
+  .option("--mode <mode>", "Replay mode (raw|verified)", "raw")
   .action(
     async (
       workspaceDir: string,
-      opts: { project: string; run: string; tail?: number }
+      opts: { project: string; run: string; tail?: number; mode: string }
     ) => {
       await runAction(async () => {
         if (!opts.project.trim()) throw new UserError("--project is required");
         if (!opts.run.trim()) throw new UserError("--run is required");
-        const eventsPath = path.join(
-          workspaceDir,
-          "work/projects",
-          opts.project,
-          "runs",
-          opts.run,
-          "events.jsonl"
-        );
-        const lines = await readEventsJsonl(eventsPath);
-        const slice = opts.tail && opts.tail > 0 ? lines.slice(-opts.tail) : lines;
-        for (const l of slice) {
-          if (!l.ok) {
-            process.stdout.write(`[parse_error] ${l.error}: ${l.raw}\n`);
+        if (opts.mode !== "raw" && opts.mode !== "verified") {
+          throw new UserError('Invalid --mode. Valid: raw, verified');
+        }
+        const replay = await replayRun({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          run_id: opts.run,
+          tail: opts.tail,
+          mode: opts.mode
+        });
+        for (const ev of replay.events) {
+          if (!ev || typeof ev !== "object") {
+            process.stdout.write(`[event] ${JSON.stringify(ev)}\n`);
             continue;
           }
-          const ev = l.event;
-          const ts = String(ev.ts_wallclock ?? "");
-          const type = String(ev.type ?? "");
-          const actor = String(ev.actor ?? "");
+          const row = ev as Record<string, unknown>;
+          const ts = String(row.ts_wallclock ?? "");
+          const type = String(row.type ?? "");
+          const actor = String(row.actor ?? "");
           process.stdout.write(`${ts} ${type} actor=${actor}\n`);
+        }
+        for (const issue of replay.parse_issues) {
+          process.stdout.write(`[parse_error] seq=${issue.seq} ${issue.error}\n`);
+        }
+        for (const issue of replay.verification_issues) {
+          process.stdout.write(`[verify_issue] seq=${issue.seq} ${issue.code}: ${issue.message}\n`);
         }
       });
     }
@@ -1673,20 +1723,25 @@ program
   .option("--share <share_pack_id>", "Share pack id", "")
   .option("--run <run_id>", "Run id included in share pack (optional)", undefined)
   .option("--tail <n>", "Show only the last N events per run", (v) => parseInt(v, 10), undefined)
+  .option("--mode <mode>", "Replay mode (raw|verified)", "raw")
   .action(
     async (
       workspaceDir: string,
-      opts: { project: string; share: string; run?: string; tail?: number }
+      opts: { project: string; share: string; run?: string; tail?: number; mode: string }
     ) => {
       await runAction(async () => {
         if (!opts.project.trim()) throw new UserError("--project is required");
         if (!opts.share.trim()) throw new UserError("--share is required");
+        if (opts.mode !== "raw" && opts.mode !== "verified") {
+          throw new UserError('Invalid --mode. Valid: raw, verified');
+        }
         const res = await replaySharePack({
           workspace_dir: workspaceDir,
           project_id: opts.project,
           share_pack_id: opts.share,
           run_id: opts.run,
-          tail: opts.tail
+          tail: opts.tail,
+          mode: opts.mode
         });
         process.stdout.write(JSON.stringify(res) + "\n");
       });
