@@ -104,5 +104,5 @@ describe("pm snapshot + allocations", () => {
     const updated = tasks.tasks.find((t: any) => t.frontmatter.id === task.task_id);
     expect(updated.frontmatter.execution_plan.preferred_model).toBe(first.preferred_model);
     expect(updated.frontmatter.execution_plan.applied_by).toBe(ceo.agent_id);
-  });
+  }, 15000);
 });

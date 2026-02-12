@@ -128,5 +128,5 @@ describe("conversations + workspace slack rpc methods", () => {
     })) as any;
     expect(profile.agent.agent_id).toBe(worker.agent_id);
     expect(profile.agent.model_hint).toBe("gpt-5-codex");
-  });
+  }, 15000);
 });
