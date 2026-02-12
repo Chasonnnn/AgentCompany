@@ -2,7 +2,13 @@ import path from "node:path";
 import { nowIso } from "../core/time.js";
 import { AgentYaml } from "../schemas/agent.js";
 import { readYamlFile } from "../store/yaml.js";
-import { listIndexedAgentCounters, listIndexedRuns, syncSqliteIndex } from "../index/sqlite.js";
+import {
+  indexDbPath,
+  listIndexedAgentCounters,
+  listIndexedRuns,
+  rebuildSqliteIndex
+} from "../index/sqlite.js";
+import { pathExists } from "../store/fs.js";
 
 function daysBetween(fromIso: string, toIso: string): number {
   const from = Date.parse(fromIso);
@@ -48,7 +54,10 @@ export async function buildAgentProfileSnapshot(args: {
   const agent = AgentYaml.parse(await readYamlFile(agentPath));
   const now = nowIso();
 
-  await syncSqliteIndex(args.workspace_dir);
+  const dbExists = await pathExists(indexDbPath(args.workspace_dir));
+  if (!dbExists) {
+    await rebuildSqliteIndex(args.workspace_dir);
+  }
 
   let metrics: AgentProfileSnapshot["metrics"];
 

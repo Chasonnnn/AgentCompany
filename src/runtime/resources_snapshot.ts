@@ -1,7 +1,14 @@
 import { nowIso } from "../core/time.js";
 import { buildUsageAnalyticsSnapshot } from "./usage_analytics.js";
 import { buildRunMonitorSnapshot } from "./run_monitor.js";
-import { listIndexedAgentCounters, listIndexedRuns, readIndexStats, syncSqliteIndex } from "../index/sqlite.js";
+import {
+  indexDbPath,
+  listIndexedAgentCounters,
+  listIndexedRuns,
+  readIndexStats,
+  rebuildSqliteIndex
+} from "../index/sqlite.js";
+import { pathExists } from "../store/fs.js";
 
 export type ResourcesSnapshot = {
   workspace_dir: string;
@@ -34,7 +41,10 @@ export async function buildResourcesSnapshot(args: {
   workspace_dir: string;
   project_id?: string;
 }): Promise<ResourcesSnapshot> {
-  await syncSqliteIndex(args.workspace_dir);
+  const dbExists = await pathExists(indexDbPath(args.workspace_dir));
+  if (!dbExists) {
+    await rebuildSqliteIndex(args.workspace_dir);
+  }
 
   const [agentCounters, usage, monitor, stats, projectRuns] = await Promise.all([
     listIndexedAgentCounters({ workspace_dir: args.workspace_dir, limit: 10000 }),
