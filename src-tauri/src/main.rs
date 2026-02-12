@@ -53,6 +53,15 @@ struct OnboardAgentArgs {
   cli_path: Option<String>
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RpcCallArgs {
+  method: String,
+  params: Option<serde_json::Value>,
+  node_bin: Option<String>,
+  cli_path: Option<String>
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ManagerWebStatus {
@@ -549,6 +558,39 @@ fn onboard_agent(args: OnboardAgentArgs) -> Result<serde_json::Value, String> {
   }))
 }
 
+#[tauri::command]
+fn rpc_call(args: RpcCallArgs) -> Result<serde_json::Value, String> {
+  let method = args.method.trim();
+  if method.is_empty() {
+    return Err("method is required".to_string());
+  }
+  let node_bin = resolve_node_bin(args.node_bin);
+  let cli_path = resolve_cli_path(args.cli_path)?;
+  let params_json =
+    serde_json::to_string(&args.params.unwrap_or_else(|| serde_json::json!({})))
+      .map_err(|e| format!("Failed to encode RPC params JSON: {}", e))?;
+
+  let output = Command::new(node_bin)
+    .arg(cli_path)
+    .arg("rpc:call")
+    .arg("--method")
+    .arg(method)
+    .arg("--params")
+    .arg(params_json)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .output()
+    .map_err(|e| format!("Failed to execute rpc:call: {}", e))?;
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    return Err(format!("rpc:call failed: {}", detail));
+  }
+  parse_cli_json_output(&output.stdout)
+}
+
 fn main() {
   tauri::Builder::default()
     .manage(UiProcessState::default())
@@ -557,7 +599,8 @@ fn main() {
       stop_manager_web,
       manager_web_status,
       bootstrap_workspace,
-      onboard_agent
+      onboard_agent,
+      rpc_call
     ])
     .run(tauri::generate_context!())
     .expect("error while running AgentCompany Desktop");
