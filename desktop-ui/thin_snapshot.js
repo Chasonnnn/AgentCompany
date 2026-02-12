@@ -16,6 +16,7 @@ export function mergeThinUiSnapshot({ monitor, inbox, fullUi, previousSnapshot }
       },
     monitor,
     review_inbox: inbox,
+    usage_analytics: fullUi?.usage_analytics ?? prev.usage_analytics ?? null,
     colleagues: fullUi?.colleagues ?? prev.colleagues ?? [],
     comments: fullUi?.comments ?? prev.comments ?? []
   };

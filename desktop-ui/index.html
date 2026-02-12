@@ -7,109 +7,146 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <aside class="sidebar">
-        <div class="workspace-name">AgentCompany</div>
-        <div class="workspace-sub">Desktop Control Plane</div>
-
-        <div class="sidebar-section">Session Config</div>
-        <form id="session-form" class="form-grid">
-          <label>
-            Workspace Directory
-            <input id="workspace" name="workspace" type="text" placeholder="/absolute/path/to/workspace" required />
-          </label>
-
-          <label>
-            Project ID
-            <input id="project" name="project" type="text" placeholder="proj_..." required />
-          </label>
-
-          <label>
-            Actor ID
-            <input id="actor" name="actor" type="text" value="human" required />
-          </label>
-
-          <label>
-            Actor Role
-            <select id="role" name="role">
-              <option value="manager" selected>manager</option>
-              <option value="human">human</option>
-              <option value="director">director</option>
-              <option value="ceo">ceo</option>
-              <option value="worker">worker</option>
-            </select>
-          </label>
-
-          <label>
-            Team ID (optional)
-            <input id="team" name="team" type="text" placeholder="team_..." />
-          </label>
-
-          <label>
-            Port
-            <input id="port" name="port" type="number" min="1" max="65535" value="8787" />
-          </label>
-        </form>
-
-        <div class="sidebar-section">Controls</div>
-        <div class="actions">
-          <button id="start-btn" type="button">Start</button>
-          <button id="stop-btn" type="button" class="danger">Stop</button>
-          <button id="refresh-btn" type="button" class="secondary">Refresh</button>
-        </div>
-
-        <div class="sidebar-section">Channels</div>
-        <div class="channel-list">
-          <button class="channel-btn active" data-pane="pending">
-            <span># pending-approvals</span>
-            <span class="count" id="desktopPendingCount">0</span>
-          </button>
-          <button class="channel-btn" data-pane="runs">
-            <span># run-monitor</span>
-            <span class="count" id="desktopRunsCount">0</span>
-          </button>
-          <button class="channel-btn" data-pane="decisions">
-            <span># recent-decisions</span>
-            <span class="count" id="desktopDecisionsCount">0</span>
-          </button>
-        </div>
-
-        <div class="sidebar-section">Colleagues</div>
-        <div class="colleague-list" id="desktopColleagueList"></div>
-
-        <div class="status-card">
-          <div>
-            Status: <strong id="status-text" class="status-pill">idle</strong>
-          </div>
-          <div>
-            Parse Alerts: <strong id="desktopParseState" class="status-pill">none</strong>
-          </div>
-          <div>
-            URL: <a id="session-url" href="#" target="_blank" rel="noopener noreferrer">-</a>
-          </div>
-          <p id="error" class="error"></p>
+    <main class="slack-shell">
+      <aside class="workspace-rail">
+        <div class="workspace-avatar">AC</div>
+        <div class="workspace-label">AgentCompany</div>
+        <div class="workspace-pill">Ops</div>
+        <div class="rail-divider"></div>
+        <button id="start-btn" type="button" class="rail-action">Start</button>
+        <button id="stop-btn" type="button" class="rail-action danger">Stop</button>
+        <button id="refresh-btn" type="button" class="rail-action ghost">Sync</button>
+        <div class="rail-divider"></div>
+        <div class="status-stack">
+          <span id="status-text" class="status-pill">idle</span>
+          <span id="desktopParseState" class="status-pill">none</span>
         </div>
       </aside>
 
-      <section class="main-pane">
-        <header class="topbar">
-          <div>
-            <h1># manager-web-live</h1>
-            <p class="muted">
-              Local-first agent operations with replayable events and manager approvals.
-            </p>
+      <aside class="channel-sidebar">
+        <header class="sidebar-top">
+          <h2 id="workspaceTitle">AgentCompany</h2>
+          <p id="workspaceSub">Local-first governed agent org</p>
+        </header>
+
+        <section class="sidebar-group">
+          <h3>Channels</h3>
+          <div class="channel-list">
+            <button class="channel-btn active" data-pane="pending">
+              <span># pending-approvals</span>
+              <span class="count" id="desktopPendingCount">0</span>
+            </button>
+            <button class="channel-btn" data-pane="runs">
+              <span># run-monitor</span>
+              <span class="count" id="desktopRunsCount">0</span>
+            </button>
+            <button class="channel-btn" data-pane="decisions">
+              <span># recent-decisions</span>
+              <span class="count" id="desktopDecisionsCount">0</span>
+            </button>
           </div>
-          <div class="badge-wrap">
-            <span class="badge">Threaded Ops</span>
-            <span class="badge">Review Inbox</span>
-            <span class="badge">Run Monitor</span>
+        </section>
+
+        <section class="sidebar-group">
+          <h3>Colleagues</h3>
+          <div class="colleague-list" id="desktopColleagueList"></div>
+        </section>
+
+        <section class="sidebar-group quick-setup">
+          <h3>Quick Setup</h3>
+          <div class="quick-fields">
+            <label>
+              Company
+              <input id="quickCompanyName" type="text" value="AgentCompany" />
+            </label>
+            <label>
+              Initial Project
+              <input id="quickProjectName" type="text" value="AgentCompany Ops" />
+            </label>
+          </div>
+          <div class="preset-wrap">
+            <div class="preset-title">Preset Departments</div>
+            <div id="departmentPresetList" class="preset-list"></div>
+          </div>
+          <div class="quick-options">
+            <label><input id="quickIncludeCeo" type="checkbox" checked /> Include CEO</label>
+            <label><input id="quickIncludeDirector" type="checkbox" checked /> Include Director</label>
+            <label><input id="quickForceReset" type="checkbox" /> Reset existing workspace</label>
+            <label><input id="quickAutoStart" type="checkbox" checked /> Auto-start session</label>
+          </div>
+          <button id="bootstrapBtn" type="button" class="secondary-btn quick-button">
+            Create Org from Presets
+          </button>
+          <p id="bootstrapStatus" class="quick-status"></p>
+        </section>
+
+        <details class="session-card" open>
+          <summary>Session Configuration</summary>
+          <form id="session-form" class="form-grid">
+            <label>
+              Workspace Directory
+              <input id="workspace" name="workspace" type="text" placeholder="/absolute/path/to/workspace" required />
+            </label>
+
+            <label>
+              Project ID
+              <input id="project" name="project" type="text" placeholder="proj_..." required />
+            </label>
+
+            <label>
+              Actor ID
+              <input id="actor" name="actor" type="text" value="human" required />
+            </label>
+
+            <label>
+              Actor Role
+              <select id="role" name="role">
+                <option value="manager" selected>manager</option>
+                <option value="human">human</option>
+                <option value="director">director</option>
+                <option value="ceo">ceo</option>
+                <option value="worker">worker</option>
+              </select>
+            </label>
+
+            <label>
+              Team ID (optional)
+              <input id="team" name="team" type="text" placeholder="team_..." />
+            </label>
+
+            <label>
+              Port
+              <input id="port" name="port" type="number" min="1" max="65535" value="8787" />
+            </label>
+          </form>
+          <div class="session-meta">
+            <div>URL: <a id="session-url" href="#" target="_blank" rel="noopener noreferrer">-</a></div>
+            <p id="error" class="error"></p>
+          </div>
+        </details>
+      </aside>
+
+      <section class="thread-pane">
+        <header class="thread-header">
+          <div>
+            <h1 id="threadTitle"># pending-approvals</h1>
+            <p id="threadSubtitle">Manager approvals and operational updates.</p>
+          </div>
+          <div class="thread-actions">
+            <button id="toggle-live-btn" type="button" class="secondary-btn">Live Ops View</button>
           </div>
         </header>
 
-        <div class="viewer">
-          <iframe id="dashboard-frame" title="AgentCompany Manager Web" src="about:blank"></iframe>
-        </div>
+        <div id="thread-stream" class="thread-stream"></div>
       </section>
+
+      <aside class="live-pane hidden" id="live-pane">
+        <header>
+          <h2>Live Ops Surface</h2>
+          <p>Embedded manager web for deep workflows.</p>
+        </header>
+        <iframe id="dashboard-frame" title="AgentCompany Manager Web" src="about:blank"></iframe>
+      </aside>
     </main>
 
     <script src="./app.js" type="module"></script>
