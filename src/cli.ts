@@ -9,6 +9,7 @@ import { doctorWorkspace } from "./workspace/doctor.js";
 import { createWorkspaceDiagnosticsBundle } from "./workspace/diagnostics.js";
 import { migrateWorkspace } from "./workspace/migrate.js";
 import { exportWorkspace, importWorkspace } from "./workspace/export_import.js";
+import { bootstrapWorkspacePresets } from "./workspace/bootstrap_presets.js";
 import { ArtifactType, newArtifactMarkdown, validateMarkdownArtifact } from "./artifacts/markdown.js";
 import { readArtifactWithPolicy } from "./artifacts/read_artifact.js";
 import { writeFileAtomic } from "./store/fs.js";
@@ -102,6 +103,47 @@ program
       process.stdout.write(`Initialized workspace at ${dir}\n`);
     });
   });
+
+program
+  .command("workspace:bootstrap")
+  .description("Initialize a workspace with preset departments + default agents/project")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--name <name>", "Company name", "AgentCompany")
+  .option("--project-name <name>", "Initial project name", "AgentCompany Ops")
+  .option(
+    "--departments <keys...>",
+    "Department preset keys (engineering, product, design, operations, qa, security, data)",
+    ["engineering", "product"]
+  )
+  .option("--force", "Reset controlled workspace state before bootstrap", false)
+  .option("--no-ceo", "Do not create a CEO agent")
+  .option("--no-director", "Do not create a Director agent")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        name: string;
+        projectName: string;
+        departments: string[];
+        force: boolean;
+        ceo: boolean;
+        director: boolean;
+      }
+    ) => {
+      await runAction(async () => {
+        const res = await bootstrapWorkspacePresets({
+          workspace_dir: workspaceDir,
+          company_name: opts.name,
+          project_name: opts.projectName,
+          departments: opts.departments,
+          include_ceo: opts.ceo,
+          include_director: opts.director,
+          force: opts.force
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
 
 program
   .command("workspace:validate")

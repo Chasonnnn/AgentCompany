@@ -51,6 +51,15 @@ Initialize a Company Workspace folder:
 node dist/cli.js workspace:init /path/to/workspace --name "Acme"
 ```
 
+Bootstrap a workspace with preset departments and default org roles (easy-start path):
+```bash
+node dist/cli.js workspace:bootstrap /path/to/workspace \
+  --name "Acme" \
+  --project-name "AgentCompany Ops" \
+  --departments engineering product operations \
+  --force
+```
+
 Initialize a demo workspace (2 teams, managers/workers, sample project):
 ```bash
 node dist/cli.js demo:init /path/to/workspace --name "Acme Demo" --force
