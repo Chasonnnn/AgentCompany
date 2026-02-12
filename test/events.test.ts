@@ -30,10 +30,13 @@ describe("events jsonl", () => {
     const parsed = JSON.parse(lines[0]) as Record<string, unknown>;
     for (const k of [
       "schema_version",
+      "event_id",
       "ts_wallclock",
       "ts_monotonic_ms",
       "run_id",
       "session_ref",
+      "correlation_id",
+      "causation_id",
       "actor",
       "visibility",
       "type",
@@ -41,6 +44,8 @@ describe("events jsonl", () => {
     ]) {
       expect(parsed).toHaveProperty(k);
     }
+    expect(typeof parsed.event_hash).toBe("string");
+    expect(parsed.prev_event_hash).toBe(null);
   });
 
   test("concurrent appends keep all JSONL events parseable", async () => {
@@ -77,5 +82,42 @@ describe("events jsonl", () => {
       seen.add(parsed.payload!.idx!);
     }
     expect(seen.size).toBe(count);
+  });
+
+  test("appended events form a hash chain", async () => {
+    const runDir = await mkTmpDir();
+    const { eventsPath } = await ensureRunFiles(runDir);
+    const first = newEnvelope({
+      schema_version: 1,
+      ts_wallclock: new Date().toISOString(),
+      run_id: "run_123",
+      session_ref: "sess_abc",
+      actor: "system",
+      visibility: "org",
+      type: "run.started",
+      payload: { i: 1 }
+    });
+    const second = newEnvelope({
+      schema_version: 1,
+      ts_wallclock: new Date().toISOString(),
+      run_id: "run_123",
+      session_ref: "sess_abc",
+      actor: "system",
+      visibility: "org",
+      type: "run.ended",
+      payload: { i: 2 }
+    });
+    await appendEventJsonl(eventsPath, first);
+    await appendEventJsonl(eventsPath, second);
+
+    const lines = (await fs.readFile(eventsPath, { encoding: "utf8" }))
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines).toHaveLength(2);
+    expect(lines[0].prev_event_hash).toBe(null);
+    expect(typeof lines[0].event_hash).toBe("string");
+    expect(lines[1].prev_event_hash).toBe(lines[0].event_hash);
+    expect(typeof lines[1].event_hash).toBe("string");
   });
 });

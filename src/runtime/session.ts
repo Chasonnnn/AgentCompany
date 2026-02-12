@@ -7,12 +7,12 @@ import { ensureDir, writeFileAtomic } from "../store/fs.js";
 import { RunYaml } from "../schemas/run.js";
 import { executeCommandRun, type ExecuteCommandArgs, type ExecuteCommandResult } from "./execute_command.js";
 import { appendEventJsonl, newEnvelope } from "./events.js";
+import { withLaunchLane } from "./launch_lane.js";
+import { transitionSessionStatus, type SessionStatus } from "./session_state.js";
 import {
   executeCodexAppServerRun,
   type ExecuteCodexAppServerResult
 } from "./execute_codex_app_server.js";
-
-export type SessionStatus = "running" | "ended" | "failed" | "stopped";
 
 export type LaunchSessionArgs = ExecuteCommandArgs & {
   session_ref?: string;
@@ -101,6 +101,12 @@ const PersistedSessionRecord = z.object({
 
 const SESSIONS = new Map<string, SessionRecord>();
 const DETACHED_PID_REUSE_GUARD_MS = 30 * 60 * 1000;
+const LAUNCH_METADATA_WAIT_MS = 800;
+const LAUNCH_METADATA_POLL_MS = 20;
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function runYamlPath(workspaceDir: string, projectId: string, runId: string): string {
   return path.join(workspaceDir, "work/projects", projectId, "runs", runId, "run.yaml");
@@ -227,7 +233,7 @@ async function markOrphanedDetachedSession(item: SessionListItem): Promise<Sessi
 
   const reconciled: SessionListItem = {
     ...item,
-    status: reconciledStatus,
+    status: transitionSessionStatus(item.status, reconciledStatus),
     ended_at_ms: item.ended_at_ms ?? endedAtMs,
     error:
       item.error ??
@@ -302,7 +308,7 @@ async function reconcilePersistedSession(item: SessionListItem): Promise<Session
     if (run.status !== "running") {
       return {
         ...item,
-        status: run.status,
+        status: transitionSessionStatus(item.status, run.status),
         ended_at_ms: item.ended_at_ms ?? (run.ended_at ? Date.parse(run.ended_at) : undefined)
       };
     }
@@ -373,90 +379,103 @@ async function resolveSessionSnapshot(
 }
 
 export async function launchSession(args: LaunchSessionArgs): Promise<{ session_ref: string }> {
-  const runDoc = RunYaml.parse(
-    await readYamlFile(runYamlPath(args.workspace_dir, args.project_id, args.run_id))
-  );
-  const protocolMode = isCodexAppServerProvider(runDoc.provider);
-  const protocolPrompt = args.prompt_text ?? args.stdin_text;
-  const sessionRef = args.session_ref ?? `local_${args.run_id}`;
-  const existing = SESSIONS.get(sessionRef);
-  if (existing && existing.status === "running") {
-    throw new Error(`Session already running: ${sessionRef}`);
-  }
+  return withLaunchLane(args.workspace_dir, async () => {
+    const runDoc = RunYaml.parse(
+      await readYamlFile(runYamlPath(args.workspace_dir, args.project_id, args.run_id))
+    );
+    const protocolMode = isCodexAppServerProvider(runDoc.provider);
+    const protocolPrompt = args.prompt_text ?? args.stdin_text;
+    const sessionRef = args.session_ref ?? `local_${args.run_id}`;
+    const existing = SESSIONS.get(sessionRef);
+    if (existing && existing.status === "running") {
+      throw new Error(`Session already running: ${sessionRef}`);
+    }
 
-  const abortController = new AbortController();
-  const rec: SessionRecord = {
-    session_ref: sessionRef,
-    project_id: args.project_id,
-    run_id: args.run_id,
-    status: "running",
-    abort_controller: abortController,
-    result: null,
-    workspace_dir: args.workspace_dir,
-    promise: Promise.resolve(),
-    started_at_ms: Date.now(),
-    mode: protocolMode ? "codex_app_server" : "command"
-  };
-  SESSIONS.set(sessionRef, rec);
-  await persistSessionItem(toListItem(rec));
+    const abortController = new AbortController();
+    const rec: SessionRecord = {
+      session_ref: sessionRef,
+      project_id: args.project_id,
+      run_id: args.run_id,
+      status: "running",
+      abort_controller: abortController,
+      result: null,
+      workspace_dir: args.workspace_dir,
+      promise: Promise.resolve(),
+      started_at_ms: Date.now(),
+      mode: protocolMode ? "codex_app_server" : "command"
+    };
+    SESSIONS.set(sessionRef, rec);
+    await persistSessionItem(toListItem(rec));
 
-  rec.promise = (async () => {
-    try {
-      if (protocolMode) {
-        if (!protocolPrompt || !protocolPrompt.trim()) {
-          throw new Error(
-            "prompt_text (or stdin_text) is required for codex_app_server session launches"
-          );
-        }
-        rec.result = await executeCodexAppServerRun({
-          workspace_dir: args.workspace_dir,
-          project_id: args.project_id,
-          run_id: args.run_id,
-          prompt_text: protocolPrompt,
-          model: args.model,
-          repo_id: args.repo_id,
-          workdir_rel: args.workdir_rel,
-          task_id: args.task_id,
-          milestone_id: args.milestone_id,
-          budget: args.budget,
-          env: args.env,
-          session_ref: sessionRef,
-          on_state_update: ({ pid, stop_marker_relpath, thread_id, turn_id }) => {
-            if (pid !== undefined) {
+    rec.promise = (async () => {
+      try {
+        if (protocolMode) {
+          if (!protocolPrompt || !protocolPrompt.trim()) {
+            throw new Error(
+              "prompt_text (or stdin_text) is required for codex_app_server session launches"
+            );
+          }
+          rec.result = await executeCodexAppServerRun({
+            workspace_dir: args.workspace_dir,
+            project_id: args.project_id,
+            run_id: args.run_id,
+            prompt_text: protocolPrompt,
+            model: args.model,
+            repo_id: args.repo_id,
+            workdir_rel: args.workdir_rel,
+            task_id: args.task_id,
+            milestone_id: args.milestone_id,
+            budget: args.budget,
+            env: args.env,
+            session_ref: sessionRef,
+            on_state_update: ({ pid, stop_marker_relpath, thread_id, turn_id }) => {
+              if (pid !== undefined) {
+                rec.pid = pid;
+                rec.pid_claimed_at_ms = Date.now();
+              }
+              if (stop_marker_relpath !== undefined) rec.stop_marker_relpath = stop_marker_relpath;
+              if (thread_id !== undefined) rec.protocol_thread_id = thread_id;
+              if (turn_id !== undefined) rec.protocol_turn_id = turn_id;
+              void persistSessionItem(toListItem(rec)).catch(() => {});
+            },
+            abort_signal: abortController.signal
+          });
+        } else {
+          rec.result = await executeCommandRun({
+            ...args,
+            session_ref: sessionRef,
+            on_child_spawn: ({ pid, stop_marker_relpath }) => {
               rec.pid = pid;
               rec.pid_claimed_at_ms = Date.now();
-            }
-            if (stop_marker_relpath !== undefined) rec.stop_marker_relpath = stop_marker_relpath;
-            if (thread_id !== undefined) rec.protocol_thread_id = thread_id;
-            if (turn_id !== undefined) rec.protocol_turn_id = turn_id;
-            void persistSessionItem(toListItem(rec)).catch(() => {});
-          },
-          abort_signal: abortController.signal
-        });
-      } else {
-        rec.result = await executeCommandRun({
-          ...args,
-          session_ref: sessionRef,
-          on_child_spawn: ({ pid, stop_marker_relpath }) => {
-            rec.pid = pid;
-            rec.pid_claimed_at_ms = Date.now();
-            rec.stop_marker_relpath = stop_marker_relpath;
-            void persistSessionItem(toListItem(rec)).catch(() => {});
-          },
-          abort_signal: abortController.signal
-        });
+              rec.stop_marker_relpath = stop_marker_relpath;
+              void persistSessionItem(toListItem(rec)).catch(() => {});
+            },
+            abort_signal: abortController.signal
+          });
+        }
+        rec.status = transitionSessionStatus(
+          rec.status,
+          await readRunStatus(args.workspace_dir, args.project_id, args.run_id)
+        );
+      } catch (e) {
+        rec.status = transitionSessionStatus(rec.status, "failed");
+        rec.error = e instanceof Error ? e.message : String(e);
+      } finally {
+        rec.ended_at_ms = Date.now();
+        await persistSessionItem(toListItem(rec));
       }
-      rec.status = await readRunStatus(args.workspace_dir, args.project_id, args.run_id);
-    } catch (e) {
-      rec.status = "failed";
-      rec.error = e instanceof Error ? e.message : String(e);
-    } finally {
-      rec.ended_at_ms = Date.now();
-      await persistSessionItem(toListItem(rec));
-    }
-  })();
+    })();
 
-  return { session_ref: sessionRef };
+    const end = Date.now() + LAUNCH_METADATA_WAIT_MS;
+    while (Date.now() < end) {
+      if (rec.pid !== undefined) break;
+      if (rec.status !== "running") break;
+      await sleep(LAUNCH_METADATA_POLL_MS);
+    }
+    await persistSessionItem(toListItem(rec));
+
+    return { session_ref: sessionRef };
+  });
 }
 
 export async function pollSession(

@@ -13,7 +13,8 @@ export type IdPrefix =
   | "share"
   | "rev"
   | "help"
-  | "cmt";
+  | "cmt"
+  | "evt";
 
 export function newId(prefix: IdPrefix): `${IdPrefix}_${string}` {
   return `${prefix}_${ulid()}`;
