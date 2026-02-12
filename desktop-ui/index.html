@@ -79,6 +79,41 @@
           <p id="bootstrapStatus" class="quick-status"></p>
         </section>
 
+        <section class="sidebar-group quick-setup">
+          <h3>Onboard Agent</h3>
+          <div class="quick-fields">
+            <label>
+              Agent Name
+              <input id="onboardAgentName" type="text" placeholder="Payments Worker 2" />
+            </label>
+            <label>
+              Role
+              <select id="onboardAgentRole">
+                <option value="worker" selected>worker</option>
+                <option value="manager">manager</option>
+                <option value="director">director</option>
+                <option value="ceo">ceo</option>
+              </select>
+            </label>
+            <label>
+              Provider
+              <input id="onboardAgentProvider" type="text" value="codex" placeholder="codex / claude_code / cmd" />
+            </label>
+            <label>
+              Team ID (optional)
+              <input id="onboardTeamId" type="text" placeholder="team_..." />
+            </label>
+            <label>
+              Team Name (create if Team ID empty)
+              <input id="onboardTeamName" type="text" placeholder="Payments" />
+            </label>
+          </div>
+          <button id="onboardAgentBtn" type="button" class="secondary-btn quick-button">
+            Onboard Agent
+          </button>
+          <p id="onboardAgentStatus" class="quick-status"></p>
+        </section>
+
         <details class="session-card" open>
           <summary>Session Configuration</summary>
           <form id="session-form" class="form-grid">

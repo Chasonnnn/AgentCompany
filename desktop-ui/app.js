@@ -32,6 +32,13 @@ const quickIncludeDirectorInput = document.getElementById("quickIncludeDirector"
 const quickForceResetInput = document.getElementById("quickForceReset");
 const quickAutoStartInput = document.getElementById("quickAutoStart");
 const departmentPresetListEl = document.getElementById("departmentPresetList");
+const onboardAgentBtn = document.getElementById("onboardAgentBtn");
+const onboardAgentStatusEl = document.getElementById("onboardAgentStatus");
+const onboardAgentNameInput = document.getElementById("onboardAgentName");
+const onboardAgentRoleInput = document.getElementById("onboardAgentRole");
+const onboardAgentProviderInput = document.getElementById("onboardAgentProvider");
+const onboardTeamIdInput = document.getElementById("onboardTeamId");
+const onboardTeamNameInput = document.getElementById("onboardTeamName");
 
 const DEPARTMENT_PRESETS = [
   { key: "engineering", label: "Engineering", enabled: true },
@@ -106,6 +113,12 @@ function setBootstrapStatus(message, isError = false) {
   if (!bootstrapStatusEl) return;
   bootstrapStatusEl.textContent = message ? String(message) : "";
   bootstrapStatusEl.classList.toggle("error", isError);
+}
+
+function setOnboardStatus(message, isError = false) {
+  if (!onboardAgentStatusEl) return;
+  onboardAgentStatusEl.textContent = message ? String(message) : "";
+  onboardAgentStatusEl.classList.toggle("error", isError);
 }
 
 function renderDepartmentPresetCheckboxes() {
@@ -692,6 +705,72 @@ async function bootstrapWorkspaceFromPresets() {
   }
 }
 
+async function onboardAgent() {
+  const invoke = getInvoke();
+  if (!invoke) {
+    setOnboardStatus("Tauri runtime not detected.", true);
+    return;
+  }
+
+  const workspaceDir = String(document.getElementById("workspace")?.value || "").trim();
+  if (!workspaceDir) {
+    setOnboardStatus("Workspace directory is required before onboarding agents.", true);
+    return;
+  }
+
+  const name = String(onboardAgentNameInput?.value || "").trim();
+  const role = String(onboardAgentRoleInput?.value || "").trim().toLowerCase();
+  const provider = String(onboardAgentProviderInput?.value || "").trim();
+  const teamId = String(onboardTeamIdInput?.value || "").trim();
+  const teamName = String(onboardTeamNameInput?.value || "").trim();
+
+  if (!name) {
+    setOnboardStatus("Agent name is required.", true);
+    return;
+  }
+  if (!provider) {
+    setOnboardStatus("Provider is required.", true);
+    return;
+  }
+  if (!["ceo", "director", "manager", "worker"].includes(role)) {
+    setOnboardStatus("Role must be one of: ceo, director, manager, worker.", true);
+    return;
+  }
+
+  onboardAgentBtn.disabled = true;
+  setOnboardStatus("Onboarding agent...");
+  try {
+    const res = await invoke("onboard_agent", {
+      args: {
+        workspaceDir,
+        name,
+        role,
+        provider,
+        teamId: teamId || undefined,
+        teamName: teamName || undefined
+      }
+    });
+    const createdTeam = Boolean(res?.created_team);
+    const createdTeamId = String(res?.team_id || teamId || "").trim();
+    if (!teamId && createdTeamId && onboardTeamIdInput) {
+      onboardTeamIdInput.value = createdTeamId;
+    }
+    setOnboardStatus(
+      `Onboarded ${name} (${role}) -> ${String(res?.agent_id || "unknown")}` +
+        (createdTeam ? ` in new team ${createdTeamId}` : createdTeamId ? ` in team ${createdTeamId}` : "")
+    );
+    if (onboardAgentNameInput) onboardAgentNameInput.value = "";
+    if (currentServerUrl) {
+      await refreshSnapshotSidebar({ includeColleagues: true });
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    setOnboardStatus(msg, true);
+  } finally {
+    onboardAgentBtn.disabled = false;
+  }
+}
+
 async function startSession() {
   const invoke = getInvoke();
   if (!invoke) {
@@ -797,6 +876,10 @@ bootstrapBtn?.addEventListener("click", () => {
   void bootstrapWorkspaceFromPresets();
 });
 
+onboardAgentBtn?.addEventListener("click", () => {
+  void onboardAgent();
+});
+
 const saved = loadSession();
 if (saved) writeForm(saved);
 renderDepartmentPresetCheckboxes();
@@ -804,6 +887,7 @@ setColleaguePlaceholder();
 setCounts(0, 0, 0);
 setParseState(null);
 setBootstrapStatus("");
+setOnboardStatus("");
 setActiveNav();
 renderThread(null);
 ensureSnapshotPolling();

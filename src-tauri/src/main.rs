@@ -40,6 +40,19 @@ struct BootstrapWorkspaceArgs {
   cli_path: Option<String>
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OnboardAgentArgs {
+  workspace_dir: String,
+  name: String,
+  role: String,
+  provider: String,
+  team_id: Option<String>,
+  team_name: Option<String>,
+  node_bin: Option<String>,
+  cli_path: Option<String>
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ManagerWebStatus {
@@ -98,11 +111,25 @@ fn valid_actor_role(role: &str) -> bool {
   matches!(role, "human" | "ceo" | "director" | "manager" | "worker")
 }
 
+fn valid_agent_role(role: &str) -> bool {
+  matches!(role, "ceo" | "director" | "manager" | "worker")
+}
+
 fn parse_cli_json_output(stdout: &[u8]) -> Result<serde_json::Value, String> {
   let s = String::from_utf8(stdout.to_vec())
     .map_err(|e| format!("CLI stdout is not valid UTF-8: {}", e))?;
   serde_json::from_str::<serde_json::Value>(s.trim())
     .map_err(|e| format!("CLI returned non-JSON output: {} (output: {})", e, s.trim()))
+}
+
+fn parse_cli_text_output(stdout: &[u8]) -> Result<String, String> {
+  let s = String::from_utf8(stdout.to_vec())
+    .map_err(|e| format!("CLI stdout is not valid UTF-8: {}", e))?;
+  let trimmed = s.trim();
+  if trimmed.is_empty() {
+    return Err("CLI returned empty output".to_string());
+  }
+  Ok(trimmed.to_string())
 }
 
 fn resolve_node_bin(explicit: Option<String>) -> String {
@@ -427,6 +454,101 @@ fn bootstrap_workspace(args: BootstrapWorkspaceArgs) -> Result<serde_json::Value
   parse_cli_json_output(&output.stdout)
 }
 
+#[tauri::command]
+fn onboard_agent(args: OnboardAgentArgs) -> Result<serde_json::Value, String> {
+  let workspace_dir = args.workspace_dir.trim();
+  if workspace_dir.is_empty() {
+    return Err("workspace_dir is required".to_string());
+  }
+  let name = args.name.trim();
+  if name.is_empty() {
+    return Err("name is required".to_string());
+  }
+  let role = args.role.trim().to_lowercase();
+  if !valid_agent_role(&role) {
+    return Err("role must be one of: ceo, director, manager, worker".to_string());
+  }
+  let provider = args.provider.trim();
+  if provider.is_empty() {
+    return Err("provider is required".to_string());
+  }
+
+  let node_bin = resolve_node_bin(args.node_bin);
+  let cli_path = resolve_cli_path(args.cli_path)?;
+  let mut created_team = false;
+  let mut team_id = args
+    .team_id
+    .as_ref()
+    .map(|v| v.trim().to_string())
+    .filter(|v| !v.is_empty());
+
+  if role != "ceo" && team_id.is_none() {
+    if let Some(team_name_raw) = args.team_name {
+      let team_name = team_name_raw.trim().to_string();
+      if !team_name.is_empty() {
+        let output = Command::new(&node_bin)
+          .arg(&cli_path)
+          .arg("team:new")
+          .arg(workspace_dir)
+          .arg("--name")
+          .arg(&team_name)
+          .stdin(Stdio::null())
+          .stdout(Stdio::piped())
+          .stderr(Stdio::piped())
+          .output()
+          .map_err(|e| format!("Failed to create team: {}", e))?;
+        if !output.status.success() {
+          let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+          let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+          let detail = if !stderr.is_empty() { stderr } else { stdout };
+          return Err(format!("Team onboarding failed: {}", detail));
+        }
+        team_id = Some(parse_cli_text_output(&output.stdout)?);
+        created_team = true;
+      }
+    }
+  }
+
+  let mut command = Command::new(node_bin);
+  command
+    .arg(cli_path)
+    .arg("agent:new")
+    .arg(workspace_dir)
+    .arg("--name")
+    .arg(name)
+    .arg("--role")
+    .arg(&role)
+    .arg("--provider")
+    .arg(provider);
+  if let Some(team) = &team_id {
+    command.arg("--team").arg(team);
+  }
+
+  let output = command
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .output()
+    .map_err(|e| format!("Failed to onboard agent: {}", e))?;
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    return Err(format!("Agent onboarding failed: {}", detail));
+  }
+  let agent_id = parse_cli_text_output(&output.stdout)?;
+
+  Ok(serde_json::json!({
+    "workspace_dir": workspace_dir,
+    "agent_id": agent_id,
+    "name": name,
+    "role": role,
+    "provider": provider,
+    "team_id": team_id,
+    "created_team": created_team
+  }))
+}
+
 fn main() {
   tauri::Builder::default()
     .manage(UiProcessState::default())
@@ -434,7 +556,8 @@ fn main() {
       start_manager_web,
       stop_manager_web,
       manager_web_status,
-      bootstrap_workspace
+      bootstrap_workspace,
+      onboard_agent
     ])
     .run(tauri::generate_context!())
     .expect("error while running AgentCompany Desktop");
@@ -453,6 +576,16 @@ mod tests {
     assert!(valid_actor_role("manager"));
     assert!(valid_actor_role("worker"));
     assert!(!valid_actor_role("admin"));
+  }
+
+  #[test]
+  fn agent_role_validation_accepts_org_roles() {
+    assert!(valid_agent_role("ceo"));
+    assert!(valid_agent_role("director"));
+    assert!(valid_agent_role("manager"));
+    assert!(valid_agent_role("worker"));
+    assert!(!valid_agent_role("human"));
+    assert!(!valid_agent_role("admin"));
   }
 
   #[test]
