@@ -14,15 +14,15 @@
           Home
         </button>
         <div id="projectRailList" class="rail-list"></div>
-        <button class="rail-item rail-add" id="projectAddBtn" type="button">+</button>
+        <button class="rail-item rail-add" id="projectAddBtn" type="button" title="Add Project">+</button>
         <div class="rail-spacer"></div>
-        <button class="rail-item" id="settingsBtn" type="button">⚙</button>
+        <button class="rail-item" id="settingsBtn" type="button" title="Settings">⚙</button>
       </aside>
 
       <aside class="context-sidebar">
         <header class="sidebar-header">
-          <h2 id="scopeTitle">Workspace Home</h2>
-          <p id="scopeSub">Projects, channels, and operational context</p>
+          <h2 id="scopeTitle">Workspace</h2>
+          <p id="scopeSub">Project management and conversations</p>
         </header>
 
         <section class="sidebar-block">
@@ -35,7 +35,7 @@
         <section class="sidebar-block">
           <div class="block-title-row">
             <h3>Channels</h3>
-            <button class="mini-btn" id="addChannelBtn" type="button">+</button>
+            <button class="mini-btn" id="addChannelBtn" type="button" title="Create Channel">+</button>
           </div>
           <div id="channelList" class="sidebar-list"></div>
         </section>
@@ -43,7 +43,7 @@
         <section class="sidebar-block">
           <div class="block-title-row">
             <h3>DMs</h3>
-            <button class="mini-btn" id="addDmBtn" type="button">+</button>
+            <button class="mini-btn" id="addDmBtn" type="button" title="New DM">+</button>
           </div>
           <div id="dmList" class="sidebar-list"></div>
         </section>
@@ -64,11 +64,11 @@
       <section class="content-pane">
         <header class="content-header">
           <div>
-            <h1 id="viewTitle">Workspace Home</h1>
-            <p id="viewSubtitle">Local-first governed agent workspace</p>
+            <h1 id="viewTitle">Workspace</h1>
+            <p id="viewSubtitle">Concise operations and PM control center</p>
           </div>
           <div class="content-actions">
-            <button class="secondary-btn" id="syncBtn" type="button">Sync</button>
+            <button class="secondary-btn" id="syncBtn" type="button">Refresh</button>
             <button class="secondary-btn" id="liveOpsBtn" type="button">Live Ops</button>
           </div>
         </header>
@@ -76,12 +76,7 @@
         <section id="contentBody" class="content-body"></section>
 
         <form id="composerForm" class="composer hidden">
-          <textarea
-            id="composerInput"
-            placeholder="Send a message..."
-            rows="3"
-            maxlength="8000"
-          ></textarea>
+          <textarea id="composerInput" placeholder="Send a message..." rows="3" maxlength="8000"></textarea>
           <div class="composer-actions">
             <span id="composerHint">Enter to send, Shift+Enter for newline</span>
             <button id="sendBtn" type="submit" class="primary-btn">Send</button>
@@ -115,6 +110,54 @@
       </form>
     </dialog>
 
+    <dialog id="channelModal">
+      <form method="dialog" class="modal-form" id="channelForm">
+        <h3>Create Channel</h3>
+        <label>
+          Name
+          <input id="channelNameInput" type="text" required placeholder="Security" />
+        </label>
+        <label>
+          Visibility
+          <select id="channelVisibilitySelect">
+            <option value="team">Team</option>
+            <option value="managers">Managers</option>
+            <option value="org">Org</option>
+            <option value="private_agent">Private</option>
+          </select>
+        </label>
+        <label>
+          Team (optional)
+          <select id="channelTeamSelect">
+            <option value="">No team binding</option>
+          </select>
+        </label>
+        <div>
+          <div class="input-label">Participants</div>
+          <div id="channelParticipantList" class="picker-list"></div>
+        </div>
+        <menu>
+          <button value="cancel" type="button" id="channelCancelBtn">Cancel</button>
+          <button value="default" type="submit">Create</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dmModal">
+      <form method="dialog" class="modal-form" id="dmForm">
+        <h3>New Direct Message</h3>
+        <label>
+          Search
+          <input id="dmSearchInput" type="search" placeholder="Search workers by name or role" />
+        </label>
+        <div id="dmAgentList" class="picker-list"></div>
+        <menu>
+          <button value="cancel" type="button" id="dmCancelBtn">Cancel</button>
+          <button value="default" type="submit">Open DM</button>
+        </menu>
+      </form>
+    </dialog>
+
     <dialog id="settingsModal">
       <form method="dialog" class="modal-form" id="settingsForm">
         <h3>Workspace Settings</h3>
@@ -128,12 +171,47 @@
         </label>
         <div class="inline-actions">
           <button id="bootstrapBtn" type="button">Bootstrap Presets</button>
-          <button id="onboardBtn" type="button">Onboard Worker</button>
+          <button id="openOnboardBtn" type="button">Onboard Worker</button>
         </div>
         <p id="settingsStatus" class="status-note"></p>
         <menu>
           <button value="cancel" type="button" id="settingsCancelBtn">Close</button>
           <button value="default" type="submit">Save + Refresh</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="onboardModal">
+      <form method="dialog" class="modal-form" id="onboardForm">
+        <h3>Onboard Agent</h3>
+        <label>
+          Name
+          <input id="onboardNameInput" type="text" required placeholder="New Worker" />
+        </label>
+        <label>
+          Role
+          <select id="onboardRoleSelect">
+            <option value="worker">Worker</option>
+            <option value="manager">Manager</option>
+          </select>
+        </label>
+        <label>
+          Provider
+          <select id="onboardProviderSelect">
+            <option value="codex">Codex</option>
+            <option value="claude_code">Claude</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
+        <label>
+          Team (optional)
+          <select id="onboardTeamSelect">
+            <option value="">No team</option>
+          </select>
+        </label>
+        <menu>
+          <button value="cancel" type="button" id="onboardCancelBtn">Cancel</button>
+          <button value="default" type="submit">Create</button>
         </menu>
       </form>
     </dialog>
