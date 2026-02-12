@@ -135,3 +135,9 @@ export async function ensureRunFiles(runDir: string): Promise<{ eventsPath: stri
   }
   return { eventsPath };
 }
+
+// Test helper: clears append queues/hash cache to simulate runtime restart behavior.
+export function resetEventStateForTests(): void {
+  eventAppendQueues.clear();
+  lastEventHashByFile.clear();
+}

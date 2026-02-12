@@ -22,6 +22,15 @@ async function mkTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-"));
 }
 
+async function readJsonl(filePath: string): Promise<any[]> {
+  const s = await fs.readFile(filePath, { encoding: "utf8" });
+  return s
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -81,6 +90,129 @@ describe("runtime session lifecycle", () => {
       await readYamlFile(path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml"))
     );
     expect(runDoc.status).toBe("ended");
+  });
+
+  test("policy gate blocks cross-team worker launch attempts and marks run failed", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id: teamA } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { team_id: teamB } = await createTeam({ workspace_dir: dir, name: "Infra" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker A",
+      role: "worker",
+      provider: "cmd",
+      team_id: teamA
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+
+    await expect(
+      launchSession({
+        workspace_dir: dir,
+        project_id,
+        run_id,
+        argv: [process.execPath, "-e", "process.stdout.write('should-not-run\\n');"],
+        actor_id: "worker_b",
+        actor_role: "worker",
+        actor_team_id: teamB
+      })
+    ).rejects.toThrow(/policy denied/i);
+
+    const runDoc = RunYaml.parse(
+      await readYamlFile(path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml"))
+    );
+    expect(runDoc.status).toBe("failed");
+
+    const events = await readJsonl(
+      path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl")
+    );
+    expect(events.some((e) => e.type === "policy.denied")).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.type === "run.failed" &&
+          e.payload?.preflight === true &&
+          e.payload?.reason === "policy_denied"
+      )
+    ).toBe(true);
+  });
+
+  test("budget preflight gate blocks launch when project hard limit is already exceeded", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+
+    const projectPath = path.join(dir, "work/projects", project_id, "project.yaml");
+    const projectDoc = await readYamlFile(projectPath);
+    await writeYamlFile(projectPath, {
+      ...projectDoc,
+      budget: {
+        hard_cost_usd: 0.01
+      }
+    });
+
+    const prior = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+    const priorPath = path.join(dir, "work/projects", project_id, "runs", prior.run_id, "run.yaml");
+    const priorDoc = RunYaml.parse(await readYamlFile(priorPath));
+    await writeYamlFile(priorPath, {
+      ...priorDoc,
+      status: "ended",
+      ended_at: new Date().toISOString(),
+      usage: {
+        source: "estimated_chars",
+        confidence: "low",
+        estimate_method: "fixture",
+        total_tokens: 5000,
+        cost_usd: 0.05,
+        cost_currency: "USD",
+        cost_source: "no_rate_card"
+      }
+    });
+
+    const { run_id } = await createRun({ workspace_dir: dir, project_id, agent_id, provider: "cmd" });
+
+    await expect(
+      launchSession({
+        workspace_dir: dir,
+        project_id,
+        run_id,
+        argv: [process.execPath, "-e", "process.stdout.write('should-not-run\\n');"]
+      })
+    ).rejects.toThrow(/budget preflight blocked launch/i);
+
+    const runDoc = RunYaml.parse(
+      await readYamlFile(path.join(dir, "work/projects", project_id, "runs", run_id, "run.yaml"))
+    );
+    expect(runDoc.status).toBe("failed");
+
+    const events = await readJsonl(
+      path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl")
+    );
+    expect(
+      events.some(
+        (e) =>
+          e.type === "budget.exceeded" &&
+          e.payload?.scope === "project" &&
+          e.payload?.phase === "preflight"
+      )
+    ).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.type === "run.failed" &&
+          e.payload?.preflight === true &&
+          e.payload?.reason === "budget_preflight_exceeded"
+      )
+    ).toBe(true);
   });
 
   test("stop transitions a running session to stopped", async () => {
