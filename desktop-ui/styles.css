@@ -281,6 +281,15 @@ select {
   color: #c0d1e4;
 }
 
+.fixed-role-note {
+  border: 1px solid #2f4a66;
+  border-radius: 8px;
+  background: #0e1722;
+  color: #a9c4dc;
+  padding: 7px 8px;
+  font-size: 0.74rem;
+}
+
 input,
 select {
   border: 1px solid #314a66;

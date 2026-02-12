@@ -69,7 +69,6 @@
             <div id="departmentPresetList" class="preset-list"></div>
           </div>
           <div class="quick-options">
-            <label><input id="quickIncludeCeo" type="checkbox" checked /> Include CEO</label>
             <label><input id="quickIncludeDirector" type="checkbox" checked /> Include Director</label>
             <label><input id="quickForceReset" type="checkbox" /> Reset existing workspace</label>
             <label><input id="quickAutoStart" type="checkbox" checked /> Auto-start session</label>
@@ -94,20 +93,12 @@
             </label>
 
             <label>
-              Actor ID
-              <input id="actor" name="actor" type="text" value="human" required />
+              CEO Actor ID
+              <input id="actor" name="actor" type="text" value="human_ceo" required />
             </label>
 
-            <label>
-              Actor Role
-              <select id="role" name="role">
-                <option value="manager" selected>manager</option>
-                <option value="human">human</option>
-                <option value="director">director</option>
-                <option value="ceo">ceo</option>
-                <option value="worker">worker</option>
-              </select>
-            </label>
+            <input id="role" name="role" type="hidden" value="ceo" />
+            <div class="fixed-role-note">Actor Role: <strong>ceo</strong> (fixed)</div>
 
             <label>
               Team ID (optional)

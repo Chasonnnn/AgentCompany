@@ -31,6 +31,12 @@ pnpm tauri:dev
 ```
 `tauri:dev` runs in local mode (`--no-dev-server`) so it launches directly from bundled static frontend files.
 
+Desktop UX contract (current):
+- The user is always treated as `CEO` in the desktop shell session flow.
+- Session role is fixed to `ceo` (no role switching in desktop UI).
+- Quick Setup always includes a CEO agent.
+- "Onboard Agent" panel can create any agent role (`ceo|director|manager|worker`) and can create a team on demand.
+
 Check desktop prerequisites (Node/CLI bundle/Tauri CLI/Rust toolchain):
 ```bash
 node dist/cli.js desktop:doctor /path/to/workspace --project "$PROJECT_ID"
@@ -59,6 +65,7 @@ node dist/cli.js workspace:bootstrap /path/to/workspace \
   --departments engineering product operations \
   --force
 ```
+Tip: the desktop Quick Setup flow auto-fills `ceo_actor_id` for you after bootstrap.
 
 Initialize a demo workspace (2 teams, managers/workers, sample project):
 ```bash
@@ -76,6 +83,13 @@ TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Payments")
 MANAGER_ID=$(node dist/cli.js agent:new /path/to/workspace --name "Payments Manager" --role manager --provider codex --team "$TEAM_ID")
 PROJECT_ID=$(node dist/cli.js project:new /path/to/workspace --name "Project X")
 node dist/cli.js agent:refresh-context /path/to/workspace --agent "$MANAGER_ID"
+```
+
+Onboard an additional agent manually (CLI equivalent of desktop "Onboard Agent"):
+```bash
+TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Design")
+AGENT_ID=$(node dist/cli.js agent:new /path/to/workspace --name "Design Worker 2" --role worker --provider codex --team "$TEAM_ID")
+echo "$AGENT_ID"
 ```
 
 Run a governed self-improvement cycle for repeated worker mistakes:
@@ -116,14 +130,14 @@ Propose and approve a curated memory delta (project memory):
 ```bash
 DELTA=$(node dist/cli.js memory:delta /path/to/workspace --project "$PROJECT_ID" --title "Decision: strict JSONL envelope" --under "## Decisions" --insert "- Events are strict-envelope JSONL and append-only." --by human)
 ARTIFACT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$DELTA")
-node dist/cli.js memory:approve /path/to/workspace --project "$PROJECT_ID" --artifact "$ARTIFACT_ID" --actor human --role manager --notes "LGTM"
+node dist/cli.js memory:approve /path/to/workspace --project "$PROJECT_ID" --artifact "$ARTIFACT_ID" --actor <ceo_actor_id> --role ceo --notes "LGTM"
 ```
 
 Milestone report and approval:
 ```bash
 REPORT=$(node dist/cli.js milestone:report:new /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --milestone <ms_id> --title "Milestone 1 report" --by <worker_agent_id> --run <run_id> --ctx <ctx_id> --evidence <patch_art_id> --tests <test_art_id>)
 REPORT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$REPORT")
-node dist/cli.js milestone:approve /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --milestone <ms_id> --report "$REPORT_ID" --actor human --role manager --notes "Approved"
+node dist/cli.js milestone:approve /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --milestone <ms_id> --report "$REPORT_ID" --actor <ceo_actor_id> --role ceo --notes "Approved"
 ```
 
 Validate a Company Workspace folder:
@@ -169,14 +183,14 @@ node dist/cli.js index:event-errors /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID"
 node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID" --no-sync-index
 node dist/cli.js inbox:snapshot /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js inbox:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor human --role manager
-node dist/cli.js comment:add /path/to/workspace --project "$PROJECT_ID" --author human --role manager --target-agent <agent_id> --body "Needs tests before merge"
+node dist/cli.js inbox:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor <ceo_actor_id> --role ceo
+node dist/cli.js comment:add /path/to/workspace --project "$PROJECT_ID" --author <ceo_actor_id> --role ceo --target-agent <agent_id> --body "Needs tests before merge"
 node dist/cli.js comment:list /path/to/workspace --project "$PROJECT_ID" --target-agent <agent_id> --target-run <run_id>
 node dist/cli.js ui:snapshot /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js ui:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor human --role manager
-node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor human --role manager
-node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor human --role manager --json
-node dist/cli.js ui:web /path/to/workspace --project "$PROJECT_ID" --actor human --role manager --port 8787
+node dist/cli.js ui:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor <ceo_actor_id> --role ceo
+node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor <ceo_actor_id> --role ceo
+node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor <ceo_actor_id> --role ceo --json
+node dist/cli.js ui:web /path/to/workspace --project "$PROJECT_ID" --actor <ceo_actor_id> --role ceo --port 8787
 ```
 
 Manager web thin APIs (for desktop/web sidebars):
@@ -189,6 +203,8 @@ Manager web thin APIs (for desktop/web sidebars):
 Desktop shell behavior:
 - The Tauri app starts/stops the existing `ui:web` process.
 - The app embeds the Manager Web UI in a native window.
+- The desktop session actor role is fixed to `ceo`.
+- The desktop setup sidebar supports one-click agent onboarding (including team creation when needed).
 - This keeps the architecture local-first and protocol/event-log based without introducing Docker.
 
 Desktop release readiness checks:
@@ -198,16 +214,16 @@ node dist/cli.js desktop:release-doctor
 
 Cross-team sharing:
 ```bash
-node dist/cli.js sharepack:create /path/to/workspace --project "$PROJECT_ID" --by human
+node dist/cli.js sharepack:create /path/to/workspace --project "$PROJECT_ID" --by <ceo_actor_id>
 node dist/cli.js sharepack:replay /path/to/workspace --project "$PROJECT_ID" --share <share_pack_id> --mode deterministic
-node dist/cli.js help:new /path/to/workspace --title "Need help reviewing this workplan" --requester human --target <manager_agent_id> --project "$PROJECT_ID" --visibility managers
+node dist/cli.js help:new /path/to/workspace --title "Need help reviewing this workplan" --requester <ceo_actor_id> --target <manager_agent_id> --project "$PROJECT_ID" --visibility managers
 ```
 
 Create and validate an artifact template:
 ```bash
 node dist/cli.js artifact:new proposal /tmp/proposal.md --title "Payments Proposal" --visibility managers --by agent_mgr_payments --run run_123 --ctx ctx_123
 node dist/cli.js artifact:validate /tmp/proposal.md
-node dist/cli.js artifact:read /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --actor human --role human
+node dist/cli.js artifact:read /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --actor <ceo_actor_id> --role ceo
 ```
 
 Debugging:

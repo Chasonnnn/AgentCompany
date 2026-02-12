@@ -28,7 +28,6 @@ const bootstrapBtn = document.getElementById("bootstrapBtn");
 const bootstrapStatusEl = document.getElementById("bootstrapStatus");
 const quickCompanyNameInput = document.getElementById("quickCompanyName");
 const quickProjectNameInput = document.getElementById("quickProjectName");
-const quickIncludeCeoInput = document.getElementById("quickIncludeCeo");
 const quickIncludeDirectorInput = document.getElementById("quickIncludeDirector");
 const quickForceResetInput = document.getElementById("quickForceReset");
 const quickAutoStartInput = document.getElementById("quickAutoStart");
@@ -497,9 +496,8 @@ function setSessionUrl(url, forceFrameReload = false) {
 function normalizeSession(raw) {
   const workspace_dir = String(raw.workspace || "").trim();
   const project_id = String(raw.project || "").trim();
-  const actor_id = String(raw.actor || "human").trim() || "human";
-  const actor_role = String(raw.role || "manager").trim() || "manager";
-  const actor_team_id = String(raw.team || "").trim();
+  const actor_id = String(raw.actor || "human_ceo").trim() || "human_ceo";
+  const actor_role = "ceo";
   const portNum = Number.parseInt(String(raw.port || "8787"), 10);
   const port = Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535 ? portNum : 8787;
 
@@ -508,7 +506,7 @@ function normalizeSession(raw) {
     project_id,
     actor_id,
     actor_role,
-    actor_team_id: actor_team_id || undefined,
+    actor_team_id: undefined,
     port,
     host: "127.0.0.1"
   };
@@ -522,9 +520,9 @@ function readForm() {
 function writeForm(session) {
   document.getElementById("workspace").value = session.workspace_dir ?? "";
   document.getElementById("project").value = session.project_id ?? "";
-  document.getElementById("actor").value = session.actor_id ?? "human";
-  document.getElementById("role").value = session.actor_role ?? "manager";
-  document.getElementById("team").value = session.actor_team_id ?? "";
+  document.getElementById("actor").value = session.actor_id ?? "human_ceo";
+  document.getElementById("role").value = "ceo";
+  document.getElementById("team").value = "";
   document.getElementById("port").value = String(session.port ?? 8787);
 }
 
@@ -657,7 +655,7 @@ async function bootstrapWorkspaceFromPresets() {
     projectName:
       String(quickProjectNameInput?.value || "AgentCompany Ops").trim() || "AgentCompany Ops",
     departments,
-    includeCeo: Boolean(quickIncludeCeoInput?.checked),
+    includeCeo: true,
     includeDirector: Boolean(quickIncludeDirectorInput?.checked),
     force: Boolean(quickForceResetInput?.checked)
   };
@@ -668,20 +666,18 @@ async function bootstrapWorkspaceFromPresets() {
     const res = await invoke("bootstrap_workspace", { args });
     const defaults = res?.default_session ?? {};
     const projectId = String(defaults.project_id || res?.project_id || "").trim();
-    const actorId = String(defaults.actor_id || "human");
-    const actorRole = String(defaults.actor_role || "manager");
-    const actorTeamId = String(defaults.actor_team_id || "");
+    const actorId = String(res?.agents?.ceo_agent_id || defaults.actor_id || "human_ceo");
 
     if (projectId) document.getElementById("project").value = projectId;
     document.getElementById("actor").value = actorId;
-    document.getElementById("role").value = actorRole;
-    document.getElementById("team").value = actorTeamId;
+    document.getElementById("role").value = "ceo";
+    document.getElementById("team").value = "";
 
     const session = readForm();
     saveSession(session);
     const deptCount = Array.isArray(res?.departments) ? res.departments.length : departments.length;
     setBootstrapStatus(
-      `Created ${deptCount} departments, project ${projectId || "unknown"}, default actor ${actorId}.`
+      `Created ${deptCount} departments, project ${projectId || "unknown"}, CEO actor ${actorId}.`
     );
     setError("");
 
