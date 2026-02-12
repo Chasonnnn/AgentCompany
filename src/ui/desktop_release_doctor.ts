@@ -27,6 +27,7 @@ export type DesktopReleaseDoctorResult = {
 export type DesktopReleaseDoctorArgs = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  tauri_config_relpath?: string;
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -56,8 +57,18 @@ export async function desktopReleaseDoctor(
   const cwd = args.cwd ?? process.cwd();
   const env = args.env ?? process.env;
   const checks: DesktopReleaseCheck[] = [];
-
-  const tauriConfigPath = path.join(cwd, "src-tauri", "tauri.conf.json");
+  const tauriConfigCandidates = [
+    args.tauri_config_relpath ? path.join(cwd, args.tauri_config_relpath) : "",
+    path.join(cwd, "src-tauri", "tauri.v3.conf.json"),
+    path.join(cwd, "src-tauri", "tauri.conf.json")
+  ].filter(Boolean);
+  let tauriConfigPath = tauriConfigCandidates[0];
+  for (const candidate of tauriConfigCandidates) {
+    if (await pathExists(candidate)) {
+      tauriConfigPath = candidate;
+      break;
+    }
+  }
   const channelsPath = path.join(cwd, "src-tauri", "release-channels.json");
   let tauriConfig: Record<string, unknown> | null = null;
 
