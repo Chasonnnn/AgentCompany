@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "identifier": "com.agentcompany.desktop",
   "build": {
-    "beforeDevCommand": "pnpm build:core",
-    "beforeBuildCommand": "pnpm build:core",
-    "frontendDist": "../desktop-ui"
+    "beforeDevCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../desktop-react/dist"
   },
   "app": {
     "windows": [

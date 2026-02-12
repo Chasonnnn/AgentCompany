@@ -59,7 +59,6 @@ export async function desktopReleaseDoctor(
   const checks: DesktopReleaseCheck[] = [];
   const tauriConfigCandidates = [
     args.tauri_config_relpath ? path.join(cwd, args.tauri_config_relpath) : "",
-    path.join(cwd, "src-tauri", "tauri.v3.conf.json"),
     path.join(cwd, "src-tauri", "tauri.conf.json")
   ].filter(Boolean);
   let tauriConfigPath = tauriConfigCandidates[0];

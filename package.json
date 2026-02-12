@@ -15,14 +15,8 @@
     "test:watch": "vitest",
     "dev:desktop:v3": "vite --config desktop-react/vite.config.ts",
     "desktop:doctor:strict": "pnpm build:core && node dist/cli.js desktop:release-doctor",
-    "tauri:dev:legacy": "tauri dev --config src-tauri/tauri.conf.json --no-dev-server",
-    "tauri:dev:v3": "tauri dev --config src-tauri/tauri.v3.conf.json --no-dev-server",
-    "tauri:dev:compat": "tauri dev --config src-tauri/tauri.compat.conf.json --no-dev-server",
-    "tauri:build:legacy": "tauri build --config src-tauri/tauri.conf.json",
-    "tauri:build:v3": "pnpm desktop:doctor:strict && tauri build --config src-tauri/tauri.v3.conf.json",
-    "tauri:build:compat": "pnpm desktop:doctor:strict && tauri build --config src-tauri/tauri.compat.conf.json",
-    "tauri:dev": "pnpm tauri:dev:v3",
-    "tauri:build": "pnpm tauri:build:v3"
+    "tauri:dev": "tauri dev --config src-tauri/tauri.conf.json --no-dev-server",
+    "tauri:build": "pnpm desktop:doctor:strict && tauri build --config src-tauri/tauri.conf.json"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.3",
