@@ -78,7 +78,7 @@ export function ContextSidebar({
               </Button>
             </div>
             {channels.length === 0 ? (
-              <EmptyState message="No channels yet." />
+              <EmptyState message="No channels yet." compact />
             ) : (
               channels.map((conversation) => (
                 <ListRow
@@ -107,7 +107,7 @@ export function ContextSidebar({
             </Button>
           </div>
           {dms.length === 0 ? (
-            <EmptyState message="No direct messages." />
+            <EmptyState message="No direct messages." compact />
           ) : (
             dms.map((conversation) => (
               <ListRow

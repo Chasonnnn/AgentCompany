@@ -178,8 +178,8 @@
 }
 
 .list-row.active {
-  border-color: rgba(10, 100, 232, 0.24);
-  background: var(--accent-soft);
+  border-color: rgba(10, 100, 232, 0.2);
+  background: rgba(10, 100, 232, 0.08);
 }
 
 .muted {
@@ -191,12 +191,21 @@
 }
 
 .empty-state {
-  border: 1px dashed var(--border-strong);
+  border: 1px dashed rgba(18, 27, 41, 0.14);
   border-radius: var(--radius-md);
-  padding: 16px;
+  padding: 10px 12px;
+  background: rgba(247, 250, 253, 0.8);
   color: var(--text-secondary);
   text-align: center;
-  font-size: 0.84rem;
+  font-size: 0.81rem;
+}
+
+.empty-state.compact {
+  border-style: solid;
+  border-color: rgba(18, 27, 41, 0.09);
+  background: #f6f8fb;
+  padding: 8px 10px;
+  text-align: left;
 }
 
 .modal-overlay {
@@ -268,7 +277,8 @@
 }
 
 .stack {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 

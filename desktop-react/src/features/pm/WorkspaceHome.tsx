@@ -41,30 +41,38 @@ export function WorkspaceHome({ workspaceHome, pm, resources, onOpenProject }: P
             </tr>
           </thead>
           <tbody>
-            {pm.workspace.projects.map((project) => (
-              <tr key={project.project_id}>
-                <td>
-                  <button className="btn ghost" onClick={() => onOpenProject(project.project_id)}>
-                    {project.name}
-                  </button>
-                </td>
-                <td>{formatPercent(project.progress_pct)}</td>
-                <td>{formatNumber(project.task_count)}</td>
-                <td>{formatNumber(project.active_runs)}</td>
-                <td>{formatNumber(project.pending_reviews)}</td>
-                <td>
-                  {project.risk_flags.length === 0 ? (
-                    <Badge>Healthy</Badge>
-                  ) : (
-                    project.risk_flags.map((flag) => (
-                      <Badge key={flag} tone={flag.includes("blocked") ? "danger" : "warn"}>
-                        {flag}
-                      </Badge>
-                    ))
-                  )}
+            {pm.workspace.projects.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="muted">
+                  No projects yet. Use the + button in the left rail to create your first project.
                 </td>
               </tr>
-            ))}
+            ) : (
+              pm.workspace.projects.map((project) => (
+                <tr key={project.project_id}>
+                  <td>
+                    <button className="btn ghost" onClick={() => onOpenProject(project.project_id)}>
+                      {project.name}
+                    </button>
+                  </td>
+                  <td>{formatPercent(project.progress_pct)}</td>
+                  <td>{formatNumber(project.task_count)}</td>
+                  <td>{formatNumber(project.active_runs)}</td>
+                  <td>{formatNumber(project.pending_reviews)}</td>
+                  <td>
+                    {project.risk_flags.length === 0 ? (
+                      <Badge>Healthy</Badge>
+                    ) : (
+                      project.risk_flags.map((flag) => (
+                        <Badge key={flag} tone={flag.includes("blocked") ? "danger" : "warn"}>
+                          {flag}
+                        </Badge>
+                      ))
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Panel>
@@ -81,4 +89,3 @@ function Kpi({ label, value, meta }: { label: string; value: string; meta: strin
     </article>
   );
 }
-

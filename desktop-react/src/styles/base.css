@@ -39,8 +39,13 @@ a {
 
 .drag-region {
   -webkit-app-region: drag;
+  user-select: none;
 }
 
 .no-drag {
   -webkit-app-region: no-drag;
+}
+
+[data-tauri-drag-region] {
+  user-select: none;
 }

@@ -12,10 +12,10 @@ type Props = {
 
 export function AgentProfileCard({ profile, loading = false, onQuickDm }: Props) {
   if (loading) {
-    return <EmptyState message="Loading profile..." />;
+    return <EmptyState message="Loading profile..." compact />;
   }
   if (!profile) {
-    return <EmptyState message="Select a participant to view profile details." />;
+    return <EmptyState message="Select a participant to view profile details." compact />;
   }
 
   return (
@@ -66,4 +66,3 @@ function Metric({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-

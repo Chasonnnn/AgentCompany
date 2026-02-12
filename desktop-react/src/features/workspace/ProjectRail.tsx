@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { FolderKanban, Home, Plus, Search, Settings } from "lucide-react";
+import { Home, Plus, Search, Settings } from "lucide-react";
 import { Button } from "@/components/primitives/Button";
 import { Badge } from "@/components/primitives/Badge";
 import type { ProjectSummary } from "@/types";
@@ -120,9 +120,6 @@ export function ProjectRail({
         </Button>
         <Button iconOnly onClick={onOpenSettings} title="Settings">
           <Settings size={16} />
-        </Button>
-        <Button iconOnly title="Projects">
-          <FolderKanban size={16} />
         </Button>
       </div>
     </aside>

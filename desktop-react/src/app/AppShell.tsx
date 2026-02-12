@@ -253,8 +253,8 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
-      <header className="app-header drag-region">
-        <div className="header-title no-drag">
+      <header className="app-header">
+        <div className="header-title">
           <h1>AgentCompany v{__APP_VERSION__}</h1>
           <p>{scope.kind === "workspace" ? "Workspace scope" : `${project?.name ?? "Project"} scope`}</p>
         </div>
@@ -274,7 +274,7 @@ export function AppShell() {
         </div>
       </header>
 
-      <main className="shell-grid">
+      <main className={`shell-grid ${selectedConversation ? "with-details" : "no-details"}`}>
         <ProjectRail
           projects={projects}
           selectedScope={scope}
@@ -375,6 +375,7 @@ export function AppShell() {
           onSelectAgent={setSelectedAgentId}
           profile={profile.data}
           loadingProfile={profile.isPending}
+          hasConversation={Boolean(selectedConversation)}
           onQuickDm={(agentId) => {
             void openDmForAgent(agentId);
           }}

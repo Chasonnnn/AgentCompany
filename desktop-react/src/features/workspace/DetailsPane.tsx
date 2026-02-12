@@ -9,6 +9,7 @@ type Props = {
   onSelectAgent: (agentId: string) => void;
   profile?: AgentProfileSnapshot;
   loadingProfile: boolean;
+  hasConversation: boolean;
   onQuickDm: (agentId: string) => void;
 };
 
@@ -18,8 +19,22 @@ export function DetailsPane({
   onSelectAgent,
   profile,
   loadingProfile,
+  hasConversation,
   onQuickDm
 }: Props) {
+  if (!hasConversation) {
+    return (
+      <aside className="pane details-pane">
+        <header className="details-header">
+          <h3>Participants</h3>
+        </header>
+        <div className="details-content">
+          <EmptyState message="Open a channel or DM to view participants and profiles." compact />
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className="pane details-pane">
       <header className="details-header">
@@ -29,7 +44,7 @@ export function DetailsPane({
       <div className="details-content stack">
         <section className="stack">
           {participants.length === 0 ? (
-            <EmptyState message="No participants." />
+            <EmptyState message="No participants." compact />
           ) : (
             participants.map((agent) => (
               <ListRow
@@ -53,4 +68,3 @@ export function DetailsPane({
     </aside>
   );
 }
-
