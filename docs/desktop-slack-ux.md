@@ -1,57 +1,111 @@
-# Desktop Slack-Like UX v1
+# Desktop v3 UX: Native-Feel PM Workspace
 
-This document defines the desktop-first Slack-like information architecture used by `desktop-ui`.
+This document defines the v3 desktop IA and visual direction for the React/Tauri app (`desktop-react`) while preserving existing backend governance/runtime behavior.
 
-## Layout
+## Visual Direction
 
-The shell is split into four zones:
+- Clarity-first and restrained.
+- Native-feel shell over decorative effects.
+- High legibility and compact but readable density.
+- Apple/OpenAI-like hierarchy (clear spacing, explicit focus states, low visual noise).
 
-1. Project rail (far-left): workspace home, project switch, add-project, settings.
-2. Context sidebar: Home, Channels, DMs, Activities, Resources.
-3. Content pane: timeline/cards/composer.
-4. Details pane: participant list and agent profile entry points.
+## Native Shell Behavior
 
-## Scope Model
+- macOS overlay title bar with hidden title and transparent window profile (`tauri.v3.conf.json`).
+- Compatibility profile (`tauri.compat.conf.json`) for reduced transparency or non-overlay fallback.
+- Explicit drag region in top header; all interactive controls marked non-drag.
+
+## Layout IA
+
+Shell is four-pane:
+
+1. Project rail:
+   - Workspace Home
+   - one-click project switching
+   - quick switch (`Cmd/Ctrl+K`)
+   - add project
+   - settings
+2. Context sidebar:
+   - Home
+   - Channels
+   - DMs
+   - Activities
+   - Resources
+3. Content pane:
+   - PM home dashboards
+   - conversation/activity/resources views
+4. Details pane:
+   - participants
+   - per-agent profile card
+   - quick DM
+
+## Scope Behavior
 
 - Workspace scope:
-  - Home conversation (`conv_workspace_home`)
-  - Workspace DMs
-  - Cross-project activities/resources
+  - portfolio PM Home
+  - workspace conversations + DMs
+  - cross-project activities/resources
 - Project scope:
-  - Home conversation (`conv_<project>_home`)
-  - `#executive-meeting`
-  - One auto-generated department channel per team
-  - Project DMs
-  - Project activities/resources
+  - project PM Home (task board + Gantt + allocation controls)
+  - project channels and DMs
+  - project activities/resources
 
-## Default Assistants
+## PM Home UX
 
-- Global manager agent: `agent_global_manager`
-- Per-project secretary: `agent_secretary_<project_id>`
+Workspace Home:
+- KPI row (projects, progress, token usage, operational alerts)
+- project portfolio table with risk flags and quick-open actions
 
-Both are provisioned idempotently when defaults are reconciled.
+Project Home:
+- KPI row (task volume, progress, blocked tasks, project usage)
+- CPM/Gantt visualization via native SVG
+- dependency-cycle warning state (non-fatal)
+- allocation recommendation table with per-task apply and bulk apply
 
-## Conversation Storage
+## Conversation UX
 
-- Project conversation metadata:
-  - `work/projects/<project_id>/conversations/<conversation_id>/conversation.yaml`
-- Project messages:
-  - `work/projects/<project_id>/conversations/<conversation_id>/messages.jsonl`
-- Workspace home:
-  - `inbox/workspace_home/conversation.yaml`
-  - `inbox/workspace_home/messages.jsonl`
+- Timeline + composer in content pane.
+- Modal-only creation flows for:
+  - project
+  - channel
+  - DM
+- No `prompt()`-based creation in v3 path.
+- CEO-centric DM initiation remains default.
 
-## Visibility Defaults
+## Activities and Resources
 
-- Home / Executive meeting: `org`
-- Department channels: `team`
-- DMs: `private_agent`
+Activities:
+- pending approvals
+- recent decisions
+- run activity rows
+- virtualized list rendering
 
-## Context-Cycle Telemetry
+Resources:
+- token/cost/worker KPIs
+- provider usage split
+- model distribution
+- unknown-safe context-cycle counters
 
-Run-level `context_cycles` is populated from provider-aware signals.
+## Performance and Interaction Rules
 
-- `provider_signal`: explicit/best-effort detected cycles
-- `unavailable`: no reliable cycle signal observed
+- Virtualize high-volume lists (project rail, DM picker, activity feed, message timeline).
+- Avoid heavy synchronous transformations on render path.
+- Polling intervals are view-aware:
+  - conversation: fast
+  - activities: medium
+  - home/resources: slower
+  - paused when window/document is not visible
 
-UI renders unknown values when cycle signals are unavailable.
+## Data and Contracts
+
+- v3 frontend consumes additive `desktop.bootstrap.snapshot` RPC for coherent initial load and view refresh.
+- Canonical files remain source of truth.
+- SQLite remains rebuildable projection layer.
+- Existing RPC contracts remain source-compatible.
+
+## SwiftUI Track Policy
+
+`macos-native` remains compile-green and reference-only.
+
+- no feature parity commitments during v3 rollout
+- no shared business logic migration to SwiftUI in this pass
