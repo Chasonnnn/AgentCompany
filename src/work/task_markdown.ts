@@ -46,6 +46,39 @@ export const TaskScope = z
   })
   .strict();
 
+export const TaskSchedule = z
+  .object({
+    planned_start: z.string().min(1).optional(),
+    planned_end: z.string().min(1).optional(),
+    duration_days: z.number().int().positive().optional(),
+    depends_on_task_ids: z.array(z.string().min(1)).default([])
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.planned_start && v.planned_end) {
+      const start = Date.parse(v.planned_start);
+      const end = Date.parse(v.planned_end);
+      if (Number.isFinite(start) && Number.isFinite(end) && end < start) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "schedule.planned_end must be >= schedule.planned_start",
+          path: ["planned_end"]
+        });
+      }
+    }
+  });
+
+export const TaskExecutionPlan = z
+  .object({
+    preferred_provider: z.string().min(1).optional(),
+    preferred_model: z.string().min(1).optional(),
+    preferred_agent_id: z.string().min(1).optional(),
+    token_budget_hint: z.number().int().nonnegative().optional(),
+    applied_by: z.string().min(1).optional(),
+    applied_at: z.string().min(1).optional()
+  })
+  .strict();
+
 export const TaskFrontMatter = z
   .object({
     schema_version: z.number().int().positive(),
@@ -59,6 +92,8 @@ export const TaskFrontMatter = z
     team_id: z.string().min(1).optional(),
     assignee_agent_id: z.string().min(1).optional(),
     scope: TaskScope.optional(),
+    schedule: TaskSchedule.optional(),
+    execution_plan: TaskExecutionPlan.optional(),
     budget: BudgetThreshold.optional(),
     deliverables: z.array(z.string().min(1)).optional(),
     acceptance_criteria: z.array(z.string().min(1)).optional(),
@@ -67,6 +102,8 @@ export const TaskFrontMatter = z
   .strict();
 
 export type TaskFrontMatter = z.infer<typeof TaskFrontMatter>;
+export type TaskSchedule = z.infer<typeof TaskSchedule>;
+export type TaskExecutionPlan = z.infer<typeof TaskExecutionPlan>;
 
 export type TaskValidationIssue = { code: string; message: string };
 
