@@ -5,6 +5,8 @@ export type IdPrefix =
   | "team"
   | "agent"
   | "proj"
+  | "conv"
+  | "msg"
   | "task"
   | "ms"
   | "run"

@@ -26,6 +26,14 @@ export const RunUsageSummary = z
   })
   .strict();
 
+export const RunContextCycles = z
+  .object({
+    count: z.number().int().nonnegative(),
+    source: z.enum(["provider_signal", "unavailable"]),
+    signal_types: z.array(z.string().min(1)).optional()
+  })
+  .strict();
+
 export const CommandRunSpec = z
   .object({
     kind: z.literal("command"),
@@ -70,6 +78,7 @@ export const RunYaml = z.object({
   ended_at: IsoDateTime.optional(),
   status: RunStatus,
   usage: RunUsageSummary.optional(),
+  context_cycles: RunContextCycles.optional(),
   context_pack_id: z.string().min(1),
   events_relpath: z.string().min(1),
   spec: z.union([CommandRunSpec, CodexAppServerRunSpec]).optional()
@@ -77,3 +86,4 @@ export const RunYaml = z.object({
 
 export type RunYaml = z.infer<typeof RunYaml>;
 export type RunUsageSummary = z.infer<typeof RunUsageSummary>;
+export type RunContextCycles = z.infer<typeof RunContextCycles>;

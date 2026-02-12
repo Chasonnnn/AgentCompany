@@ -8,6 +8,9 @@ export const AgentYaml = z.object({
   type: z.literal("agent"),
   id: z.string().min(1),
   name: z.string().min(1),
+  display_title: z.string().min(1).optional(),
+  avatar: z.string().min(1).optional(),
+  model_hint: z.string().min(1).optional(),
   role: AgentRole,
   provider: z.string().min(1),
   team_id: z.string().optional(),
@@ -16,4 +19,3 @@ export const AgentYaml = z.object({
 });
 
 export type AgentYaml = z.infer<typeof AgentYaml>;
-
