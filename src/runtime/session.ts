@@ -306,8 +306,24 @@ async function reconcilePersistedSession(item: SessionListItem): Promise<Session
         ended_at_ms: item.ended_at_ms ?? (run.ended_at ? Date.parse(run.ended_at) : undefined)
       };
     }
-    if (item.pid && !isProcessAlive(item.pid)) {
-      return markOrphanedDetachedSession(item);
+    if (item.pid) {
+      const stopMarkerRel =
+        item.stop_marker_relpath ?? path.join("runs", item.run_id, "outputs", "stop_requested.flag");
+      const stopMarkerAbs = path.join(item.workspace_dir, "work/projects", item.project_id, stopMarkerRel);
+      const stopRequested = await fs
+        .access(stopMarkerAbs)
+        .then(() => true)
+        .catch(() => false);
+      if (stopRequested && isProcessAlive(item.pid)) {
+        try {
+          process.kill(item.pid, "SIGKILL");
+        } catch {
+          // Best-effort escalation for detached stop requests.
+        }
+      }
+      if (!isProcessAlive(item.pid)) {
+        return markOrphanedDetachedSession(item);
+      }
     }
     return {
       ...item,

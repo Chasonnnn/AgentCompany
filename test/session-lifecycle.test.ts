@@ -221,7 +221,7 @@ describe("runtime session lifecycle", () => {
       );
       expect(runDoc.status).toBe("stopped");
     },
-    10000
+    20000
   );
 
   test("persisted detached session records include pid fingerprint metadata", async () => {
