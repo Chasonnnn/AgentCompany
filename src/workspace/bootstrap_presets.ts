@@ -4,6 +4,7 @@ import { initWorkspace } from "./init.js";
 import { createTeam } from "../org/teams.js";
 import { createAgent } from "../org/agents.js";
 import { createProject } from "../work/projects.js";
+import { ensureProjectDefaults, ensureWorkspaceDefaults } from "../conversations/defaults.js";
 
 export type DepartmentPresetKey =
   | "engineering"
@@ -162,6 +163,15 @@ export async function bootstrapWorkspacePresets(
   const project = await createProject({
     workspace_dir: workspaceDir,
     name: projectName
+  });
+  await ensureWorkspaceDefaults({
+    workspace_dir: workspaceDir,
+    ceo_actor_id: ceoAgentId ?? "human_ceo"
+  });
+  await ensureProjectDefaults({
+    workspace_dir: workspaceDir,
+    project_id: project.project_id,
+    ceo_actor_id: ceoAgentId ?? "human_ceo"
   });
 
   const preferredDepartment = departments[0];

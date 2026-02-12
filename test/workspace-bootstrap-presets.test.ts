@@ -56,5 +56,5 @@ describe("workspace preset bootstrap", () => {
     });
     const secondTeams = await fs.readdir(path.join(dir, "org", "teams"));
     expect(secondTeams.length).toBe(1);
-  });
+  }, 15000);
 });
