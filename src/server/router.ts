@@ -423,6 +423,15 @@ const WorkspaceHomeSnapshotParams = z.object({
   workspace_dir: z.string().min(1)
 });
 
+const DesktopBootstrapSnapshotParams = z.object({
+  workspace_dir: z.string().min(1),
+  actor_id: z.string().min(1),
+  scope: z.enum(["workspace", "project"]),
+  project_id: z.string().min(1).optional(),
+  view: z.enum(["home", "activities", "resources", "conversation"]),
+  conversation_id: z.string().min(1).optional()
+});
+
 const TaskScheduleParams = z
   .object({
     planned_start: z.string().min(1).optional(),
@@ -801,6 +810,124 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       return {
         ...home,
         pm: pm.workspace
+      };
+    }
+    case "desktop.bootstrap.snapshot": {
+      const p = DesktopBootstrapSnapshotParams.parse(params);
+      if (p.scope === "project" && !p.project_id) {
+        throw new RpcUserError("project_id is required when scope=project");
+      }
+      if (p.view === "conversation" && !p.conversation_id) {
+        throw new RpcUserError("conversation_id is required when view=conversation");
+      }
+
+      if (p.scope === "project" && p.project_id) {
+        await ensureProjectDefaults({
+          workspace_dir: p.workspace_dir,
+          project_id: p.project_id,
+          ceo_actor_id: p.actor_id
+        });
+      } else {
+        await ensureWorkspaceDefaults({ workspace_dir: p.workspace_dir });
+      }
+
+      const [projectsPayload, agents, teams, conversations, workspaceHome, pm, resources] = await Promise.all([
+        routeRpcMethod("workspace.projects.list", {
+          workspace_dir: p.workspace_dir
+        }),
+        routeRpcMethod("workspace.agents.list", {
+          workspace_dir: p.workspace_dir
+        }),
+        routeRpcMethod("workspace.teams.list", {
+          workspace_dir: p.workspace_dir
+        }),
+        routeRpcMethod("conversation.list", {
+          workspace_dir: p.workspace_dir,
+          scope: p.scope,
+          project_id: p.project_id
+        }),
+        buildWorkspaceHomeSnapshot({
+          workspace_dir: p.workspace_dir
+        }),
+        buildPmSnapshot({
+          workspace_dir: p.workspace_dir,
+          scope: p.scope,
+          project_id: p.project_id
+        }),
+        buildResourcesSnapshot({
+          workspace_dir: p.workspace_dir,
+          project_id: p.scope === "project" ? p.project_id : undefined
+        })
+      ]);
+
+      let viewData: unknown;
+      let activitySummary = {
+        pending_reviews: 0,
+        recent_decisions: 0,
+        monitor_rows: 0
+      };
+
+      if (p.view === "home") {
+        let recommendations: unknown[] = [];
+        if (p.scope === "project" && p.project_id) {
+          const rec = await recommendTaskAllocations({
+            workspace_dir: p.workspace_dir,
+            project_id: p.project_id
+          });
+          recommendations = Array.isArray(rec.recommendations)
+            ? rec.recommendations.map((row) => ({
+                ...row,
+                reason: row.rationale
+              }))
+            : [];
+        }
+        viewData = {
+          workspace_home: workspaceHome,
+          pm,
+          resources,
+          recommendations
+        };
+      } else if (p.view === "activities") {
+        const ui = await buildUiSnapshot({
+          workspace_dir: p.workspace_dir,
+          project_id: p.scope === "project" ? p.project_id : undefined,
+          sync_index: true
+        });
+        viewData = { ui };
+        activitySummary = {
+          pending_reviews: ui.review_inbox.pending.length,
+          recent_decisions: ui.review_inbox.recent_decisions.length,
+          monitor_rows: ui.monitor.rows.length
+        };
+      } else if (p.view === "resources") {
+        viewData = { resources };
+      } else {
+        const messages = await listConversationMessages({
+          workspace_dir: p.workspace_dir,
+          scope: p.scope,
+          project_id: p.project_id,
+          conversation_id: p.conversation_id!,
+          limit: 3000
+        });
+        viewData = { messages };
+      }
+
+      return {
+        workspace_dir: p.workspace_dir,
+        actor_id: p.actor_id,
+        scope: p.scope,
+        project_id: p.project_id,
+        view: p.view,
+        conversation_id: p.conversation_id,
+        projects: (projectsPayload as any).projects ?? [],
+        agents,
+        teams,
+        conversations,
+        view_data: viewData,
+        resources_summary: resources.totals,
+        activity_summary: activitySummary,
+        pm_summary: pm.workspace.summary,
+        sync_ts: new Date().toISOString()
       };
     }
     case "task.list": {

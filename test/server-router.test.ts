@@ -469,4 +469,66 @@ describe("server router", () => {
     expect(res.artifact_id).toBe(artifactId);
     expect(typeof res.markdown).toBe("string");
   });
+
+  test("desktop.bootstrap.snapshot returns scoped payloads for home and conversation views", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const created = (await routeRpcMethod("workspace.project.create_with_defaults", {
+      workspace_dir: dir,
+      name: "Proj",
+      ceo_actor_id: "human_ceo"
+    })) as any;
+
+    const workspaceHome = (await routeRpcMethod("desktop.bootstrap.snapshot", {
+      workspace_dir: dir,
+      actor_id: "human_ceo",
+      scope: "workspace",
+      view: "home"
+    })) as any;
+    expect(Array.isArray(workspaceHome.projects)).toBe(true);
+    expect(Array.isArray(workspaceHome.agents)).toBe(true);
+    expect(Array.isArray(workspaceHome.teams)).toBe(true);
+    expect(Array.isArray(workspaceHome.conversations)).toBe(true);
+    expect(workspaceHome.view_data.pm.scope).toBe("workspace");
+
+    const projectHome = (await routeRpcMethod("desktop.bootstrap.snapshot", {
+      workspace_dir: dir,
+      actor_id: "human_ceo",
+      scope: "project",
+      project_id: created.project_id,
+      view: "home"
+    })) as any;
+    expect(projectHome.scope).toBe("project");
+    expect(projectHome.view_data.pm.scope).toBe("project");
+    expect(Array.isArray(projectHome.view_data.recommendations)).toBe(true);
+
+    const projectConversations = (await routeRpcMethod("conversation.list", {
+      workspace_dir: dir,
+      scope: "project",
+      project_id: created.project_id
+    })) as any[];
+    const conversationId = projectConversations[0]?.id;
+    expect(typeof conversationId).toBe("string");
+
+    await routeRpcMethod("conversation.message.send", {
+      workspace_dir: dir,
+      scope: "project",
+      project_id: created.project_id,
+      conversation_id: conversationId,
+      author_id: "human_ceo",
+      author_role: "ceo",
+      body: "hello from bootstrap test"
+    });
+
+    const conversationView = (await routeRpcMethod("desktop.bootstrap.snapshot", {
+      workspace_dir: dir,
+      actor_id: "human_ceo",
+      scope: "project",
+      project_id: created.project_id,
+      view: "conversation",
+      conversation_id: conversationId
+    })) as any;
+    expect(Array.isArray(conversationView.view_data.messages)).toBe(true);
+    expect(conversationView.view_data.messages.some((m: any) => m.body.includes("bootstrap test"))).toBe(true);
+  });
 });
