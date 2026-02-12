@@ -295,9 +295,6 @@ async function loadPersistedSession(
 
 async function reconcilePersistedSession(item: SessionListItem): Promise<SessionListItem> {
   if (item.status !== "running") return item;
-  if (item.pid && !isProcessAlive(item.pid)) {
-    return markOrphanedDetachedSession(item);
-  }
   try {
     const run = RunYaml.parse(
       await readYamlFile(runYamlPath(item.workspace_dir, item.project_id, item.run_id))
@@ -308,6 +305,9 @@ async function reconcilePersistedSession(item: SessionListItem): Promise<Session
         status: run.status,
         ended_at_ms: item.ended_at_ms ?? (run.ended_at ? Date.parse(run.ended_at) : undefined)
       };
+    }
+    if (item.pid && !isProcessAlive(item.pid)) {
+      return markOrphanedDetachedSession(item);
     }
     return {
       ...item,
