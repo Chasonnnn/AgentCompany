@@ -8,3 +8,5 @@ dist/
 *.db
 src-tauri/target/
 src-tauri/gen/
+macos-native/.build/
+work/

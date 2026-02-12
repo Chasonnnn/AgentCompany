@@ -4,11 +4,12 @@
   "version": "0.0.0",
   "identifier": "com.agentcompany.desktop",
   "build": {
-    "beforeDevCommand": "pnpm build:core",
-    "beforeBuildCommand": "pnpm build:core",
-    "frontendDist": "../desktop-ui"
+    "beforeDevCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../desktop-react/dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "AgentCompany",
@@ -16,7 +17,10 @@
         "height": 920,
         "minWidth": 980,
         "minHeight": 700,
-        "resizable": true
+        "resizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true
       }
     ],
     "security": {

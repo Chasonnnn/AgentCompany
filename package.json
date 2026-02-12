@@ -7,24 +7,46 @@
     "ac": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:core": "tsc -p tsconfig.json",
+    "build:desktop:v3": "vite build --config desktop-react/vite.config.ts",
+    "build": "pnpm build:core && pnpm build:desktop:v3",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p desktop-react/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri:dev": "tauri dev --config src-tauri/tauri.conf.json --no-dev-server",
-    "tauri:build": "tauri build --config src-tauri/tauri.conf.json"
+    "dev:desktop:v3": "vite --config desktop-react/vite.config.ts",
+    "desktop:doctor:strict": "pnpm build:core && node dist/cli.js desktop:release-doctor",
+    "tauri:dev:legacy": "tauri dev --config src-tauri/tauri.conf.json --no-dev-server",
+    "tauri:dev:v3": "tauri dev --config src-tauri/tauri.v3.conf.json --no-dev-server",
+    "tauri:dev:compat": "tauri dev --config src-tauri/tauri.compat.conf.json --no-dev-server",
+    "tauri:build:legacy": "tauri build --config src-tauri/tauri.conf.json",
+    "tauri:build:v3": "pnpm desktop:doctor:strict && tauri build --config src-tauri/tauri.v3.conf.json",
+    "tauri:build:compat": "pnpm desktop:doctor:strict && tauri build --config src-tauri/tauri.compat.conf.json",
+    "tauri:dev": "pnpm tauri:dev:v3",
+    "tauri:build": "pnpm tauri:build:v3"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.90.3",
+    "@tanstack/react-virtual": "^3.13.12",
+    "@tauri-apps/api": "^2.9.0",
     "commander": "^14.0.0",
     "diff": "^8.0.3",
+    "lucide-react": "^0.525.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "ulid": "^3.0.0",
     "yaml": "^2.8.1",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.0",
     "@types/node": "^24.3.0",
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.5",
     "@tauri-apps/cli": "^2.2.5",
+    "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "^26.0.0",
     "typescript": "^5.8.3",
+    "vite": "^7.0.5",
     "vitest": "^3.2.4"
   }
 }
