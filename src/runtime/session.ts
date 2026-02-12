@@ -6,10 +6,13 @@ import { readYamlFile, writeYamlFile } from "../store/yaml.js";
 import { ensureDir, writeFileAtomic } from "../store/fs.js";
 import { RunYaml } from "../schemas/run.js";
 import { AgentYaml } from "../schemas/agent.js";
+import { enforcePolicy } from "../policy/enforce.js";
+import type { ActorRole } from "../policy/policy.js";
 import { executeCommandRun, type ExecuteCommandArgs, type ExecuteCommandResult } from "./execute_command.js";
 import { appendEventJsonl, newEnvelope } from "./events.js";
 import { withLaunchLane, type LaunchLanePriority } from "./launch_lane.js";
 import { transitionSessionStatus, type SessionStatus } from "./session_state.js";
+import { evaluateBudgetPreflight } from "./budget.js";
 import {
   executeCodexAppServerRun,
   type ExecuteCodexAppServerResult
@@ -23,6 +26,9 @@ export type LaunchSessionArgs = ExecuteCommandArgs & {
   lane_workspace_limit?: number;
   lane_provider_limit?: number;
   lane_team_limit?: number;
+  actor_id?: string;
+  actor_role?: ActorRole;
+  actor_team_id?: string;
 };
 
 export type SessionPollResult = {
@@ -187,6 +193,137 @@ async function readAgentTeamId(workspaceDir: string, agentId: string): Promise<s
   } catch {
     return undefined;
   }
+}
+
+function summarizeBudgetFindings(
+  findings: Array<{ scope: string; metric: string; severity: string; threshold: number; actual: number }>
+): string {
+  return findings
+    .map(
+      (f) =>
+        `${f.scope}.${f.metric}.${f.severity}: actual=${Number(f.actual)} threshold=${Number(f.threshold)}`
+    )
+    .join("; ");
+}
+
+async function appendBudgetPreflightEvents(args: {
+  workspace_dir: string;
+  project_id: string;
+  run_id: string;
+  session_ref: string;
+  decisions: Array<Record<string, unknown>>;
+  alerts: Array<Record<string, unknown>>;
+  exceeded: Array<Record<string, unknown>>;
+}): Promise<void> {
+  const eventsPath = path.join(
+    args.workspace_dir,
+    "work/projects",
+    args.project_id,
+    "runs",
+    args.run_id,
+    "events.jsonl"
+  );
+  const now = nowIso();
+  for (const decision of args.decisions) {
+    await appendEventJsonl(
+      eventsPath,
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: now,
+        run_id: args.run_id,
+        session_ref: args.session_ref,
+        actor: "system",
+        visibility: "org",
+        type: "budget.decision",
+        payload: { ...decision, phase: "preflight" }
+      })
+    );
+  }
+  for (const finding of args.alerts) {
+    await appendEventJsonl(
+      eventsPath,
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: now,
+        run_id: args.run_id,
+        session_ref: args.session_ref,
+        actor: "system",
+        visibility: "org",
+        type: "budget.alert",
+        payload: { ...finding, phase: "preflight" }
+      })
+    );
+  }
+  for (const finding of args.exceeded) {
+    await appendEventJsonl(
+      eventsPath,
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: now,
+        run_id: args.run_id,
+        session_ref: args.session_ref,
+        actor: "system",
+        visibility: "org",
+        type: "budget.exceeded",
+        payload: { ...finding, phase: "preflight" }
+      })
+    );
+  }
+}
+
+async function markRunPrelaunchFailure(args: {
+  workspace_dir: string;
+  project_id: string;
+  run_id: string;
+  session_ref: string;
+  reason: string;
+  error: string;
+  budget_exceeded?: boolean;
+}): Promise<void> {
+  const runPath = runYamlPath(args.workspace_dir, args.project_id, args.run_id);
+  const endedAt = nowIso();
+  try {
+    const run = RunYaml.parse(await readYamlFile(runPath));
+    if (run.status === "running") {
+      await writeYamlFile(runPath, {
+        ...run,
+        status: "failed",
+        ended_at: endedAt
+      });
+    }
+  } catch {
+    // Best-effort fallback: failure event is still appended below.
+  }
+
+  const eventsPath = path.join(
+    args.workspace_dir,
+    "work/projects",
+    args.project_id,
+    "runs",
+    args.run_id,
+    "events.jsonl"
+  );
+  await appendEventJsonl(
+    eventsPath,
+    newEnvelope({
+      schema_version: 1,
+      ts_wallclock: endedAt,
+      run_id: args.run_id,
+      session_ref: args.session_ref,
+      actor: "system",
+      visibility: "org",
+      type: "run.failed",
+      payload: {
+        exit_code: null,
+        signal: null,
+        stopped: false,
+        preflight: true,
+        reason: args.reason,
+        error: args.error,
+        budget_exceeded: args.budget_exceeded === true
+      }
+    })
+  ).catch(() => {});
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -410,98 +547,160 @@ export async function launchSession(args: LaunchSessionArgs): Promise<{ session_
       team_limit: args.lane_team_limit
     },
     async () => {
-    const protocolMode = isCodexAppServerProvider(runDoc.provider);
-    const protocolPrompt = args.prompt_text ?? args.stdin_text;
-    const sessionRef = args.session_ref ?? `local_${args.run_id}`;
-    const existing = SESSIONS.get(sessionRef);
-    if (existing && existing.status === "running") {
-      throw new Error(`Session already running: ${sessionRef}`);
-    }
-
-    const abortController = new AbortController();
-    const rec: SessionRecord = {
-      session_ref: sessionRef,
-      project_id: args.project_id,
-      run_id: args.run_id,
-      status: "running",
-      abort_controller: abortController,
-      result: null,
-      workspace_dir: args.workspace_dir,
-      promise: Promise.resolve(),
-      started_at_ms: Date.now(),
-      mode: protocolMode ? "codex_app_server" : "command"
-    };
-    SESSIONS.set(sessionRef, rec);
-    await persistSessionItem(toListItem(rec));
-
-    rec.promise = (async () => {
+      const sessionRef = args.session_ref ?? `local_${args.run_id}`;
+      const actorId = args.actor_id?.trim() ? args.actor_id.trim() : "human";
+      const actorRole = args.actor_role ?? "human";
+      const actorTeamId = args.actor_team_id?.trim() ? args.actor_team_id.trim() : undefined;
       try {
-        if (protocolMode) {
-          if (!protocolPrompt || !protocolPrompt.trim()) {
-            throw new Error(
-              "prompt_text (or stdin_text) is required for codex_app_server session launches"
-            );
+        await enforcePolicy({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          run_id: args.run_id,
+          actor_id: actorId,
+          actor_role: actorRole,
+          actor_team_id: actorTeamId,
+          action: "launch",
+          resource: {
+            resource_id: args.run_id,
+            kind: "run",
+            visibility: agentTeamId ? "team" : "org",
+            team_id: agentTeamId,
+            producing_actor_id: runDoc.agent_id
           }
-          rec.result = await executeCodexAppServerRun({
-            workspace_dir: args.workspace_dir,
-            project_id: args.project_id,
-            run_id: args.run_id,
-            prompt_text: protocolPrompt,
-            model: args.model,
-            repo_id: args.repo_id,
-            workdir_rel: args.workdir_rel,
-            task_id: args.task_id,
-            milestone_id: args.milestone_id,
-            budget: args.budget,
-            env: args.env,
-            session_ref: sessionRef,
-            on_state_update: ({ pid, stop_marker_relpath, thread_id, turn_id }) => {
-              if (pid !== undefined) {
+        });
+
+        const preflight = await evaluateBudgetPreflight({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          task_id: args.task_id,
+          run_budget: args.budget
+        });
+        await appendBudgetPreflightEvents({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          run_id: args.run_id,
+          session_ref: sessionRef,
+          decisions: preflight.decisions.map((d) => ({ ...d })),
+          alerts: preflight.alerts.map((d) => ({ ...d })),
+          exceeded: preflight.exceeded.map((d) => ({ ...d }))
+        });
+        if (preflight.exceeded.length > 0) {
+          throw new Error(
+            `Budget preflight blocked launch: ${summarizeBudgetFindings(preflight.exceeded)}`
+          );
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const lower = msg.toLowerCase();
+        const isPolicy = lower.includes("policy denied");
+        const isBudget = lower.includes("budget preflight");
+        await markRunPrelaunchFailure({
+          workspace_dir: args.workspace_dir,
+          project_id: args.project_id,
+          run_id: args.run_id,
+          session_ref: sessionRef,
+          reason: isPolicy
+            ? "policy_denied"
+            : isBudget
+              ? "budget_preflight_exceeded"
+              : "launch_preflight_failed",
+          error: msg,
+          budget_exceeded: isBudget
+        });
+        throw e;
+      }
+
+      const protocolMode = isCodexAppServerProvider(runDoc.provider);
+      const protocolPrompt = args.prompt_text ?? args.stdin_text;
+      const existing = SESSIONS.get(sessionRef);
+      if (existing && existing.status === "running") {
+        throw new Error(`Session already running: ${sessionRef}`);
+      }
+
+      const abortController = new AbortController();
+      const rec: SessionRecord = {
+        session_ref: sessionRef,
+        project_id: args.project_id,
+        run_id: args.run_id,
+        status: "running",
+        abort_controller: abortController,
+        result: null,
+        workspace_dir: args.workspace_dir,
+        promise: Promise.resolve(),
+        started_at_ms: Date.now(),
+        mode: protocolMode ? "codex_app_server" : "command"
+      };
+      SESSIONS.set(sessionRef, rec);
+      await persistSessionItem(toListItem(rec));
+
+      rec.promise = (async () => {
+        try {
+          if (protocolMode) {
+            if (!protocolPrompt || !protocolPrompt.trim()) {
+              throw new Error(
+                "prompt_text (or stdin_text) is required for codex_app_server session launches"
+              );
+            }
+            rec.result = await executeCodexAppServerRun({
+              workspace_dir: args.workspace_dir,
+              project_id: args.project_id,
+              run_id: args.run_id,
+              prompt_text: protocolPrompt,
+              model: args.model,
+              repo_id: args.repo_id,
+              workdir_rel: args.workdir_rel,
+              task_id: args.task_id,
+              milestone_id: args.milestone_id,
+              budget: args.budget,
+              env: args.env,
+              session_ref: sessionRef,
+              on_state_update: ({ pid, stop_marker_relpath, thread_id, turn_id }) => {
+                if (pid !== undefined) {
+                  rec.pid = pid;
+                  rec.pid_claimed_at_ms = Date.now();
+                }
+                if (stop_marker_relpath !== undefined) rec.stop_marker_relpath = stop_marker_relpath;
+                if (thread_id !== undefined) rec.protocol_thread_id = thread_id;
+                if (turn_id !== undefined) rec.protocol_turn_id = turn_id;
+                void persistSessionItem(toListItem(rec)).catch(() => {});
+              },
+              abort_signal: abortController.signal
+            });
+          } else {
+            rec.result = await executeCommandRun({
+              ...args,
+              session_ref: sessionRef,
+              on_child_spawn: ({ pid, stop_marker_relpath }) => {
                 rec.pid = pid;
                 rec.pid_claimed_at_ms = Date.now();
-              }
-              if (stop_marker_relpath !== undefined) rec.stop_marker_relpath = stop_marker_relpath;
-              if (thread_id !== undefined) rec.protocol_thread_id = thread_id;
-              if (turn_id !== undefined) rec.protocol_turn_id = turn_id;
-              void persistSessionItem(toListItem(rec)).catch(() => {});
-            },
-            abort_signal: abortController.signal
-          });
-        } else {
-          rec.result = await executeCommandRun({
-            ...args,
-            session_ref: sessionRef,
-            on_child_spawn: ({ pid, stop_marker_relpath }) => {
-              rec.pid = pid;
-              rec.pid_claimed_at_ms = Date.now();
-              rec.stop_marker_relpath = stop_marker_relpath;
-              void persistSessionItem(toListItem(rec)).catch(() => {});
-            },
-            abort_signal: abortController.signal
-          });
+                rec.stop_marker_relpath = stop_marker_relpath;
+                void persistSessionItem(toListItem(rec)).catch(() => {});
+              },
+              abort_signal: abortController.signal
+            });
+          }
+          rec.status = transitionSessionStatus(
+            rec.status,
+            await readRunStatus(args.workspace_dir, args.project_id, args.run_id)
+          );
+        } catch (e) {
+          rec.status = transitionSessionStatus(rec.status, "failed");
+          rec.error = e instanceof Error ? e.message : String(e);
+        } finally {
+          rec.ended_at_ms = Date.now();
+          await persistSessionItem(toListItem(rec));
         }
-        rec.status = transitionSessionStatus(
-          rec.status,
-          await readRunStatus(args.workspace_dir, args.project_id, args.run_id)
-        );
-      } catch (e) {
-        rec.status = transitionSessionStatus(rec.status, "failed");
-        rec.error = e instanceof Error ? e.message : String(e);
-      } finally {
-        rec.ended_at_ms = Date.now();
-        await persistSessionItem(toListItem(rec));
+      })();
+
+      const end = Date.now() + LAUNCH_METADATA_WAIT_MS;
+      while (Date.now() < end) {
+        if (rec.pid !== undefined) break;
+        if (rec.status !== "running") break;
+        await sleep(LAUNCH_METADATA_POLL_MS);
       }
-    })();
+      await persistSessionItem(toListItem(rec));
 
-    const end = Date.now() + LAUNCH_METADATA_WAIT_MS;
-    while (Date.now() < end) {
-      if (rec.pid !== undefined) break;
-      if (rec.status !== "running") break;
-      await sleep(LAUNCH_METADATA_POLL_MS);
-    }
-    await persistSessionItem(toListItem(rec));
-
-    return { session_ref: sessionRef };
+      return { session_ref: sessionRef };
     }
   );
 }

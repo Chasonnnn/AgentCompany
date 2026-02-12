@@ -2,7 +2,7 @@ export type ActorRole = "human" | "ceo" | "director" | "manager" | "worker";
 
 export type Visibility = "private_agent" | "team" | "managers" | "org";
 
-export type PolicyAction = "read" | "approve";
+export type PolicyAction = "read" | "approve" | "launch";
 
 export type PolicyActor = {
   actor_id: string;
@@ -78,4 +78,3 @@ export function evaluatePolicy(
     }
   }
 }
-

@@ -142,7 +142,10 @@ const SessionLaunchParams = z.object({
   lane_priority: z.enum(["high", "normal", "low"]).optional(),
   lane_workspace_limit: z.number().int().positive().optional(),
   lane_provider_limit: z.number().int().positive().optional(),
-  lane_team_limit: z.number().int().positive().optional()
+  lane_team_limit: z.number().int().positive().optional(),
+  actor_id: z.string().min(1).default("human"),
+  actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]).default("human"),
+  actor_team_id: z.string().min(1).optional()
 });
 
 const SessionSingleParams = z.object({
@@ -548,7 +551,10 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         lane_priority: p.lane_priority,
         lane_workspace_limit: p.lane_workspace_limit,
         lane_provider_limit: p.lane_provider_limit,
-        lane_team_limit: p.lane_team_limit
+        lane_team_limit: p.lane_team_limit,
+        actor_id: p.actor_id,
+        actor_role: p.actor_role,
+        actor_team_id: p.actor_team_id
       });
     }
     case "session.poll": {

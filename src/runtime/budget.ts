@@ -150,7 +150,6 @@ export async function evaluateBudgetForCompletedRun(args: {
   task_id?: string;
   run_budget?: BudgetThreshold;
 }): Promise<BudgetEvaluation> {
-  const evalOut: BudgetEvaluation = { decisions: [], alerts: [], exceeded: [] };
   const runYamlPath = path.join(
     args.workspace_dir,
     "work/projects",
@@ -160,17 +159,52 @@ export async function evaluateBudgetForCompletedRun(args: {
     "run.yaml"
   );
   const currentRun = RunYaml.parse(await readYamlFile(runYamlPath));
+  return evaluateBudget({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    task_id: args.task_id,
+    run_budget: args.run_budget,
+    run_totals: usageToTotals(currentRun.usage)
+  });
+}
 
+export async function evaluateBudgetPreflight(args: {
+  workspace_dir: string;
+  project_id: string;
+  task_id?: string;
+  run_budget?: BudgetThreshold;
+}): Promise<BudgetEvaluation> {
+  return evaluateBudget({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    task_id: args.task_id,
+    run_budget: args.run_budget,
+    run_totals: {
+      tokens: 0,
+      cost_usd: 0
+    }
+  });
+}
+
+async function evaluateBudget(args: {
+  workspace_dir: string;
+  project_id: string;
+  task_id?: string;
+  run_budget?: BudgetThreshold;
+  run_totals: UsageTotals;
+}): Promise<BudgetEvaluation> {
+  const evalOut: BudgetEvaluation = { decisions: [], alerts: [], exceeded: [] };
   if (args.run_budget) {
-    const runEval = applyBudgetThreshold("run", args.run_budget, usageToTotals(currentRun.usage));
+    const runEval = applyBudgetThreshold("run", args.run_budget, args.run_totals);
     evalOut.decisions.push(...runEval.decisions);
     evalOut.alerts.push(...runEval.alerts);
     evalOut.exceeded.push(...runEval.exceeded);
   }
 
+  const allRuns = await listRunDocs(args.workspace_dir, args.project_id);
+
   const projectBudget = await readProjectBudget(args.workspace_dir, args.project_id).catch(() => undefined);
   if (projectBudget) {
-    const allRuns = await listRunDocs(args.workspace_dir, args.project_id);
     const projectEval = applyBudgetThreshold("project", projectBudget, sumTotals(allRuns));
     evalOut.decisions.push(...projectEval.decisions);
     evalOut.alerts.push(...projectEval.alerts);
@@ -182,7 +216,6 @@ export async function evaluateBudgetForCompletedRun(args: {
       () => undefined
     );
     if (taskBudget) {
-      const allRuns = await listRunDocs(args.workspace_dir, args.project_id);
       const taskRuns = allRuns.filter((run) => run.spec?.task_id === args.task_id);
       const taskEval = applyBudgetThreshold("task", taskBudget, sumTotals(taskRuns));
       evalOut.decisions.push(...taskEval.decisions);
