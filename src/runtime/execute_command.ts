@@ -17,6 +17,11 @@ import { TaskFrontMatter } from "../work/task_markdown.js";
 import { computeRunUsageCostUsd } from "./cost.js";
 import { evaluateBudgetForCompletedRun } from "./budget.js";
 import {
+  detectContextCyclesFromJsonLine,
+  summarizeContextCycleSignals,
+  type ContextCycleSignal
+} from "./context_cycles.js";
+import {
   extractUsageFromJsonLine,
   splitCompleteLines,
   estimateUsageFromChars,
@@ -375,10 +380,33 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
 
   const reportedUsageCandidates: RunUsageSummary[] = [];
   const seenUsageSignatures = new Set<string>();
+  const contextCycleSignals: ContextCycleSignal[] = [];
+  const contextCycleSignalSeen = new Set<string>();
   let stdoutUsageBuffer = "";
   let stderrUsageBuffer = "";
   let stdoutChars = 0;
   let stderrChars = 0;
+
+  function recordContextCycleSignals(signals: ContextCycleSignal[]): void {
+    for (const signal of signals) {
+      const sig = `${signal.source}::${signal.signal_type}::${signal.count}`;
+      if (contextCycleSignalSeen.has(sig)) continue;
+      contextCycleSignalSeen.add(sig);
+      contextCycleSignals.push(signal);
+      writer.write(
+        newEnvelope({
+          schema_version: 1,
+          ts_wallclock: nowIso(),
+          run_id: args.run_id,
+          session_ref: sessionRef,
+          actor: "system",
+          visibility: "org",
+          type: "context.cycle.detected",
+          payload: signal
+        })
+      );
+    }
+  }
 
   function recordUsage(u: RunUsageSummary): void {
     const sig = JSON.stringify({
@@ -413,6 +441,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
     for (const line of lines) {
+      recordContextCycleSignals(detectContextCyclesFromJsonLine(line));
       for (const u of extractUsageFromJsonLine(line, runDoc.provider)) {
         recordUsage(u);
       }
@@ -469,6 +498,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     const parsed = splitCompleteLines(stdoutUsageBuffer);
     stdoutUsageBuffer = parsed.rest;
     for (const line of parsed.lines) {
+      recordContextCycleSignals(detectContextCyclesFromJsonLine(line));
       for (const u of extractUsageFromJsonLine(line, runDoc.provider)) {
         recordUsage(u);
       }
@@ -498,6 +528,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     const parsed = splitCompleteLines(stderrUsageBuffer);
     stderrUsageBuffer = parsed.rest;
     for (const line of parsed.lines) {
+      recordContextCycleSignals(detectContextCyclesFromJsonLine(line));
       for (const u of extractUsageFromJsonLine(line, runDoc.provider)) {
         recordUsage(u);
       }
@@ -605,11 +636,24 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
     stdin_relpath: stdinRelpath
   };
   const provisionalStatus = stopped ? "stopped" : ok ? "ended" : "failed";
+  const cycleSummary = summarizeContextCycleSignals(contextCycleSignals);
+  const runContextCycles =
+    cycleSummary.count > 0
+      ? {
+          count: cycleSummary.count,
+          source: "provider_signal" as const,
+          signal_types: cycleSummary.signal_types
+        }
+      : {
+          count: 0,
+          source: "unavailable" as const
+        };
   await writeYamlFile(runYamlPath, {
     ...runDoc,
     status: provisionalStatus,
     ended_at: endedAt,
     usage: finalUsage,
+    context_cycles: runContextCycles,
     spec: specDoc
   });
 
@@ -697,6 +741,7 @@ export async function executeCommandRun(args: ExecuteCommandArgs): Promise<Execu
       status: finalStatus,
       ended_at: endedAt,
       usage: finalUsage,
+      context_cycles: runContextCycles,
       spec: specDoc
     });
   }

@@ -13,6 +13,11 @@ import { writeFileAtomic } from "../store/fs.js";
 import { estimateUsageFromChars, selectPreferredUsage, splitCompleteLines } from "./token_usage.js";
 import { computeRunUsageCostUsd } from "./cost.js";
 import { evaluateBudgetForCompletedRun } from "./budget.js";
+import {
+  detectContextCyclesFromProtocolNotification,
+  summarizeContextCycleSignals,
+  type ContextCycleSignal
+} from "./context_cycles.js";
 
 export type ExecuteCodexAppServerArgs = {
   workspace_dir: string;
@@ -209,6 +214,8 @@ export async function executeCodexAppServerRun(
   const pending = new Map<number, PendingRequest>();
   const reportedUsages: RunUsageSummary[] = [];
   const usageSigs = new Set<string>();
+  const contextCycleSignals: ContextCycleSignal[] = [];
+  const contextCycleSignalSeen = new Set<string>();
 
   let waitForTurnCompleteResolve: (() => void) | null = null;
   const waitForTurnComplete = new Promise<void>((resolve) => {
@@ -252,12 +259,35 @@ export async function executeCodexAppServerRun(
     );
   }
 
+  function recordContextCycleSignals(signals: ContextCycleSignal[]): void {
+    for (const signal of signals) {
+      const sig = `${signal.source}::${signal.signal_type}::${signal.count}`;
+      if (contextCycleSignalSeen.has(sig)) continue;
+      contextCycleSignalSeen.add(sig);
+      contextCycleSignals.push(signal);
+      writer.write(
+        newEnvelope({
+          schema_version: 1,
+          ts_wallclock: nowIso(),
+          run_id: args.run_id,
+          session_ref: sessionRef,
+          actor: "system",
+          visibility: "org",
+          type: "context.cycle.detected",
+          payload: signal
+        })
+      );
+    }
+  }
+
   function handleProtocolNotification(message: Record<string, unknown>): void {
     const method = typeof message.method === "string" ? message.method : "";
     const params =
       typeof message.params === "object" && message.params !== null
         ? (message.params as Record<string, unknown>)
         : {};
+
+    recordContextCycleSignals(detectContextCyclesFromProtocolNotification(method, params));
 
     if (method === "item/agentMessage/delta") {
       const delta = typeof params.delta === "string" ? params.delta : "";
@@ -571,12 +601,25 @@ export async function executeCodexAppServerRun(
 
   const provisionalStatus =
     stopped ? "stopped" : completionStatus === "completed" ? "ended" : "failed";
+  const cycleSummary = summarizeContextCycleSignals(contextCycleSignals);
+  const runContextCycles =
+    cycleSummary.count > 0
+      ? {
+          count: cycleSummary.count,
+          source: "provider_signal" as const,
+          signal_types: cycleSummary.signal_types
+        }
+      : {
+          count: 0,
+          source: "unavailable" as const
+        };
 
   await writeYamlFile(runYamlPath, {
     ...runDoc,
     status: provisionalStatus,
     ended_at: endedAt,
     usage: finalUsage,
+    context_cycles: runContextCycles,
     spec: {
       kind: "codex_app_server",
       prompt_relpath: promptRelpath,
@@ -676,6 +719,7 @@ export async function executeCodexAppServerRun(
       status: finalStatus,
       ended_at: endedAt,
       usage: finalUsage,
+      context_cycles: runContextCycles,
       spec: {
         kind: "codex_app_server",
         prompt_relpath: promptRelpath,
