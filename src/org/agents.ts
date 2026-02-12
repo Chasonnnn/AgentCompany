@@ -7,6 +7,9 @@ import { writeYamlFile } from "../store/yaml.js";
 export type CreateAgentArgs = {
   workspace_dir: string;
   name: string;
+  display_title?: string;
+  avatar?: string;
+  model_hint?: string;
   role: "ceo" | "director" | "manager" | "worker";
   provider: string;
   team_id?: string;
@@ -24,6 +27,9 @@ export async function createAgent(args: CreateAgentArgs): Promise<{ agent_id: st
     type: "agent",
     id: agentId,
     name: args.name,
+    display_title: args.display_title,
+    avatar: args.avatar,
+    model_hint: args.model_hint,
     role: args.role,
     provider: args.provider,
     team_id: args.team_id,
