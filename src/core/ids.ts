@@ -10,6 +10,7 @@ export type IdPrefix =
   | "task"
   | "ms"
   | "run"
+  | "job"
   | "art"
   | "ctx"
   | "share"
