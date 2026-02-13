@@ -1245,8 +1245,8 @@ async function readSnapshot(args: UiWebServerArgs): Promise<UiSnapshot> {
     pending_limit: args.pending_limit,
     decisions_limit: args.decisions_limit,
     comments_limit: args.comments_limit,
-    refresh_index: args.refresh_index,
-    sync_index: args.sync_index
+    refresh_index: args.refresh_index ?? false,
+    sync_index: args.sync_index ?? false
   });
 }
 
@@ -1258,8 +1258,8 @@ async function readMonitorSnapshot(
     workspace_dir: args.workspace_dir,
     project_id: args.project_id,
     limit: args.monitor_limit,
-    refresh_index: overrides?.refresh_index ?? args.refresh_index,
-    sync_index: overrides?.sync_index ?? args.sync_index
+    refresh_index: overrides?.refresh_index ?? args.refresh_index ?? false,
+    sync_index: overrides?.sync_index ?? args.sync_index ?? false
   });
 }
 
@@ -1272,8 +1272,8 @@ async function readInboxSnapshot(
     project_id: args.project_id,
     pending_limit: args.pending_limit,
     decisions_limit: args.decisions_limit,
-    refresh_index: overrides?.refresh_index ?? args.refresh_index,
-    sync_index: overrides?.sync_index ?? args.sync_index
+    refresh_index: overrides?.refresh_index ?? args.refresh_index ?? false,
+    sync_index: overrides?.sync_index ?? args.sync_index ?? false
   });
 }
 
@@ -1326,8 +1326,8 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
           pending_limit: args.pending_limit,
           decisions_limit: args.decisions_limit,
           comments_limit: args.comments_limit,
-          refresh_index: refreshParam ?? args.refresh_index,
-          sync_index: syncParam ?? args.sync_index
+          refresh_index: refreshParam ?? args.refresh_index ?? false,
+          sync_index: syncParam ?? args.sync_index ?? false
         });
         sendJson(res, 200, snap);
         return;
@@ -1367,8 +1367,8 @@ export async function startUiWebServer(args: UiWebServerArgs): Promise<UiWebServ
             parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
               ? Math.floor(parsedLimit)
               : args.monitor_limit,
-          refresh_index: refreshParam ?? args.refresh_index,
-          sync_index: syncParam ?? args.sync_index
+          refresh_index: refreshParam ?? args.refresh_index ?? false,
+          sync_index: syncParam ?? args.sync_index ?? false
         });
         sendJson(res, 200, analytics);
         return;

@@ -16,6 +16,7 @@ import { subscribeRuntimeEvents } from "../runtime/event_bus.js";
 import { listIndexedEvents, syncSqliteIndex } from "../index/sqlite.js";
 import { createIndexSyncWorker } from "../index/sync_worker.js";
 import { registerIndexSyncWorker } from "../runtime/index_sync_service.js";
+import { HeartbeatService, setDefaultHeartbeatService } from "../runtime/heartbeat_service.js";
 
 type StdioLike = {
   stdin: NodeJS.ReadableStream;
@@ -81,6 +82,22 @@ function matchesSubscription(sub: Subscription, msg: { project_id?: string; even
     if (!sub.event_types.includes(t)) return false;
   }
   return true;
+}
+
+function workspaceDirFromParams(params: unknown): string | undefined {
+  if (!params || typeof params !== "object") return undefined;
+  const asRecord = params as Record<string, unknown>;
+  if (typeof asRecord.workspace_dir === "string" && asRecord.workspace_dir.trim()) {
+    return asRecord.workspace_dir;
+  }
+  const job = asRecord.job;
+  if (job && typeof job === "object") {
+    const rec = job as Record<string, unknown>;
+    if (typeof rec.workspace_dir === "string" && rec.workspace_dir.trim()) {
+      return rec.workspace_dir;
+    }
+  }
+  return undefined;
 }
 
 async function handleEventsMethod(
@@ -153,9 +170,14 @@ async function handleEventsMethod(
 async function handleRequest(
   req: JsonRpcRequest,
   io: StdioLike,
-  subscriptions: Map<string, Subscription>
+  subscriptions: Map<string, Subscription>,
+  heartbeatService: HeartbeatService
 ): Promise<void> {
   try {
+    const workspaceDir = workspaceDirFromParams(req.params);
+    if (workspaceDir) {
+      await heartbeatService.observeWorkspace(workspaceDir);
+    }
     if (await handleEventsMethod(req, subscriptions, io.stdout)) return;
     const result = await routeRpcMethod(req.method, req.params);
     writeJsonLine(io.stdout, success(req.id, result));
@@ -179,6 +201,8 @@ export async function runJsonRpcServer(io: StdioLike = {
   stderr: process.stderr
 }): Promise<void> {
   const subscriptions = new Map<string, Subscription>();
+  const heartbeatService = new HeartbeatService();
+  setDefaultHeartbeatService(heartbeatService);
   const syncWorker = createIndexSyncWorker({
     debounce_ms: 250,
     min_interval_ms: 1000,
@@ -195,7 +219,10 @@ export async function runJsonRpcServer(io: StdioLike = {
   const unsub = subscribeRuntimeEvents((msg) => {
     const project_id = projectFromEventsPath(msg.events_file_path);
     const workspaceDir = workspaceFromEventsPath(msg.events_file_path);
-    if (workspaceDir) syncWorker.notify(workspaceDir);
+    if (workspaceDir) {
+      syncWorker.notify(workspaceDir);
+      void heartbeatService.observeWorkspace(workspaceDir);
+    }
     const ev = msg.event as any;
     for (const sub of subscriptions.values()) {
       if (!matchesSubscription(sub, { project_id, event: ev })) continue;
@@ -228,14 +255,15 @@ export async function runJsonRpcServer(io: StdioLike = {
         writeJsonLine(io.stdout, error(null, -32600, "Invalid Request"));
         continue;
       }
-      await handleRequest(parsed, io, subscriptions);
+      await handleRequest(parsed, io, subscriptions, heartbeatService);
     }
   } finally {
     unsub();
     try {
-      await syncWorker.close();
+      await Promise.allSettled([syncWorker.close(), heartbeatService.close()]);
     } finally {
       registerIndexSyncWorker(null);
+      setDefaultHeartbeatService(null);
     }
   }
 }

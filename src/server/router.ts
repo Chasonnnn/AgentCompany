@@ -16,11 +16,13 @@ import {
   listSessions
 } from "../runtime/session.js";
 import { cleanupWorktrees } from "../runtime/worktree_cleanup.js";
+import { submitJob, pollJob, collectJob, cancelJob, listJobs } from "../runtime/job_runner.js";
 import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { buildUiSnapshot } from "../runtime/ui_bundle.js";
 import { buildUsageAnalyticsSnapshot } from "../runtime/usage_analytics.js";
 import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/index_sync_service.js";
+import { getDefaultHeartbeatService } from "../runtime/heartbeat_service.js";
 import { resolveInboxItem } from "../inbox/resolve.js";
 import { resolveInboxAndBuildUiSnapshot } from "../ui/resolve_and_snapshot.js";
 import { createComment, listComments } from "../comments/comment.js";
@@ -52,8 +54,10 @@ import { approveMilestone } from "../milestones/approve_milestone.js";
 import { recordAgentMistake } from "../eval/mistake_loop.js";
 import { runSelfImproveCycle } from "../eval/self_improve_cycle.js";
 import { refreshAgentContextIndex } from "../eval/agent_context_index.js";
+import { setRepoRoot } from "../machine/machine.js";
 import { readYamlFile } from "../store/yaml.js";
 import { ReviewYaml } from "../schemas/review.js";
+import { JobSpec } from "../schemas/job.js";
 import { validateHelpRequestMarkdown } from "../help/help_request.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
 import { readArtifactWithPolicy } from "../artifacts/read_artifact.js";
@@ -179,6 +183,56 @@ const SessionListParams = z.object({
   run_id: z.string().min(1).optional(),
   status: z.enum(["running", "ended", "failed", "stopped"]).optional()
 });
+
+const JobSubmitParams = z.object({
+  job: JobSpec
+});
+
+const JobSingleParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  job_id: z.string().min(1)
+});
+
+const JobListParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  status: z.enum(["queued", "running", "completed", "canceled"]).optional(),
+  limit: z.number().int().positive().max(5000).optional()
+});
+
+const HeartbeatStatusParams = z.object({
+  workspace_dir: z.string().min(1)
+});
+
+const HeartbeatTickParams = z.object({
+  workspace_dir: z.string().min(1),
+  dry_run: z.boolean().optional(),
+  reason: z.string().min(1).optional()
+});
+
+const HeartbeatConfigGetParams = z.object({
+  workspace_dir: z.string().min(1)
+});
+
+const HeartbeatConfigSetParams = z
+  .object({
+    workspace_dir: z.string().min(1),
+    enabled: z.boolean().optional(),
+    tick_interval_minutes: z.number().int().min(1).max(24 * 60).optional(),
+    top_k_workers: z.number().int().min(1).max(100).optional(),
+    min_wake_score: z.number().int().min(0).max(100).optional(),
+    ok_suppression_minutes: z.number().int().min(0).max(24 * 60).optional(),
+    due_horizon_minutes: z.number().int().min(1).max(24 * 60).optional(),
+    max_auto_actions_per_tick: z.number().int().min(1).max(10_000).optional(),
+    max_auto_actions_per_hour: z.number().int().min(1).max(100_000).optional(),
+    quiet_hours_start_hour: z.number().int().min(0).max(23).optional(),
+    quiet_hours_end_hour: z.number().int().min(0).max(23).optional(),
+    stuck_job_running_minutes: z.number().int().min(1).max(24 * 60).optional(),
+    idempotency_ttl_days: z.number().int().min(1).max(365).optional(),
+    jitter_max_seconds: z.number().int().min(0).max(3600).optional()
+  })
+  .strict();
 
 const RunListParams = z.object({
   workspace_dir: z.string().min(1),
@@ -417,6 +471,13 @@ const WorkspaceProjectLinkRepoParams = z.object({
   project_id: z.string().min(1),
   repo_id: z.string().min(1),
   label: z.string().min(1).optional()
+});
+
+const WorkspaceRepoRootSetParams = z.object({
+  workspace_dir: z.string().min(1),
+  repo_id: z.string().min(1),
+  repo_path: z.string().min(1),
+  require_git: z.boolean().default(true)
 });
 
 const WorkspaceHomeSnapshotParams = z.object({
@@ -796,6 +857,33 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         repos: links.repos
       };
     }
+    case "workspace.repo_root.set": {
+      const p = WorkspaceRepoRootSetParams.parse(params);
+      const repoPath = path.resolve(p.repo_path);
+      let st: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        st = await fs.stat(repoPath);
+      } catch {
+        throw new RpcUserError(`repo_path does not exist: ${repoPath}`);
+      }
+      if (!st.isDirectory()) {
+        throw new RpcUserError(`repo_path must be a directory: ${repoPath}`);
+      }
+      if (p.require_git) {
+        const gitMarker = path.join(repoPath, ".git");
+        try {
+          await fs.access(gitMarker);
+        } catch {
+          throw new RpcUserError(`Path does not look like a git repository (missing .git): ${repoPath}`);
+        }
+      }
+      await setRepoRoot(p.workspace_dir, p.repo_id, repoPath);
+      return {
+        workspace_dir: p.workspace_dir,
+        repo_id: p.repo_id,
+        repo_path: repoPath
+      };
+    }
     case "workspace.home.snapshot": {
       const p = WorkspaceHomeSnapshotParams.parse(params);
       const [home, pm] = await Promise.all([
@@ -1172,6 +1260,79 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
     case "session.list": {
       const p = SessionListParams.parse(params ?? {});
       return await listSessions(p);
+    }
+    case "job.submit": {
+      const p = JobSubmitParams.parse(params);
+      return submitJob({ job: p.job });
+    }
+    case "job.poll": {
+      const p = JobSingleParams.parse(params);
+      return pollJob({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        job_id: p.job_id
+      });
+    }
+    case "job.collect": {
+      const p = JobSingleParams.parse(params);
+      return collectJob({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        job_id: p.job_id
+      });
+    }
+    case "job.cancel": {
+      const p = JobSingleParams.parse(params);
+      return cancelJob({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        job_id: p.job_id
+      });
+    }
+    case "job.list": {
+      const p = JobListParams.parse(params);
+      return listJobs({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        status: p.status,
+        limit: p.limit
+      });
+    }
+    case "heartbeat.status": {
+      const p = HeartbeatStatusParams.parse(params);
+      const service = getDefaultHeartbeatService();
+      await service.observeWorkspace(p.workspace_dir);
+      return service.getStatus({
+        workspace_dir: p.workspace_dir
+      });
+    }
+    case "heartbeat.tick": {
+      const p = HeartbeatTickParams.parse(params);
+      const service = getDefaultHeartbeatService();
+      await service.observeWorkspace(p.workspace_dir);
+      return service.tickWorkspace({
+        workspace_dir: p.workspace_dir,
+        dry_run: p.dry_run,
+        reason: p.reason ?? "rpc"
+      });
+    }
+    case "heartbeat.config.get": {
+      const p = HeartbeatConfigGetParams.parse(params);
+      const service = getDefaultHeartbeatService();
+      await service.observeWorkspace(p.workspace_dir);
+      return service.getConfig({
+        workspace_dir: p.workspace_dir
+      });
+    }
+    case "heartbeat.config.set": {
+      const p = HeartbeatConfigSetParams.parse(params);
+      const service = getDefaultHeartbeatService();
+      await service.observeWorkspace(p.workspace_dir);
+      const { workspace_dir, ...patch } = p;
+      return service.setConfig({
+        workspace_dir,
+        config: patch
+      });
     }
     case "run.list": {
       const p = RunListParams.parse(params);

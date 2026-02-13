@@ -1,6 +1,7 @@
 import path from "node:path";
 import { nowIso } from "../core/time.js";
 import { listSessions } from "./session.js";
+import { listJobs } from "./job_runner.js";
 import {
   indexDbPath,
   listIndexedRuns,
@@ -85,6 +86,12 @@ export type RunMonitorSnapshot = {
   generated_at: string;
   index_rebuilt: boolean;
   index_synced: boolean;
+  jobs?: {
+    queued: number;
+    running: number;
+    completed: number;
+    canceled: number;
+  };
   rows: RunMonitorRow[];
 };
 
@@ -354,11 +361,37 @@ export async function buildRunMonitorSnapshot(args: RunMonitorSnapshotArgs): Pro
     row.token_usage = await readRunUsage(args.workspace_dir, row.project_id, row.run_id);
   }
 
+  let jobsSummary: RunMonitorSnapshot["jobs"];
+  const jobProjects =
+    args.project_id !== undefined
+      ? [args.project_id]
+      : [...new Set(rows.map((row) => row.project_id))];
+  if (jobProjects.length > 0) {
+    const allJobs = (
+      await Promise.all(
+        jobProjects.map((projectId) =>
+          listJobs({
+            workspace_dir: args.workspace_dir,
+            project_id: projectId,
+            limit: 5000
+          }).catch(() => [])
+        )
+      )
+    ).flat();
+    jobsSummary = {
+      queued: allJobs.filter((j) => j.status === "queued").length,
+      running: allJobs.filter((j) => j.status === "running").length,
+      completed: allJobs.filter((j) => j.status === "completed").length,
+      canceled: allJobs.filter((j) => j.status === "canceled").length
+    };
+  }
+
   return {
     workspace_dir: args.workspace_dir,
     generated_at: nowIso(),
     index_rebuilt: indexRebuilt,
     index_synced: indexSynced,
+    jobs: jobsSummary,
     rows: rows.slice(0, limit)
   };
 }

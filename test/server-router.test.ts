@@ -11,6 +11,7 @@ import { createRun } from "../src/runtime/run.js";
 import { proposeMemoryDelta } from "../src/memory/propose_memory_delta.js";
 import { createSharePack } from "../src/share/share_pack.js";
 import { routeRpcMethod } from "../src/server/router.js";
+import { readMachineConfig, setProviderBin } from "../src/machine/machine.js";
 
 async function mkTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-"));
@@ -94,11 +95,142 @@ describe("server router", () => {
     expect(names).toContain("claude_cli");
   });
 
+  test("workspace.repo_root.set stores repo mapping for git folder", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const repoDir = path.join(dir, "repo-main");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+
+    const out = (await routeRpcMethod("workspace.repo_root.set", {
+      workspace_dir: dir,
+      repo_id: "repo_main",
+      repo_path: repoDir
+    })) as any;
+
+    expect(out.repo_id).toBe("repo_main");
+    expect(out.repo_path).toBe(repoDir);
+    const machine = await readMachineConfig(dir);
+    expect(machine.repo_roots.repo_main).toBe(repoDir);
+  });
+
+  test("workspace.repo_root.set rejects non-git folders by default", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const repoDir = path.join(dir, "not-a-repo");
+    await fs.mkdir(repoDir, { recursive: true });
+
+    await expect(
+      routeRpcMethod("workspace.repo_root.set", {
+        workspace_dir: dir,
+        repo_id: "repo_main",
+        repo_path: repoDir
+      })
+    ).rejects.toThrow("does not look like a git repository");
+  });
+
   test("session.list returns an array", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
     const sessions = await routeRpcMethod("session.list", { workspace_dir: dir });
     expect(Array.isArray(sessions)).toBe(true);
+  });
+
+  test("job.submit/poll/collect/list/cancel route to job runner", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const codexBin = path.join(dir, "codex");
+    await fs.writeFile(
+      codexBin,
+      `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "login" && args[1] === "status") {
+  process.stdout.write("Auth mode: ChatGPT\\n");
+  process.exit(0);
+}
+let input = "";
+process.stdin.on("data", (d) => (input += d.toString("utf8")));
+process.stdin.on("end", () => {
+  setTimeout(() => {
+    process.stdout.write(JSON.stringify({
+      status: "succeeded",
+      summary: "ok",
+      files_changed: [],
+      commands_run: [],
+      artifacts: [],
+      next_actions: [],
+      errors: []
+    }) + "\\n");
+  }, 500);
+});
+`,
+      { encoding: "utf8", mode: 0o755 }
+    );
+    await setProviderBin(dir, "codex", codexBin);
+
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj Jobs" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Core" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+
+    const submitted = (await routeRpcMethod("job.submit", {
+      job: {
+        schema_version: 1,
+        type: "job",
+        job_id: "job_router_case",
+        worker_kind: "codex",
+        workspace_dir: dir,
+        project_id,
+        goal: "ship fix",
+        constraints: ["json only"],
+        deliverables: ["result"],
+        permission_level: "patch",
+        context_refs: [{ kind: "note", value: "router test" }],
+        worker_agent_id: agent_id
+      }
+    })) as any;
+    expect(submitted.job_id).toBe("job_router_case");
+
+    const listed = (await routeRpcMethod("job.list", {
+      workspace_dir: dir,
+      project_id
+    })) as any[];
+    expect(listed.some((j) => j.job_id === "job_router_case")).toBe(true);
+
+    // Poll until terminal status.
+    let poll: any;
+    const end = Date.now() + 15000;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      poll = (await routeRpcMethod("job.poll", {
+        workspace_dir: dir,
+        project_id,
+        job_id: "job_router_case"
+      })) as any;
+      if (poll.status !== "queued" && poll.status !== "running") break;
+      if (Date.now() > end) throw new Error("Timed out waiting for routed job");
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    expect(poll.status).toBe("completed");
+
+    const collected = (await routeRpcMethod("job.collect", {
+      workspace_dir: dir,
+      project_id,
+      job_id: "job_router_case"
+    })) as any;
+    expect(collected.result.status).toBe("succeeded");
+    expect(collected.manager_digest).toBeDefined();
+
+    const cancelOut = (await routeRpcMethod("job.cancel", {
+      workspace_dir: dir,
+      project_id,
+      job_id: "job_router_case"
+    })) as any;
+    expect(cancelOut.cancellation_requested).toBe(true);
   });
 
   test("worktree.cleanup returns retention summary", async () => {
@@ -178,6 +310,43 @@ describe("server router", () => {
     expect(typeof ui.index_sync_worker.enabled).toBe("boolean");
     expect(Array.isArray(ui.monitor.rows)).toBe(true);
     expect(Array.isArray(ui.review_inbox.pending)).toBe(true);
+  });
+
+  test("heartbeat config/status/tick methods route through heartbeat service", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+
+    const cfgBefore = (await routeRpcMethod("heartbeat.config.get", {
+      workspace_dir: dir
+    })) as any;
+    expect(cfgBefore.enabled).toBe(true);
+    expect(cfgBefore.tick_interval_minutes).toBe(20);
+
+    const cfgAfter = (await routeRpcMethod("heartbeat.config.set", {
+      workspace_dir: dir,
+      tick_interval_minutes: 15,
+      top_k_workers: 1
+    })) as any;
+    expect(cfgAfter.tick_interval_minutes).toBe(15);
+    expect(cfgAfter.top_k_workers).toBe(1);
+
+    const status = (await routeRpcMethod("heartbeat.status", {
+      workspace_dir: dir
+    })) as any;
+    expect(status.workspace_dir).toBe(dir);
+    expect(status.observed).toBe(true);
+    expect(typeof status.runtime.loop_running).toBe("boolean");
+    expect(status.config.top_k_workers).toBe(1);
+
+    const tick = (await routeRpcMethod("heartbeat.tick", {
+      workspace_dir: dir,
+      dry_run: true,
+      reason: "router-test"
+    })) as any;
+    expect(typeof tick.tick_id).toBe("string");
+    expect(Array.isArray(tick.candidates)).toBe(true);
+    expect(Array.isArray(tick.woken_workers)).toBe(true);
+    expect(typeof tick.reports_processed).toBe("number");
   });
 
   test("sharepack.replay returns bundled run events", async () => {
