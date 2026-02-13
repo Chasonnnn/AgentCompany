@@ -10,6 +10,7 @@ import { parseMilestoneReportMarkdown } from "../milestones/milestone_report.js"
 import { parseHeartbeatActionProposalMarkdown } from "../heartbeat/action_proposal.js";
 import { executeApprovedHeartbeatProposal } from "../runtime/heartbeat_actions.js";
 import { enforcePolicy, type EnforcePolicyArgs } from "../policy/enforce.js";
+import { assertNoSensitiveText } from "../core/redaction.js";
 import { writeYamlFile } from "../store/yaml.js";
 import { appendEventJsonl, newEnvelope } from "../runtime/events.js";
 import { TaskFrontMatter } from "../work/task_markdown.js";
@@ -134,6 +135,10 @@ async function writeDeniedReview(args: {
     project_id: string;
     target_file?: string;
     patch_file?: string;
+    scope_kind?: "project_memory" | "agent_guidance";
+    scope_ref?: string;
+    sensitivity?: "public" | "internal" | "restricted";
+    rationale?: string;
   };
   policy: Awaited<ReturnType<typeof enforcePolicy>>;
   notes?: string;
@@ -250,7 +255,11 @@ async function denyMemoryDelta(
       artifact_id: fm.id,
       project_id: fm.project_id,
       target_file: fm.target_file,
-      patch_file: fm.patch_file
+      patch_file: fm.patch_file,
+      scope_kind: fm.scope_kind,
+      scope_ref: fm.scope_ref,
+      sensitivity: fm.sensitivity,
+      rationale: fm.rationale
     },
     policy,
     notes: args.notes
@@ -269,6 +278,10 @@ async function denyMemoryDelta(
       artifact_id: fm.id,
       target_file: fm.target_file,
       patch_file: fm.patch_file,
+      scope_kind: fm.scope_kind,
+      scope_ref: fm.scope_ref,
+      sensitivity: fm.sensitivity,
+      rationale: fm.rationale,
       policy
     }
   });
@@ -508,6 +521,10 @@ async function approveHeartbeatActionProposal(
 }
 
 export async function resolveInboxItem(args: ResolveInboxItemArgs): Promise<ResolveInboxItemResult> {
+  if (typeof args.notes === "string" && args.notes.trim().length > 0) {
+    assertNoSensitiveText(args.notes, "review.notes");
+  }
+
   const artifact = await readArtifactMarkdown(args);
 
   if (artifact.type === "memory_delta") {

@@ -19,7 +19,11 @@ export const ReviewSubject = z
     artifact_id: z.string().min(1),
     project_id: z.string().min(1),
     target_file: z.string().min(1).optional(),
-    patch_file: z.string().min(1).optional()
+    patch_file: z.string().min(1).optional(),
+    scope_kind: z.enum(["project_memory", "agent_guidance"]).optional(),
+    scope_ref: z.string().min(1).optional(),
+    sensitivity: z.enum(["public", "internal", "restricted"]).optional(),
+    rationale: z.string().min(1).optional()
   })
   .strict();
 
@@ -39,4 +43,3 @@ export const ReviewYaml = z
   .strict();
 
 export type ReviewYaml = z.infer<typeof ReviewYaml>;
-
