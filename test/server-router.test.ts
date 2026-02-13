@@ -448,10 +448,17 @@ process.stdin.on("end", () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
     const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
-    const { agent_id } = await createAgent({
+    const manager = await createAgent({
       workspace_dir: dir,
       name: "Manager",
       role: "manager",
+      provider: "codex",
+      team_id
+    });
+    const director = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
       provider: "codex",
       team_id
     });
@@ -459,19 +466,23 @@ process.stdin.on("end", () => {
     const run = await createRun({
       workspace_dir: dir,
       project_id,
-      agent_id,
+      agent_id: manager.agent_id,
       provider: "codex"
     });
     const proposed = await proposeMemoryDelta({
       workspace_dir: dir,
       project_id,
       title: "Router Resolve",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Exercise ui.resolve over governed memory deltas.",
       under_heading: "## Decisions",
       insert_lines: ["- denied via ui.resolve test"],
       visibility: "managers",
-      produced_by: agent_id,
+      produced_by: manager.agent_id,
       run_id: run.run_id,
-      context_pack_id: run.context_pack_id
+      context_pack_id: run.context_pack_id,
+      evidence: ["art_evidence_router_ui_resolve"]
     });
 
     const res = (await routeRpcMethod("ui.resolve", {
@@ -479,8 +490,8 @@ process.stdin.on("end", () => {
       project_id,
       artifact_id: proposed.artifact_id,
       decision: "denied",
-      actor_id: agent_id,
-      actor_role: "manager",
+      actor_id: director.agent_id,
+      actor_role: "director",
       actor_team_id: team_id
     })) as any;
     expect(res.resolved.artifact_id).toBe(proposed.artifact_id);
@@ -489,6 +500,110 @@ process.stdin.on("end", () => {
     expect(
       res.snapshot.review_inbox.pending.some((p: any) => p.artifact_id === proposed.artifact_id)
     ).toBe(false);
+  });
+
+  test("memory.propose_delta + memory.list_deltas support pending and decided views", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const manager = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "codex",
+      team_id
+    });
+    const director = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id: manager.agent_id,
+      provider: "codex"
+    });
+
+    const proposed = (await routeRpcMethod("memory.propose_delta", {
+      workspace_dir: dir,
+      project_id,
+      title: "Router memory proposal",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Verify router path for governed memory proposal/list flow.",
+      under_heading: "## Decisions",
+      insert_lines: ["- added through routeRpcMethod memory.propose_delta"],
+      visibility: "managers",
+      produced_by: manager.agent_id,
+      run_id: run.run_id,
+      context_pack_id: run.context_pack_id,
+      evidence: ["art_evidence_router_memory"]
+    })) as any;
+    expect(typeof proposed.artifact_id).toBe("string");
+
+    const pending = (await routeRpcMethod("memory.list_deltas", {
+      workspace_dir: dir,
+      project_id,
+      actor_id: manager.agent_id,
+      actor_role: "manager",
+      actor_team_id: team_id,
+      status: "pending",
+      limit: 50
+    })) as any;
+    expect(Array.isArray(pending.items)).toBe(true);
+    expect(typeof pending.filtered_by_policy_count).toBe("number");
+    const pendingItem = pending.items.find((i: any) => i.artifact_id === proposed.artifact_id);
+    expect(pendingItem?.status).toBe("pending");
+    expect(pendingItem?.scope_kind).toBe("project_memory");
+    expect(pendingItem?.sensitivity).toBe("internal");
+
+    await routeRpcMethod("memory.approve_delta", {
+      workspace_dir: dir,
+      project_id,
+      artifact_id: proposed.artifact_id,
+      actor_id: director.agent_id,
+      actor_role: "director",
+      actor_team_id: team_id,
+      notes: "approved by director in router test"
+    });
+
+    const approved = (await routeRpcMethod("memory.list_deltas", {
+      workspace_dir: dir,
+      project_id,
+      actor_id: director.agent_id,
+      actor_role: "director",
+      actor_team_id: team_id,
+      status: "approved",
+      limit: 50
+    })) as any;
+    expect(Array.isArray(approved.items)).toBe(true);
+    const approvedItem = approved.items.find((i: any) => i.artifact_id === proposed.artifact_id);
+    expect(approvedItem?.status).toBe("approved");
+    expect(approvedItem?.decision?.decision).toBe("approved");
+    expect(approvedItem?.decision?.actor_role).toBe("director");
+
+    await expect(
+      routeRpcMethod("memory.list_deltas", {
+        workspace_dir: dir,
+        project_id,
+        status: "all",
+        limit: 50
+      })
+    ).rejects.toThrow(/actor_id|actor_role|required/i);
+  });
+
+  test("system.capabilities returns memory schema + method availability", async () => {
+    const capabilities = (await routeRpcMethod("system.capabilities", {})) as any;
+    expect(typeof capabilities).toBe("object");
+    expect(Array.isArray(capabilities.available_methods)).toBe(true);
+    expect(capabilities.available_methods).toContain("system.capabilities");
+    expect(capabilities.available_methods).toContain("memory.list_deltas");
+    expect(capabilities.memory.write_schema_version).toBe(2);
+    expect(capabilities.memory.parse_supported).toEqual([1, 2]);
   });
 
   test("comment.add and comment.list route to persisted comment store", async () => {
@@ -560,7 +675,7 @@ process.stdin.on("end", () => {
       agent_id
     })) as any;
     expect(res.agent_id).toBe(agent_id);
-    expect(typeof res.agents_md_relpath).toBe("string");
+    expect(typeof res.context_index_relpath).toBe("string");
     expect(typeof res.reference_count).toBe("number");
   });
 

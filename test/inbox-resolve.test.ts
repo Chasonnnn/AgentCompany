@@ -42,6 +42,13 @@ describe("inbox resolve", () => {
       provider: "cmd",
       team_id
     });
+    const director = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
+      provider: "cmd",
+      team_id
+    });
     const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
     const { run_id, context_pack_id } = await createRun({
       workspace_dir: dir,
@@ -54,12 +61,16 @@ describe("inbox resolve", () => {
       workspace_dir: dir,
       project_id,
       title: "Reject this for now",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Exercise denied path with governed approval metadata.",
       under_heading: "## Decisions",
       insert_lines: ["- This should not be merged when denied."],
       visibility: "managers",
       produced_by: mgr.agent_id,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_inbox_denied"]
     });
 
     const memoryPath = path.join(dir, "work/projects", project_id, "memory.md");
@@ -77,8 +88,8 @@ describe("inbox resolve", () => {
       project_id,
       artifact_id: proposed.artifact_id,
       decision: "denied",
-      actor_id: mgr.agent_id,
-      actor_role: "manager",
+      actor_id: director.agent_id,
+      actor_role: "director",
       actor_team_id: team_id,
       notes: "Needs revision"
     });
@@ -247,12 +258,16 @@ describe("inbox resolve", () => {
       workspace_dir: dir,
       project_id,
       title: "Blocked by policy",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Workers should not be allowed to resolve governed memory proposals.",
       under_heading: "## Decisions",
       insert_lines: ["- Should be denied by policy."],
       visibility: "managers",
       produced_by: worker.agent_id,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_worker_denied"]
     });
 
     await expect(
@@ -277,5 +292,76 @@ describe("inbox resolve", () => {
           e.payload?.resource_id === proposed.artifact_id
       )
     ).toBe(true);
+  });
+
+  test("deny path rejects secret-like notes before writing review/event", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const manager = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "cmd",
+      team_id
+    });
+    const director = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
+      provider: "cmd",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { run_id, context_pack_id } = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id: manager.agent_id,
+      provider: "cmd"
+    });
+
+    const proposed = await proposeMemoryDelta({
+      workspace_dir: dir,
+      project_id,
+      title: "Reject with bad note",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Secret-like reviewer notes should block deny persistence.",
+      under_heading: "## Decisions",
+      insert_lines: ["- pending memory item for deny-note gate"],
+      visibility: "managers",
+      produced_by: manager.agent_id,
+      run_id,
+      context_pack_id,
+      evidence: ["art_evidence_deny_note_gate"]
+    });
+
+    await expect(
+      resolveInboxItem({
+        workspace_dir: dir,
+        project_id,
+        artifact_id: proposed.artifact_id,
+        decision: "denied",
+        actor_id: director.agent_id,
+        actor_role: "director",
+        actor_team_id: team_id,
+        notes: "Bad note with token sk-1234567890abcdefghijklmnopqrs"
+      })
+    ).rejects.toThrow(/sensitive|redact|secret/i);
+
+    const reviewsDir = path.join(dir, "inbox/reviews");
+    const reviewFiles = await fs.readdir(reviewsDir);
+    expect(reviewFiles.some((f) => f.endsWith(".yaml"))).toBe(false);
+
+    const pending = await buildReviewInboxSnapshot({
+      workspace_dir: dir,
+      project_id,
+      sync_index: true
+    });
+    expect(pending.pending.some((p) => p.artifact_id === proposed.artifact_id)).toBe(true);
+
+    const eventsPath = path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl");
+    const eventsRaw = await fs.readFile(eventsPath, { encoding: "utf8" });
+    expect(eventsRaw).not.toContain('"type":"approval.decided"');
   });
 });

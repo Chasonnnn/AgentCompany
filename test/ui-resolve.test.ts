@@ -26,6 +26,13 @@ describe("ui resolve and snapshot", () => {
       provider: "cmd",
       team_id
     });
+    const director = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
+      provider: "cmd",
+      team_id
+    });
     const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
     const { run_id, context_pack_id } = await createRun({
       workspace_dir: dir,
@@ -38,12 +45,16 @@ describe("ui resolve and snapshot", () => {
       workspace_dir: dir,
       project_id,
       title: "Resolve me",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Validate governed memory resolution and snapshot refresh.",
       under_heading: "## Decisions",
       insert_lines: ["- This entry is denied in test."],
       visibility: "managers",
       produced_by: mgr.agent_id,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_ui_resolve"]
     });
 
     const res = await resolveInboxAndBuildUiSnapshot({
@@ -51,8 +62,8 @@ describe("ui resolve and snapshot", () => {
       project_id,
       artifact_id: proposed.artifact_id,
       decision: "denied",
-      actor_id: mgr.agent_id,
-      actor_role: "manager",
+      actor_id: director.agent_id,
+      actor_role: "director",
       actor_team_id: team_id,
       notes: "Declined"
     });

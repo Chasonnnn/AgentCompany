@@ -26,6 +26,13 @@ describe("ui web server", () => {
       provider: "cmd",
       team_id
     });
+    const director = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
+      provider: "cmd",
+      team_id
+    });
     const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
     const { run_id, context_pack_id } = await createRun({
       workspace_dir: dir,
@@ -37,19 +44,23 @@ describe("ui web server", () => {
       workspace_dir: dir,
       project_id,
       title: "Web pending",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Exercise pending/resolve UI APIs against governed memory deltas.",
       under_heading: "## Decisions",
       insert_lines: ["- web item"],
       visibility: "managers",
       produced_by: mgr.agent_id,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_ui_web"]
     });
 
     const web = await startUiWebServer({
       workspace_dir: dir,
       project_id,
-      actor_id: mgr.agent_id,
-      actor_role: "manager",
+      actor_id: director.agent_id,
+      actor_role: "director",
       actor_team_id: team_id,
       host: "127.0.0.1",
       port: 0

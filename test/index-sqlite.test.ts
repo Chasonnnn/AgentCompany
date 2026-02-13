@@ -47,6 +47,13 @@ describe("sqlite index cache", () => {
       provider: "codex",
       team_id
     });
+    const { agent_id: directorId } = await createAgent({
+      workspace_dir: dir,
+      name: "Payments Director",
+      role: "director",
+      provider: "codex",
+      team_id
+    });
     const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
 
     const { run_id, context_pack_id } = await createRun({
@@ -66,19 +73,23 @@ describe("sqlite index cache", () => {
       workspace_dir: dir,
       project_id,
       title: "Record policy choice",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Keep a governed record requiring review workflow.",
       under_heading: "## Decisions",
       insert_lines: ["- Require approval records for curated memory updates."],
       visibility: "managers",
       produced_by: managerId,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_index_rebuild"]
     });
     await approveMemoryDelta({
       workspace_dir: dir,
       project_id,
       artifact_id: delta.artifact_id,
-      actor_id: managerId,
-      actor_role: "manager",
+      actor_id: directorId,
+      actor_role: "director",
       actor_team_id: team_id,
       notes: "approved in test"
     });

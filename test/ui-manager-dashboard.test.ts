@@ -70,12 +70,16 @@ describe("ui manager dashboard", () => {
       workspace_dir: dir,
       project_id,
       title: "Dashboard pending",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Create a governed pending item for dashboard rendering.",
       under_heading: "## Decisions",
       insert_lines: ["- pending dashboard item"],
       visibility: "managers",
       produced_by: mgr.agent_id,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_dashboard_text"]
     });
 
     const text = await buildManagerDashboardText({
@@ -116,12 +120,16 @@ describe("ui manager dashboard", () => {
       workspace_dir: dir,
       project_id,
       title: "Dashboard pending JSON",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Create a governed pending item for dashboard JSON payload.",
       under_heading: "## Decisions",
       insert_lines: ["- pending dashboard json item"],
       visibility: "managers",
       produced_by: mgr.agent_id,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_dashboard_json"]
     });
 
     const payload = await buildManagerDashboardJson({

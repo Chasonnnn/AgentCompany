@@ -43,6 +43,13 @@ describe("sqlite index artifact projections", () => {
       provider: "codex",
       team_id
     });
+    const { agent_id: directorId } = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
+      provider: "codex",
+      team_id
+    });
 
     const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
     const run = await createRun({
@@ -62,12 +69,16 @@ describe("sqlite index artifact projections", () => {
       workspace_dir: dir,
       project_id,
       title: "Capture decision",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Index should surface governed memory decisions.",
       under_heading: "## Decisions",
       insert_lines: ["- Keep review decisions indexed."],
       visibility: "managers",
       produced_by: managerId,
       run_id: run.run_id,
-      context_pack_id: run.context_pack_id
+      context_pack_id: run.context_pack_id,
+      evidence: ["art_evidence_index_memory"]
     });
 
     await rebuildSqliteIndex(dir);
@@ -93,8 +104,8 @@ describe("sqlite index artifact projections", () => {
       workspace_dir: dir,
       project_id,
       artifact_id: delta.artifact_id,
-      actor_id: managerId,
-      actor_role: "manager",
+      actor_id: directorId,
+      actor_role: "director",
       actor_team_id: team_id,
       notes: "approved"
     });
@@ -155,12 +166,16 @@ describe("sqlite index artifact projections", () => {
       workspace_dir: dir,
       project_id,
       title: "Delete me",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Temporary memory artifact for index deletion behavior.",
       under_heading: "## Decisions",
       insert_lines: ["- Temporary memory delta artifact."],
       visibility: "managers",
       produced_by: managerId,
       run_id: run.run_id,
-      context_pack_id: run.context_pack_id
+      context_pack_id: run.context_pack_id,
+      evidence: ["art_evidence_delete_behavior"]
     });
 
     await rebuildSqliteIndex(dir);

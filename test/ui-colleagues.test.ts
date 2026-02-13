@@ -47,12 +47,16 @@ describe("ui snapshot colleagues", () => {
       workspace_dir: dir,
       project_id,
       title: "Worker pending item",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Generate pending governed memory work for colleague counters.",
       under_heading: "## Decisions",
       insert_lines: ["- pending review"],
       visibility: "managers",
       produced_by: worker.agent_id,
       run_id: run.run_id,
-      context_pack_id: run.context_pack_id
+      context_pack_id: run.context_pack_id,
+      evidence: ["art_evidence_colleagues"]
     });
 
     const snapshot = await buildUiSnapshot({
