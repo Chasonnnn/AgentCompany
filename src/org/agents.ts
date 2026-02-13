@@ -43,5 +43,20 @@ export async function createAgent(args: CreateAgentArgs): Promise<{ agent_id: st
     `# Agent Journal (Append-only)\n\n- created_at: ${nowIso()}\n- agent_id: ${agentId}\n\n## Entries\n`
   );
 
+  await writeFileAtomic(
+    path.join(agentDir, "AGENTS.md"),
+    [
+      `# AGENTS.md - ${agentId}`,
+      "",
+      "## Operating Rules",
+      "- Follow the assigned task contract and milestone acceptance criteria.",
+      "- Produce required evidence artifacts for coding milestones (patch/commit + tests).",
+      "- Report blockers early with concrete evidence.",
+      "",
+      "## Recurring Mistakes To Avoid",
+      ""
+    ].join("\n")
+  );
+
   return { agent_id: agentId };
 }

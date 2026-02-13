@@ -23,7 +23,7 @@ async function readJsonl(filePath: string): Promise<any[]> {
 }
 
 describe("self improvement loop", () => {
-  test("promotes repeated mistakes into worker AGENTS.md after threshold", async () => {
+  test("does not directly promote repeated mistakes into worker AGENTS.md", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
     const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
@@ -56,7 +56,12 @@ describe("self improvement loop", () => {
     }
 
     const agentsPath = path.join(dir, "org/agents", worker.agent_id, "AGENTS.md");
-    const before = await fs.readFile(agentsPath, { encoding: "utf8" });
+    let before = "";
+    try {
+      before = await fs.readFile(agentsPath, { encoding: "utf8" });
+    } catch {
+      before = "";
+    }
     expect(before.includes("mistake:missing_tests_evidence")).toBe(false);
 
     const third = await recordAgentMistake({
@@ -69,11 +74,15 @@ describe("self improvement loop", () => {
       prevention_rule: "Always attach tests artifacts before requesting milestone approval."
     });
     expect(third.count).toBe(3);
-    expect(third.promoted_to_agents_md).toBe(true);
+    expect(third.promoted_to_agents_md).toBe(false);
 
-    const after = await fs.readFile(agentsPath, { encoding: "utf8" });
-    expect(after.includes("mistake:missing_tests_evidence")).toBe(true);
-    expect(after).toContain("Always attach tests artifacts before requesting milestone approval.");
+    let after = "";
+    try {
+      after = await fs.readFile(agentsPath, { encoding: "utf8" });
+    } catch {
+      after = "";
+    }
+    expect(after.includes("mistake:missing_tests_evidence")).toBe(false);
 
     const logPath = path.join(dir, "org/agents", worker.agent_id, "mistakes.yaml");
     const log = await fs.readFile(logPath, { encoding: "utf8" });
@@ -137,7 +146,6 @@ describe("self improvement loop", () => {
     const eventsPath = path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl");
     const evs = await readJsonl(eventsPath);
     expect(evs.some((e) => e.type === "evaluation.mistake_recorded")).toBe(true);
-    expect(evs.some((e) => e.type === "evaluation.rule_promoted")).toBe(true);
+    expect(evs.some((e) => e.type === "evaluation.rule_promoted")).toBe(false);
   });
 });
-

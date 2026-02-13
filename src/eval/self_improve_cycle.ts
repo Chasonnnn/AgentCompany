@@ -357,12 +357,15 @@ export async function runSelfImproveCycle(
     count: detected.count,
     manager_actor_id: args.manager_actor_id
   });
-  const targetFile = path.join("org/agents", args.worker_agent_id, "AGENTS.md");
   const proposal = await proposeMemoryDelta({
     workspace_dir: args.workspace_dir,
     project_id: args.project_id,
     title: `Self-improvement rule for ${args.worker_agent_id}: ${args.mistake_key}`,
-    target_file: targetFile,
+    scope_kind: "agent_guidance",
+    scope_ref: args.worker_agent_id,
+    sensitivity: "internal",
+    rationale:
+      "Promote repeated mistake-prevention guidance into curated agent rules after evaluated repeats.",
     under_heading: "## Recurring Mistakes To Avoid",
     insert_lines: [insertLine],
     visibility: "managers",
@@ -447,4 +450,3 @@ export async function runSelfImproveCycle(
     target_file: proposal.target_file
   };
 }
-

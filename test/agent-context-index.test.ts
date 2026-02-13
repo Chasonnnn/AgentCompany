@@ -17,7 +17,7 @@ async function mkTmpDir(): Promise<string> {
 }
 
 describe("agent context index", () => {
-  test("refreshes per-agent AGENTS.md context index from assigned tasks", async () => {
+  test("writes per-agent context_index.md from assigned tasks without mutating AGENTS.md", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
 
@@ -81,18 +81,27 @@ describe("agent context index", () => {
     expect(first.assignment_count).toBe(1);
     expect(first.reference_count).toBeGreaterThan(0);
     expect(first.updated).toBe(true);
+    expect(typeof first.context_index_relpath).toBe("string");
 
-    const guidancePath = path.join(dir, first.agents_md_relpath);
-    const guidance = await fs.readFile(guidancePath, { encoding: "utf8" });
-    expect(guidance.includes("<!-- managed: context-index -->")).toBe(true);
-    expect(guidance.includes(path.join("work/projects", project_id, "tasks", `${taskA.task_id}.md`))).toBe(
+    const contextPath = path.join(dir, first.context_index_relpath);
+    const context = await fs.readFile(contextPath, { encoding: "utf8" });
+    expect(context.includes(path.join("work/projects", project_id, "tasks", `${taskA.task_id}.md`))).toBe(
       true
     );
-    expect(guidance.includes(path.join("work/projects", project_id, "tasks", `${taskB.task_id}.md`))).toBe(
+    expect(context.includes(path.join("work/projects", project_id, "tasks", `${taskB.task_id}.md`))).toBe(
       false
     );
-    expect(guidance.includes("task_scope_repo_id")).toBe(true);
-    expect(guidance.includes("task_scope_path")).toBe(true);
+    expect(context.includes("task_scope_repo_id")).toBe(true);
+    expect(context.includes("task_scope_path")).toBe(true);
+
+    const agentsPath = path.join(dir, "org/agents", workerA.agent_id, "AGENTS.md");
+    let agents = "";
+    try {
+      agents = await fs.readFile(agentsPath, { encoding: "utf8" });
+    } catch {
+      agents = "";
+    }
+    expect(agents.includes("<!-- managed: context-index -->")).toBe(false);
 
     const second = await refreshAgentContextIndex({
       workspace_dir: dir,
@@ -101,9 +110,9 @@ describe("agent context index", () => {
       max_tasks: 20,
       max_scope_paths: 20
     });
-    const guidanceAfter = await fs.readFile(guidancePath, { encoding: "utf8" });
+    const contextAfter = await fs.readFile(contextPath, { encoding: "utf8" });
     expect(second.assignment_count).toBe(1);
     expect(second.updated).toBe(false);
-    expect(guidanceAfter.split("<!-- managed: context-index -->").length - 1).toBe(1);
+    expect(contextAfter).toBe(context);
   });
 });

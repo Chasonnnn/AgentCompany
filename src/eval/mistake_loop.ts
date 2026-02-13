@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { nowIso } from "../core/time.js";
-import { writeFileAtomic, pathExists } from "../store/fs.js";
+import { pathExists } from "../store/fs.js";
 import { readYamlFile, writeYamlFile } from "../store/yaml.js";
 import { appendEventJsonl, newEnvelope } from "../runtime/events.js";
 import type { ActorRole } from "../policy/policy.js";
@@ -92,55 +92,6 @@ async function readLogOrDefault(absPath: string, agentId: string): Promise<Mista
   };
 }
 
-function baseAgentGuidance(agentId: string): string {
-  return [
-    `# AGENTS.md - ${agentId}`,
-    "",
-    "## Operating Rules",
-    "- Follow the assigned task contract and milestone acceptance criteria.",
-    "- Produce required evidence artifacts for coding milestones (patch/commit + tests).",
-    "- Report blockers early with concrete evidence.",
-    "",
-    "## Recurring Mistakes To Avoid",
-    "<!-- managed: recurring-mistakes -->",
-    ""
-  ].join("\n");
-}
-
-async function ensureGuidanceFile(absPath: string, agentId: string): Promise<string> {
-  if (await pathExists(absPath)) {
-    return fs.readFile(absPath, { encoding: "utf8" });
-  }
-  const initial = baseAgentGuidance(agentId);
-  await writeFileAtomic(absPath, initial);
-  return initial;
-}
-
-function ensureRuleInGuidance(args: {
-  guidance_markdown: string;
-  key: string;
-  prevention_rule: string;
-  count: number;
-}): { updated: string; changed: boolean } {
-  const marker = `mistake:${args.key}`;
-  if (args.guidance_markdown.includes(marker)) {
-    return { updated: args.guidance_markdown, changed: false };
-  }
-  const line = `- <!-- ${marker} --> [${args.key}] ${args.prevention_rule} (promoted after ${args.count} repeats)`;
-  const heading = "## Recurring Mistakes To Avoid";
-  const idx = args.guidance_markdown.indexOf(heading);
-  if (idx === -1) {
-    return {
-      updated: `${args.guidance_markdown.trimEnd()}\n\n${heading}\n${line}\n`,
-      changed: true
-    };
-  }
-  const insertAt = args.guidance_markdown.indexOf("\n", idx + heading.length);
-  const headEnd = insertAt === -1 ? args.guidance_markdown.length : insertAt + 1;
-  const updated = `${args.guidance_markdown.slice(0, headEnd)}${line}\n${args.guidance_markdown.slice(headEnd)}`;
-  return { updated, changed: true };
-}
-
 async function appendEvaluationEvent(args: {
   workspace_dir: string;
   project_id?: string;
@@ -193,7 +144,6 @@ export async function recordAgentMistake(
   const logRel = path.join("org/agents", args.worker_agent_id, "mistakes.yaml");
   const logAbs = path.join(args.workspace_dir, logRel);
   const guidanceRel = path.join("org/agents", args.worker_agent_id, "AGENTS.md");
-  const guidanceAbs = path.join(args.workspace_dir, guidanceRel);
 
   const log = await readLogOrDefault(logAbs, args.worker_agent_id);
   const at = nowIso();
@@ -231,22 +181,7 @@ export async function recordAgentMistake(
   await writeYamlFile(logAbs, log);
 
   const entry = log.entries.find((e) => e.key === args.mistake_key)!;
-  let promoted = false;
-  if (entry.count >= threshold) {
-    const current = await ensureGuidanceFile(guidanceAbs, args.worker_agent_id);
-    const updated = ensureRuleInGuidance({
-      guidance_markdown: current,
-      key: entry.key,
-      prevention_rule: entry.prevention_rule,
-      count: entry.count
-    });
-    if (updated.changed) {
-      await writeFileAtomic(guidanceAbs, updated.updated);
-      promoted = true;
-    }
-  } else {
-    await ensureGuidanceFile(guidanceAbs, args.worker_agent_id);
-  }
+  const promoted = false;
 
   await appendEvaluationEvent({
     workspace_dir: args.workspace_dir,
@@ -264,22 +199,6 @@ export async function recordAgentMistake(
       evidence_artifact_ids: args.evidence_artifact_ids ?? []
     }
   });
-  if (promoted) {
-    await appendEvaluationEvent({
-      workspace_dir: args.workspace_dir,
-      project_id: args.project_id,
-      run_id: args.run_id,
-      actor: args.manager_actor_id,
-      type: "evaluation.rule_promoted",
-      payload: {
-        worker_agent_id: args.worker_agent_id,
-        mistake_key: entry.key,
-        promoted_to: guidanceRel,
-        count: entry.count
-      }
-    });
-  }
-
   return {
     worker_agent_id: args.worker_agent_id,
     mistake_key: entry.key,
@@ -289,4 +208,3 @@ export async function recordAgentMistake(
     agents_md_relpath: guidanceRel
   };
 }
-

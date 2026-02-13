@@ -25,7 +25,7 @@ export type RefreshAgentContextIndexArgs = {
 
 export type RefreshAgentContextIndexResult = {
   agent_id: string;
-  agents_md_relpath: string;
+  context_index_relpath: string;
   assignment_count: number;
   reference_count: number;
   updated: boolean;
@@ -33,39 +33,9 @@ export type RefreshAgentContextIndexResult = {
   project_id?: string;
 };
 
-const CONTEXT_HEADING = "## Relevant Context Index";
-const CONTEXT_MARKER = "<!-- managed: context-index -->";
-
-function baseAgentGuidance(agentId: string): string {
-  return [
-    `# AGENTS.md - ${agentId}`,
-    "",
-    "## Operating Rules",
-    "- Follow the assigned task contract and milestone acceptance criteria.",
-    "- Produce required evidence artifacts for coding milestones (patch/commit + tests).",
-    "- Report blockers early with concrete evidence.",
-    "",
-    "## Recurring Mistakes To Avoid",
-    "<!-- managed: recurring-mistakes -->",
-    "",
-    CONTEXT_HEADING,
-    CONTEXT_MARKER,
-    ""
-  ].join("\n");
-}
-
-async function ensureGuidanceFile(absPath: string, agentId: string): Promise<string> {
-  if (await pathExists(absPath)) {
-    return fs.readFile(absPath, { encoding: "utf8" });
-  }
-  const initial = baseAgentGuidance(agentId);
-  await writeFileAtomic(absPath, initial);
-  return initial;
-}
-
-async function listDirectories(absPath: string): Promise<string[]> {
+async function listDirectories(absDir: string): Promise<string[]> {
   try {
-    const ents = await fs.readdir(absPath, { withFileTypes: true });
+    const ents = await fs.readdir(absDir, { withFileTypes: true });
     return ents
       .filter((e) => e.isDirectory())
       .map((e) => e.name)
@@ -75,9 +45,9 @@ async function listDirectories(absPath: string): Promise<string[]> {
   }
 }
 
-async function listTaskFiles(absPath: string): Promise<string[]> {
+async function listTaskFiles(absDir: string): Promise<string[]> {
   try {
-    const ents = await fs.readdir(absPath, { withFileTypes: true });
+    const ents = await fs.readdir(absDir, { withFileTypes: true });
     return ents
       .filter((e) => e.isFile() && e.name.endsWith(".md"))
       .map((e) => e.name)
@@ -146,8 +116,8 @@ function buildContextLines(args: {
   const lines: string[] = [];
   const seen = new Set<string>();
 
-  appendUnique(lines, seen, `- company_contract: \`company.yaml\``);
-  appendUnique(lines, seen, `- org_visibility_policy: \`org/policy.yaml\``);
+  appendUnique(lines, seen, `- company_contract: \`company/company.yaml\``);
+  appendUnique(lines, seen, `- org_visibility_policy: \`company/policy.yaml\``);
   appendUnique(lines, seen, `- agent_profile: \`org/agents/${args.agent_id}/agent.yaml\``);
   appendUnique(lines, seen, `- agent_journal: \`org/agents/${args.agent_id}/journal.md\``);
   if (args.include_mistakes_log) {
@@ -189,44 +159,21 @@ function buildContextLines(args: {
   return lines;
 }
 
-function normalizeNewline(s: string): string {
-  return s.endsWith("\n") ? s : `${s}\n`;
-}
-
-function findSectionEnd(markdown: string, start: number): number {
-  const rest = markdown.slice(start);
-  const nextHeadingRel = rest.search(/^##\s.+$/m);
-  if (nextHeadingRel === -1) return markdown.length;
-  return start + nextHeadingRel;
-}
-
-function upsertContextSection(markdown: string, lines: string[]): { updated: string; changed: boolean } {
-  const withNl = normalizeNewline(markdown);
-  const markerIdx = withNl.indexOf(CONTEXT_MARKER);
-  const sectionBody = `${CONTEXT_MARKER}\n${lines.join("\n")}${lines.length ? "\n" : ""}`;
-
-  if (markerIdx >= 0) {
-    const markerLineStart = withNl.lastIndexOf("\n", markerIdx);
-    const markerStart = markerLineStart === -1 ? 0 : markerLineStart + 1;
-    const markerLineEnd = withNl.indexOf("\n", markerIdx);
-    const afterMarkerLine = markerLineEnd === -1 ? withNl.length : markerLineEnd + 1;
-    const end = findSectionEnd(withNl, afterMarkerLine);
-    const updated = `${withNl.slice(0, markerStart)}${sectionBody}${withNl.slice(end)}`;
-    return { updated, changed: updated !== withNl };
+function renderContextIndexMarkdown(args: {
+  agent_id: string;
+  lines: string[];
+}): string {
+  const out: string[] = [
+    `# Context Index - ${args.agent_id}`,
+    "",
+    "## References"
+  ];
+  if (args.lines.length) {
+    out.push(...args.lines);
+  } else {
+    out.push("- no_assigned_tasks: true");
   }
-
-  const headingIdx = withNl.indexOf(CONTEXT_HEADING);
-  if (headingIdx >= 0) {
-    const headingLineEnd = withNl.indexOf("\n", headingIdx);
-    const afterHeading = headingLineEnd === -1 ? withNl.length : headingLineEnd + 1;
-    const end = findSectionEnd(withNl, afterHeading);
-    const updated = `${withNl.slice(0, afterHeading)}${sectionBody}${withNl.slice(end)}`;
-    return { updated, changed: updated !== withNl };
-  }
-
-  const prefix = withNl.trimEnd();
-  const updated = `${prefix}\n\n${CONTEXT_HEADING}\n${sectionBody}`;
-  return { updated: normalizeNewline(updated), changed: true };
+  return `${out.join("\n")}\n`;
 }
 
 export async function refreshAgentContextIndex(
@@ -240,8 +187,8 @@ export async function refreshAgentContextIndex(
     throw new Error(`Agent not found: ${args.agent_id}`);
   }
 
-  const guidanceRel = path.join("org/agents", args.agent_id, "AGENTS.md");
-  const guidanceAbs = path.join(args.workspace_dir, guidanceRel);
+  const contextRel = path.join("org/agents", args.agent_id, "context_index.md");
+  const contextAbs = path.join(args.workspace_dir, contextRel);
   const mistakesAbs = path.join(args.workspace_dir, "org/agents", args.agent_id, "mistakes.yaml");
 
   const assignments = await collectAssignments(args);
@@ -252,19 +199,31 @@ export async function refreshAgentContextIndex(
     max_scope_paths: args.max_scope_paths ?? 40
   });
 
-  const existing = await ensureGuidanceFile(guidanceAbs, args.agent_id);
-  const replaced = upsertContextSection(existing, lines);
-  if (replaced.changed) {
-    await writeFileAtomic(guidanceAbs, replaced.updated);
+  const generatedAt = nowIso();
+  const rendered = renderContextIndexMarkdown({
+    agent_id: args.agent_id,
+    lines
+  });
+
+  let existing = "";
+  try {
+    existing = await fs.readFile(contextAbs, { encoding: "utf8" });
+  } catch {
+    existing = "";
+  }
+
+  const changed = existing !== rendered;
+  if (changed) {
+    await writeFileAtomic(contextAbs, rendered);
   }
 
   return {
     agent_id: args.agent_id,
-    agents_md_relpath: guidanceRel,
+    context_index_relpath: contextRel,
     assignment_count: assignments.length,
     reference_count: lines.length,
-    updated: replaced.changed,
-    generated_at: nowIso(),
+    updated: changed,
+    generated_at: generatedAt,
     project_id: args.project_id
   };
 }
