@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { withLaunchLane, readLaunchLaneStatsForWorkspace } from "../src/runtime/launch_lane.js";
+import {
+  withLaunchLane,
+  readLaunchLaneStatsForWorkspace,
+  reportProviderBackpressure,
+  clearProviderCooldown
+} from "../src/runtime/launch_lane.js";
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,5 +152,53 @@ describe("launch lane scheduler", () => {
       "normal:start",
       "normal:end"
     ]);
+  });
+
+  test("enforces provider cooldown after backpressure reports", async () => {
+    const workspace = "/tmp/ws-e";
+    const started: string[] = [];
+    reportProviderBackpressure(workspace, "codex", "429", {
+      base_cooldown_ms: 90,
+      max_cooldown_ms: 90
+    });
+
+    const beganAt = Date.now();
+    const run = withLaunchLane(
+      workspace,
+      { provider: "codex", workspace_limit: 2, provider_limit: 2 },
+      async () => {
+        started.push("started");
+      }
+    );
+
+    await sleep(20);
+    expect(started).toEqual([]);
+    const midStats = readLaunchLaneStatsForWorkspace(workspace);
+    expect(midStats.provider_cooldowns.codex).toBeDefined();
+    await run;
+    const elapsed = Date.now() - beganAt;
+    expect(elapsed).toBeGreaterThanOrEqual(70);
+    expect(started).toEqual(["started"]);
+  });
+
+  test("clearProviderCooldown releases queued provider work immediately", async () => {
+    const workspace = "/tmp/ws-f";
+    reportProviderBackpressure(workspace, "claude", "429", {
+      base_cooldown_ms: 500,
+      max_cooldown_ms: 500
+    });
+    const started: string[] = [];
+    const run = withLaunchLane(
+      workspace,
+      { provider: "claude", workspace_limit: 1, provider_limit: 1 },
+      async () => {
+        started.push("ok");
+      }
+    );
+    await sleep(25);
+    expect(started).toEqual([]);
+    clearProviderCooldown(workspace, "claude");
+    await run;
+    expect(started).toEqual(["ok"]);
   });
 });

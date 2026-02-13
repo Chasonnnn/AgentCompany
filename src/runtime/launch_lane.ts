@@ -2,6 +2,7 @@ import path from "node:path";
 
 export const LaunchLanePriorities = ["high", "normal", "low"] as const;
 export type LaunchLanePriority = (typeof LaunchLanePriorities)[number];
+export type BackpressureClass = "rate_limit" | "transient" | "interactive" | "auth";
 
 export type LaunchLaneOptions = {
   provider?: string;
@@ -30,11 +31,15 @@ type LaneState = {
   running: number;
   running_by_provider: Map<string, number>;
   running_by_team: Map<string, number>;
+  provider_cooldowns: Map<string, { until_ms: number; level: number; reason?: string }>;
+  cooldown_timer?: NodeJS.Timeout;
   draining: boolean;
 };
 
 const lanes = new Map<string, LaneState>();
 let nextQueueId = 1;
+const DEFAULT_PROVIDER_COOLDOWN_MS = 5 * 60 * 1000;
+const MAX_PROVIDER_COOLDOWN_MS = 30 * 60 * 1000;
 
 function laneKey(workspaceDir: string): string {
   return path.resolve(workspaceDir);
@@ -73,6 +78,7 @@ function getOrCreateLane(key: string): LaneState {
     running: 0,
     running_by_provider: new Map<string, number>(),
     running_by_team: new Map<string, number>(),
+    provider_cooldowns: new Map<string, { until_ms: number; level: number; reason?: string }>(),
     draining: false
   };
   lanes.set(key, created);
@@ -87,19 +93,40 @@ function getRunningByTeam(state: LaneState, teamId: string): number {
   return state.running_by_team.get(teamId) ?? 0;
 }
 
+function pruneExpiredProviderCooldowns(state: LaneState): void {
+  const now = Date.now();
+  for (const [provider, cd] of state.provider_cooldowns.entries()) {
+    if (cd.until_ms <= now) state.provider_cooldowns.delete(provider);
+  }
+}
+
 function findRunnableIndex(state: LaneState): number {
   if (state.queue.length === 0) return -1;
+  pruneExpiredProviderCooldowns(state);
   const indices = state.queue
     .map((q, idx) => ({ idx, rank: priorityRank(q.priority), id: q.id }))
     .sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : a.id - b.id));
   for (const entry of indices) {
     const item = state.queue[entry.idx];
+    const cooldown = state.provider_cooldowns.get(item.provider);
+    if (cooldown && cooldown.until_ms > Date.now()) continue;
     if (state.running >= item.workspace_limit) continue;
     if (getRunningByProvider(state, item.provider) >= item.provider_limit) continue;
     if (getRunningByTeam(state, item.team_id) >= item.team_limit) continue;
     return entry.idx;
   }
   return -1;
+}
+
+function earliestProviderCooldownExpiryForQueued(state: LaneState): number | undefined {
+  pruneExpiredProviderCooldowns(state);
+  let earliest: number | undefined;
+  for (const item of state.queue) {
+    const cd = state.provider_cooldowns.get(item.provider);
+    if (!cd) continue;
+    if (earliest === undefined || cd.until_ms < earliest) earliest = cd.until_ms;
+  }
+  return earliest;
 }
 
 function incrementMapCount(map: Map<string, number>, key: string): void {
@@ -116,8 +143,28 @@ function maybeCleanupLane(key: string): void {
   const state = lanes.get(key);
   if (!state) return;
   if (state.running === 0 && state.queue.length === 0 && !state.draining) {
+    if (state.cooldown_timer) {
+      clearTimeout(state.cooldown_timer);
+      state.cooldown_timer = undefined;
+    }
     lanes.delete(key);
   }
+}
+
+function scheduleCooldownWake(key: string): void {
+  const state = lanes.get(key);
+  if (!state) return;
+  const earliest = earliestProviderCooldownExpiryForQueued(state);
+  if (earliest === undefined) return;
+  const waitMs = Math.max(1, earliest - Date.now());
+  if (state.cooldown_timer) {
+    clearTimeout(state.cooldown_timer);
+    state.cooldown_timer = undefined;
+  }
+  state.cooldown_timer = setTimeout(() => {
+    state.cooldown_timer = undefined;
+    scheduleDrain(key);
+  }, waitMs);
 }
 
 function scheduleDrain(key: string): void {
@@ -164,6 +211,8 @@ async function drainLane(key: string): Promise<void> {
     // If new work arrived while we were draining, continue.
     if (state.queue.length > 0 && findRunnableIndex(state) >= 0) {
       scheduleDrain(key);
+    } else if (state.queue.length > 0) {
+      scheduleCooldownWake(key);
     } else {
       maybeCleanupLane(key);
     }
@@ -251,12 +300,23 @@ export function readLaunchLaneStatsForWorkspace(workspaceDir: string): {
   pending_low: number;
   running_by_provider: Record<string, number>;
   running_by_team: Record<string, number>;
+  provider_cooldowns: Record<
+    string,
+    {
+      until_ms: number;
+      remaining_ms: number;
+      level: number;
+      reason?: string;
+    }
+  >;
 } {
   const key = laneKey(workspaceDir);
   const lane = lanes.get(key);
+  if (lane) pruneExpiredProviderCooldowns(lane);
   const pendingHigh = lane?.queue.filter((q) => q.priority === "high").length ?? 0;
   const pendingNormal = lane?.queue.filter((q) => q.priority === "normal").length ?? 0;
   const pendingLow = lane?.queue.filter((q) => q.priority === "low").length ?? 0;
+  const now = Date.now();
 
   return {
     workspace_dir: key,
@@ -266,6 +326,80 @@ export function readLaunchLaneStatsForWorkspace(workspaceDir: string): {
     pending_normal: pendingNormal,
     pending_low: pendingLow,
     running_by_provider: Object.fromEntries(lane?.running_by_provider ?? []),
-    running_by_team: Object.fromEntries(lane?.running_by_team ?? [])
+    running_by_team: Object.fromEntries(lane?.running_by_team ?? []),
+    provider_cooldowns: Object.fromEntries(
+      [...(lane?.provider_cooldowns ?? new Map<string, { until_ms: number; level: number; reason?: string }>())]
+        .map(([provider, cd]) => [
+          provider,
+          {
+            until_ms: cd.until_ms,
+            remaining_ms: Math.max(0, cd.until_ms - now),
+            level: cd.level,
+            reason: cd.reason
+          }
+        ])
+    )
   };
+}
+
+export function reportProviderBackpressure(
+  workspaceDir: string,
+  provider: string,
+  reason?: string,
+  opts?: {
+    class?: BackpressureClass;
+    base_cooldown_ms?: number;
+    max_cooldown_ms?: number;
+    jitter_pct?: number;
+  }
+): { provider: string; until_ms: number; cooldown_ms: number; level: number } {
+  const key = laneKey(workspaceDir);
+  const lane = getOrCreateLane(key);
+  const now = Date.now();
+  const existing = lane.provider_cooldowns.get(provider);
+  const klass = opts?.class ?? "rate_limit";
+  const classBase =
+    klass === "transient"
+      ? 60_000
+      : klass === "interactive"
+        ? 120_000
+        : klass === "auth"
+          ? MAX_PROVIDER_COOLDOWN_MS
+          : DEFAULT_PROVIDER_COOLDOWN_MS;
+  const classMax = klass === "auth" ? MAX_PROVIDER_COOLDOWN_MS : MAX_PROVIDER_COOLDOWN_MS;
+  const base = Math.max(1000, opts?.base_cooldown_ms ?? classBase);
+  const max = Math.max(base, opts?.max_cooldown_ms ?? classMax);
+  const existingActive = existing && existing.until_ms > now;
+  const nextLevel = Math.min(existingActive ? existing.level + 1 : 1, klass === "auth" ? 1 : 6);
+  let cooldownMs = Math.min(base * 2 ** (nextLevel - 1), max);
+  const jitterPct = Math.max(0, Math.min(0.5, opts?.jitter_pct ?? 0.1));
+  if (jitterPct > 0) {
+    const min = 1 - jitterPct;
+    const maxMul = 1 + jitterPct;
+    const mul = min + Math.random() * (maxMul - min);
+    cooldownMs = Math.max(1000, Math.round(cooldownMs * mul));
+  }
+  const untilMs = now + cooldownMs;
+  lane.provider_cooldowns.set(provider, {
+    until_ms: untilMs,
+    level: nextLevel,
+    reason: reason ? `${klass}:${reason}` : klass
+  });
+  scheduleCooldownWake(key);
+  scheduleDrain(key);
+  return {
+    provider,
+    until_ms: untilMs,
+    cooldown_ms: cooldownMs,
+    level: nextLevel
+  };
+}
+
+export function clearProviderCooldown(workspaceDir: string, provider: string): void {
+  const key = laneKey(workspaceDir);
+  const lane = lanes.get(key);
+  if (!lane) return;
+  lane.provider_cooldowns.delete(provider);
+  scheduleDrain(key);
+  maybeCleanupLane(key);
 }
