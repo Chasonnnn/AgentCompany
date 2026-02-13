@@ -22,6 +22,7 @@ describe("workspace doctor", () => {
 
     await setProviderBin(dir, "codex", "/definitely-missing/codex");
     await setProviderBin(dir, "claude", "/definitely-missing/claude");
+    await setProviderBin(dir, "gemini", "/definitely-missing/gemini");
 
     const report = await doctorWorkspace({ workspace_dir: dir });
     const providers = report.checks.find((c) => c.id === "providers.cli");

@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { resolveProviderBin } from "../drivers/resolve_bin.js";
 import { codexCliAdapterStatus } from "./codex_cli.js";
 import { codexAppServerAdapterStatus } from "./codex_app_server.js";
 import { claudeCliAdapterStatus } from "./claude_cli.js";
+import { geminiCliAdapterStatus } from "./gemini_cli.js";
 import type { AdapterStatus } from "./types.js";
 
 async function isExecutableAvailable(bin: string): Promise<boolean> {
@@ -47,33 +49,77 @@ async function supportsCodexAppServer(bin: string): Promise<boolean> {
   });
 }
 
+const OFFICIAL_CLI_ALLOWLIST: Record<string, string[]> = {
+  codex: ["codex"],
+  codex_app_server: ["codex"],
+  claude: ["claude"],
+  claude_code: ["claude"],
+  gemini: ["gemini"]
+};
+
+function isOfficialProviderCliBin(provider: string, bin: string): boolean {
+  const allowed = OFFICIAL_CLI_ALLOWLIST[provider] ?? OFFICIAL_CLI_ALLOWLIST[provider.replaceAll("-", "_")];
+  if (!allowed?.length) return false;
+  const base = path.basename(bin).toLowerCase();
+  return allowed.some((name) => base === name || base.startsWith(`${name}-`));
+}
+
+function officialBinReason(provider: string, bin: string): string {
+  const allow = OFFICIAL_CLI_ALLOWLIST[provider] ?? OFFICIAL_CLI_ALLOWLIST[provider.replaceAll("-", "_")] ?? [];
+  return `Unapproved CLI binary for provider "${provider}": ${bin}. Allowed base names: ${allow.join(", ")}`;
+}
+
 export async function listAdapterStatuses(workspaceDir: string): Promise<AdapterStatus[]> {
   const codexResolved = await resolveProviderBin(workspaceDir, "codex");
   const codexAppResolved = await resolveProviderBin(workspaceDir, "codex_app_server");
   const claudeResolved = await resolveProviderBin(workspaceDir, "claude");
-  const codexCliAvailable = await isExecutableAvailable(codexResolved.bin);
-  const codexAppBinAvailable = await isExecutableAvailable(codexAppResolved.bin);
+  const geminiResolved = await resolveProviderBin(workspaceDir, "gemini");
+  const codexBinOk = isOfficialProviderCliBin("codex", codexResolved.bin);
+  const codexCliAvailable = codexBinOk && (await isExecutableAvailable(codexResolved.bin));
+  const codexAppBinOk = isOfficialProviderCliBin("codex_app_server", codexAppResolved.bin);
+  const codexAppBinAvailable = codexAppBinOk && (await isExecutableAvailable(codexAppResolved.bin));
   const codexAppServerAvailable =
     codexAppBinAvailable && (await supportsCodexAppServer(codexAppResolved.bin));
-  const claudeCliAvailable = await isExecutableAvailable(claudeResolved.bin);
+  const claudeBinOk = isOfficialProviderCliBin("claude", claudeResolved.bin);
+  const claudeCliAvailable = claudeBinOk && (await isExecutableAvailable(claudeResolved.bin));
+  const geminiBinOk = isOfficialProviderCliBin("gemini", geminiResolved.bin);
+  const geminiCliAvailable = geminiBinOk && (await isExecutableAvailable(geminiResolved.bin));
 
   const codexCli = codexCliAdapterStatus(
     codexCliAvailable,
-    codexCliAvailable ? undefined : `codex binary not found: ${codexResolved.bin}`
+    codexCliAvailable
+      ? undefined
+      : codexBinOk
+        ? `codex binary not found: ${codexResolved.bin}`
+        : officialBinReason("codex", codexResolved.bin)
   );
   const claudeCli = claudeCliAdapterStatus(
     claudeCliAvailable,
-    claudeCliAvailable ? undefined : `claude binary not found: ${claudeResolved.bin}`
+    claudeCliAvailable
+      ? undefined
+      : claudeBinOk
+        ? `claude binary not found: ${claudeResolved.bin}`
+        : officialBinReason("claude", claudeResolved.bin)
+  );
+  const geminiCli = geminiCliAdapterStatus(
+    geminiCliAvailable,
+    geminiCliAvailable
+      ? undefined
+      : geminiBinOk
+        ? `gemini binary not found: ${geminiResolved.bin}`
+        : officialBinReason("gemini", geminiResolved.bin)
   );
 
   const codexAppServer = codexAppServerAdapterStatus(
     codexAppServerAvailable,
     codexAppServerAvailable
       ? undefined
-      : codexAppBinAvailable
-        ? `codex app-server command unavailable for binary: ${codexAppResolved.bin}`
-        : `codex binary not found: ${codexAppResolved.bin}`
+      : codexAppBinOk
+        ? codexAppBinAvailable
+          ? `codex app-server command unavailable for binary: ${codexAppResolved.bin}`
+          : `codex binary not found: ${codexAppResolved.bin}`
+        : officialBinReason("codex_app_server", codexAppResolved.bin)
   );
 
-  return [codexAppServer, codexCli, claudeCli];
+  return [codexAppServer, codexCli, claudeCli, geminiCli];
 }

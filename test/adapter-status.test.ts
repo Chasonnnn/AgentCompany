@@ -11,7 +11,7 @@ async function mkTmpDir(): Promise<string> {
 }
 
 async function writeFakeCodexWithAppServer(dir: string): Promise<string> {
-  const p = path.join(dir, "fake-codex.mjs");
+  const p = path.join(dir, "codex");
   const src = `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "app-server" && args[1] === "--help") {

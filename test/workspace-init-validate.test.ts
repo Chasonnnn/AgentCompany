@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { initWorkspace } from "../src/workspace/init.js";
 import { validateWorkspace } from "../src/workspace/validate.js";
+import { readYamlFile } from "../src/store/yaml.js";
 
 async function mkTmpDir(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-"));
@@ -38,5 +39,20 @@ describe("workspace init/validate", () => {
     await expect(initWorkspace({ root_dir: dir, company_name: "Acme", force: true })).resolves.toBe(
       undefined
     );
+  });
+
+  test("init defaults gemini execution policy to API channel", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const machine = (await readYamlFile(path.join(dir, ".local", "machine.yaml"))) as {
+      provider_execution_policy?: Record<string, {
+        channel: string;
+        require_subscription_proof: boolean;
+      }>;
+    };
+    const geminiPolicy = machine.provider_execution_policy?.gemini;
+    expect(geminiPolicy).toBeDefined();
+    expect(geminiPolicy?.channel).toBe("api");
+    expect(geminiPolicy?.require_subscription_proof).toBe(false);
   });
 });

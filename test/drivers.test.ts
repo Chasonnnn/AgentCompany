@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { buildCodexExecCommand } from "../src/drivers/codex.js";
 import { buildClaudePrintCommand } from "../src/drivers/claude.js";
+import { buildGeminiScaffoldCommand } from "../src/drivers/gemini.js";
 
 describe("driver command builders", () => {
   test("codex exec includes required flags and uses stdin + last_message file", () => {
@@ -56,5 +57,30 @@ describe("driver command builders", () => {
     const i = cmd.argv.indexOf("--model");
     expect(i).toBeGreaterThanOrEqual(0);
     expect(cmd.argv[i + 1]).toBe("claude-3-7-sonnet-latest");
+  });
+
+  test("gemini headless command uses json output and prompt flag", () => {
+    const cmd = buildGeminiScaffoldCommand({
+      bin: "/bin/gemini",
+      prompt: "hello",
+      outputs_dir_abs: "/tmp/outputs"
+    });
+    expect(cmd.argv[0]).toBe("/bin/gemini");
+    expect(cmd.argv.includes("--output-format")).toBe(true);
+    expect(cmd.argv.includes("json")).toBe(true);
+    expect(cmd.argv.includes("-p")).toBe(true);
+    expect(cmd.argv.at(-1)).toBe("hello");
+  });
+
+  test("gemini supports optional model", () => {
+    const cmd = buildGeminiScaffoldCommand({
+      bin: "/bin/gemini",
+      prompt: "hello",
+      outputs_dir_abs: "/tmp/outputs",
+      model: "gemini-2.5-pro"
+    });
+    const i = cmd.argv.indexOf("--model");
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(cmd.argv[i + 1]).toBe("gemini-2.5-pro");
   });
 });

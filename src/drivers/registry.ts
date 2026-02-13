@@ -1,8 +1,9 @@
 import { buildClaudePrintCommand, CLAUDE_CAPABILITIES } from "./claude.js";
 import { buildCodexExecCommand, CODEX_CAPABILITIES } from "./codex.js";
+import { buildGeminiScaffoldCommand, GEMINI_CAPABILITIES } from "./gemini.js";
 import type { BuiltCommand, DriverCapabilities } from "./types.js";
 
-export type DriverName = "codex" | "claude";
+export type DriverName = "codex" | "claude" | "gemini";
 
 export type ResolvedDriver = {
   name: DriverName;
@@ -27,9 +28,12 @@ export function resolveDriverName(provider: string): DriverName {
     case "claude_code":
     case "claude-code":
       return "claude";
+    case "gemini":
+    case "gemini_cli":
+      return "gemini";
     default:
       throw new Error(
-        `Unknown provider "${provider}". Supported: codex, codex_app_server, claude`
+        `Unknown provider "${provider}". Supported: codex, codex_app_server, claude, gemini`
       );
   }
 }
@@ -47,6 +51,12 @@ export function getDriver(name: DriverName): ResolvedDriver {
         name,
         capabilities: CLAUDE_CAPABILITIES,
         buildArtifactFillCommand: buildClaudePrintCommand
+      };
+    case "gemini":
+      return {
+        name,
+        capabilities: GEMINI_CAPABILITIES,
+        buildArtifactFillCommand: buildGeminiScaffoldCommand
       };
     default: {
       const _exhaustive: never = name;

@@ -59,6 +59,42 @@ export async function initWorkspace(args: InitWorkspaceArgs): Promise<void> {
     type: "machine",
     repo_roots: {},
     provider_bins: {},
+    provider_execution_policy: {
+      codex: {
+        channel: "subscription_cli",
+        require_subscription_proof: true,
+        proof_strategy: "codex_cli",
+        allowed_bin_patterns: ["codex"]
+      },
+      codex_app_server: {
+        channel: "subscription_cli",
+        require_subscription_proof: true,
+        proof_strategy: "codex_cli",
+        allowed_bin_patterns: ["codex"]
+      },
+      claude: {
+        channel: "subscription_cli",
+        require_subscription_proof: true,
+        proof_strategy: "claude_cli",
+        allowed_bin_patterns: ["claude"]
+      },
+      claude_code: {
+        channel: "subscription_cli",
+        require_subscription_proof: true,
+        proof_strategy: "claude_cli",
+        allowed_bin_patterns: ["claude"]
+      },
+      gemini: {
+        channel: "api",
+        require_subscription_proof: false,
+        allowed_bin_patterns: ["gemini"]
+      },
+      manager: {
+        channel: "api",
+        require_subscription_proof: false,
+        allowed_bin_patterns: []
+      }
+    },
     provider_pricing_usd_per_1k_tokens: {}
   });
 
