@@ -2,6 +2,14 @@
 
 Local-first macOS "agent org" PM tool.
 
+## Governance First
+
+Before implementation work, read `/Users/chason/AgentCompany/AGENTS.md`.
+- It defines Director/Worker responsibilities and Work Item format.
+- It defines Definition of Done (tests + evidence + docs + policy safety).
+- It defines Memory Governance v0 (proposal/approval workflow, role gates, sensitivity, and fail-closed secret handling).
+- It links to the module ownership map at `/Users/chason/AgentCompany/docs/module-ownership-map.md` for fast file routing.
+
 ## Repo Quickstart
 
 Prereqs:
@@ -151,9 +159,20 @@ node dist/cli.js task:add-milestone /path/to/workspace --project "$PROJECT_ID" -
 
 Propose and approve a curated memory delta (project memory):
 ```bash
-DELTA=$(node dist/cli.js memory:delta /path/to/workspace --project "$PROJECT_ID" --title "Decision: strict JSONL envelope" --under "## Decisions" --insert "- Events are strict-envelope JSONL and append-only." --by human)
+DELTA=$(node dist/cli.js memory:delta /path/to/workspace \
+  --project "$PROJECT_ID" \
+  --title "Decision: strict JSONL envelope" \
+  --scope-kind project_memory \
+  --sensitivity internal \
+  --rationale "Capture a durable event-envelope decision with run evidence." \
+  --under "## Decisions" \
+  --insert "- Events are strict-envelope JSONL and append-only." \
+  --by human \
+  --evidence art_evidence_event_envelope)
 ARTIFACT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$DELTA")
 node dist/cli.js memory:approve /path/to/workspace --project "$PROJECT_ID" --artifact "$ARTIFACT_ID" --actor <ceo_actor_id> --role ceo --notes "LGTM"
+node dist/cli.js memory:list /path/to/workspace --actor <ceo_actor_id> --role ceo --project "$PROJECT_ID" --status all
+node dist/cli.js system:capabilities
 ```
 
 Milestone report and approval:

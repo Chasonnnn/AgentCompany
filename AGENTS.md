@@ -84,3 +84,76 @@ Recommended top-level module split (adjust if the chosen stack requires it):
 - `src/drivers/` (provider integrations + capabilities)
 - `src/ui/` (desktop UI)
 
+## 6) Roles and Work Item Contract
+
+### Director
+Responsibilities:
+- Decompose requests into concrete Work Items.
+- Assign owner modules/files and required tests.
+- Review evidence artifacts and accept/reject outcomes.
+- Approve governed memory deltas.
+- Ensure public interface changes update docs/contracts.
+
+Constraints:
+- Must not bypass policy enforcement or visibility rules for convenience.
+- Must reject Work Items that lack required evidence or tests.
+
+### Worker
+Responsibilities:
+- Execute one Work Item at a time in the assigned owner area.
+- Run required tests and attach evidence artifacts.
+- Keep changes scoped to the Work Item acceptance criteria.
+- May propose memory deltas but may not approve them.
+
+Constraints:
+- Must not directly bypass governance workflows (reviews, policy, memory approval).
+- Must not ship changes without matching tests/evidence.
+
+### Required Work Item Format
+Every implementation Work Item must include:
+- `Area`
+- `Owner files to edit first`
+- `Paired docs/contracts`
+- `Tests to run`
+- `Acceptance criteria`
+- `Evidence required`
+- `Routing reference` (link to `/Users/chason/AgentCompany/docs/module-ownership-map.md`)
+
+## 7) Fast Routing Rules
+
+- If you change routing/contract behavior:
+  - Update `src/server/router.ts` + `src/cli.ts` + `docs/protocol/v1.md`.
+  - Add/update server/router tests.
+- If you change runtime execution behavior:
+  - Start in `src/runtime/`.
+  - Verify read-model/index impact in `src/index/sqlite.ts`.
+- If you change policy/visibility/security behavior:
+  - Start in `src/policy/`.
+  - Verify both read-time and index-time guard paths.
+- If you change memory governance:
+  - Use memory delta propose/approve paths only.
+  - Ensure review and policy audit artifacts remain complete.
+
+## 8) Definition of Done (Required)
+
+- Required tests for the changed area pass.
+- Evidence artifacts are attached and auditable.
+- Public-surface docs/contracts are updated when interfaces change.
+- No policy bypass introduced:
+  - read paths enforce policy
+  - index/read-model paths do not leak restricted data
+
+## 9) Memory Governance v0
+
+- Memory changes are written only via memory delta workflow:
+  - `memory.propose_delta` / `memory:delta`
+  - `memory.approve_delta` / `memory:approve`
+- Approval authority for memory deltas is Director+/CEO/Human only.
+- Workers may propose memory deltas but may not approve them.
+- Sensitivity classification is required (`public|internal|restricted`) and separate from visibility ACL.
+- Secret-like content is fail-closed (proposal/approval blocked until sanitized).
+- `AGENTS.md` is curated memory; generated context index data is stored separately.
+
+## 10) Module Ownership Map
+
+- Use `/Users/chason/AgentCompany/docs/module-ownership-map.md` to route changes quickly to owner files, paired docs, and required tests.
