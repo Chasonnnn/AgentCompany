@@ -3,6 +3,7 @@ import path from "node:path";
 import { applyPatch } from "diff";
 import { newId } from "../core/ids.js";
 import { nowIso } from "../core/time.js";
+import { assertNoSensitiveText } from "../core/redaction.js";
 import { writeFileAtomic } from "../store/fs.js";
 import { readYamlFile, writeYamlFile } from "../store/yaml.js";
 import { type ActorRole } from "../policy/policy.js";
@@ -38,6 +39,10 @@ function ensureWorkspaceRelative(p: string): void {
 export async function approveMemoryDelta(
   args: ApproveMemoryDeltaArgs
 ): Promise<ApproveMemoryDeltaResult> {
+  if (typeof args.notes === "string" && args.notes.trim().length > 0) {
+    assertNoSensitiveText(args.notes, "review.notes");
+  }
+
   const artifactRel = path.join(
     "work/projects",
     args.project_id,
@@ -78,9 +83,11 @@ export async function approveMemoryDelta(
 
   const before = await fs.readFile(targetAbs, { encoding: "utf8" });
   const patchText = await fs.readFile(patchAbs, { encoding: "utf8" });
+  assertNoSensitiveText(patchText, "memory_delta.patch_file");
 
   const after = applyPatch(before, patchText);
   if (after === false) throw new Error("Patch did not apply cleanly to target file");
+  assertNoSensitiveText(after, "memory_delta.target_after_apply");
 
   await writeFileAtomic(targetAbs, after);
 
@@ -102,7 +109,11 @@ export async function approveMemoryDelta(
       artifact_id: parsed.frontmatter.id,
       project_id: parsed.frontmatter.project_id,
       target_file: parsed.frontmatter.target_file,
-      patch_file: parsed.frontmatter.patch_file
+      patch_file: parsed.frontmatter.patch_file,
+      scope_kind: parsed.frontmatter.scope_kind,
+      scope_ref: parsed.frontmatter.scope_ref,
+      sensitivity: parsed.frontmatter.sensitivity,
+      rationale: parsed.frontmatter.rationale
     },
     policy,
     notes: args.notes ?? ""
@@ -137,6 +148,10 @@ export async function approveMemoryDelta(
           artifact_id: parsed.frontmatter.id,
           target_file: parsed.frontmatter.target_file,
           patch_file: parsed.frontmatter.patch_file,
+          scope_kind: parsed.frontmatter.scope_kind,
+          scope_ref: parsed.frontmatter.scope_ref,
+          sensitivity: parsed.frontmatter.sensitivity,
+          rationale: parsed.frontmatter.rationale,
           policy
         }
       })

@@ -4,23 +4,28 @@ import YAML from "yaml";
 import { applyPatch, createTwoFilesPatch } from "diff";
 import { newId } from "../core/ids.js";
 import { nowIso } from "../core/time.js";
+import { assertNoSensitiveText } from "../core/redaction.js";
 import { writeFileAtomic } from "../store/fs.js";
 import { Visibility } from "../schemas/common.js";
 import { validateMarkdownArtifact } from "../artifacts/markdown.js";
 import { insertUnderHeading } from "./insert_under_heading.js";
+import { MemoryScopeKind, MemorySensitivity } from "./memory_delta.js";
 
 export type ProposeMemoryDeltaArgs = {
   workspace_dir: string;
   project_id: string;
   title: string;
-  target_file?: string; // workspace-relative; defaults to work/projects/<project_id>/memory.md
+  scope_kind: "project_memory" | "agent_guidance";
+  scope_ref?: string;
+  sensitivity: "public" | "internal" | "restricted";
+  rationale: string;
   under_heading: string;
   insert_lines: string[];
   visibility: "private_agent" | "team" | "managers" | "org";
   produced_by: string;
   run_id: string;
   context_pack_id: string;
-  evidence?: string[];
+  evidence: string[];
 };
 
 export type ProposeMemoryDeltaResult = {
@@ -28,6 +33,8 @@ export type ProposeMemoryDeltaResult = {
   artifact_relpath: string;
   patch_relpath: string;
   target_file: string;
+  scope_kind: "project_memory" | "agent_guidance";
+  scope_ref: string;
 };
 
 function ensureWorkspaceRelative(p: string): void {
@@ -40,14 +47,69 @@ function ensureWorkspaceRelative(p: string): void {
   }
 }
 
+function resolveTargetFile(args: {
+  project_id: string;
+  scope_kind: "project_memory" | "agent_guidance";
+  scope_ref?: string;
+}): { target_relpath: string; scope_ref: string } {
+  if (args.scope_kind === "project_memory") {
+    if (args.scope_ref && args.scope_ref !== args.project_id) {
+      throw new Error(
+        `scope_ref must match project_id for project_memory scope (expected ${args.project_id}, got ${args.scope_ref})`
+      );
+    }
+    return {
+      target_relpath: path.join("work/projects", args.project_id, "memory.md"),
+      scope_ref: args.project_id
+    };
+  }
+  const scopeRef = String(args.scope_ref ?? "").trim();
+  if (!scopeRef) {
+    throw new Error("scope_ref is required for agent_guidance scope");
+  }
+  return {
+    target_relpath: path.join("org/agents", scopeRef, "AGENTS.md"),
+    scope_ref: scopeRef
+  };
+}
+
 export async function proposeMemoryDelta(
   args: ProposeMemoryDeltaArgs
 ): Promise<ProposeMemoryDeltaResult> {
-  const targetRel =
-    args.target_file ?? path.join("work/projects", args.project_id, "memory.md");
+  const scopeKind = MemoryScopeKind.parse(args.scope_kind);
+  const sensitivity = MemorySensitivity.parse(args.sensitivity);
+  const visibility = Visibility.parse(args.visibility);
+  const rationale = String(args.rationale ?? "").trim();
+  if (!rationale) throw new Error("rationale is required");
+  if (!Array.isArray(args.evidence) || args.evidence.length === 0) {
+    throw new Error("evidence must contain at least one artifact id");
+  }
+  const evidence = args.evidence.map((e) => String(e).trim()).filter(Boolean);
+  if (evidence.length === 0) {
+    throw new Error("evidence must contain at least one non-empty artifact id");
+  }
+  if (sensitivity === "restricted" && visibility === "org") {
+    throw new Error("restricted memory deltas cannot use org visibility");
+  }
+
+  assertNoSensitiveText(args.title, "memory_delta.title");
+  assertNoSensitiveText(rationale, "memory_delta.rationale");
+  assertNoSensitiveText(args.insert_lines.join("\n"), "memory_delta.insert_lines");
+
+  const scope = resolveTargetFile({
+    project_id: args.project_id,
+    scope_kind: scopeKind,
+    scope_ref: args.scope_ref
+  });
+  const targetRel = scope.target_relpath;
   ensureWorkspaceRelative(targetRel);
 
   const targetAbs = path.join(args.workspace_dir, targetRel);
+  try {
+    await fs.access(targetAbs);
+  } catch {
+    throw new Error(`Target memory file does not exist: ${targetRel}`);
+  }
   const before = await fs.readFile(targetAbs, { encoding: "utf8" });
 
   const inserted = insertUnderHeading({
@@ -69,6 +131,7 @@ export async function proposeMemoryDelta(
   const applied = applyPatch(before, patchText);
   if (applied === false) throw new Error("Generated patch did not apply to original content");
   if (applied !== after) throw new Error("Generated patch applied but produced unexpected output");
+  assertNoSensitiveText(patchText, "memory_delta.patch");
 
   const artifactId = newId("art");
   const createdAt = nowIso();
@@ -87,26 +150,35 @@ export async function proposeMemoryDelta(
   );
 
   const fm: Record<string, unknown> = {
-    schema_version: 1,
+    schema_version: 2,
     type: "memory_delta",
     id: artifactId,
     created_at: createdAt,
     title: args.title,
-    visibility: Visibility.parse(args.visibility),
+    visibility,
     produced_by: args.produced_by,
     run_id: args.run_id,
     context_pack_id: args.context_pack_id,
     project_id: args.project_id,
     target_file: targetRel,
-    patch_file: patchRel
+    patch_file: patchRel,
+    scope_kind: scopeKind,
+    scope_ref: scope.scope_ref,
+    sensitivity,
+    rationale,
+    evidence
   };
-  if (args.evidence?.length) fm.evidence = args.evidence;
 
   const fmText = YAML.stringify(fm, { aliasDuplicateObjects: false }).trimEnd();
   const bodyLines: string[] = [
     `# ${args.title}`,
     "",
     "## Summary",
+    "",
+    `- rationale: ${rationale}`,
+    `- scope_kind: \`${scopeKind}\``,
+    `- scope_ref: \`${scope.scope_ref}\``,
+    `- sensitivity: \`${sensitivity}\``,
     "",
     "## Changes",
     "",
@@ -121,9 +193,7 @@ export async function proposeMemoryDelta(
     "## Evidence",
     ""
   ];
-  if (args.evidence?.length) {
-    for (const e of args.evidence) bodyLines.push(`- ${e}`);
-  }
+  for (const e of evidence) bodyLines.push(`- ${e}`);
 
   const md = `---\n${fmText}\n---\n\n${bodyLines.join("\n")}\n`;
 
@@ -140,7 +210,8 @@ export async function proposeMemoryDelta(
     artifact_id: artifactId,
     artifact_relpath: artifactRel,
     patch_relpath: patchRel,
-    target_file: targetRel
+    target_file: targetRel,
+    scope_kind: scopeKind,
+    scope_ref: scope.scope_ref
   };
 }
-

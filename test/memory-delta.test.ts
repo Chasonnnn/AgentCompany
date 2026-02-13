@@ -25,14 +25,14 @@ async function readJsonl(filePath: string): Promise<any[]> {
 }
 
 describe("memory deltas", () => {
-  test("propose + approve applies patch and records review + approval event", async () => {
+  test("director can approve and apply memory delta", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
     const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
     const { agent_id } = await createAgent({
       workspace_dir: dir,
-      name: "Manager",
-      role: "manager",
+      name: "Director",
+      role: "director",
       provider: "cmd",
       team_id
     });
@@ -52,12 +52,16 @@ describe("memory deltas", () => {
       workspace_dir: dir,
       project_id,
       title: "Add decision about event envelope",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Record a durable event-envelope decision with run evidence.",
       under_heading: "## Decisions",
       insert_lines: ["- Events are strict-envelope JSONL and append-only."],
       visibility: "managers",
       produced_by: agent_id,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_event_envelope"]
     });
 
     await fs.access(path.join(dir, proposed.patch_relpath));
@@ -68,7 +72,7 @@ describe("memory deltas", () => {
       project_id,
       artifact_id: proposed.artifact_id,
       actor_id: agent_id,
-      actor_role: "manager",
+      actor_role: "director",
       notes: "LGTM"
     });
     expect(approved.decision).toBe("approved");
@@ -85,15 +89,22 @@ describe("memory deltas", () => {
     expect(evs.some((e) => e.type === "approval.decided")).toBe(true);
   });
 
-  test("worker cannot approve memory delta", async () => {
+  test("manager cannot approve memory delta", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
     const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
     const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
-    const { agent_id } = await createAgent({
+    const manager = await createAgent({
       workspace_dir: dir,
-      name: "Worker",
-      role: "worker",
+      name: "Manager",
+      role: "manager",
+      provider: "cmd",
+      team_id
+    });
+    const director = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
       provider: "cmd",
       team_id
     });
@@ -101,7 +112,7 @@ describe("memory deltas", () => {
     const { run_id, context_pack_id } = await createRun({
       workspace_dir: dir,
       project_id,
-      agent_id,
+      agent_id: director.agent_id,
       provider: "cmd"
     });
 
@@ -109,12 +120,16 @@ describe("memory deltas", () => {
       workspace_dir: dir,
       project_id,
       title: "Add decision",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Manager-proposed change should still require director approval.",
       under_heading: "## Decisions",
-      insert_lines: ["- Workers should not approve deltas."],
+      insert_lines: ["- Managers should not approve deltas."],
       visibility: "managers",
-      produced_by: agent_id,
+      produced_by: manager.agent_id,
       run_id,
-      context_pack_id
+      context_pack_id,
+      evidence: ["art_evidence_memory_delta"]
     });
 
     const memoryPath = path.join(dir, "work/projects", project_id, "memory.md");
@@ -125,8 +140,8 @@ describe("memory deltas", () => {
         workspace_dir: dir,
         project_id,
         artifact_id: proposed.artifact_id,
-        actor_id: agent_id,
-        actor_role: "worker"
+        actor_id: manager.agent_id,
+        actor_role: "manager"
       })
     ).rejects.toThrow(/Policy denied approval/);
 
@@ -137,7 +152,14 @@ describe("memory deltas", () => {
     const reviewFiles = await fs.readdir(reviewsDir);
     expect(reviewFiles.some((f) => f.endsWith(".yaml"))).toBe(false);
 
-    const eventsPath = path.join(dir, "work/projects", project_id, "runs", run_id, "events.jsonl");
+    const eventsPath = path.join(
+      dir,
+      "work/projects",
+      project_id,
+      "runs",
+      run_id,
+      "events.jsonl"
+    );
     const evs = await readJsonl(eventsPath);
     expect(
       evs.some(
@@ -156,5 +178,43 @@ describe("memory deltas", () => {
           e.payload?.resource_id === proposed.artifact_id
       )
     ).toBe(true);
+  });
+
+  test("proposal requires scope, sensitivity, rationale, and evidence", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const { agent_id } = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
+      provider: "cmd",
+      team_id
+    });
+    const { run_id, context_pack_id } = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id,
+      provider: "cmd"
+    });
+
+    await expect(
+      proposeMemoryDelta({
+        workspace_dir: dir,
+        project_id,
+        title: "Missing required governance metadata",
+        scope_kind: "project_memory",
+        sensitivity: "internal",
+        rationale: "",
+        under_heading: "## Decisions",
+        insert_lines: ["- Should fail due to missing rationale/evidence."],
+        visibility: "managers",
+        produced_by: agent_id,
+        run_id,
+        context_pack_id,
+        evidence: []
+      } as any)
+    ).rejects.toThrow(/rationale|evidence/i);
   });
 });
