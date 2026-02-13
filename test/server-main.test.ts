@@ -9,6 +9,7 @@ import { createTeam } from "../src/org/teams.js";
 import { createAgent } from "../src/org/agents.js";
 import { createRun } from "../src/runtime/run.js";
 import { executeCommandRun } from "../src/runtime/execute_command.js";
+import { proposeMemoryDelta } from "../src/memory/propose_memory_delta.js";
 import { runJsonRpcServer } from "../src/server/main.js";
 
 async function mkTmpDir(): Promise<string> {
@@ -208,6 +209,77 @@ describe("JSON-RPC server", () => {
         m.params?.event?.run_id === runId
     );
     expect(typeof notif.params.event.type).toBe("string");
+
+    input.end();
+    await serverPromise;
+  });
+
+  test("returns structured SECRET_DETECTED error data for memory approval notes", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Payments" });
+    const manager = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "cmd",
+      team_id
+    });
+    const director = await createAgent({
+      workspace_dir: dir,
+      name: "Director",
+      role: "director",
+      provider: "cmd",
+      team_id
+    });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id: manager.agent_id,
+      provider: "cmd"
+    });
+    const proposed = await proposeMemoryDelta({
+      workspace_dir: dir,
+      project_id,
+      title: "Structured error data check",
+      scope_kind: "project_memory",
+      sensitivity: "internal",
+      rationale: "Server should return structured secret-detection metadata.",
+      under_heading: "## Decisions",
+      insert_lines: ["- safe line"],
+      visibility: "managers",
+      produced_by: manager.agent_id,
+      run_id: run.run_id,
+      context_pack_id: run.context_pack_id,
+      evidence: ["art_evidence_server_main"]
+    });
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const stderr = new PassThrough();
+    const parser = setupOutputParser(output);
+    const serverPromise = runJsonRpcServer({
+      stdin: input,
+      stdout: output,
+      stderr
+    });
+
+    sendReq(input, 30, "memory.approve_delta", {
+      workspace_dir: dir,
+      project_id,
+      artifact_id: proposed.artifact_id,
+      actor_id: director.agent_id,
+      actor_role: "director",
+      notes: "contains sk-1234567890abcdefghijklmnopqrs"
+    });
+    const resp = await parser.waitFor((m) => m.id === 30);
+    expect(resp.error).toBeDefined();
+    expect(resp.error.message).toMatch(/sensitive|secret|redact/i);
+    expect(resp.error.data?.reason_code).toBe("SECRET_DETECTED");
+    expect(typeof resp.error.data?.total_matches).toBe("number");
+    expect(resp.error.data?.total_matches).toBeGreaterThan(0);
+    expect(typeof resp.error.data?.matches_by_kind).toBe("object");
 
     input.end();
     await serverPromise;

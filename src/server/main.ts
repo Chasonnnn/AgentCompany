@@ -17,6 +17,7 @@ import { listIndexedEvents, syncSqliteIndex } from "../index/sqlite.js";
 import { createIndexSyncWorker } from "../index/sync_worker.js";
 import { registerIndexSyncWorker } from "../runtime/index_sync_service.js";
 import { HeartbeatService, setDefaultHeartbeatService } from "../runtime/heartbeat_service.js";
+import { isSensitiveTextError, sensitiveTextErrorData } from "../core/redaction.js";
 
 type StdioLike = {
   stdin: NodeJS.ReadableStream;
@@ -188,6 +189,10 @@ async function handleRequest(
     }
     if (e instanceof RpcUserError) {
       writeJsonLine(io.stdout, error(req.id, -32601, e.message));
+      return;
+    }
+    if (isSensitiveTextError(e)) {
+      writeJsonLine(io.stdout, error(req.id, -32000, e.message, sensitiveTextErrorData(e)));
       return;
     }
     const err = e instanceof Error ? e : new Error(String(e));

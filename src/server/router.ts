@@ -50,6 +50,7 @@ import { buildAgentProfileSnapshot } from "../runtime/agent_profile.js";
 import { buildResourcesSnapshot } from "../runtime/resources_snapshot.js";
 import { proposeMemoryDelta } from "../memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
+import { listMemoryDeltas } from "../memory/list_memory_deltas.js";
 import { approveMilestone } from "../milestones/approve_milestone.js";
 import { recordAgentMistake } from "../eval/mistake_loop.js";
 import { runSelfImproveCycle } from "../eval/self_improve_cycle.js";
@@ -276,14 +277,17 @@ const MemoryProposeParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
   title: z.string().min(1),
-  target_file: z.string().min(1).optional(),
+  scope_kind: z.enum(["project_memory", "agent_guidance"]),
+  scope_ref: z.string().min(1).optional(),
+  sensitivity: z.enum(["public", "internal", "restricted"]),
+  rationale: z.string().min(1),
   under_heading: z.string().min(1),
   insert_lines: z.array(z.string().min(1)).min(1),
   visibility: z.enum(["private_agent", "team", "managers", "org"]),
   produced_by: z.string().min(1),
   run_id: z.string().min(1),
   context_pack_id: z.string().min(1),
-  evidence: z.array(z.string().min(1)).optional()
+  evidence: z.array(z.string().min(1)).min(1)
 });
 
 const ArtifactReadParams = z.object({
@@ -304,6 +308,16 @@ const MemoryApproveParams = z.object({
   actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
   actor_team_id: z.string().min(1).optional(),
   notes: z.string().optional()
+});
+
+const MemoryListParams = z.object({
+  workspace_dir: z.string().min(1),
+  actor_id: z.string().min(1),
+  actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  actor_team_id: z.string().min(1).optional(),
+  project_id: z.string().min(1).optional(),
+  status: z.enum(["pending", "approved", "denied", "all"]).optional(),
+  limit: z.number().int().positive().max(5000).optional()
 });
 
 const MilestoneApproveParams = z.object({
@@ -371,6 +385,24 @@ const IndexRebuildParams = z.object({
 });
 
 const EmptyParams = z.object({}).passthrough();
+
+const SYSTEM_CAPABILITIES = {
+  protocol_version: "v1",
+  available_methods: [
+    "system.capabilities",
+    "memory.propose_delta",
+    "memory.approve_delta",
+    "memory.list_deltas"
+  ],
+  memory: {
+    write_schema_version: 2,
+    parse_supported: [1, 2],
+    list_requires_actor: true,
+    list_required_params: ["actor_id", "actor_role"],
+    scope_kind: ["project_memory", "agent_guidance"],
+    sensitivity: ["public", "internal", "restricted"]
+  }
+} as const;
 
 const IndexListRunsParams = z.object({
   workspace_dir: z.string().min(1),
@@ -715,6 +747,10 @@ async function listHelpRequests(workspaceDir: string, limit: number): Promise<un
 
 export async function routeRpcMethod(method: string, params: unknown): Promise<unknown> {
   switch (method) {
+    case "system.capabilities": {
+      EmptyParams.parse((params ?? {}) as unknown);
+      return SYSTEM_CAPABILITIES;
+    }
     case "workspace.open": {
       const p = WorkspaceOpenParams.parse(params);
       const res = await validateWorkspace(p.workspace_dir);
@@ -1377,7 +1413,10 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         workspace_dir: p.workspace_dir,
         project_id: p.project_id,
         title: p.title,
-        target_file: p.target_file,
+        scope_kind: p.scope_kind,
+        scope_ref: p.scope_ref,
+        sensitivity: p.sensitivity,
+        rationale: p.rationale,
         under_heading: p.under_heading,
         insert_lines: p.insert_lines,
         visibility: p.visibility,
@@ -1409,6 +1448,18 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         actor_role: p.actor_role,
         actor_team_id: p.actor_team_id,
         notes: p.notes
+      });
+    }
+    case "memory.list_deltas": {
+      const p = MemoryListParams.parse(params);
+      return listMemoryDeltas({
+        workspace_dir: p.workspace_dir,
+        actor_id: p.actor_id,
+        actor_role: p.actor_role,
+        actor_team_id: p.actor_team_id,
+        project_id: p.project_id,
+        status: p.status,
+        limit: p.limit
       });
     }
     case "milestone.approve": {

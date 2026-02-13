@@ -26,6 +26,7 @@ import { createTaskFile, addTaskMilestone } from "./work/tasks.js";
 import { MilestoneKind, MilestoneStatus, validateTaskMarkdown } from "./work/task_markdown.js";
 import { proposeMemoryDelta } from "./memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "./memory/approve_memory_delta.js";
+import { listMemoryDeltas } from "./memory/list_memory_deltas.js";
 import { listRuns } from "./runtime/run_queries.js";
 import { replayRun } from "./runtime/replay.js";
 import { createMilestoneReportFile } from "./milestones/report_files.js";
@@ -390,6 +391,16 @@ program
   });
 
 program
+  .command("system:capabilities")
+  .description("Show server method availability and memory schema capabilities")
+  .action(async () => {
+    await runAction(async () => {
+      const result = await routeRpcMethod("system.capabilities", {});
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    });
+  });
+
+program
   .command("demo:init")
   .description("Initialize a demo workspace with 2 teams, managers/workers, and a sample project")
   .argument("<dir>", "Workspace root directory")
@@ -541,7 +552,7 @@ program
 program
   .command("agent:record-mistake")
   .description(
-    "Record a repeated worker mistake (manager action) and auto-promote a rule to worker AGENTS.md after threshold"
+    "Record a repeated worker mistake with auditable evidence (no direct AGENTS.md edits)"
   )
   .argument("<workspace_dir>", "Workspace root directory")
   .option("--worker <agent_id>", "Worker agent id", "")
@@ -555,7 +566,12 @@ program
   .option("--task <task_id>", "Task id (optional)", undefined)
   .option("--milestone <milestone_id>", "Milestone id (optional)", undefined)
   .option("--evidence <artifact_ids...>", "Evidence artifact ids (optional)", [])
-  .option("--threshold <n>", "Promotion threshold (default 3)", (v) => parseInt(v, 10), 3)
+  .option(
+    "--threshold <n>",
+    "Escalation threshold metadata for repeated observations (default 3)",
+    (v) => parseInt(v, 10),
+    3
+  )
   .action(
     async (
       workspaceDir: string,
@@ -607,7 +623,7 @@ program
 program
   .command("agent:self-improve-cycle")
   .description(
-    "Run a governed self-improvement cycle: record repeated mistake, evaluate, and propose AGENTS.md memory delta for manager approval"
+    "Run a governed self-improvement cycle: record repeated mistake, evaluate, and propose AGENTS.md memory delta for director+ approval"
   )
   .argument("<workspace_dir>", "Workspace root directory")
   .option("--project <project_id>", "Project id", "")
@@ -618,12 +634,6 @@ program
   .option("--summary <summary>", "Human-readable mistake summary", "")
   .option("--rule <prevention_rule>", "Rule to propose into worker AGENTS.md", "")
   .option("--proposal-threshold <n>", "Repeats required before creating proposal", (v) => parseInt(v, 10), 3)
-  .option(
-    "--record-threshold <n>",
-    "Auto-promotion threshold for record step (default keeps direct edits disabled in this flow)",
-    (v) => parseInt(v, 10),
-    Number.MAX_SAFE_INTEGER
-  )
   .option("--task <task_id>", "Task id (optional)", undefined)
   .option("--milestone <milestone_id>", "Milestone id (optional)", undefined)
   .option("--evidence <artifact_ids...>", "Evidence artifact ids (optional)", [])
@@ -646,7 +656,6 @@ program
         summary: string;
         rule: string;
         proposalThreshold: number;
-        recordThreshold: number;
         task?: string;
         milestone?: string;
         evidence: string[];
@@ -669,9 +678,6 @@ program
         if (!Number.isInteger(opts.proposalThreshold) || opts.proposalThreshold < 1) {
           throw new UserError("--proposal-threshold must be an integer >= 1");
         }
-        if (!Number.isInteger(opts.recordThreshold) || opts.recordThreshold < 1) {
-          throw new UserError("--record-threshold must be an integer >= 1");
-        }
 
         const res = await runSelfImproveCycle({
           workspace_dir: workspaceDir,
@@ -683,7 +689,6 @@ program
           summary: opts.summary,
           prevention_rule: opts.rule,
           proposal_threshold: opts.proposalThreshold,
-          promote_threshold: opts.recordThreshold,
           task_id: opts.task,
           milestone_id: opts.milestone,
           evidence_artifact_ids: opts.evidence.length ? opts.evidence : undefined,
@@ -698,9 +703,7 @@ program
 
 program
   .command("agent:refresh-context")
-  .description(
-    "Refresh the managed context index section in an agent AGENTS.md from assigned task contracts"
-  )
+  .description("Refresh org/agents/<id>/context_index.md from assigned task contracts")
   .argument("<workspace_dir>", "Workspace root directory")
   .option("--agent <agent_id>", "Agent id", "")
   .option("--project <project_id>", "Optional project id filter", undefined)
@@ -1705,7 +1708,10 @@ program
   .argument("<workspace_dir>", "Workspace root directory")
   .option("--project <project_id>", "Project id", "")
   .option("--title <title>", "Delta title", "")
-  .option("--target <relpath>", "Target memory file (workspace-relative)", undefined)
+  .option("--scope-kind <scope_kind>", "Scope kind (project_memory|agent_guidance)", "project_memory")
+  .option("--scope-ref <scope_ref>", "Scope reference (required for agent_guidance)", undefined)
+  .option("--sensitivity <sensitivity>", "Sensitivity (public|internal|restricted)", "internal")
+  .option("--rationale <text>", "Required rationale for this memory change", "")
   .option("--under <heading>", "Heading to insert under (exact match)", "")
   .option("--insert <line...>", "Lines to insert under the heading", [])
   .option("--visibility <visibility>", "Visibility (private_agent|team|managers|org)", "managers")
@@ -1719,7 +1725,10 @@ program
       opts: {
         project: string;
         title: string;
-        target?: string;
+        scopeKind: string;
+        scopeRef?: string;
+        sensitivity: string;
+        rationale: string;
         under: string;
         insert: string[];
         visibility: string;
@@ -1732,26 +1741,42 @@ program
       await runAction(async () => {
         if (!opts.project.trim()) throw new UserError("--project is required");
         if (!opts.title.trim()) throw new UserError("--title is required");
+        if (!opts.rationale.trim()) throw new UserError("--rationale is required");
         if (!opts.under.trim()) throw new UserError("--under is required");
         if (!opts.insert.length) throw new UserError("--insert is required (one or more lines)");
+        if (!opts.evidence.length) throw new UserError("--evidence is required (one or more ids)");
         const visParsed = Visibility.safeParse(opts.visibility);
         if (!visParsed.success) {
           throw new UserError(
             `Invalid visibility "${opts.visibility}". Valid: ${Visibility.options.join(", ")}`
           );
         }
+        const scopeKind = opts.scopeKind.trim();
+        if (!["project_memory", "agent_guidance"].includes(scopeKind)) {
+          throw new UserError("Invalid --scope-kind. Valid: project_memory, agent_guidance");
+        }
+        const sensitivity = opts.sensitivity.trim();
+        if (!["public", "internal", "restricted"].includes(sensitivity)) {
+          throw new UserError("Invalid --sensitivity. Valid: public, internal, restricted");
+        }
+        if (scopeKind === "agent_guidance" && !String(opts.scopeRef ?? "").trim()) {
+          throw new UserError("--scope-ref is required when --scope-kind=agent_guidance");
+        }
         const res = await proposeMemoryDelta({
           workspace_dir: workspaceDir,
           project_id: opts.project,
           title: opts.title,
-          target_file: opts.target,
+          scope_kind: scopeKind as "project_memory" | "agent_guidance",
+          scope_ref: opts.scopeRef,
+          sensitivity: sensitivity as "public" | "internal" | "restricted",
+          rationale: opts.rationale,
           under_heading: opts.under,
           insert_lines: opts.insert,
           visibility: visParsed.data,
           produced_by: opts.by,
           run_id: opts.run,
           context_pack_id: opts.ctx,
-          evidence: opts.evidence.length ? opts.evidence : undefined
+          evidence: opts.evidence
         });
         process.stdout.write(JSON.stringify(res) + "\n");
       });
@@ -1786,6 +1811,56 @@ program
           actor_id: opts.actor,
           actor_role: role,
           notes: opts.notes
+        });
+        process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
+
+program
+  .command("memory:list")
+  .description("List governed memory deltas with pending/decided status")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--actor <actor_id>", "Actor id (human or agent id)", "")
+  .option("--role <role>", "Actor role (human|ceo|director|manager|worker)", "")
+  .option("--actor-team <team_id>", "Actor team id", undefined)
+  .option("--project <project_id>", "Project id", undefined)
+  .option("--status <status>", "Status filter (pending|approved|denied|all)", "all")
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 200)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        actor: string;
+        role: string;
+        actorTeam?: string;
+        project?: string;
+        status: string;
+        limit: number;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.actor.trim()) throw new UserError("--actor is required");
+        const role = opts.role.trim();
+        if (!role) throw new UserError("--role is required");
+        if (!["human", "ceo", "director", "manager", "worker"].includes(role)) {
+          throw new UserError("Invalid --role. Valid: human, ceo, director, manager, worker");
+        }
+        const status = opts.status.trim();
+        if (!["pending", "approved", "denied", "all"].includes(status)) {
+          throw new UserError("Invalid --status. Valid: pending, approved, denied, all");
+        }
+        if (!Number.isInteger(opts.limit) || opts.limit <= 0) {
+          throw new UserError("--limit must be an integer > 0");
+        }
+        const res = await listMemoryDeltas({
+          workspace_dir: workspaceDir,
+          actor_id: opts.actor,
+          actor_role: role as "human" | "ceo" | "director" | "manager" | "worker",
+          actor_team_id: opts.actorTeam,
+          project_id: opts.project,
+          status: status as "pending" | "approved" | "denied" | "all",
+          limit: opts.limit
         });
         process.stdout.write(JSON.stringify(res) + "\n");
       });

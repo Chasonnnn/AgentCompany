@@ -37,11 +37,18 @@ const MANAGER_ROLES: ReadonlySet<ActorRole> = new Set([
   "manager"
 ]);
 
+const DIRECTOR_ROLES: ReadonlySet<ActorRole> = new Set(["human", "ceo", "director"]);
+
 export function evaluatePolicy(
   actor: PolicyActor,
   action: PolicyAction,
   resource: Resource
 ): PolicyDecision {
+  // v0 governance: memory approvals require director+ roles only.
+  if (action === "approve" && resource.kind === "memory_delta" && !DIRECTOR_ROLES.has(actor.role)) {
+    return { allowed: false, rule_id: "approve.memory.role", reason: "role_not_allowed" };
+  }
+
   // v0: approvals are restricted to managers+ by default.
   if (action === "approve" && !MANAGER_ROLES.has(actor.role)) {
     return { allowed: false, rule_id: "approve.role", reason: "role_not_allowed" };
