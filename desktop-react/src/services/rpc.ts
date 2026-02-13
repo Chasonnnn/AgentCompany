@@ -20,18 +20,25 @@ function resolveInvoke():
   return null;
 }
 
-export async function rpcCall<T>(method: string, params: Record<string, JsonValue>): Promise<T> {
+export async function invokeDesktopCommand<T>(
+  command: string,
+  args?: Record<string, unknown>
+): Promise<T> {
   const invoke = resolveInvoke();
   if (!invoke) {
     throw new Error("Tauri runtime is unavailable. Launch AgentCompany desktop app.");
   }
-  const result = await invoke("rpc_call", {
+  const result = await invoke(command, args);
+  return result as T;
+}
+
+export async function rpcCall<T>(method: string, params: Record<string, JsonValue>): Promise<T> {
+  return invokeDesktopCommand<T>("rpc_call", {
     args: {
       method,
       params
     }
   });
-  return result as T;
 }
 
 export function slugify(input: string): string {
@@ -50,3 +57,9 @@ export function parseRepoIds(raw: string): string[] {
     .filter(Boolean);
 }
 
+export async function pickRepoFolder(): Promise<string | null> {
+  const picked = await invokeDesktopCommand<string | null>("pick_repo_folder");
+  if (typeof picked !== "string") return null;
+  const trimmed = picked.trim();
+  return trimmed ? trimmed : null;
+}

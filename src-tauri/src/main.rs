@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -183,7 +183,7 @@ fn discover_cli_candidates() -> Vec<PathBuf> {
   out
 }
 
-fn resolve_cli_path(explicit: Option<String>) -> Result<PathBuf, String> {
+fn resolve_cli_path(explicit: Option<String>, bundled_candidates: &[PathBuf]) -> Result<PathBuf, String> {
   if let Some(raw) = explicit {
     let p = PathBuf::from(raw.trim());
     if p.is_file() {
@@ -209,10 +209,25 @@ fn resolve_cli_path(explicit: Option<String>) -> Result<PathBuf, String> {
     }
   }
 
+  for candidate in bundled_candidates {
+    if candidate.is_file() {
+      return Ok(candidate.clone());
+    }
+  }
+
   Err(
-    "Unable to find dist/cli.js. Run `pnpm build` and/or set AGENTCOMPANY_CLI_PATH to the absolute dist/cli.js path."
+    "Unable to find dist/cli.js or bundled bin/cli.js. Run `pnpm build` and/or set AGENTCOMPANY_CLI_PATH to the absolute dist/cli.js path."
       .to_string(),
   )
+}
+
+fn bundled_cli_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
+  let mut out: Vec<PathBuf> = Vec::new();
+  if let Ok(resource_dir) = app.path().resource_dir() {
+    out.push(resource_dir.join("bin").join("cli.js"));
+    out.push(resource_dir.join("dist").join("cli.js"));
+  }
+  out
 }
 
 fn terminate_child(child: &mut Child) -> Result<(), String> {
@@ -272,6 +287,7 @@ fn stop_manager_web(state: State<'_, UiProcessState>) -> Result<ManagerWebStatus
 
 #[tauri::command]
 fn start_manager_web(
+  app: tauri::AppHandle,
   state: State<'_, UiProcessState>,
   args: StartManagerWebArgs
 ) -> Result<ManagerWebStatus, String> {
@@ -318,7 +334,7 @@ fn start_manager_web(
   }
 
   let node_bin = resolve_node_bin(args.node_bin);
-  let cli_path = resolve_cli_path(args.cli_path)?;
+  let cli_path = resolve_cli_path(args.cli_path, &bundled_cli_candidates(&app))?;
 
   let mut guard = state
     .process
@@ -401,14 +417,14 @@ fn start_manager_web(
 }
 
 #[tauri::command]
-fn bootstrap_workspace(args: BootstrapWorkspaceArgs) -> Result<serde_json::Value, String> {
+fn bootstrap_workspace(app: tauri::AppHandle, args: BootstrapWorkspaceArgs) -> Result<serde_json::Value, String> {
   let workspace_dir = args.workspace_dir.trim();
   if workspace_dir.is_empty() {
     return Err("workspace_dir is required".to_string());
   }
 
   let node_bin = resolve_node_bin(args.node_bin);
-  let cli_path = resolve_cli_path(args.cli_path)?;
+  let cli_path = resolve_cli_path(args.cli_path, &bundled_cli_candidates(&app))?;
 
   let mut command = Command::new(node_bin);
   command.arg(cli_path).arg("workspace:bootstrap").arg(workspace_dir);
@@ -464,7 +480,7 @@ fn bootstrap_workspace(args: BootstrapWorkspaceArgs) -> Result<serde_json::Value
 }
 
 #[tauri::command]
-fn onboard_agent(args: OnboardAgentArgs) -> Result<serde_json::Value, String> {
+fn onboard_agent(app: tauri::AppHandle, args: OnboardAgentArgs) -> Result<serde_json::Value, String> {
   let workspace_dir = args.workspace_dir.trim();
   if workspace_dir.is_empty() {
     return Err("workspace_dir is required".to_string());
@@ -483,7 +499,7 @@ fn onboard_agent(args: OnboardAgentArgs) -> Result<serde_json::Value, String> {
   }
 
   let node_bin = resolve_node_bin(args.node_bin);
-  let cli_path = resolve_cli_path(args.cli_path)?;
+  let cli_path = resolve_cli_path(args.cli_path, &bundled_cli_candidates(&app))?;
   let mut created_team = false;
   let mut team_id = args
     .team_id
@@ -559,13 +575,13 @@ fn onboard_agent(args: OnboardAgentArgs) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-fn rpc_call(args: RpcCallArgs) -> Result<serde_json::Value, String> {
+fn rpc_call(app: tauri::AppHandle, args: RpcCallArgs) -> Result<serde_json::Value, String> {
   let method = args.method.trim();
   if method.is_empty() {
     return Err("method is required".to_string());
   }
   let node_bin = resolve_node_bin(args.node_bin);
-  let cli_path = resolve_cli_path(args.cli_path)?;
+  let cli_path = resolve_cli_path(args.cli_path, &bundled_cli_candidates(&app))?;
   let params_json =
     serde_json::to_string(&args.params.unwrap_or_else(|| serde_json::json!({})))
       .map_err(|e| format!("Failed to encode RPC params JSON: {}", e))?;
@@ -591,6 +607,55 @@ fn rpc_call(args: RpcCallArgs) -> Result<serde_json::Value, String> {
   parse_cli_json_output(&output.stdout)
 }
 
+#[tauri::command]
+fn pick_repo_folder() -> Result<Option<String>, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let script = r#"try
+set selected_folder to (choose folder with prompt "Select a repository folder")
+POSIX path of selected_folder
+on error number -128
+return ""
+end try"#;
+    let output = Command::new("osascript")
+      .arg("-e")
+      .arg(script)
+      .stdin(Stdio::null())
+      .stdout(Stdio::piped())
+      .stderr(Stdio::piped())
+      .output()
+      .map_err(|e| format!("Failed to open folder picker: {}", e))?;
+
+    if !output.status.success() {
+      let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+      let detail = if stderr.is_empty() {
+        "Unknown AppleScript error".to_string()
+      } else {
+        stderr
+      };
+      return Err(format!("Folder picker failed: {}", detail));
+    }
+
+    let raw = String::from_utf8(output.stdout)
+      .map_err(|e| format!("Folder picker returned non-UTF8 output: {}", e))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+      return Ok(None);
+    }
+
+    let mut out = trimmed.to_string();
+    while out.len() > 1 && out.ends_with('/') {
+      out.pop();
+    }
+    return Ok(Some(out));
+  }
+
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("Repo folder picker is only supported on macOS in this build.".to_string())
+  }
+}
+
 fn main() {
   tauri::Builder::default()
     .manage(UiProcessState::default())
@@ -600,7 +665,8 @@ fn main() {
       manager_web_status,
       bootstrap_workspace,
       onboard_agent,
-      rpc_call
+      rpc_call,
+      pick_repo_folder
     ])
     .run(tauri::generate_context!())
     .expect("error while running AgentCompany Desktop");
@@ -645,7 +711,8 @@ mod tests {
     let cli = dist.join("cli.js");
     fs::write(&cli, "#!/usr/bin/env node\nconsole.log('ok');\n").expect("write temp cli.js");
 
-    let resolved = resolve_cli_path(Some(cli.display().to_string())).expect("resolve explicit path");
+    let resolved =
+      resolve_cli_path(Some(cli.display().to_string()), &[]).expect("resolve explicit path");
     assert_eq!(resolved, cli);
 
     let _ = fs::remove_dir_all(base);

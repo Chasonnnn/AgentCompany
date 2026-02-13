@@ -57,6 +57,29 @@ Initialize a Company Workspace folder:
 node dist/cli.js workspace:init /path/to/workspace --name "Acme"
 ```
 
+Gemini CLI API mode (new workspaces):
+- New workspaces now default Gemini execution policy to `api` channel.
+- The runtime fails fast for Gemini jobs unless one of these auth paths is configured:
+  - `GEMINI_API_KEY`
+  - `GOOGLE_API_KEY`
+  - Vertex AI env: `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`
+
+Example:
+```bash
+export GEMINI_API_KEY=your_key_here
+```
+
+Existing workspaces are unchanged:
+- If your workspace was initialized before this change, Gemini may still be configured as `subscription_cli`.
+- To switch an existing workspace to API channel, edit `.local/machine.yaml`:
+```yaml
+provider_execution_policy:
+  gemini:
+    channel: api
+    require_subscription_proof: false
+    allowed_bin_patterns: ["gemini"]
+```
+
 Bootstrap a workspace with preset departments and default org roles (easy-start path):
 ```bash
 node dist/cli.js workspace:bootstrap /path/to/workspace \
@@ -199,6 +222,20 @@ Manager web thin APIs (for desktop/web sidebars):
 - `GET /api/comments?target_agent_id=<id>&target_artifact_id=<id>&target_run_id=<id>&limit=<n>`
 - `POST /api/comments`
 - `GET /api/ui/snapshot` (full snapshot; used periodically for colleague directory refresh)
+
+Heartbeat orchestration (workspace-level coordinator + targeted workers):
+- Durable config/state live at:
+  - `.local/heartbeat/config.yaml`
+  - `.local/heartbeat/state.yaml`
+- JSON-RPC methods:
+  - `heartbeat.status`
+  - `heartbeat.tick`
+  - `heartbeat.config.get`
+  - `heartbeat.config.set`
+- Default behavior:
+  - heartbeat loop auto-starts when a workspace is observed via server traffic/events
+  - deterministic triage scores workers and wakes only top-K above threshold
+  - worker heartbeat reports are policy-gated with idempotency, budgets, quiet hours, and inbox approvals for risky actions
 
 Desktop shell behavior:
 - The Tauri app starts/stops the existing `ui:web` process.

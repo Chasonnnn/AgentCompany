@@ -18,6 +18,7 @@ import { QuickSwitchModal } from "@/features/workspace/QuickSwitchModal";
 import { ResourcesView } from "@/features/workspace/ResourcesView";
 import { SettingsModal } from "@/features/workspace/SettingsModal";
 import { useAgentProfile, useDesktopActions, useDesktopSnapshot } from "@/services/queries";
+import { pickRepoFolder } from "@/services/rpc";
 import type {
   AgentSummary,
   BootstrapActivitiesViewData,
@@ -420,17 +421,17 @@ export function AppShell() {
         open={showCreateProject}
         pending={actions.createProject.isPending}
         onClose={() => setShowCreateProject(false)}
-        onSubmit={async ({ name, repoIds }) => {
+        onSubmit={async ({ repoPath }) => {
           const created = await actions.createProject.mutateAsync({
             workspaceDir,
             actorId,
-            name,
-            repoIds
+            repoPath
           });
           setScope({ kind: "project", projectId: created.project_id });
           setView({ kind: "home" });
           setShowCreateProject(false);
         }}
+        onPickRepoFolder={pickRepoFolder}
       />
 
       <CreateChannelModal

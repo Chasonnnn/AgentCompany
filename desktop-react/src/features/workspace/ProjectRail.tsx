@@ -115,7 +115,7 @@ export function ProjectRail({
         <Button iconOnly onClick={onQuickSwitch} title="Quick Switch (Cmd/Ctrl+K)">
           <Search size={15} />
         </Button>
-        <Button iconOnly onClick={onCreateProject} title="Add Project">
+        <Button iconOnly onClick={onCreateProject} title="Add Repo Folder">
           <Plus size={16} />
         </Button>
         <Button iconOnly onClick={onOpenSettings} title="Settings">

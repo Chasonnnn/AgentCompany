@@ -191,6 +191,24 @@ export type ResourcesSnapshot = {
 export type UiSnapshot = {
   workspace_dir: string;
   generated_at: string;
+  heartbeat?: {
+    enabled: boolean;
+    running: boolean;
+    tick_interval_minutes: number;
+    top_k_workers: number;
+    min_wake_score: number;
+    last_tick_at?: string;
+    next_tick_at?: string;
+    stats: {
+      ticks_total: number;
+      workers_woken_total: number;
+      reports_ok_total: number;
+      reports_actions_total: number;
+      actions_executed_total: number;
+      approvals_queued_total: number;
+      deduped_actions_total: number;
+    };
+  };
   monitor: {
     rows: Array<{
       project_id: string;
