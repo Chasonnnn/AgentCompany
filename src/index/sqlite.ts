@@ -2142,6 +2142,16 @@ export async function listIndexedPendingApprovals(args: {
               AND r.subject_kind = 'milestone'
           )
         )
+        OR
+        (
+          a.type = 'heartbeat_action_proposal'
+          AND NOT EXISTS (
+            SELECT 1 FROM reviews r
+            WHERE r.project_id = a.project_id
+              AND r.subject_artifact_id = a.artifact_id
+              AND r.subject_kind = 'heartbeat_action'
+          )
+        )
       )
       ${where.length ? `AND ${where.join(" AND ")}` : ""}
       ORDER BY a.created_at DESC, a.artifact_id DESC

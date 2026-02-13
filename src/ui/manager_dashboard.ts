@@ -45,6 +45,19 @@ export type ManagerDashboardJson = {
     last_error_at_ms: number | null;
     last_error_message: string | null;
   };
+  heartbeat: {
+    enabled: boolean;
+    running: boolean;
+    tick_interval_minutes: number;
+    top_k_workers: number;
+    min_wake_score: number;
+    last_tick_at?: string;
+    next_tick_at?: string;
+    ticks_total: number;
+    workers_woken_total: number;
+    actions_executed_total: number;
+    approvals_queued_total: number;
+  };
   counts: {
     pending: number;
     recent_decisions: number;
@@ -145,6 +158,15 @@ export function formatManagerDashboardSnapshot(snapshot: UiSnapshot): string {
   lines.push(
     `index_sync_worker: enabled=${snapshot.index_sync_worker.enabled} running=${snapshot.index_sync_worker.running} pending_workspaces=${snapshot.index_sync_worker.pending_workspaces}`
   );
+  lines.push(
+    `heartbeat: enabled=${snapshot.heartbeat.enabled} running=${snapshot.heartbeat.running} interval=${snapshot.heartbeat.tick_interval_minutes}m top_k=${snapshot.heartbeat.top_k_workers} min_score=${snapshot.heartbeat.min_wake_score}`
+  );
+  lines.push(
+    `heartbeat ticks: total=${snapshot.heartbeat.stats.ticks_total} woken=${snapshot.heartbeat.stats.workers_woken_total} actions=${snapshot.heartbeat.stats.actions_executed_total} approvals=${snapshot.heartbeat.stats.approvals_queued_total}`
+  );
+  lines.push(
+    `heartbeat schedule: last=${snapshot.heartbeat.last_tick_at ?? "-"} next=${snapshot.heartbeat.next_tick_at ?? "-"}`
+  );
   lines.push("");
 
   lines.push(`Pending approvals (${pending.length}):`);
@@ -210,6 +232,19 @@ export function compactManagerDashboardSnapshot(snapshot: UiSnapshot): ManagerDa
       total_workspace_sync_errors: snapshot.index_sync_worker.total_workspace_sync_errors,
       last_error_at_ms: snapshot.index_sync_worker.last_error_at_ms,
       last_error_message: snapshot.index_sync_worker.last_error_message
+    },
+    heartbeat: {
+      enabled: snapshot.heartbeat.enabled,
+      running: snapshot.heartbeat.running,
+      tick_interval_minutes: snapshot.heartbeat.tick_interval_minutes,
+      top_k_workers: snapshot.heartbeat.top_k_workers,
+      min_wake_score: snapshot.heartbeat.min_wake_score,
+      last_tick_at: snapshot.heartbeat.last_tick_at,
+      next_tick_at: snapshot.heartbeat.next_tick_at,
+      ticks_total: snapshot.heartbeat.stats.ticks_total,
+      workers_woken_total: snapshot.heartbeat.stats.workers_woken_total,
+      actions_executed_total: snapshot.heartbeat.stats.actions_executed_total,
+      approvals_queued_total: snapshot.heartbeat.stats.approvals_queued_total
     },
     counts: {
       pending: snapshot.review_inbox.pending.length,

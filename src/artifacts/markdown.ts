@@ -13,7 +13,8 @@ export const ArtifactType = z.enum([
   "milestone_report",
   "manager_digest",
   "memory_delta",
-  "failure_report"
+  "failure_report",
+  "heartbeat_action_proposal"
 ]);
 
 export type ArtifactType = z.infer<typeof ArtifactType>;
@@ -40,7 +41,8 @@ const REQUIRED_HEADINGS: Record<ArtifactType, readonly string[]> = {
   milestone_report: ["## Summary", "## Evidence", "## Next"],
   manager_digest: ["## Summary", "## Decisions", "## Risks"],
   memory_delta: ["## Summary", "## Changes", "## Evidence"],
-  failure_report: ["## Summary", "## Cause", "## Next Steps"]
+  failure_report: ["## Summary", "## Cause", "## Next Steps"],
+  heartbeat_action_proposal: ["## Summary", "## Proposed Action", "## Policy"]
 };
 
 export type ArtifactValidationIssue = { code: string; message: string };
@@ -114,4 +116,3 @@ export function newArtifactMarkdown(args: NewArtifactArgs): string {
 
   return `---\n${fmText}\n---\n\n# ${args.title}\n\n${headings}\n`;
 }
-

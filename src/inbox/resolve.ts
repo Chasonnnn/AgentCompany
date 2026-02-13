@@ -7,6 +7,8 @@ import { approveMemoryDelta } from "../memory/approve_memory_delta.js";
 import { parseMemoryDeltaMarkdown } from "../memory/memory_delta.js";
 import { approveMilestone } from "../milestones/approve_milestone.js";
 import { parseMilestoneReportMarkdown } from "../milestones/milestone_report.js";
+import { parseHeartbeatActionProposalMarkdown } from "../heartbeat/action_proposal.js";
+import { executeApprovedHeartbeatProposal } from "../runtime/heartbeat_actions.js";
 import { enforcePolicy, type EnforcePolicyArgs } from "../policy/enforce.js";
 import { writeYamlFile } from "../store/yaml.js";
 import { appendEventJsonl, newEnvelope } from "../runtime/events.js";
@@ -29,7 +31,7 @@ export type ResolveInboxItemArgs = {
 export type ResolveInboxItemResult = {
   review_id: string;
   decision: ResolveDecision;
-  subject_kind: "memory_delta" | "milestone";
+  subject_kind: "memory_delta" | "milestone" | "heartbeat_action";
   project_id: string;
   artifact_id: string;
   task_id?: string;
@@ -127,7 +129,7 @@ async function writeDeniedReview(args: {
   actor_role: ActorRole;
   decision: "denied";
   subject: {
-    kind: "memory_delta" | "milestone";
+    kind: "memory_delta" | "milestone" | "heartbeat_action";
     artifact_id: string;
     project_id: string;
     target_file?: string;
@@ -146,6 +148,35 @@ async function writeDeniedReview(args: {
     actor_id: args.actor_id,
     actor_role: args.actor_role,
     decision: args.decision,
+    subject: args.subject,
+    policy: args.policy,
+    notes: args.notes ?? ""
+  });
+  return { review_id: reviewId, created_at: createdAt };
+}
+
+async function writeApprovedReview(args: {
+  workspace_dir: string;
+  actor_id: string;
+  actor_role: ActorRole;
+  subject: {
+    kind: "heartbeat_action";
+    artifact_id: string;
+    project_id: string;
+  };
+  policy: Awaited<ReturnType<typeof enforcePolicy>>;
+  notes?: string;
+}): Promise<{ review_id: string; created_at: string }> {
+  const reviewId = newId("rev");
+  const createdAt = nowIso();
+  await writeYamlFile(path.join(args.workspace_dir, "inbox/reviews", `${reviewId}.yaml`), {
+    schema_version: 1,
+    type: "review",
+    id: reviewId,
+    created_at: createdAt,
+    actor_id: args.actor_id,
+    actor_role: args.actor_role,
+    decision: "approved",
     subject: args.subject,
     policy: args.policy,
     notes: args.notes ?? ""
@@ -329,6 +360,153 @@ async function denyMilestone(
   };
 }
 
+async function denyHeartbeatActionProposal(
+  args: ResolveInboxItemArgs,
+  markdown: string
+): Promise<ResolveInboxItemResult> {
+  const parsed = parseHeartbeatActionProposalMarkdown(markdown);
+  if (!parsed.ok) throw new Error(parsed.error);
+  const fm = parsed.frontmatter;
+  if (fm.project_id !== args.project_id) {
+    throw new Error(
+      `Heartbeat action proposal project_id mismatch (expected ${args.project_id}, got ${fm.project_id})`
+    );
+  }
+
+  const policy = await enforcePolicy(
+    denyPolicyArgs({
+      workspace_dir: args.workspace_dir,
+      project_id: args.project_id,
+      run_id: fm.run_id,
+      actor_id: args.actor_id,
+      actor_role: args.actor_role,
+      actor_team_id: args.actor_team_id,
+      resource_id: fm.id,
+      visibility: fm.visibility,
+      kind: "heartbeat_action_proposal"
+    })
+  );
+
+  const review = await writeDeniedReview({
+    workspace_dir: args.workspace_dir,
+    actor_id: args.actor_id,
+    actor_role: args.actor_role,
+    decision: "denied",
+    subject: {
+      kind: "heartbeat_action",
+      artifact_id: fm.id,
+      project_id: fm.project_id
+    },
+    policy,
+    notes: args.notes
+  });
+
+  await appendDecisionEvent({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    run_id: fm.run_id,
+    actor_id: args.actor_id,
+    created_at: review.created_at,
+    review_id: review.review_id,
+    payload: {
+      decision: "denied",
+      subject_kind: "heartbeat_action",
+      artifact_id: fm.id,
+      proposed_action_kind: fm.proposed_action.kind,
+      policy
+    }
+  });
+
+  return {
+    review_id: review.review_id,
+    decision: "denied",
+    subject_kind: "heartbeat_action",
+    project_id: args.project_id,
+    artifact_id: fm.id
+  };
+}
+
+async function approveHeartbeatActionProposal(
+  args: ResolveInboxItemArgs,
+  markdown: string
+): Promise<ResolveInboxItemResult> {
+  const parsed = parseHeartbeatActionProposalMarkdown(markdown);
+  if (!parsed.ok) throw new Error(parsed.error);
+  const fm = parsed.frontmatter;
+  if (fm.project_id !== args.project_id) {
+    throw new Error(
+      `Heartbeat action proposal project_id mismatch (expected ${args.project_id}, got ${fm.project_id})`
+    );
+  }
+
+  const policy = await enforcePolicy(
+    denyPolicyArgs({
+      workspace_dir: args.workspace_dir,
+      project_id: args.project_id,
+      run_id: fm.run_id,
+      actor_id: args.actor_id,
+      actor_role: args.actor_role,
+      actor_team_id: args.actor_team_id,
+      resource_id: fm.id,
+      visibility: fm.visibility,
+      kind: "heartbeat_action_proposal"
+    })
+  );
+
+  const executed = await executeApprovedHeartbeatProposal({
+    workspace_dir: args.workspace_dir,
+    proposal: fm,
+    actor_id: args.actor_id,
+    actor_role: args.actor_role,
+    actor_team_id: args.actor_team_id
+  });
+
+  const review = await writeApprovedReview({
+    workspace_dir: args.workspace_dir,
+    actor_id: args.actor_id,
+    actor_role: args.actor_role,
+    subject: {
+      kind: "heartbeat_action",
+      artifact_id: fm.id,
+      project_id: fm.project_id
+    },
+    policy,
+    notes: args.notes
+  });
+
+  await appendDecisionEvent({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    run_id: fm.run_id,
+    actor_id: args.actor_id,
+    created_at: review.created_at,
+    review_id: review.review_id,
+    payload: {
+      decision: "approved",
+      subject_kind: "heartbeat_action",
+      artifact_id: fm.id,
+      proposed_action_kind: fm.proposed_action.kind,
+      execution: {
+        executed_actions: executed.summary.executed_actions,
+        queued_for_approval: executed.summary.queued_for_approval,
+        deduped_actions: executed.summary.deduped_actions,
+        skipped_actions: executed.summary.skipped_actions,
+        proposal_artifact_ids: executed.summary.proposal_artifact_ids,
+        launched_job_ids: executed.summary.launched_job_ids
+      },
+      policy
+    }
+  });
+
+  return {
+    review_id: review.review_id,
+    decision: "approved",
+    subject_kind: "heartbeat_action",
+    project_id: args.project_id,
+    artifact_id: fm.id
+  };
+}
+
 export async function resolveInboxItem(args: ResolveInboxItemArgs): Promise<ResolveInboxItemResult> {
   const artifact = await readArtifactMarkdown(args);
 
@@ -382,6 +560,13 @@ export async function resolveInboxItem(args: ResolveInboxItemArgs): Promise<Reso
       };
     }
     return denyMilestone(args, artifact.markdown);
+  }
+
+  if (artifact.type === "heartbeat_action_proposal") {
+    if (args.decision === "approved") {
+      return approveHeartbeatActionProposal(args, artifact.markdown);
+    }
+    return denyHeartbeatActionProposal(args, artifact.markdown);
   }
 
   throw new Error(
