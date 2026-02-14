@@ -37,6 +37,12 @@ describe("workspace preset bootstrap", () => {
     }
 
     const agents = await listAgents({ workspace_dir: dir });
+    const executiveManager = agents.find((a) => a.agent_id === res.agents.executive_manager_agent_id);
+    expect(executiveManager?.provider).toBe("gemini");
+    const executionOrgAgents = agents.filter((a) => a.role === "director" || a.role === "worker");
+    for (const agent of executionOrgAgents) {
+      expect(agent.provider === "codex" || agent.provider.startsWith("claude")).toBe(true);
+    }
     const globalDirectors = agents.filter((a) => a.role === "director" && !a.team_id);
     expect(globalDirectors).toHaveLength(0);
     const heartbeatConfig = await readHeartbeatConfig(dir);

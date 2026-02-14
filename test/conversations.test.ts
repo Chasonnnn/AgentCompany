@@ -6,6 +6,7 @@ import { initWorkspace } from "../src/workspace/init.js";
 import { createTeam } from "../src/org/teams.js";
 import { createAgent } from "../src/org/agents.js";
 import { routeRpcMethod } from "../src/server/router.js";
+import { bootstrapWorkspacePresets } from "../src/workspace/bootstrap_presets.js";
 
 async function mkTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-"));
@@ -129,4 +130,35 @@ describe("conversations + workspace slack rpc methods", () => {
     expect(profile.agent.agent_id).toBe(worker.agent_id);
     expect(profile.agent.model_hint).toBe("gpt-5-codex");
   }, 15000);
+
+  test("enterprise team channels include team members plus executive manager only", async () => {
+    const dir = await mkTmpDir();
+    const boot = await bootstrapWorkspacePresets({
+      workspace_dir: dir,
+      org_mode: "enterprise",
+      departments: ["frontend"],
+      workers_per_dept: 1
+    });
+    const exec = boot.agents.executive_manager_agent_id;
+    if (!exec) throw new Error("missing executive manager");
+    const frontend = boot.departments[0];
+    if (!frontend) throw new Error("missing frontend department");
+
+    const conversations = (await routeRpcMethod("conversation.list", {
+      workspace_dir: dir,
+      scope: "project",
+      project_id: boot.project_id
+    })) as any[];
+    const frontendChannel = conversations.find((c) => c.slug === "frontend");
+    expect(frontendChannel).toBeTruthy();
+    const ids = new Set(frontendChannel.participants.agent_ids);
+    expect(ids.has(frontend.director_agent_id)).toBe(true);
+    expect(ids.has(frontend.worker_agent_ids[0])).toBe(true);
+    expect(ids.has(exec)).toBe(true);
+    expect(ids.has("agent_global_manager")).toBe(false);
+    expect(ids.has(`agent_secretary_${boot.project_id}`)).toBe(false);
+    if (boot.agents.ceo_agent_id) {
+      expect(ids.has(boot.agents.ceo_agent_id)).toBe(false);
+    }
+  });
 });

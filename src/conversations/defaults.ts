@@ -294,7 +294,7 @@ export async function ensureProjectDefaults(args: {
       visibility: "team",
       created_by: chosenExecutiveManager,
       participants: {
-        agent_ids: [...new Set([...topParticipants, ...teamMemberIds, chosenExecutiveManager])],
+        agent_ids: [...new Set([...teamMemberIds, chosenExecutiveManager].filter(Boolean))],
         team_ids: [team.id]
       }
     });

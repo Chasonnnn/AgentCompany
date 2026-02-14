@@ -233,7 +233,7 @@ export async function bootstrapWorkspacePresets(
       name: executiveManagerName,
       display_title: "Executive Manager",
       role: "manager",
-      provider: "codex"
+      provider: "gemini"
     });
     executiveManagerAgentId = executiveManager.agent_id;
   } else if (includeDirector) {
