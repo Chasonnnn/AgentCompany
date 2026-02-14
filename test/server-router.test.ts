@@ -31,6 +31,13 @@ describe("server router", () => {
     expect(boot.org_mode).toBe("enterprise");
     expect(typeof boot.agents.executive_manager_agent_id).toBe("string");
     expect(boot.departments.length).toBe(2);
+    const bootstrapAgents = (await routeRpcMethod("workspace.agents.list", {
+      workspace_dir: dir
+    })) as any[];
+    const executiveManager = bootstrapAgents.find(
+      (a) => a.agent_id === boot.agents.executive_manager_agent_id
+    );
+    expect(executiveManager?.provider).toBe("gemini");
 
     const intake = (await routeRpcMethod("pipeline.client_intake.run", {
       workspace_dir: dir,
@@ -42,6 +49,8 @@ describe("server router", () => {
     expect(intake.project_id.startsWith("proj_")).toBe(true);
     expect(typeof intake.artifacts.executive_plan_artifact_id).toBe("string");
     expect(typeof intake.meeting_conversation_id).toBe("string");
+    expect(intake.generation.mode).toBe("deterministic");
+    expect(typeof intake.generation.audit_log_relpath).toBe("string");
 
     const cfg = (await routeRpcMethod("heartbeat.config.set", {
       workspace_dir: dir,
@@ -52,6 +61,17 @@ describe("server router", () => {
     expect(cfg.hierarchy_mode).toBe("enterprise_v1");
     expect(cfg.executive_manager_agent_id).toBe(boot.agents.executive_manager_agent_id);
     expect(cfg.allow_director_to_spawn_workers).toBe(true);
+
+    const approved = (await routeRpcMethod("ui.resolve", {
+      workspace_dir: dir,
+      project_id: intake.project_id,
+      artifact_id: intake.artifacts.approval_artifact_id,
+      decision: "approved",
+      actor_id: boot.agents.ceo_agent_id,
+      actor_role: "ceo"
+    })) as any;
+    expect(approved.resolved.decision).toBe("approved");
+    expect(approved.resolved.subject_kind).toBe("heartbeat_action");
 
     const department = boot.departments[0];
     const assigned = (await routeRpcMethod("pipeline.department.assign_tasks", {
