@@ -58,5 +58,50 @@ export async function createAgent(args: CreateAgentArgs): Promise<{ agent_id: st
     ].join("\n")
   );
 
+  await writeFileAtomic(
+    path.join(agentDir, "role.md"),
+    [
+      `# Role - ${args.name}`,
+      "",
+      `- role: ${args.role}`,
+      `- display_title: ${args.display_title ?? args.role}`,
+      `- provider: ${args.provider}`,
+      args.team_id ? `- team_id: ${args.team_id}` : "- team_id: unassigned",
+      "",
+      "## Duties",
+      "- Execute assigned work scoped to this role and team.",
+      "- Keep artifacts, tasks, and evidence auditable.",
+      "",
+      "## Boundaries",
+      "- Do not bypass policy, approval, or memory governance paths.",
+      "- Do not assign or launch cross-team work without explicit approval.",
+      "",
+      "## Escalation",
+      "- Raise blockers, policy denials, budget risks, and secret-risk findings to manager/CEO."
+    ].join("\n")
+  );
+
+  await writeFileAtomic(
+    path.join(agentDir, "skills_index.md"),
+    [
+      `# Skills Index - ${args.name}`,
+      "",
+      "## Approved Skills",
+      "- Core workspace navigation and task execution",
+      "- Artifact authoring and validation",
+      "- Policy-aware collaboration and escalation",
+      "",
+      "## Approved References",
+      "- company/company.yaml",
+      "- company/policy.yaml",
+      "- org/teams/<team>/memory.md",
+      "- work/projects/<project>/memory.md",
+      "",
+      "## Forbidden",
+      "- Direct memory mutation outside propose/approve workflows",
+      "- Cross-team access without policy-checked approval"
+    ].join("\n")
+  );
+
   return { agent_id: agentId };
 }

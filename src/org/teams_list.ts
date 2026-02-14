@@ -7,6 +7,9 @@ import { readYamlFile } from "../store/yaml.js";
 export type ListedTeam = {
   team_id: string;
   name: string;
+  department_key?: string;
+  department_label?: string;
+  charter?: string;
   created_at: string;
 };
 
@@ -26,6 +29,9 @@ export async function listTeams(args: { workspace_dir: string }): Promise<Listed
       out.push({
         team_id: doc.id,
         name: doc.name,
+        department_key: doc.department_key,
+        department_label: doc.department_label,
+        charter: doc.charter,
         created_at: doc.created_at
       });
     } catch {

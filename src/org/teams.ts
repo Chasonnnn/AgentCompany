@@ -7,6 +7,9 @@ import { writeYamlFile } from "../store/yaml.js";
 export type CreateTeamArgs = {
   workspace_dir: string;
   name: string;
+  department_key?: string;
+  department_label?: string;
+  charter?: string;
   id?: string;
 };
 
@@ -20,6 +23,9 @@ export async function createTeam(args: CreateTeamArgs): Promise<{ team_id: strin
     type: "team",
     id: teamId,
     name: args.name,
+    department_key: args.department_key?.trim() || undefined,
+    department_label: args.department_label?.trim() || undefined,
+    charter: args.charter?.trim() || undefined,
     created_at: nowIso()
   });
 
@@ -30,4 +36,3 @@ export async function createTeam(args: CreateTeamArgs): Promise<{ team_id: strin
 
   return { team_id: teamId };
 }
-

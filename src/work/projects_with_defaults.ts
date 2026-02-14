@@ -6,6 +6,7 @@ export async function createProjectWithDefaults(args: {
   workspace_dir: string;
   name: string;
   ceo_actor_id?: string;
+  executive_manager_agent_id?: string;
   repo_ids?: string[];
 }): Promise<{
   project_id: string;
@@ -21,7 +22,8 @@ export async function createProjectWithDefaults(args: {
   const defaults = await ensureProjectDefaults({
     workspace_dir: args.workspace_dir,
     project_id: created.project_id,
-    ceo_actor_id: args.ceo_actor_id
+    ceo_actor_id: args.ceo_actor_id,
+    executive_manager_agent_id: args.executive_manager_agent_id
   });
 
   for (const repoIdRaw of args.repo_ids ?? []) {
