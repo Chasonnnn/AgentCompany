@@ -18,6 +18,55 @@ async function mkTmpDir(): Promise<string> {
 }
 
 describe("server router", () => {
+  test("enterprise bootstrap and pipeline RPC methods are routed", async () => {
+    const dir = await mkTmpDir();
+    const boot = (await routeRpcMethod("workspace.bootstrap.enterprise", {
+      workspace_dir: dir,
+      company_name: "Acme",
+      project_name: "Ops",
+      departments: ["frontend", "backend"],
+      workers_per_dept: 1
+    })) as any;
+
+    expect(boot.org_mode).toBe("enterprise");
+    expect(typeof boot.agents.executive_manager_agent_id).toBe("string");
+    expect(boot.departments.length).toBe(2);
+
+    const intake = (await routeRpcMethod("pipeline.client_intake.run", {
+      workspace_dir: dir,
+      project_name: "CRM",
+      ceo_actor_id: boot.agents.ceo_agent_id,
+      executive_manager_agent_id: boot.agents.executive_manager_agent_id,
+      intake_text: "Build a CRM for a B2B sales team."
+    })) as any;
+    expect(intake.project_id.startsWith("proj_")).toBe(true);
+    expect(typeof intake.artifacts.executive_plan_artifact_id).toBe("string");
+    expect(typeof intake.meeting_conversation_id).toBe("string");
+
+    const cfg = (await routeRpcMethod("heartbeat.config.set", {
+      workspace_dir: dir,
+      hierarchy_mode: "enterprise_v1",
+      executive_manager_agent_id: boot.agents.executive_manager_agent_id,
+      allow_director_to_spawn_workers: true
+    })) as any;
+    expect(cfg.hierarchy_mode).toBe("enterprise_v1");
+    expect(cfg.executive_manager_agent_id).toBe(boot.agents.executive_manager_agent_id);
+    expect(cfg.allow_director_to_spawn_workers).toBe(true);
+
+    const department = boot.departments[0];
+    const assigned = (await routeRpcMethod("pipeline.department.assign_tasks", {
+      workspace_dir: dir,
+      project_id: intake.project_id,
+      department_key: department.department_key,
+      director_agent_id: department.director_agent_id,
+      worker_agent_ids: department.worker_agent_ids,
+      approved_executive_plan_artifact_id: intake.artifacts.executive_plan_artifact_id
+    })) as any;
+    expect(Array.isArray(assigned.created_task_ids)).toBe(true);
+    expect(Array.isArray(assigned.denied_assignments)).toBe(true);
+    expect(typeof assigned.assignment_map).toBe("object");
+  }, 20_000);
+
   test("workspace.open and run.create/run.list route to core modules", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
@@ -190,7 +239,9 @@ process.stdin.on("end", () => {
         deliverables: ["result"],
         permission_level: "patch",
         context_refs: [{ kind: "note", value: "router test" }],
-        worker_agent_id: agent_id
+        worker_agent_id: agent_id,
+        manager_actor_id: "manager_router",
+        manager_role: "manager"
       }
     })) as any;
     expect(submitted.job_id).toBe("job_router_case");
@@ -231,7 +282,7 @@ process.stdin.on("end", () => {
       job_id: "job_router_case"
     })) as any;
     expect(cancelOut.cancellation_requested).toBe(true);
-  });
+  }, 15_000);
 
   test("worktree.cleanup returns retention summary", async () => {
     const dir = await mkTmpDir();
@@ -601,9 +652,144 @@ process.stdin.on("end", () => {
     expect(typeof capabilities).toBe("object");
     expect(Array.isArray(capabilities.available_methods)).toBe(true);
     expect(capabilities.available_methods).toContain("system.capabilities");
+    expect(capabilities.available_methods).toContain("workspace.repo_root.set");
+    expect(capabilities.available_methods).toContain("usage.analytics");
+    expect(capabilities.available_methods).toContain("events.subscribe");
     expect(capabilities.available_methods).toContain("memory.list_deltas");
+    expect(capabilities.available_methods).toContain("context.plan_for_job");
+    expect(capabilities.available_methods).toContain("memory.extract_candidates");
     expect(capabilities.memory.write_schema_version).toBe(2);
     expect(capabilities.memory.parse_supported).toEqual([1, 2]);
+    expect(capabilities.context.layers_version).toBe(1);
+    expect(capabilities.context.job_submit_auto_default).toBe(true);
+    expect(capabilities.memory.session_candidate_mode).toBe("review_only");
+    expect(capabilities.retrieval.storage).toBe("sqlite_metadata");
+  });
+
+  test("context.plan_for_job returns layered context refs and trace counters", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Platform" });
+    const manager = await createAgent({
+      workspace_dir: dir,
+      name: "Manager",
+      role: "manager",
+      provider: "codex",
+      team_id
+    });
+    const worker = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+
+    const plan = (await routeRpcMethod("context.plan_for_job", {
+      workspace_dir: dir,
+      project_id,
+      worker_agent_id: worker.agent_id,
+      manager_actor_id: manager.agent_id,
+      manager_role: "manager",
+      manager_team_id: team_id,
+      goal: "Plan a context bundle",
+      constraints: ["No policy bypass"],
+      deliverables: ["Context refs"],
+      max_refs: 20
+    })) as any;
+    expect(Array.isArray(plan.context_refs)).toBe(true);
+    expect(Array.isArray(plan.layers_used)).toBe(true);
+    expect(Array.isArray(plan.retrieval_trace)).toBe(true);
+    expect(typeof plan.filtered_by_policy_count).toBe("number");
+    expect(typeof plan.filtered_by_sensitivity_count).toBe("number");
+    expect(typeof plan.filtered_by_secret_count).toBe("number");
+  });
+
+  test("memory.extract_candidates returns review-only candidate report", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const codexBin = path.join(dir, "codex");
+    await fs.writeFile(
+      codexBin,
+      `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "login" && args[1] === "status") {
+  process.stdout.write("Auth mode: ChatGPT\\n");
+  process.exit(0);
+}
+let input = "";
+process.stdin.on("data", (d) => (input += d.toString("utf8")));
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify({
+    status: "succeeded",
+    summary: "router candidate extraction",
+    files_changed: [{ path: "src/server/router.ts", change_type: "modified" }],
+    commands_run: [],
+    artifacts: [],
+    next_actions: [],
+    errors: []
+  }) + "\\n");
+});
+`,
+      { encoding: "utf8", mode: 0o755 }
+    );
+    await setProviderBin(dir, "codex", codexBin);
+
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Core" });
+    const worker = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+
+    const submitted = (await routeRpcMethod("job.submit", {
+      job: {
+        schema_version: 1,
+        type: "job",
+        job_id: "job_router_extract_candidates",
+        worker_kind: "codex",
+        workspace_dir: dir,
+        project_id,
+        goal: "Generate candidates",
+        constraints: ["JSON only"],
+        deliverables: ["result"],
+        permission_level: "patch",
+        context_refs: [{ kind: "note", value: "router extraction" }],
+        worker_agent_id: worker.agent_id,
+        manager_actor_id: "manager_router",
+        manager_role: "manager"
+      }
+    })) as any;
+    const end = Date.now() + 15000;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const poll = (await routeRpcMethod("job.poll", {
+        workspace_dir: dir,
+        project_id,
+        job_id: submitted.job_id
+      })) as any;
+      if (poll.status !== "queued" && poll.status !== "running") break;
+      if (Date.now() > end) throw new Error("Timed out waiting for routed extraction job");
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+
+    const extracted = (await routeRpcMethod("memory.extract_candidates", {
+      workspace_dir: dir,
+      project_id,
+      job_id: submitted.job_id,
+      actor_id: "manager_router",
+      actor_role: "manager",
+      limit: 20
+    })) as any;
+    expect(typeof extracted.report_relpath).toBe("string");
+    expect(typeof extracted.count).toBe("number");
+    expect(typeof extracted.blocked_secret_count).toBe("number");
+    expect(Array.isArray(extracted.candidates)).toBe(true);
+    await fs.access(path.join(dir, extracted.report_relpath));
   });
 
   test("comment.add and comment.list route to persisted comment store", async () => {

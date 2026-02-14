@@ -156,12 +156,15 @@ async function upsertDefaultConversation(
 export async function ensureWorkspaceDefaults(args: {
   workspace_dir: string;
   ceo_actor_id?: string;
+  executive_manager_agent_id?: string;
 }): Promise<{
   global_manager_agent_id: string;
   workspace_home_conversation_id: string;
+  workspace_executive_office_conversation_id: string;
 }> {
   const ceoActor = (args.ceo_actor_id ?? "human_ceo").trim() || "human_ceo";
   const gm = await ensureGlobalManagerAgent(args.workspace_dir);
+  const executiveManagerId = args.executive_manager_agent_id?.trim() || gm;
   await upsertDefaultConversation(args.workspace_dir, "workspace", {
     id: "conv_workspace_home",
     name: "Workspace Home",
@@ -173,9 +176,21 @@ export async function ensureWorkspaceDefaults(args: {
       agent_ids: [ceoActor, gm]
     }
   });
+  await upsertDefaultConversation(args.workspace_dir, "workspace", {
+    id: "conv_workspace_executive_office",
+    name: "Executive Office",
+    slug: "executive-office",
+    kind: "channel",
+    visibility: "org",
+    created_by: executiveManagerId,
+    participants: {
+      agent_ids: [...new Set([ceoActor, executiveManagerId])]
+    }
+  });
   return {
     global_manager_agent_id: gm,
-    workspace_home_conversation_id: "conv_workspace_home"
+    workspace_home_conversation_id: "conv_workspace_home",
+    workspace_executive_office_conversation_id: "conv_workspace_executive_office"
   };
 }
 
@@ -183,15 +198,18 @@ export async function ensureProjectDefaults(args: {
   workspace_dir: string;
   project_id: string;
   ceo_actor_id?: string;
+  executive_manager_agent_id?: string;
 }): Promise<{
   global_manager_agent_id: string;
   project_secretary_agent_id: string;
   conversation_ids: string[];
 }> {
   const ceoActor = (args.ceo_actor_id ?? "human_ceo").trim() || "human_ceo";
+  const executiveManagerId = args.executive_manager_agent_id?.trim() || undefined;
   const ws = await ensureWorkspaceDefaults({
     workspace_dir: args.workspace_dir,
-    ceo_actor_id: ceoActor
+    ceo_actor_id: ceoActor,
+    executive_manager_agent_id: executiveManagerId
   });
   const secretaryId = await ensureProjectSecretaryAgent(args.workspace_dir, args.project_id);
   const agents = await listAgents(args.workspace_dir);
@@ -199,8 +217,14 @@ export async function ensureProjectDefaults(args: {
   const ceoAgentIds = agents.filter((a) => a.role === "ceo").map((a) => a.id);
   const directorAgentIds = agents.filter((a) => a.role === "director").map((a) => a.id);
   const managerAgentIds = agents.filter((a) => a.role === "manager").map((a) => a.id);
+  const chosenExecutiveManager =
+    executiveManagerId ??
+    agents.find((a) => a.role === "manager" && a.display_title === "Executive Manager")?.id ??
+    ws.global_manager_agent_id;
 
-  const topParticipants = [...new Set([ceoActor, ...ceoAgentIds, ws.global_manager_agent_id, secretaryId])];
+  const topParticipants = [
+    ...new Set([ceoActor, ...ceoAgentIds, ws.global_manager_agent_id, chosenExecutiveManager, secretaryId])
+  ];
   const conversationIds: string[] = [];
 
   const home = await upsertDefaultConversation(args.workspace_dir, "project", {
@@ -216,6 +240,34 @@ export async function ensureProjectDefaults(args: {
     }
   });
   conversationIds.push(home.id);
+
+  const executiveOffice = await upsertDefaultConversation(args.workspace_dir, "project", {
+    id: `conv_${args.project_id}_executive_office`,
+    project_id: args.project_id,
+    name: "Executive Office",
+    slug: "executive-office",
+    kind: "channel",
+    visibility: "org",
+    created_by: chosenExecutiveManager,
+    participants: {
+      agent_ids: [...new Set([ceoActor, chosenExecutiveManager, secretaryId])]
+    }
+  });
+  conversationIds.push(executiveOffice.id);
+
+  const planningCouncil = await upsertDefaultConversation(args.workspace_dir, "project", {
+    id: `conv_${args.project_id}_planning_council`,
+    project_id: args.project_id,
+    name: "Planning Council",
+    slug: "planning-council",
+    kind: "channel",
+    visibility: "org",
+    created_by: chosenExecutiveManager,
+    participants: {
+      agent_ids: [...new Set([ceoActor, chosenExecutiveManager, ...directorAgentIds])]
+    }
+  });
+  conversationIds.push(planningCouncil.id);
 
   const exec = await upsertDefaultConversation(args.workspace_dir, "project", {
     id: `conv_${args.project_id}_executive_meeting`,
@@ -240,9 +292,9 @@ export async function ensureProjectDefaults(args: {
       slug: slugify(team.name),
       kind: "channel",
       visibility: "team",
-      created_by: ws.global_manager_agent_id,
+      created_by: chosenExecutiveManager,
       participants: {
-        agent_ids: [...new Set([...topParticipants, ...teamMemberIds])],
+        agent_ids: [...new Set([...topParticipants, ...teamMemberIds, chosenExecutiveManager])],
         team_ids: [team.id]
       }
     });

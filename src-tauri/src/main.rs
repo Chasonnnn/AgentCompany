@@ -157,6 +157,35 @@ fn resolve_node_bin(explicit: Option<String>) -> String {
   "node".to_string()
 }
 
+fn has_workspace_marker(dir: &Path) -> bool {
+  dir.join("company").join("company.yaml").is_file()
+}
+
+fn resolve_default_workspace_path(
+  explicit_workspace_dir: Option<&str>,
+  cwd: Option<&Path>,
+  home_dir: Option<&Path>
+) -> Option<PathBuf> {
+  if let Some(raw) = explicit_workspace_dir {
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() {
+      return Some(PathBuf::from(trimmed));
+    }
+  }
+
+  if let Some(dir) = cwd {
+    if has_workspace_marker(dir) {
+      return Some(dir.to_path_buf());
+    }
+    let work_dir = dir.join("work");
+    if has_workspace_marker(&work_dir) {
+      return Some(work_dir);
+    }
+  }
+
+  home_dir.map(|home| home.join("AgentCompany").join("work"))
+}
+
 fn push_candidates(base: &Path, out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
   for ancestor in base.ancestors().take(8) {
     let candidate = ancestor.join("dist").join("cli.js");
@@ -608,6 +637,19 @@ fn rpc_call(app: tauri::AppHandle, args: RpcCallArgs) -> Result<serde_json::Valu
 }
 
 #[tauri::command]
+fn default_workspace_dir() -> Result<String, String> {
+  let explicit = std::env::var("AGENTCOMPANY_WORKSPACE_DIR").ok();
+  let cwd = std::env::current_dir().ok();
+  let home = std::env::var("HOME").ok().map(PathBuf::from);
+  let resolved = resolve_default_workspace_path(explicit.as_deref(), cwd.as_deref(), home.as_deref())
+    .ok_or_else(|| {
+      "Unable to resolve default workspace directory. Set AGENTCOMPANY_WORKSPACE_DIR or configure workspace in Settings."
+        .to_string()
+    })?;
+  Ok(resolved.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn pick_repo_folder() -> Result<Option<String>, String> {
   #[cfg(target_os = "macos")]
   {
@@ -666,6 +708,7 @@ fn main() {
       bootstrap_workspace,
       onboard_agent,
       rpc_call,
+      default_workspace_dir,
       pick_repo_folder
     ])
     .run(tauri::generate_context!())
@@ -716,5 +759,49 @@ mod tests {
     assert_eq!(resolved, cli);
 
     let _ = fs::remove_dir_all(base);
+  }
+
+  #[test]
+  fn resolve_default_workspace_path_prefers_explicit_env_override() {
+    let cwd = std::env::temp_dir();
+    let home = cwd.join("home");
+    let resolved = resolve_default_workspace_path(
+      Some("/tmp/custom-workspace"),
+      Some(cwd.as_path()),
+      Some(home.as_path())
+    )
+    .expect("expected explicit workspace path");
+    assert_eq!(resolved, PathBuf::from("/tmp/custom-workspace"));
+  }
+
+  #[test]
+  fn resolve_default_workspace_path_prefers_workspace_near_cwd() {
+    let base = std::env::temp_dir().join(format!(
+      "agentcompany-default-workspace-test-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos()
+    ));
+    let workspace = base.join("work");
+    let marker = workspace.join("company").join("company.yaml");
+    fs::create_dir_all(marker.parent().expect("company dir")).expect("create workspace marker dir");
+    fs::write(&marker, "schema_version: 1\n").expect("write marker");
+
+    let resolved = resolve_default_workspace_path(None, Some(base.as_path()), None)
+      .expect("expected cwd/work workspace path");
+    assert_eq!(resolved, workspace);
+
+    let _ = fs::remove_dir_all(base);
+  }
+
+  #[test]
+  fn resolve_default_workspace_path_falls_back_to_home_agentcompany_work() {
+    let cwd = std::env::temp_dir();
+    let home = cwd.join("agentcompany-home");
+    let resolved =
+      resolve_default_workspace_path(None, Some(cwd.as_path()), Some(home.as_path()))
+        .expect("expected home fallback");
+    assert_eq!(resolved, home.join("AgentCompany").join("work"));
   }
 }

@@ -102,10 +102,12 @@ async function listProjectConversations(workspaceDir: string, projectId: string)
 function sortConversations(rows: ConversationYamlType[]): ConversationYamlType[] {
   const rank = (c: ConversationYamlType): number => {
     if (c.slug === "home") return 0;
-    if (c.slug === "executive-meeting") return 1;
-    if (c.kind === "channel") return 2;
-    if (c.kind === "dm") return 3;
-    return 4;
+    if (c.slug === "executive-office") return 1;
+    if (c.slug === "planning-council") return 2;
+    if (c.slug === "executive-meeting") return 3;
+    if (c.kind === "channel") return 4;
+    if (c.kind === "dm") return 5;
+    return 6;
   };
   return [...rows].sort((a, b) => {
     const r = rank(a) - rank(b);

@@ -7,6 +7,7 @@ import { doctorWorkspace } from "../workspace/doctor.js";
 import { createWorkspaceDiagnosticsBundle } from "../workspace/diagnostics.js";
 import { migrateWorkspace } from "../workspace/migrate.js";
 import { exportWorkspace, importWorkspace } from "../workspace/export_import.js";
+import { bootstrapWorkspacePresets } from "../workspace/bootstrap_presets.js";
 import { createRun } from "../runtime/run.js";
 import {
   launchSession,
@@ -55,14 +56,18 @@ import { approveMilestone } from "../milestones/approve_milestone.js";
 import { recordAgentMistake } from "../eval/mistake_loop.js";
 import { runSelfImproveCycle } from "../eval/self_improve_cycle.js";
 import { refreshAgentContextIndex } from "../eval/agent_context_index.js";
+import { planContextForJob } from "../runtime/context_plan.js";
 import { setRepoRoot } from "../machine/machine.js";
 import { readYamlFile } from "../store/yaml.js";
 import { ReviewYaml } from "../schemas/review.js";
 import { JobSpec } from "../schemas/job.js";
+import { extractSessionCommitCandidates } from "../memory/extract_session_commit_candidates.js";
 import { validateHelpRequestMarkdown } from "../help/help_request.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
 import { readArtifactWithPolicy } from "../artifacts/read_artifact.js";
 import { listAdapterStatuses } from "../adapters/registry.js";
+import { runClientIntakePipeline } from "../pipeline/client_intake_run.js";
+import { assignDepartmentTasks } from "../pipeline/department_assignment.js";
 import {
   rebuildSqliteIndex,
   syncSqliteIndex,
@@ -89,6 +94,21 @@ const WorkspaceInitParams = z.object({
   company_name: z.string().min(1).default("AgentCompany"),
   force: z.boolean().default(false)
 });
+
+const WorkspaceBootstrapEnterpriseParams = z
+  .object({
+    workspace_dir: z.string().min(1),
+    company_name: z.string().min(1).default("AgentCompany"),
+    project_name: z.string().min(1).default("AgentCompany Ops"),
+    org_mode: z.enum(["enterprise", "standard"]).default("enterprise"),
+    executive_manager_name: z.string().min(1).default("Executive Manager"),
+    departments: z.array(z.string().min(1)).optional(),
+    workers_per_dept: z.number().int().min(1).max(20).default(1),
+    include_ceo: z.boolean().default(true),
+    include_director: z.boolean().default(true),
+    force: z.boolean().default(false)
+  })
+  .strict();
 
 const WorkspaceDoctorParams = z.object({
   workspace_dir: z.string().min(1),
@@ -227,6 +247,9 @@ const HeartbeatConfigSetParams = z
     due_horizon_minutes: z.number().int().min(1).max(24 * 60).optional(),
     max_auto_actions_per_tick: z.number().int().min(1).max(10_000).optional(),
     max_auto_actions_per_hour: z.number().int().min(1).max(100_000).optional(),
+    hierarchy_mode: z.enum(["standard", "enterprise_v1"]).optional(),
+    executive_manager_agent_id: z.string().min(1).optional(),
+    allow_director_to_spawn_workers: z.boolean().optional(),
     quiet_hours_start_hour: z.number().int().min(0).max(23).optional(),
     quiet_hours_end_hour: z.number().int().min(0).max(23).optional(),
     stuck_job_running_minutes: z.number().int().min(1).max(24 * 60).optional(),
@@ -320,6 +343,44 @@ const MemoryListParams = z.object({
   limit: z.number().int().positive().max(5000).optional()
 });
 
+const ContextPlanParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  worker_agent_id: z.string().min(1).optional(),
+  manager_actor_id: z.string().min(1),
+  manager_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  manager_team_id: z.string().min(1).optional(),
+  job_kind: z.enum(["execution", "heartbeat"]).optional(),
+  goal: z.string().min(1),
+  constraints: z.array(z.string().min(1)).optional(),
+  deliverables: z.array(z.string().min(1)).optional(),
+  context_refs: z
+    .array(
+      z
+        .object({
+          kind: z.enum(["file", "command", "artifact", "note"]),
+          value: z.string().min(1),
+          description: z.string().min(1).optional()
+        })
+        .strict()
+    )
+    .optional(),
+  max_refs: z.number().int().positive().max(200).optional()
+});
+
+const MemoryExtractCandidatesParams = z.object({
+  workspace_dir: z.string().min(1),
+  project_id: z.string().min(1),
+  job_id: z.string().min(1).optional(),
+  run_id: z.string().min(1).optional(),
+  actor_id: z.string().min(1),
+  actor_role: z.enum(["human", "ceo", "director", "manager", "worker"]),
+  actor_team_id: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(100).optional()
+}).refine((p) => Boolean(p.job_id || p.run_id), {
+  message: "job_id or run_id is required"
+});
+
 const MilestoneApproveParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
@@ -389,18 +450,108 @@ const EmptyParams = z.object({}).passthrough();
 const SYSTEM_CAPABILITIES = {
   protocol_version: "v1",
   available_methods: [
-    "system.capabilities",
-    "memory.propose_delta",
+    "adapter.status",
+    "agent.profile.snapshot",
+    "agent.record_mistake",
+    "agent.refresh_context",
+    "agent.self_improve_cycle",
+    "artifact.read",
+    "comment.add",
+    "comment.list",
+    "context.plan_for_job",
+    "conversation.create_channel",
+    "conversation.create_dm",
+    "conversation.list",
+    "conversation.members.sync",
+    "conversation.message.send",
+    "conversation.messages.list",
+    "desktop.bootstrap.snapshot",
+    "events.ack",
+    "events.subscribe",
+    "events.unsubscribe",
+    "heartbeat.config.get",
+    "heartbeat.config.set",
+    "heartbeat.status",
+    "heartbeat.tick",
+    "inbox.list_help_requests",
+    "inbox.list_reviews",
+    "inbox.resolve",
+    "inbox.snapshot",
+    "index.list_event_parse_errors",
+    "index.list_events",
+    "index.list_help_requests",
+    "index.list_reviews",
+    "index.list_runs",
+    "index.rebuild",
+    "index.stats",
+    "index.sync",
+    "index.sync_worker_flush",
+    "index.sync_worker_status",
+    "job.cancel",
+    "job.collect",
+    "job.list",
+    "job.poll",
+    "job.submit",
     "memory.approve_delta",
-    "memory.list_deltas"
+    "memory.extract_candidates",
+    "memory.list_deltas",
+    "memory.propose_delta",
+    "milestone.approve",
+    "monitor.snapshot",
+    "pipeline.client_intake.run",
+    "pipeline.department.assign_tasks",
+    "pm.apply_allocations",
+    "pm.recommend_allocations",
+    "pm.snapshot",
+    "resources.snapshot",
+    "run.create",
+    "run.list",
+    "run.replay",
+    "session.collect",
+    "session.launch",
+    "session.list",
+    "session.poll",
+    "session.stop",
+    "sharepack.replay",
+    "system.capabilities",
+    "task.list",
+    "task.update_plan",
+    "ui.resolve",
+    "ui.snapshot",
+    "usage.analytics",
+    "workspace.agents.list",
+    "workspace.bootstrap.enterprise",
+    "workspace.diagnostics",
+    "workspace.doctor",
+    "workspace.export",
+    "workspace.home.snapshot",
+    "workspace.import",
+    "workspace.init",
+    "workspace.migrate",
+    "workspace.open",
+    "workspace.project.create_with_defaults",
+    "workspace.project.link_repo",
+    "workspace.projects.list",
+    "workspace.repo_root.set",
+    "workspace.teams.list",
+    "workspace.validate",
+    "worktree.cleanup"
   ],
+  context: {
+    layers_version: 1,
+    job_submit_auto_default: true
+  },
   memory: {
     write_schema_version: 2,
     parse_supported: [1, 2],
     list_requires_actor: true,
     list_required_params: ["actor_id", "actor_role"],
+    session_candidate_mode: "review_only",
     scope_kind: ["project_memory", "agent_guidance"],
     sensitivity: ["public", "internal", "restricted"]
+  },
+  retrieval: {
+    storage: "sqlite_metadata"
   }
 } as const;
 
@@ -495,6 +646,7 @@ const WorkspaceProjectCreateWithDefaultsParams = z.object({
   workspace_dir: z.string().min(1),
   name: z.string().min(1),
   ceo_actor_id: z.string().min(1).optional(),
+  executive_manager_agent_id: z.string().min(1).optional(),
   repo_ids: z.array(z.string().min(1)).optional()
 });
 
@@ -639,7 +791,8 @@ const ConversationMessageSendParams = z.object({
 const ConversationMembersSyncParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1),
-  ceo_actor_id: z.string().min(1).optional()
+  ceo_actor_id: z.string().min(1).optional(),
+  executive_manager_agent_id: z.string().min(1).optional()
 });
 
 const AgentProfileSnapshotParams = z.object({
@@ -652,6 +805,29 @@ const ResourcesSnapshotParams = z.object({
   workspace_dir: z.string().min(1),
   project_id: z.string().min(1).optional()
 });
+
+const PipelineClientIntakeRunParams = z
+  .object({
+    workspace_dir: z.string().min(1),
+    project_name: z.string().min(1),
+    ceo_actor_id: z.string().min(1),
+    executive_manager_agent_id: z.string().min(1),
+    intake_text: z.string().optional(),
+    intake_file: z.string().optional(),
+    model: z.string().min(1).optional()
+  })
+  .strict();
+
+const PipelineDepartmentAssignTasksParams = z
+  .object({
+    workspace_dir: z.string().min(1),
+    project_id: z.string().min(1),
+    department_key: z.string().min(1),
+    director_agent_id: z.string().min(1),
+    worker_agent_ids: z.array(z.string().min(1)).min(1),
+    approved_executive_plan_artifact_id: z.string().min(1)
+  })
+  .strict();
 
 const UiResolveParams = z.object({
   workspace_dir: z.string().min(1),
@@ -769,6 +945,21 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       });
       return { ok: true };
     }
+    case "workspace.bootstrap.enterprise": {
+      const p = WorkspaceBootstrapEnterpriseParams.parse(params);
+      return bootstrapWorkspacePresets({
+        workspace_dir: p.workspace_dir,
+        company_name: p.company_name,
+        project_name: p.project_name,
+        org_mode: p.org_mode,
+        executive_manager_name: p.executive_manager_name,
+        departments: p.departments,
+        workers_per_dept: p.workers_per_dept,
+        include_ceo: p.include_ceo,
+        include_director: p.include_director,
+        force: p.force
+      });
+    }
     case "workspace.validate": {
       const p = WorkspaceValidateParams.parse(params);
       return validateWorkspace(p.workspace_dir);
@@ -876,6 +1067,7 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         workspace_dir: p.workspace_dir,
         name: p.name,
         ceo_actor_id: p.ceo_actor_id,
+        executive_manager_agent_id: p.executive_manager_agent_id,
         repo_ids: p.repo_ids
       });
     }
@@ -1219,7 +1411,8 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       return ensureProjectDefaults({
         workspace_dir: p.workspace_dir,
         project_id: p.project_id,
-        ceo_actor_id: p.ceo_actor_id
+        ceo_actor_id: p.ceo_actor_id,
+        executive_manager_agent_id: p.executive_manager_agent_id
       });
     }
     case "agent.profile.snapshot": {
@@ -1235,6 +1428,29 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       return buildResourcesSnapshot({
         workspace_dir: p.workspace_dir,
         project_id: p.project_id
+      });
+    }
+    case "pipeline.client_intake.run": {
+      const p = PipelineClientIntakeRunParams.parse(params);
+      return runClientIntakePipeline({
+        workspace_dir: p.workspace_dir,
+        project_name: p.project_name,
+        ceo_actor_id: p.ceo_actor_id,
+        executive_manager_agent_id: p.executive_manager_agent_id,
+        intake_text: p.intake_text,
+        intake_file: p.intake_file,
+        model: p.model
+      });
+    }
+    case "pipeline.department.assign_tasks": {
+      const p = PipelineDepartmentAssignTasksParams.parse(params);
+      return assignDepartmentTasks({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        department_key: p.department_key,
+        director_agent_id: p.director_agent_id,
+        worker_agent_ids: p.worker_agent_ids,
+        approved_executive_plan_artifact_id: p.approved_executive_plan_artifact_id
       });
     }
     case "worktree.cleanup": {
@@ -1426,6 +1642,23 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         evidence: p.evidence
       });
     }
+    case "context.plan_for_job": {
+      const p = ContextPlanParams.parse(params);
+      return planContextForJob({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        worker_agent_id: p.worker_agent_id,
+        manager_actor_id: p.manager_actor_id,
+        manager_role: p.manager_role,
+        manager_team_id: p.manager_team_id,
+        job_kind: p.job_kind,
+        goal: p.goal,
+        constraints: p.constraints,
+        deliverables: p.deliverables,
+        context_refs: p.context_refs,
+        max_refs: p.max_refs
+      });
+    }
     case "artifact.read": {
       const p = ArtifactReadParams.parse(params);
       return readArtifactWithPolicy({
@@ -1459,6 +1692,19 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         actor_team_id: p.actor_team_id,
         project_id: p.project_id,
         status: p.status,
+        limit: p.limit
+      });
+    }
+    case "memory.extract_candidates": {
+      const p = MemoryExtractCandidatesParams.parse(params);
+      return extractSessionCommitCandidates({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        job_id: p.job_id,
+        run_id: p.run_id,
+        actor_id: p.actor_id,
+        actor_role: p.actor_role,
+        actor_team_id: p.actor_team_id,
         limit: p.limit
       });
     }

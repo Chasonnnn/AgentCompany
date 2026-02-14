@@ -28,6 +28,9 @@ export type UiSnapshot = {
     tick_interval_minutes: number;
     top_k_workers: number;
     min_wake_score: number;
+    hierarchy_mode: "standard" | "enterprise_v1";
+    executive_manager_agent_id?: string;
+    allow_director_to_spawn_workers: boolean;
     last_tick_at?: string;
     next_tick_at?: string;
     stats: {
@@ -103,6 +106,9 @@ export async function buildUiSnapshot(args: UiSnapshotArgs): Promise<UiSnapshot>
       tick_interval_minutes: heartbeatConfig.tick_interval_minutes,
       top_k_workers: heartbeatConfig.top_k_workers,
       min_wake_score: heartbeatConfig.min_wake_score,
+      hierarchy_mode: heartbeatConfig.hierarchy_mode,
+      executive_manager_agent_id: heartbeatConfig.executive_manager_agent_id,
+      allow_director_to_spawn_workers: heartbeatConfig.allow_director_to_spawn_workers,
       last_tick_at: heartbeatState.last_tick_at,
       next_tick_at: heartbeatState.next_tick_at,
       stats: {

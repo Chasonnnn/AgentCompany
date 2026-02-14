@@ -27,6 +27,7 @@ import { MilestoneKind, MilestoneStatus, validateTaskMarkdown } from "./work/tas
 import { proposeMemoryDelta } from "./memory/propose_memory_delta.js";
 import { approveMemoryDelta } from "./memory/approve_memory_delta.js";
 import { listMemoryDeltas } from "./memory/list_memory_deltas.js";
+import { extractSessionCommitCandidates } from "./memory/extract_session_commit_candidates.js";
 import { listRuns } from "./runtime/run_queries.js";
 import { replayRun } from "./runtime/replay.js";
 import { createMilestoneReportFile } from "./milestones/report_files.js";
@@ -39,6 +40,8 @@ import { demoInit } from "./demo/demo_init.js";
 import { scaffoldProjectIntake } from "./pipeline/intake_scaffold.js";
 import { fillArtifactWithProvider } from "./pipeline/artifact_fill.js";
 import { runPlanningPipeline } from "./pipeline/plan_run.js";
+import { runClientIntakePipeline } from "./pipeline/client_intake_run.js";
+import { assignDepartmentTasks } from "./pipeline/department_assignment.js";
 import { recordAgentMistake } from "./eval/mistake_loop.js";
 import { runSelfImproveCycle } from "./eval/self_improve_cycle.js";
 import { refreshAgentContextIndex } from "./eval/agent_context_index.js";
@@ -54,6 +57,7 @@ import { routeRpcMethod } from "./server/router.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
 import { buildUiSnapshot } from "./runtime/ui_bundle.js";
+import { planContextForJob } from "./runtime/context_plan.js";
 import {
   rebuildSqliteIndex,
   syncSqliteIndex,
@@ -109,15 +113,22 @@ program
 
 program
   .command("workspace:bootstrap")
-  .description("Initialize a workspace with preset departments + default agents/project")
+  .description("Initialize a workspace with enterprise/standard org presets and default agents/project")
   .argument("<workspace_dir>", "Workspace root directory")
   .option("--name <name>", "Company name", "AgentCompany")
   .option("--project-name <name>", "Initial project name", "AgentCompany Ops")
+  .option("--org-mode <mode>", "Org mode (enterprise|standard)", "enterprise")
+  .option("--executive-manager-name <name>", "Executive manager display name", "Executive Manager")
+  .option(
+    "--department <keys...>",
+    "Department keys (frontend, backend, agent_resources, marketing, infra, data, engineering, product, design, operations, qa, security)"
+  )
   .option(
     "--departments <keys...>",
-    "Department preset keys (engineering, product, design, operations, qa, security, data)",
-    ["engineering", "product"]
+    "Legacy alias for --department",
+    undefined
   )
+  .option("--workers-per-dept <n>", "Workers per department (min: 1)", (v) => parseInt(v, 10), 1)
   .option("--force", "Reset controlled workspace state before bootstrap", false)
   .option("--no-ceo", "Do not create a CEO agent")
   .option("--no-director", "Do not create a Director agent")
@@ -127,18 +138,30 @@ program
       opts: {
         name: string;
         projectName: string;
-        departments: string[];
+        orgMode: string;
+        executiveManagerName: string;
+        department?: string[];
+        departments?: string[];
+        workersPerDept: number;
         force: boolean;
         ceo: boolean;
         director: boolean;
       }
     ) => {
       await runAction(async () => {
+        const departments = opts.department?.length ? opts.department : opts.departments;
+        const orgMode = opts.orgMode === "standard" ? "standard" : "enterprise";
+        if (!Number.isInteger(opts.workersPerDept) || opts.workersPerDept < 1) {
+          throw new UserError("--workers-per-dept must be an integer >= 1");
+        }
         const res = await bootstrapWorkspacePresets({
           workspace_dir: workspaceDir,
           company_name: opts.name,
           project_name: opts.projectName,
-          departments: opts.departments,
+          org_mode: orgMode,
+          executive_manager_name: opts.executiveManagerName,
+          departments,
+          workers_per_dept: opts.workersPerDept,
           include_ceo: opts.ceo,
           include_director: opts.director,
           force: opts.force
@@ -495,6 +518,98 @@ program
           manager_agent_ids: opts.managers,
           intake_brief: intakeText,
           model: opts.model
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("pipeline:client-intake")
+  .description(
+    "Run enterprise client intake orchestration (CEO draft -> executive plan -> planning council artifacts)"
+  )
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project-name <name>", "Project name", "")
+  .option("--ceo-actor-id <agent_id>", "CEO actor id", "")
+  .option("--executive-manager-agent-id <agent_id>", "Executive manager agent id", "")
+  .option("--intake <text>", "CEO draft intake text", "")
+  .option("--intake-file <path>", "Path to intake text file", undefined)
+  .option("--model <model>", "Optional model override", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        projectName: string;
+        ceoActorId: string;
+        executiveManagerAgentId: string;
+        intake: string;
+        intakeFile?: string;
+        model?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.projectName.trim()) throw new UserError("--project-name is required");
+        if (!opts.ceoActorId.trim()) throw new UserError("--ceo-actor-id is required");
+        if (!opts.executiveManagerAgentId.trim()) {
+          throw new UserError("--executive-manager-agent-id is required");
+        }
+        const hasInline = Boolean(opts.intake?.trim());
+        const hasFile = Boolean(opts.intakeFile?.trim());
+        if (hasInline && hasFile) {
+          throw new UserError("Provide only one of --intake or --intake-file");
+        }
+        const intakeText = hasFile
+          ? await fs.readFile(opts.intakeFile!, { encoding: "utf8" })
+          : opts.intake || undefined;
+        const res = await runClientIntakePipeline({
+          workspace_dir: workspaceDir,
+          project_name: opts.projectName,
+          ceo_actor_id: opts.ceoActorId,
+          executive_manager_agent_id: opts.executiveManagerAgentId,
+          intake_text: intakeText,
+          model: opts.model
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("pipeline:assign-department-tasks")
+  .description("Assign approved department execution tasks from director to in-team workers")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project-id <id>", "Project id", "")
+  .option("--department-key <key>", "Department key", "")
+  .option("--director-agent-id <id>", "Department director agent id", "")
+  .option("--worker-agent-ids <ids...>", "Worker agent ids", [])
+  .option("--approved-executive-plan-artifact-id <id>", "Approved executive plan artifact id", "")
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        projectId: string;
+        departmentKey: string;
+        directorAgentId: string;
+        workerAgentIds: string[];
+        approvedExecutivePlanArtifactId: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.projectId.trim()) throw new UserError("--project-id is required");
+        if (!opts.departmentKey.trim()) throw new UserError("--department-key is required");
+        if (!opts.directorAgentId.trim()) throw new UserError("--director-agent-id is required");
+        if (!opts.workerAgentIds.length) throw new UserError("--worker-agent-ids is required");
+        if (!opts.approvedExecutivePlanArtifactId.trim()) {
+          throw new UserError("--approved-executive-plan-artifact-id is required");
+        }
+        const res = await assignDepartmentTasks({
+          workspace_dir: workspaceDir,
+          project_id: opts.projectId,
+          department_key: opts.departmentKey,
+          director_agent_id: opts.directorAgentId,
+          worker_agent_ids: opts.workerAgentIds,
+          approved_executive_plan_artifact_id: opts.approvedExecutivePlanArtifactId
         });
         process.stdout.write(JSON.stringify(res, null, 2) + "\n");
       });
@@ -1863,6 +1978,138 @@ program
           limit: opts.limit
         });
         process.stdout.write(JSON.stringify(res) + "\n");
+      });
+    }
+  );
+
+program
+  .command("context:plan")
+  .description("Build a layered, policy-filtered context plan for a job")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--worker <agent_id>", "Worker agent id", undefined)
+  .option("--manager <actor_id>", "Manager actor id", "")
+  .option("--role <role>", "Manager role (human|ceo|director|manager|worker)", "")
+  .option("--manager-team <team_id>", "Manager team id", undefined)
+  .option("--job-kind <kind>", "Job kind (execution|heartbeat)", "execution")
+  .option("--goal <text>", "Goal text", "")
+  .option("--constraint <text...>", "Constraint lines", [])
+  .option("--deliverable <text...>", "Deliverable lines", [])
+  .option("--ref <json...>", 'Seed context refs as JSON objects (e.g. {"kind":"note","value":"x"})', [])
+  .option("--max-refs <n>", "Max context refs", (v) => parseInt(v, 10), undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        worker?: string;
+        manager: string;
+        role: string;
+        managerTeam?: string;
+        jobKind: string;
+        goal: string;
+        constraint: string[];
+        deliverable: string[];
+        ref: string[];
+        maxRefs?: number;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.manager.trim()) throw new UserError("--manager is required");
+        if (!opts.role.trim()) throw new UserError("--role is required");
+        if (!opts.goal.trim()) throw new UserError("--goal is required");
+        if (!["human", "ceo", "director", "manager", "worker"].includes(opts.role)) {
+          throw new UserError("Invalid --role. Valid: human, ceo, director, manager, worker");
+        }
+        if (!["execution", "heartbeat"].includes(opts.jobKind)) {
+          throw new UserError("Invalid --job-kind. Valid: execution, heartbeat");
+        }
+        const parsedRefs = opts.ref.map((raw) => {
+          try {
+            const parsed = JSON.parse(raw) as {
+              kind: "file" | "command" | "artifact" | "note";
+              value: string;
+              description?: string;
+            };
+            if (!["file", "command", "artifact", "note"].includes(String(parsed.kind))) {
+              throw new UserError("Invalid --ref.kind. Valid: file, command, artifact, note");
+            }
+            if (!String(parsed.value ?? "").trim()) {
+              throw new UserError("--ref.value must be a non-empty string");
+            }
+            return parsed;
+          } catch (e) {
+            throw new UserError(`Invalid --ref JSON: ${(e as Error).message}`);
+          }
+        });
+        const plan = await planContextForJob({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          worker_agent_id: opts.worker,
+          manager_actor_id: opts.manager,
+          manager_role: opts.role as "human" | "ceo" | "director" | "manager" | "worker",
+          manager_team_id: opts.managerTeam,
+          job_kind: opts.jobKind as "execution" | "heartbeat",
+          goal: opts.goal,
+          constraints: opts.constraint,
+          deliverables: opts.deliverable,
+          context_refs: parsedRefs,
+          max_refs: opts.maxRefs
+        });
+        process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+      });
+    }
+  );
+
+program
+  .command("memory:candidates")
+  .description("Extract review-only memory candidates from a job/run into run outputs")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Project id", "")
+  .option("--job <job_id>", "Job id", undefined)
+  .option("--run <run_id>", "Run id", undefined)
+  .option("--actor <actor_id>", "Actor id", "")
+  .option("--role <role>", "Actor role (human|ceo|director|manager|worker)", "")
+  .option("--actor-team <team_id>", "Actor team id", undefined)
+  .option("--limit <n>", "Max candidate rows", (v) => parseInt(v, 10), 20)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project: string;
+        job?: string;
+        run?: string;
+        actor: string;
+        role: string;
+        actorTeam?: string;
+        limit: number;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.project.trim()) throw new UserError("--project is required");
+        if (!opts.actor.trim()) throw new UserError("--actor is required");
+        if (!opts.role.trim()) throw new UserError("--role is required");
+        if (!opts.job?.trim() && !opts.run?.trim()) {
+          throw new UserError("Either --job or --run is required");
+        }
+        if (!["human", "ceo", "director", "manager", "worker"].includes(opts.role)) {
+          throw new UserError("Invalid --role. Valid: human, ceo, director, manager, worker");
+        }
+        if (!Number.isInteger(opts.limit) || opts.limit <= 0) {
+          throw new UserError("--limit must be an integer > 0");
+        }
+        const res = await extractSessionCommitCandidates({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          job_id: opts.job?.trim() || undefined,
+          run_id: opts.run?.trim() || undefined,
+          actor_id: opts.actor,
+          actor_role: opts.role as "human" | "ceo" | "director" | "manager" | "worker",
+          actor_team_id: opts.actorTeam,
+          limit: opts.limit
+        });
+        process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
       });
     }
   );
