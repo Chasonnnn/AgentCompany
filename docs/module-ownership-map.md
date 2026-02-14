@@ -38,6 +38,34 @@ Use this map to land changes in the right files first.
 - Paired docs/contracts: `AGENTS.md`
 - Required tests: `test/core-redaction.test.ts`, `test/memory-redaction.test.ts`, `test/inbox-resolve.test.ts`
 
+## Context Planning + Retrieval
+
+- Area: layered context planning, policy-filtered composition, context trace persistence
+- Owner files:
+  - `src/runtime/context_plan.ts`
+  - `src/runtime/job_runner.ts`
+  - `src/runtime/worker_adapter.ts`
+  - `src/schemas/context_plan.ts`
+- Paired docs/contracts: `docs/protocol/v1.md`, `README.md`, `AGENTS.md`
+- Required tests:
+  - `test/context-plan.test.ts`
+  - `test/context-plan-policy.test.ts`
+  - `test/job-runner.test.ts`
+  - `test/job-runner-heartbeat.test.ts`
+
+## Session Candidate Extraction
+
+- Area: review-only memory candidate extraction from run/job outcomes
+- Owner files:
+  - `src/memory/extract_session_commit_candidates.ts`
+  - `src/schemas/memory_candidate_report.ts`
+  - `src/server/router.ts`
+  - `src/cli.ts`
+- Paired docs/contracts: `docs/protocol/v1.md`, `README.md`
+- Required tests:
+  - `test/memory-candidate-extraction.test.ts`
+  - `test/server-router.test.ts`
+
 ## Inbox Review Resolution
 
 - Area: approve/deny flows and review artifacts/events

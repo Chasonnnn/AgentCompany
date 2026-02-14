@@ -9,6 +9,7 @@ Before implementation work, read `/Users/chason/AgentCompany/AGENTS.md`.
 - It defines Definition of Done (tests + evidence + docs + policy safety).
 - It defines Memory Governance v0 (proposal/approval workflow, role gates, sensitivity, and fail-closed secret handling).
 - It links to the module ownership map at `/Users/chason/AgentCompany/docs/module-ownership-map.md` for fast file routing.
+- It requires context planning changes to update runtime + router + protocol docs together.
 
 ## Repo Quickstart
 
@@ -173,6 +174,24 @@ ARTIFACT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$D
 node dist/cli.js memory:approve /path/to/workspace --project "$PROJECT_ID" --artifact "$ARTIFACT_ID" --actor <ceo_actor_id> --role ceo --notes "LGTM"
 node dist/cli.js memory:list /path/to/workspace --actor <ceo_actor_id> --role ceo --project "$PROJECT_ID" --status all
 node dist/cli.js system:capabilities
+```
+
+Plan layered context for a job and extract review-only memory candidates from a completed run:
+```bash
+node dist/cli.js context:plan /path/to/workspace \
+  --project "$PROJECT_ID" \
+  --worker <worker_agent_id> \
+  --manager <manager_actor_id> \
+  --role manager \
+  --goal "Ship monitor improvements without policy regressions" \
+  --constraint "No policy bypass" \
+  --deliverable "ResultSpec JSON"
+
+node dist/cli.js memory:candidates /path/to/workspace \
+  --project "$PROJECT_ID" \
+  --job <job_id> \
+  --actor <manager_actor_id> \
+  --role manager
 ```
 
 Milestone report and approval:

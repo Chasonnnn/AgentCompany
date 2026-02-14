@@ -133,6 +133,9 @@ Every implementation Work Item must include:
 - If you change memory governance:
   - Use memory delta propose/approve paths only.
   - Ensure review and policy audit artifacts remain complete.
+- If you change context planning/retrieval:
+  - Update `src/runtime/context_plan.ts` + `src/server/router.ts` + `docs/protocol/v1.md`.
+  - Verify policy-filtered composition behavior and context trace outputs in tests.
 
 ## 8) Definition of Done (Required)
 
