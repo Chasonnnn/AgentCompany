@@ -68,3 +68,24 @@ export async function resolveDefaultWorkspaceDir(): Promise<string> {
   const dir = await invokeDesktopCommand<string>("default_workspace_dir");
   return typeof dir === "string" ? dir.trim() : "";
 }
+
+export type GeminiApiKeyStatus = {
+  configured: boolean;
+  storage: "macos_keychain" | "unsupported";
+};
+
+export async function getGeminiApiKeyStatus(): Promise<GeminiApiKeyStatus> {
+  return invokeDesktopCommand<GeminiApiKeyStatus>("get_gemini_api_key_status");
+}
+
+export async function setGeminiApiKey(apiKey: string): Promise<GeminiApiKeyStatus> {
+  return invokeDesktopCommand<GeminiApiKeyStatus>("set_gemini_api_key", {
+    args: {
+      apiKey
+    }
+  });
+}
+
+export async function deleteGeminiApiKey(): Promise<GeminiApiKeyStatus> {
+  return invokeDesktopCommand<GeminiApiKeyStatus>("delete_gemini_api_key");
+}

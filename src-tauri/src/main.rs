@@ -62,6 +62,19 @@ struct RpcCallArgs {
   cli_path: Option<String>
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetGeminiApiKeyArgs {
+  api_key: String
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiApiKeyStatus {
+  configured: bool,
+  storage: String
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ManagerWebStatus {
@@ -78,6 +91,9 @@ struct ManagedProcess {
   workspace_dir: String,
   project_id: String
 }
+
+const GEMINI_KEYCHAIN_SERVICE: &str = "com.agentcompany.desktop";
+const GEMINI_KEYCHAIN_ACCOUNT: &str = "gemini_api_key";
 
 #[derive(Default)]
 struct UiProcessState {
@@ -259,6 +275,139 @@ fn bundled_cli_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
   out
 }
 
+fn keychain_item_not_found(stderr: &str) -> bool {
+  let text = stderr.to_lowercase();
+  text.contains("could not be found in the keychain")
+    || text.contains("the specified item could not be found in the keychain")
+}
+
+#[cfg(target_os = "macos")]
+fn read_gemini_api_key_from_keychain() -> Result<Option<String>, String> {
+  let output = Command::new("/usr/bin/security")
+    .arg("find-generic-password")
+    .arg("-a")
+    .arg(GEMINI_KEYCHAIN_ACCOUNT)
+    .arg("-s")
+    .arg(GEMINI_KEYCHAIN_SERVICE)
+    .arg("-w")
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .output()
+    .map_err(|e| format!("Failed to read Gemini API key from macOS Keychain: {}", e))?;
+  if output.status.success() {
+    let raw = String::from_utf8(output.stdout)
+      .map_err(|e| format!("Gemini API key output was not UTF-8: {}", e))?;
+    let trimmed = raw.trim().to_string();
+    if trimmed.is_empty() {
+      return Ok(None);
+    }
+    return Ok(Some(trimmed));
+  }
+  let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+  if keychain_item_not_found(&stderr) {
+    return Ok(None);
+  }
+  Err(format!(
+    "Failed to read Gemini API key from macOS Keychain: {}",
+    stderr.trim()
+  ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_gemini_api_key_from_keychain() -> Result<Option<String>, String> {
+  Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+fn write_gemini_api_key_to_keychain(api_key: &str) -> Result<(), String> {
+  let output = Command::new("/usr/bin/security")
+    .arg("add-generic-password")
+    .arg("-a")
+    .arg(GEMINI_KEYCHAIN_ACCOUNT)
+    .arg("-s")
+    .arg(GEMINI_KEYCHAIN_SERVICE)
+    .arg("-U")
+    .arg("-w")
+    .arg(api_key)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .output()
+    .map_err(|e| format!("Failed to write Gemini API key to macOS Keychain: {}", e))?;
+  if output.status.success() {
+    return Ok(());
+  }
+  let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+  Err(format!(
+    "Failed to write Gemini API key to macOS Keychain: {}",
+    if stderr.is_empty() {
+      "Unknown keychain error".to_string()
+    } else {
+      stderr
+    }
+  ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn write_gemini_api_key_to_keychain(_api_key: &str) -> Result<(), String> {
+  Err("Gemini API key storage is only supported on macOS desktop builds.".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn delete_gemini_api_key_from_keychain() -> Result<(), String> {
+  let output = Command::new("/usr/bin/security")
+    .arg("delete-generic-password")
+    .arg("-a")
+    .arg(GEMINI_KEYCHAIN_ACCOUNT)
+    .arg("-s")
+    .arg(GEMINI_KEYCHAIN_SERVICE)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .output()
+    .map_err(|e| format!("Failed to delete Gemini API key from macOS Keychain: {}", e))?;
+  if output.status.success() {
+    return Ok(());
+  }
+  let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+  if keychain_item_not_found(&stderr) {
+    return Ok(());
+  }
+  Err(format!(
+    "Failed to delete Gemini API key from macOS Keychain: {}",
+    stderr.trim()
+  ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn delete_gemini_api_key_from_keychain() -> Result<(), String> {
+  Err("Gemini API key storage is only supported on macOS desktop builds.".to_string())
+}
+
+fn gemini_key_status(configured: bool) -> GeminiApiKeyStatus {
+  GeminiApiKeyStatus {
+    configured,
+    storage: if cfg!(target_os = "macos") {
+      "macos_keychain".to_string()
+    } else {
+      "unsupported".to_string()
+    }
+  }
+}
+
+fn apply_desktop_secret_env(command: &mut Command) {
+  let existing = std::env::var("GEMINI_API_KEY").ok();
+  if existing.as_deref().map(|v| !v.trim().is_empty()).unwrap_or(false) {
+    return;
+  }
+  if let Ok(Some(api_key)) = read_gemini_api_key_from_keychain() {
+    if !api_key.trim().is_empty() {
+      command.env("GEMINI_API_KEY", api_key);
+    }
+  }
+}
+
 fn terminate_child(child: &mut Child) -> Result<(), String> {
   if let Ok(Some(_)) = child.try_wait() {
     return Ok(());
@@ -428,6 +577,7 @@ fn start_manager_web(
     command.arg("--no-sync-index");
   }
 
+  apply_desktop_secret_env(&mut command);
   let child = command
     .spawn()
     .map_err(|e| format!("Failed to start Manager Web process: {}", e))?;
@@ -494,6 +644,7 @@ fn bootstrap_workspace(app: tauri::AppHandle, args: BootstrapWorkspaceArgs) -> R
     command.arg("--force");
   }
 
+  apply_desktop_secret_env(&mut command);
   command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
   let output = command
     .output()
@@ -540,7 +691,8 @@ fn onboard_agent(app: tauri::AppHandle, args: OnboardAgentArgs) -> Result<serde_
     if let Some(team_name_raw) = args.team_name {
       let team_name = team_name_raw.trim().to_string();
       if !team_name.is_empty() {
-        let output = Command::new(&node_bin)
+        let mut command = Command::new(&node_bin);
+        command
           .arg(&cli_path)
           .arg("team:new")
           .arg(workspace_dir)
@@ -548,7 +700,9 @@ fn onboard_agent(app: tauri::AppHandle, args: OnboardAgentArgs) -> Result<serde_
           .arg(&team_name)
           .stdin(Stdio::null())
           .stdout(Stdio::piped())
-          .stderr(Stdio::piped())
+          .stderr(Stdio::piped());
+        apply_desktop_secret_env(&mut command);
+        let output = command
           .output()
           .map_err(|e| format!("Failed to create team: {}", e))?;
         if !output.status.success() {
@@ -578,6 +732,7 @@ fn onboard_agent(app: tauri::AppHandle, args: OnboardAgentArgs) -> Result<serde_
     command.arg("--team").arg(team);
   }
 
+  apply_desktop_secret_env(&mut command);
   let output = command
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
@@ -615,7 +770,8 @@ fn rpc_call(app: tauri::AppHandle, args: RpcCallArgs) -> Result<serde_json::Valu
     serde_json::to_string(&args.params.unwrap_or_else(|| serde_json::json!({})))
       .map_err(|e| format!("Failed to encode RPC params JSON: {}", e))?;
 
-  let output = Command::new(node_bin)
+  let mut command = Command::new(node_bin);
+  command
     .arg(cli_path)
     .arg("rpc:call")
     .arg("--method")
@@ -624,7 +780,9 @@ fn rpc_call(app: tauri::AppHandle, args: RpcCallArgs) -> Result<serde_json::Valu
     .arg(params_json)
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
+    .stderr(Stdio::piped());
+  apply_desktop_secret_env(&mut command);
+  let output = command
     .output()
     .map_err(|e| format!("Failed to execute rpc:call: {}", e))?;
   if !output.status.success() {
@@ -634,6 +792,34 @@ fn rpc_call(app: tauri::AppHandle, args: RpcCallArgs) -> Result<serde_json::Valu
     return Err(format!("rpc:call failed: {}", detail));
   }
   parse_cli_json_output(&output.stdout)
+}
+
+#[tauri::command]
+fn get_gemini_api_key_status() -> Result<GeminiApiKeyStatus, String> {
+  if !cfg!(target_os = "macos") {
+    return Ok(gemini_key_status(false));
+  }
+  let configured = read_gemini_api_key_from_keychain()?.is_some();
+  Ok(gemini_key_status(configured))
+}
+
+#[tauri::command]
+fn set_gemini_api_key(args: SetGeminiApiKeyArgs) -> Result<GeminiApiKeyStatus, String> {
+  let api_key = args.api_key.trim().to_string();
+  if api_key.is_empty() {
+    return Err("Gemini API key cannot be empty.".to_string());
+  }
+  write_gemini_api_key_to_keychain(&api_key)?;
+  Ok(gemini_key_status(true))
+}
+
+#[tauri::command]
+fn delete_gemini_api_key() -> Result<GeminiApiKeyStatus, String> {
+  if !cfg!(target_os = "macos") {
+    return Ok(gemini_key_status(false));
+  }
+  delete_gemini_api_key_from_keychain()?;
+  Ok(gemini_key_status(false))
 }
 
 #[tauri::command]
@@ -708,6 +894,9 @@ fn main() {
       bootstrap_workspace,
       onboard_agent,
       rpc_call,
+      get_gemini_api_key_status,
+      set_gemini_api_key,
+      delete_gemini_api_key,
       default_workspace_dir,
       pick_repo_folder
     ])
@@ -803,5 +992,29 @@ mod tests {
       resolve_default_workspace_path(None, Some(cwd.as_path()), Some(home.as_path()))
         .expect("expected home fallback");
     assert_eq!(resolved, home.join("AgentCompany").join("work"));
+  }
+
+  #[test]
+  fn keychain_item_not_found_detects_macos_security_message() {
+    let stderr =
+      "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.";
+    assert!(keychain_item_not_found(stderr));
+  }
+
+  #[test]
+  fn keychain_item_not_found_ignores_unrelated_errors() {
+    let stderr = "security: SecKeychainItemCreateFromContent: Unable to obtain authorization.";
+    assert!(!keychain_item_not_found(stderr));
+  }
+
+  #[test]
+  fn gemini_key_status_reports_storage_backend() {
+    let status = gemini_key_status(false);
+    if cfg!(target_os = "macos") {
+      assert_eq!(status.storage, "macos_keychain");
+    } else {
+      assert_eq!(status.storage, "unsupported");
+    }
+    assert!(!status.configured);
   }
 }
