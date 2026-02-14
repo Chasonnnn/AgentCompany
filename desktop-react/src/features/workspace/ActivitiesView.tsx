@@ -6,7 +6,7 @@ import { formatDateTime } from "@/utils/format";
 
 type ActivityRow = {
   id: string;
-  kind: "pending_review" | "decision" | "run";
+  kind: "pending_review" | "decision" | "run" | "heartbeat_stop";
   title: string;
   meta: string;
   time: string;
@@ -21,11 +21,16 @@ export function ActivitiesView({ ui }: Props) {
   const rows = useMemo<ActivityRow[]>(() => {
     const out: ActivityRow[] = [];
     for (const pending of ui.review_inbox.pending) {
+      const isHeartbeatStop =
+        pending.artifact_type === "heartbeat_action_proposal" &&
+        (pending.title?.toLowerCase().includes("hard stop") ?? false);
       out.push({
         id: `pending:${pending.artifact_id}`,
-        kind: "pending_review",
+        kind: isHeartbeatStop ? "heartbeat_stop" : "pending_review",
         title: pending.title || pending.artifact_type,
-        meta: `${pending.project_id} · pending approval`,
+        meta: isHeartbeatStop
+          ? `${pending.project_id} · heartbeat hard stop`
+          : `${pending.project_id} · pending approval`,
         time: pending.created_at ?? ui.generated_at
       });
     }
@@ -91,4 +96,3 @@ export function ActivitiesView({ ui }: Props) {
     </section>
   );
 }
-

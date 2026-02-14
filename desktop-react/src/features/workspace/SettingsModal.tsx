@@ -59,7 +59,7 @@ export function SettingsModal({
         <Input
           value={draftWorkspace}
           onChange={(event) => setDraftWorkspace(event.target.value)}
-          placeholder="/Users/chason/AgentCompany/work"
+          placeholder="/path/to/AgentCompany/work"
         />
       </div>
       <div className="field">
@@ -73,4 +73,3 @@ export function SettingsModal({
     </Modal>
   );
 }
-

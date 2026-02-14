@@ -34,6 +34,9 @@ export type AgentSummary = {
 export type TeamSummary = {
   team_id: string;
   name: string;
+  department_key?: string;
+  department_label?: string;
+  charter?: string;
   created_at: string;
 };
 
@@ -197,6 +200,9 @@ export type UiSnapshot = {
     tick_interval_minutes: number;
     top_k_workers: number;
     min_wake_score: number;
+    hierarchy_mode: "standard" | "enterprise_v1";
+    executive_manager_agent_id?: string;
+    allow_director_to_spawn_workers: boolean;
     last_tick_at?: string;
     next_tick_at?: string;
     stats: {
@@ -272,6 +278,37 @@ export type AgentProfileSnapshot = {
     context_cycles_count: number | null;
     context_cycles_source: "provider_signal" | "unknown";
   };
+};
+
+export type ClientIntakeRunResult = {
+  project_id: string;
+  artifacts: {
+    intake_brief_artifact_id: string;
+    executive_plan_artifact_id: string;
+    meeting_transcript_artifact_id: string;
+    approval_artifact_id: string;
+  };
+  department_plan_artifact_ids: Record<string, string>;
+  director_task_ids: Record<string, string>;
+  assigned_task_ids: string[];
+  meeting_conversation_id: string;
+};
+
+export type DepartmentAssignResult = {
+  project_id: string;
+  department_key: string;
+  director_agent_id: string;
+  executive_plan_artifact_id: string;
+  created_task_ids: string[];
+  created_milestone_ids: string[];
+  assignment_map: Record<string, string>;
+  denied_assignments: Array<{
+    worker_agent_id: string;
+    reason: string;
+    expected_team_id?: string;
+    actual_team_id?: string;
+  }>;
+  audit_log_relpath: string;
 };
 
 export type BootstrapHomeViewData = {

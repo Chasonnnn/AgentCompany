@@ -18,7 +18,7 @@ import { QuickSwitchModal } from "@/features/workspace/QuickSwitchModal";
 import { ResourcesView } from "@/features/workspace/ResourcesView";
 import { SettingsModal } from "@/features/workspace/SettingsModal";
 import { useAgentProfile, useDesktopActions, useDesktopSnapshot } from "@/services/queries";
-import { pickRepoFolder } from "@/services/rpc";
+import { pickRepoFolder, resolveDefaultWorkspaceDir } from "@/services/rpc";
 import type {
   AgentSummary,
   BootstrapActivitiesViewData,
@@ -36,7 +36,7 @@ type ScopeSelection = { kind: ScopeKind; projectId?: string };
 type ViewSelection = { kind: ViewKind; conversationId?: string };
 
 function defaultWorkspaceDir() {
-  return "/Users/chason/AgentCompany/work";
+  return "";
 }
 
 function loadSession(): {
@@ -115,6 +115,23 @@ export function AppShell() {
       })
     );
   }, [workspaceDir, actorId, reduceTransparency, scope, view]);
+
+  useEffect(() => {
+    if (workspaceDir.trim()) return;
+    let canceled = false;
+    void resolveDefaultWorkspaceDir()
+      .then((resolved) => {
+        if (canceled) return;
+        if (!resolved) return;
+        setWorkspaceDir(resolved);
+      })
+      .catch(() => {
+        // Settings modal remains available for manual configuration.
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [workspaceDir]);
 
   useEffect(() => {
     document.body.classList.toggle("reduce-transparency", reduceTransparency);
@@ -342,9 +359,73 @@ export function AppShell() {
               agents={agents}
               sending={actions.sendMessage.isPending}
               applying={actions.applyAllocations.isPending}
+              assigningDepartmentTasks={actions.assignDepartmentTasks.isPending}
+              workspaceDir={workspaceDir}
+              actorId={actorId}
+              teams={teams}
               onOpenProject={(projectId) => {
                 setScope({ kind: "project", projectId });
                 setView({ kind: "home" });
+              }}
+              onRunClientIntake={async () => {
+                try {
+                  const projectName = window.prompt("Client project name");
+                  if (!projectName?.trim()) return;
+                  const intakeText = window.prompt("Draft requirements (optional)");
+                  const executiveManager = agents.find(
+                    (agent) => agent.role === "manager" && agent.display_title === "Executive Manager"
+                  );
+                  if (!executiveManager) {
+                    throw new Error("Executive Manager agent not found. Bootstrap enterprise org first.");
+                  }
+                  const ceoAgent = agents.find((agent) => agent.role === "ceo");
+                  const result = await actions.runClientIntake.mutateAsync({
+                    workspaceDir,
+                    projectName: projectName.trim(),
+                    ceoActorId: ceoAgent?.agent_id ?? actorId,
+                    executiveManagerAgentId: executiveManager.agent_id,
+                    intakeText: intakeText?.trim() || undefined
+                  });
+                  setScope({ kind: "project", projectId: result.project_id });
+                  setView({ kind: "home" });
+                  setInlineError("");
+                } catch (error) {
+                  setInlineError(error instanceof Error ? error.message : String(error));
+                }
+              }}
+              onAssignDepartmentTasks={async (approvedExecutivePlanArtifactId) => {
+                try {
+                  if (!scope.projectId) return;
+                  const assignments = teams
+                    .filter((team) => Boolean(team.department_key))
+                    .map((team) => {
+                      const director = agents.find(
+                        (agent) => agent.role === "director" && agent.team_id === team.team_id
+                      );
+                      const workers = agents
+                        .filter((agent) => agent.role === "worker" && agent.team_id === team.team_id)
+                        .map((agent) => agent.agent_id);
+                      return {
+                        team,
+                        director,
+                        workers
+                      };
+                    })
+                    .filter((row) => row.director && row.workers.length > 0);
+                  for (const row of assignments) {
+                    await actions.assignDepartmentTasks.mutateAsync({
+                      workspaceDir,
+                      projectId: scope.projectId,
+                      departmentKey: row.team.department_key!,
+                      directorAgentId: row.director!.agent_id,
+                      workerAgentIds: row.workers,
+                      approvedExecutivePlanArtifactId
+                    });
+                  }
+                  setInlineError("");
+                } catch (error) {
+                  setInlineError(error instanceof Error ? error.message : String(error));
+                }
               }}
               onSendMessage={async (body) => {
                 if (!view.conversationId) return;
@@ -492,11 +573,24 @@ export function AppShell() {
 function ContentView(props: {
   view: ViewSelection;
   scope: ScopeSelection;
+  workspaceDir: string;
+  actorId: string;
   data: any;
   agents: AgentSummary[];
+  teams: Array<{
+    team_id: string;
+    name: string;
+    department_key?: string;
+    department_label?: string;
+    charter?: string;
+    created_at: string;
+  }>;
   sending: boolean;
   applying: boolean;
+  assigningDepartmentTasks: boolean;
   onOpenProject: (projectId: string) => void;
+  onRunClientIntake: () => Promise<void>;
+  onAssignDepartmentTasks: (approvedExecutivePlanArtifactId: string) => Promise<void>;
   onSendMessage: (body: string) => Promise<void>;
   onApplyAllocation: (items: Array<{
     task_id: string;
@@ -517,7 +611,13 @@ function ContentView(props: {
             workspaceHome={home.workspace_home}
             pm={home.pm}
             resources={home.resources}
+            agents={props.agents}
+            teams={props.teams}
+            activitySummary={props.data?.activity_summary}
             onOpenProject={props.onOpenProject}
+            onStartClientIntake={() => {
+              void props.onRunClientIntake();
+            }}
           />
         </section>
       );
@@ -530,8 +630,12 @@ function ContentView(props: {
             resources={home.resources}
             recommendations={home.recommendations ?? []}
             applying={props.applying}
+            assigningDepartmentTasks={props.assigningDepartmentTasks}
             onApplyAll={props.onApplyAllocation}
             onApplyOne={async (item) => props.onApplyAllocation([item])}
+            onAssignDepartmentTasks={async (approvedExecutivePlanArtifactId) =>
+              props.onAssignDepartmentTasks(approvedExecutivePlanArtifactId)
+            }
           />
         </section>
       );

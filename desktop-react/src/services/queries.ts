@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type AgentProfileSnapshot,
   type AllocationApplyPayload,
+  type ClientIntakeRunResult,
+  type DepartmentAssignResult,
   type DesktopBootstrapSnapshot,
   type ScopeKind,
   type ViewKind
@@ -231,12 +233,52 @@ export function useDesktopActions() {
     onSuccess: invalidateSnapshots
   });
 
+  const runClientIntake = useMutation({
+    mutationFn: async (args: {
+      workspaceDir: string;
+      projectName: string;
+      ceoActorId: string;
+      executiveManagerAgentId: string;
+      intakeText?: string;
+    }) =>
+      rpcCall<ClientIntakeRunResult>("pipeline.client_intake.run", {
+        workspace_dir: args.workspaceDir,
+        project_name: args.projectName,
+        ceo_actor_id: args.ceoActorId,
+        executive_manager_agent_id: args.executiveManagerAgentId,
+        ...(args.intakeText ? { intake_text: args.intakeText } : {})
+      }),
+    onSuccess: invalidateSnapshots
+  });
+
+  const assignDepartmentTasks = useMutation({
+    mutationFn: async (args: {
+      workspaceDir: string;
+      projectId: string;
+      departmentKey: string;
+      directorAgentId: string;
+      workerAgentIds: string[];
+      approvedExecutivePlanArtifactId: string;
+    }) =>
+      rpcCall<DepartmentAssignResult>("pipeline.department.assign_tasks", {
+        workspace_dir: args.workspaceDir,
+        project_id: args.projectId,
+        department_key: args.departmentKey,
+        director_agent_id: args.directorAgentId,
+        worker_agent_ids: args.workerAgentIds,
+        approved_executive_plan_artifact_id: args.approvedExecutivePlanArtifactId
+      }),
+    onSuccess: invalidateSnapshots
+  });
+
   return {
     createProject,
     createChannel,
     createDm,
     sendMessage,
     applyAllocations,
+    runClientIntake,
+    assignDepartmentTasks,
     invalidateSnapshots
   };
 }

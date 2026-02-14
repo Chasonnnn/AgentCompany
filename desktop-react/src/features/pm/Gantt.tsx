@@ -13,6 +13,19 @@ export function Gantt({ gantt }: { gantt: ProjectPMViewModel["gantt"] }) {
     return <div className="empty-state">No scheduled tasks yet.</div>;
   }
 
+  const byTeam = new Map<string, number>();
+  for (const task of gantt.tasks) {
+    const key = task.team_id ?? "unassigned";
+    byTeam.set(key, (byTeam.get(key) ?? 0) + 1);
+  }
+  const teamLoad = [...byTeam.entries()].map(([team, count]) => ({
+    team,
+    count,
+    pressure: count >= 6 ? "high" : count >= 3 ? "medium" : "low"
+  }));
+  const criticalCount = gantt.tasks.filter((task) => task.critical).length;
+  const blockedCritical = gantt.tasks.filter((task) => task.critical && task.status === "blocked").length;
+
   const starts = gantt.tasks.map((task) => dayValue(task.start_at));
   const ends = gantt.tasks.map((task) => dayValue(task.end_at));
   const minDay = Math.min(...starts);
@@ -26,6 +39,21 @@ export function Gantt({ gantt }: { gantt: ProjectPMViewModel["gantt"] }) {
 
   return (
     <div className="stack">
+      <div className="hstack" style={{ flexWrap: "wrap", gap: 8 }}>
+        <span className="badge">Critical path tasks: {criticalCount}</span>
+        <span className={`badge ${blockedCritical > 0 ? "danger" : ""}`.trim()}>
+          Blocked critical: {blockedCritical}
+        </span>
+        {teamLoad.map((row) => (
+          <span
+            key={row.team}
+            className={`badge ${row.pressure === "high" ? "danger" : row.pressure === "medium" ? "warn" : ""}`.trim()}
+          >
+            {row.team}: {row.count}
+          </span>
+        ))}
+      </div>
+
       {gantt.cpm_status === "dependency_cycle" ? (
         <div className="empty-state">
           <span className="error">Dependency cycle detected.</span> Schedule bars are shown with best effort.
@@ -84,4 +112,3 @@ function TaskRow({
     </g>
   );
 }
-

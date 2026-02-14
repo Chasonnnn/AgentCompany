@@ -63,3 +63,8 @@ export async function pickRepoFolder(): Promise<string | null> {
   const trimmed = picked.trim();
   return trimmed ? trimmed : null;
 }
+
+export async function resolveDefaultWorkspaceDir(): Promise<string> {
+  const dir = await invokeDesktopCommand<string>("default_workspace_dir");
+  return typeof dir === "string" ? dir.trim() : "";
+}

@@ -11,11 +11,22 @@ type Props = {
   resources: ResourcesSnapshot;
   recommendations: AllocationRecommendation[];
   applying: boolean;
+  assigningDepartmentTasks?: boolean;
   onApplyOne: (item: AllocationApplyPayload) => Promise<void>;
   onApplyAll: (items: AllocationApplyPayload[]) => Promise<void>;
+  onAssignDepartmentTasks?: (approvedExecutivePlanArtifactId: string) => Promise<void>;
 };
 
-export function ProjectHome({ projectPm, resources, recommendations, applying, onApplyOne, onApplyAll }: Props) {
+export function ProjectHome({
+  projectPm,
+  resources,
+  recommendations,
+  applying,
+  assigningDepartmentTasks,
+  onApplyOne,
+  onApplyAll,
+  onAssignDepartmentTasks
+}: Props) {
   const allItems: AllocationApplyPayload[] = recommendations.map((row) => ({
     task_id: row.task_id,
     preferred_provider: row.preferred_provider,
@@ -39,6 +50,27 @@ export function ProjectHome({ projectPm, resources, recommendations, applying, o
 
       <Panel title="CPM / Gantt">
         <Gantt gantt={projectPm.gantt} />
+      </Panel>
+
+      <Panel title="Planning Council">
+        <div className="stack" style={{ gap: 8 }}>
+          <div className="muted">
+            Review planning transcript/department plans and approve the executive plan before worker execution.
+          </div>
+          {onAssignDepartmentTasks ? (
+            <Button
+              tone="primary"
+              disabled={Boolean(assigningDepartmentTasks)}
+              onClick={() => {
+                const id = window.prompt("Approved executive plan artifact id");
+                if (!id?.trim()) return;
+                void onAssignDepartmentTasks(id.trim());
+              }}
+            >
+              {assigningDepartmentTasks ? "Assigning..." : "Run Department Assignment"}
+            </Button>
+          ) : null}
+        </div>
       </Panel>
 
       <Panel
@@ -113,4 +145,3 @@ function Kpi({ label, value, meta }: { label: string; value: string; meta: strin
     </article>
   );
 }
-
