@@ -3,10 +3,12 @@ import path from "node:path";
 import { createTaskFile, addTaskMilestone } from "../work/tasks.js";
 import { parseFrontMatter } from "../artifacts/frontmatter.js";
 import { AgentYaml } from "../schemas/agent.js";
+import { ReviewYaml } from "../schemas/review.js";
 import { listTeams } from "../org/teams_list.js";
 import { readYamlFile } from "../store/yaml.js";
 import { ensureDir, writeFileAtomic } from "../store/fs.js";
 import { nowIso } from "../core/time.js";
+import { parseHeartbeatActionProposalMarkdown } from "../heartbeat/action_proposal.js";
 
 export type AssignDepartmentTasksArgs = {
   workspace_dir: string;
@@ -63,6 +65,100 @@ async function validateExecutivePlanArtifact(args: {
   }
 }
 
+function proposalLinksExecutivePlan(args: {
+  project_id: string;
+  executive_plan_artifact_id: string;
+  proposed_action: Record<string, unknown>;
+  rationale?: string;
+}): boolean {
+  const linkedByRationale = `executive_plan_artifact_id=${args.executive_plan_artifact_id}`;
+  const rationaleCandidates = [args.rationale];
+  if (typeof args.proposed_action.rationale === "string") {
+    rationaleCandidates.push(args.proposed_action.rationale);
+  }
+  for (const rationale of rationaleCandidates) {
+    if (typeof rationale === "string" && rationale.includes(linkedByRationale)) return true;
+  }
+
+  const idempotencyKeys: string[] = [];
+  if (typeof args.proposed_action.idempotency_key === "string") {
+    idempotencyKeys.push(args.proposed_action.idempotency_key);
+  }
+  if (
+    args.proposed_action.kind === "create_approval_item" &&
+    args.proposed_action.proposed_action &&
+    typeof args.proposed_action.proposed_action === "object"
+  ) {
+    const nested = args.proposed_action.proposed_action as Record<string, unknown>;
+    if (typeof nested.idempotency_key === "string") idempotencyKeys.push(nested.idempotency_key);
+  }
+
+  const strictToken = `:${args.project_id}:${args.executive_plan_artifact_id}`;
+  return idempotencyKeys.some(
+    (key) => key.includes(strictToken) || key.endsWith(`:${args.executive_plan_artifact_id}`) || key.includes(args.executive_plan_artifact_id)
+  );
+}
+
+async function assertExecutivePlanApprovedByCeo(args: {
+  workspace_dir: string;
+  project_id: string;
+  executive_plan_artifact_id: string;
+}): Promise<void> {
+  const reviewsDir = path.join(args.workspace_dir, "inbox", "reviews");
+  let files: string[] = [];
+  try {
+    files = (await fs.readdir(reviewsDir)).filter((f) => f.endsWith(".yaml"));
+  } catch {
+    files = [];
+  }
+
+  for (const file of files) {
+    let reviewDoc: unknown;
+    try {
+      reviewDoc = await readYamlFile(path.join(reviewsDir, file));
+    } catch {
+      continue;
+    }
+    const parsed = ReviewYaml.safeParse(reviewDoc);
+    if (!parsed.success) continue;
+    const review = parsed.data;
+    if (review.decision !== "approved") continue;
+    if (review.subject.kind !== "heartbeat_action") continue;
+    if (review.subject.project_id !== args.project_id) continue;
+    if (review.actor_role !== "ceo" && review.actor_role !== "human") continue;
+
+    const proposalAbs = path.join(
+      args.workspace_dir,
+      "work",
+      "projects",
+      args.project_id,
+      "artifacts",
+      `${review.subject.artifact_id}.md`
+    );
+    let proposalMarkdown = "";
+    try {
+      proposalMarkdown = await fs.readFile(proposalAbs, { encoding: "utf8" });
+    } catch {
+      continue;
+    }
+    const proposal = parseHeartbeatActionProposalMarkdown(proposalMarkdown);
+    if (!proposal.ok) continue;
+    if (proposal.frontmatter.project_id !== args.project_id) continue;
+    if (
+      proposalLinksExecutivePlan({
+        project_id: args.project_id,
+        executive_plan_artifact_id: args.executive_plan_artifact_id,
+        proposed_action: proposal.frontmatter.proposed_action as Record<string, unknown>,
+        rationale: proposal.frontmatter.rationale
+      })
+    ) {
+      return;
+    }
+  }
+
+  throw new Error(`CEO approval required for executive plan ${args.executive_plan_artifact_id}`);
+}
+
 export async function assignDepartmentTasks(
   args: AssignDepartmentTasksArgs
 ): Promise<AssignDepartmentTasksResult> {
@@ -82,6 +178,11 @@ export async function assignDepartmentTasks(
     workspace_dir: workspaceDir,
     project_id: projectId,
     artifact_id: executivePlanArtifactId
+  });
+  await assertExecutivePlanApprovedByCeo({
+    workspace_dir: workspaceDir,
+    project_id: projectId,
+    executive_plan_artifact_id: executivePlanArtifactId
   });
 
   const [director, teams] = await Promise.all([
@@ -209,4 +310,3 @@ export async function assignDepartmentTasks(
     audit_log_relpath: path.join("work", "projects", projectId, "logs", auditName)
   };
 }
-

@@ -6,6 +6,8 @@ import { bootstrapWorkspacePresets } from "../src/workspace/bootstrap_presets.js
 import { runClientIntakePipeline } from "../src/pipeline/client_intake_run.js";
 import { validateMarkdownArtifact } from "../src/artifacts/markdown.js";
 import { listProjectTasks } from "../src/work/tasks_list.js";
+import { AgentYaml } from "../src/schemas/agent.js";
+import { readYamlFile, writeYamlFile } from "../src/store/yaml.js";
 
 async function mkTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-client-intake-"));
@@ -16,6 +18,15 @@ async function readArtifact(workspaceDir: string, projectId: string, artifactId:
     path.join(workspaceDir, "work", "projects", projectId, "artifacts", `${artifactId}.md`),
     { encoding: "utf8" }
   );
+}
+
+async function setAgentProvider(workspaceDir: string, agentId: string, provider: string): Promise<void> {
+  const abs = path.join(workspaceDir, "org", "agents", agentId, "agent.yaml");
+  const agent = AgentYaml.parse(await readYamlFile(abs));
+  await writeYamlFile(abs, {
+    ...agent,
+    provider
+  });
 }
 
 describe("pipeline client intake", () => {
@@ -43,6 +54,10 @@ describe("pipeline client intake", () => {
     expect(out.project_id.startsWith("proj_")).toBe(true);
     expect(typeof out.meeting_conversation_id).toBe("string");
     expect(Object.keys(out.department_plan_artifact_ids)).toHaveLength(2);
+    expect(out.generation.mode).toBe("deterministic");
+    expect(out.generation.attempted).toBe(0);
+    expect(out.generation.failed).toBe(0);
+    expect(typeof out.generation.audit_log_relpath).toBe("string");
 
     const intakeMd = await readArtifact(dir, out.project_id, out.artifacts.intake_brief_artifact_id);
     const intakeVal = validateMarkdownArtifact(intakeMd);
@@ -82,5 +97,44 @@ describe("pipeline client intake", () => {
     const workerTasks = tasks.filter((t) => t.frontmatter.assignee_agent_id && allWorkerIds.has(t.frontmatter.assignee_agent_id));
     expect(workerTasks).toHaveLength(0);
   }, 20_000);
-});
 
+  test("model-based provider fill failures fall back to deterministic artifacts and emit generation audit", async () => {
+    const dir = await mkTmpDir();
+    const boot = await bootstrapWorkspacePresets({
+      workspace_dir: dir,
+      org_mode: "enterprise",
+      departments: ["frontend", "backend"]
+    });
+    const ceo = boot.agents.ceo_agent_id;
+    const exec = boot.agents.executive_manager_agent_id;
+    if (!ceo || !exec) {
+      throw new Error("enterprise bootstrap did not return ceo/executive manager");
+    }
+
+    await setAgentProvider(dir, exec, "unknown_provider_for_test");
+    for (const department of boot.departments) {
+      await setAgentProvider(dir, department.director_agent_id, "unknown_provider_for_test");
+    }
+
+    const out = await runClientIntakePipeline({
+      workspace_dir: dir,
+      project_name: "CRM Tool Provider Fallback",
+      ceo_actor_id: ceo,
+      executive_manager_agent_id: exec,
+      intake_text: "Build CRM with automation.",
+      model: "gpt-5-codex"
+    });
+
+    expect(out.project_id.startsWith("proj_")).toBe(true);
+    expect(out.generation.mode).toBe("provider_with_fallback");
+    expect(out.generation.attempted).toBeGreaterThan(0);
+    expect(out.generation.failed).toBeGreaterThan(0);
+    expect(out.generation.succeeded + out.generation.failed).toBe(out.generation.attempted);
+    expect(Array.isArray(out.generation.failure_artifact_ids)).toBe(true);
+
+    const auditAbs = path.join(dir, out.generation.audit_log_relpath);
+    const auditRaw = await fs.readFile(auditAbs, { encoding: "utf8" });
+    expect(auditRaw).toContain("provider_fill_failed");
+    expect(auditRaw).toContain("executive_plan");
+  });
+});

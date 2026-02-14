@@ -5,13 +5,14 @@ import { describe, expect, test } from "vitest";
 import { bootstrapWorkspacePresets } from "../src/workspace/bootstrap_presets.js";
 import { runClientIntakePipeline } from "../src/pipeline/client_intake_run.js";
 import { assignDepartmentTasks } from "../src/pipeline/department_assignment.js";
+import { resolveInboxItem } from "../src/inbox/resolve.js";
 
 async function mkTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-dept-assign-"));
 }
 
 describe("department assignment", () => {
-  test("allows in-team worker assignment and denies cross-team assignment with audit log", async () => {
+  test("requires CEO approval link before assignment and still denies cross-team assignment with audit log", async () => {
     const dir = await mkTmpDir();
     const boot = await bootstrapWorkspacePresets({
       workspace_dir: dir,
@@ -33,6 +34,26 @@ describe("department assignment", () => {
     const frontend = boot.departments.find((d) => d.department_key === "frontend");
     const backend = boot.departments.find((d) => d.department_key === "backend");
     if (!frontend || !backend) throw new Error("expected frontend/backend departments");
+
+    await expect(
+      assignDepartmentTasks({
+        workspace_dir: dir,
+        project_id: intake.project_id,
+        department_key: "frontend",
+        director_agent_id: frontend.director_agent_id,
+        worker_agent_ids: [frontend.worker_agent_ids[0]!],
+        approved_executive_plan_artifact_id: intake.artifacts.executive_plan_artifact_id
+      })
+    ).rejects.toThrow(/CEO approval required/i);
+
+    await resolveInboxItem({
+      workspace_dir: dir,
+      project_id: intake.project_id,
+      artifact_id: intake.artifacts.approval_artifact_id,
+      decision: "approved",
+      actor_id: ceo,
+      actor_role: "ceo"
+    });
 
     const allowed = await assignDepartmentTasks({
       workspace_dir: dir,
@@ -65,4 +86,3 @@ describe("department assignment", () => {
     expect(log).toContain("cross_team_assignment_denied");
   });
 });
-

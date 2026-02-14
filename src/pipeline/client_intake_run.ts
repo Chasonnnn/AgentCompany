@@ -8,7 +8,8 @@ import { listConversations } from "../conversations/store.js";
 import { listAgents } from "../org/agents_list.js";
 import { listTeams } from "../org/teams_list.js";
 import { createHeartbeatActionProposal } from "../heartbeat/action_proposal.js";
-import { writeFileAtomic } from "../store/fs.js";
+import { ensureDir, writeFileAtomic } from "../store/fs.js";
+import { fillArtifactWithProvider } from "./artifact_fill.js";
 
 export type RunClientIntakePipelineArgs = {
   workspace_dir: string;
@@ -32,7 +33,28 @@ export type RunClientIntakePipelineResult = {
   director_task_ids: Record<string, string>;
   assigned_task_ids: string[];
   meeting_conversation_id: string;
+  generation: {
+    mode: "deterministic" | "provider_with_fallback";
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    failure_artifact_ids: string[];
+    audit_log_relpath: string;
+  };
 };
+
+type ProviderFillTarget = {
+  artifact_kind: "executive_plan" | "meeting_transcript" | "department_plan";
+  artifact_id: string;
+  agent_id: string;
+  department_key?: string;
+  department_label?: string;
+  prompt: string;
+};
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
 
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -166,6 +188,7 @@ export async function runClientIntakePipeline(
   const transcriptDiscussion: string[] = [];
   const transcriptDecisions: string[] = [];
   const transcriptOpenQuestions: string[] = [];
+  const providerTargets: ProviderFillTarget[] = [];
 
   for (const director of departmentDirectors) {
     const team = director.team_id ? teamById.get(director.team_id) : undefined;
@@ -183,6 +206,22 @@ export async function runClientIntakePipeline(
       context_pack_id: "ctx_manual"
     });
     departmentPlanArtifactIds[departmentKey] = departmentPlan.artifact_id;
+    providerTargets.push({
+      artifact_kind: "department_plan",
+      artifact_id: departmentPlan.artifact_id,
+      agent_id: director.agent_id,
+      department_key: departmentKey,
+      department_label: departmentLabel,
+      prompt: [
+        `Project: ${projectName}`,
+        `Department: ${departmentLabel}`,
+        "Use the CEO intake and planning-council context to produce a concrete department plan.",
+        "Keep the required headings. Include actionable deliverables, dependencies, risks, and sequencing details.",
+        "",
+        "CEO intake:",
+        intakeText
+      ].join("\n")
+    });
 
     await patchArtifactSections({
       workspace_dir: workspaceDir,
@@ -263,6 +302,19 @@ export async function runClientIntakePipeline(
       ].join("\n")
     }
   });
+  providerTargets.unshift({
+    artifact_kind: "executive_plan",
+    artifact_id: executivePlan.artifact_id,
+    agent_id: executiveManagerId,
+    prompt: [
+      `Project: ${projectName}`,
+      "Produce an executive plan from the CEO intake and department scope.",
+      "Include concrete cross-department sequencing and keep CEO approval as a hard gate before worker execution.",
+      "",
+      "CEO intake:",
+      intakeText
+    ].join("\n")
+  });
 
   const transcript = await createProjectArtifactFile({
     workspace_dir: workspaceDir,
@@ -289,6 +341,100 @@ export async function runClientIntakePipeline(
       "## Open Questions": transcriptOpenQuestions.length ? transcriptOpenQuestions.join("\n") : "- None."
     }
   });
+  providerTargets.splice(1, 0, {
+    artifact_kind: "meeting_transcript",
+    artifact_id: transcript.artifact_id,
+    agent_id: executiveManagerId,
+    prompt: [
+      `Project: ${projectName}`,
+      "Produce a concise planning-council meeting transcript grounded in the CEO intake and director proposals.",
+      "Capture attendees, meaningful discussion points, explicit decisions, and open questions.",
+      "",
+      "CEO intake:",
+      intakeText
+    ].join("\n")
+  });
+
+  const generationMode: "deterministic" | "provider_with_fallback" = args.model?.trim()
+    ? "provider_with_fallback"
+    : "deterministic";
+  const generationAuditRows: Array<Record<string, unknown>> = [];
+  const generationFailureArtifactIds = new Set<string>();
+  let generationAttempted = 0;
+  let generationSucceeded = 0;
+  let generationFailed = 0;
+
+  if (generationMode === "provider_with_fallback") {
+    const model = args.model?.trim();
+    for (const target of providerTargets) {
+      generationAttempted += 1;
+      const startedAt = nowIso();
+      try {
+        const filled = await fillArtifactWithProvider({
+          workspace_dir: workspaceDir,
+          project_id: project.project_id,
+          artifact_id: target.artifact_id,
+          agent_id: target.agent_id,
+          model,
+          prompt: target.prompt
+        });
+        if (filled.ok) {
+          generationSucceeded += 1;
+          generationAuditRows.push({
+            ts: startedAt,
+            event: "provider_fill_succeeded",
+            artifact_kind: target.artifact_kind,
+            department_key: target.department_key,
+            artifact_id: target.artifact_id,
+            agent_id: target.agent_id,
+            run_id: filled.run_id,
+            context_pack_id: filled.context_pack_id
+          });
+        } else {
+          generationFailed += 1;
+          if (filled.failure_artifact_id) generationFailureArtifactIds.add(filled.failure_artifact_id);
+          generationAuditRows.push({
+            ts: startedAt,
+            event: "provider_fill_failed",
+            artifact_kind: target.artifact_kind,
+            department_key: target.department_key,
+            artifact_id: target.artifact_id,
+            agent_id: target.agent_id,
+            error: filled.error,
+            run_id: filled.run_id,
+            context_pack_id: filled.context_pack_id,
+            failure_artifact_id: filled.failure_artifact_id
+          });
+        }
+      } catch (err) {
+        generationFailed += 1;
+        generationAuditRows.push({
+          ts: startedAt,
+          event: "provider_fill_failed",
+          artifact_kind: target.artifact_kind,
+          department_key: target.department_key,
+          artifact_id: target.artifact_id,
+          agent_id: target.agent_id,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+  } else {
+    generationAuditRows.push({
+      ts: nowIso(),
+      event: "provider_fill_skipped",
+      reason: "model_not_provided"
+    });
+  }
+
+  const logsDir = path.join(workspaceDir, "work", "projects", project.project_id, "logs");
+  await ensureDir(logsDir);
+  const generationAuditName = `client_intake_generation_${Date.now()}.jsonl`;
+  const generationAuditAbs = path.join(logsDir, generationAuditName);
+  await writeFileAtomic(
+    generationAuditAbs,
+    generationAuditRows.map((row) => JSON.stringify(row)).join("\n") + (generationAuditRows.length ? "\n" : "")
+  );
 
   const approval = await createHeartbeatActionProposal({
     workspace_dir: workspaceDir,
@@ -330,7 +476,14 @@ export async function runClientIntakePipeline(
     department_plan_artifact_ids: departmentPlanArtifactIds,
     director_task_ids: directorTaskIds,
     assigned_task_ids: assignedTaskIds,
-    meeting_conversation_id: meetingConversation.id
+    meeting_conversation_id: meetingConversation.id,
+    generation: {
+      mode: generationMode,
+      attempted: generationAttempted,
+      succeeded: generationSucceeded,
+      failed: generationFailed,
+      failure_artifact_ids: [...generationFailureArtifactIds],
+      audit_log_relpath: path.join("work", "projects", project.project_id, "logs", generationAuditName)
+    }
   };
 }
-
