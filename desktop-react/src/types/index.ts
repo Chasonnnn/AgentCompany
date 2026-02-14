@@ -252,6 +252,36 @@ export type UiSnapshot = {
   };
 };
 
+export type InboxSnapshot = {
+  workspace_dir: string;
+  generated_at: string;
+  pending: Array<{
+    project_id: string;
+    artifact_id: string;
+    artifact_type: string;
+    title: string | null;
+    visibility: string | null;
+    produced_by: string | null;
+    run_id: string | null;
+    created_at: string | null;
+    parse_error_count: number;
+  }>;
+  recent_decisions: Array<{
+    review_id: string;
+    created_at: string;
+    decision: "approved" | "denied";
+    actor_id: string;
+    actor_role: string;
+    subject_kind: string;
+    subject_artifact_id: string;
+    project_id: string;
+    notes: string | null;
+    artifact_type: string | null;
+    run_id: string | null;
+    parse_error_count: number;
+  }>;
+};
+
 export type AgentProfileSnapshot = {
   workspace_dir: string;
   generated_at: string;
@@ -292,6 +322,14 @@ export type ClientIntakeRunResult = {
   director_task_ids: Record<string, string>;
   assigned_task_ids: string[];
   meeting_conversation_id: string;
+  generation: {
+    mode: "deterministic" | "provider_with_fallback";
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    failure_artifact_ids: string[];
+    audit_log_relpath: string;
+  };
 };
 
 export type DepartmentAssignResult = {

@@ -12,9 +12,19 @@ type Props = {
   recommendations: AllocationRecommendation[];
   applying: boolean;
   assigningDepartmentTasks?: boolean;
+  executivePlanApprovals?: Array<{
+    artifact_id: string;
+    title?: string | null;
+    created_at?: string | null;
+  }>;
+  resolvingExecutivePlan?: boolean;
   onApplyOne: (item: AllocationApplyPayload) => Promise<void>;
   onApplyAll: (items: AllocationApplyPayload[]) => Promise<void>;
   onAssignDepartmentTasks?: (approvedExecutivePlanArtifactId: string) => Promise<void>;
+  onResolveExecutivePlanApproval?: (
+    artifactId: string,
+    decision: "approved" | "denied"
+  ) => Promise<void>;
 };
 
 export function ProjectHome({
@@ -23,9 +33,12 @@ export function ProjectHome({
   recommendations,
   applying,
   assigningDepartmentTasks,
+  executivePlanApprovals = [],
+  resolvingExecutivePlan,
   onApplyOne,
   onApplyAll,
-  onAssignDepartmentTasks
+  onAssignDepartmentTasks,
+  onResolveExecutivePlanApproval
 }: Props) {
   const allItems: AllocationApplyPayload[] = recommendations.map((row) => ({
     task_id: row.task_id,
@@ -57,6 +70,55 @@ export function ProjectHome({
           <div className="muted">
             Review planning transcript/department plans and approve the executive plan before worker execution.
           </div>
+          {executivePlanApprovals.length === 0 ? (
+            <div className="muted">No pending executive-plan approvals.</div>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Pending Approval</th>
+                  <th>Created</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {executivePlanApprovals.map((row) => (
+                  <tr key={row.artifact_id}>
+                    <td>
+                      <strong>{row.title ?? "Executive Plan Approval"}</strong>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        {row.artifact_id}
+                      </div>
+                    </td>
+                    <td>{row.created_at ? new Date(row.created_at).toLocaleString() : "Unknown"}</td>
+                    <td>
+                      <div className="hstack">
+                        <Button
+                          tone="primary"
+                          disabled={!onResolveExecutivePlanApproval || Boolean(resolvingExecutivePlan)}
+                          onClick={() => {
+                            if (!onResolveExecutivePlanApproval) return;
+                            void onResolveExecutivePlanApproval(row.artifact_id, "approved");
+                          }}
+                        >
+                          {resolvingExecutivePlan ? "Working..." : "Approve"}
+                        </Button>
+                        <Button
+                          disabled={!onResolveExecutivePlanApproval || Boolean(resolvingExecutivePlan)}
+                          onClick={() => {
+                            if (!onResolveExecutivePlanApproval) return;
+                            void onResolveExecutivePlanApproval(row.artifact_id, "denied");
+                          }}
+                        >
+                          Deny
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           {onAssignDepartmentTasks ? (
             <Button
               tone="primary"

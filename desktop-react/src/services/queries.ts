@@ -6,6 +6,7 @@ import {
   type ClientIntakeRunResult,
   type DepartmentAssignResult,
   type DesktopBootstrapSnapshot,
+  type InboxSnapshot,
   type ScopeKind,
   type ViewKind
 } from "@/types";
@@ -114,6 +115,23 @@ export function useAgentProfile(args: {
         ...(args.projectId ? { project_id: args.projectId } : {})
       }),
     staleTime: 10_000
+  });
+}
+
+export function useInboxSnapshot(args: { workspaceDir: string; projectId?: string }, enabled: boolean) {
+  return useQuery({
+    queryKey: ["inbox-snapshot", args.workspaceDir, args.projectId ?? "workspace"],
+    enabled,
+    queryFn: async () =>
+      rpcCall<InboxSnapshot>("inbox.snapshot", {
+        workspace_dir: args.workspaceDir,
+        ...(args.projectId ? { project_id: args.projectId } : {})
+      }),
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return false;
+      return 4000;
+    },
+    staleTime: 1000
   });
 }
 
@@ -271,6 +289,33 @@ export function useDesktopActions() {
     onSuccess: invalidateSnapshots
   });
 
+  const resolveInboxItem = useMutation({
+    mutationFn: async (args: {
+      workspaceDir: string;
+      projectId: string;
+      artifactId: string;
+      decision: "approved" | "denied";
+      actorId: string;
+      actorRole: "human" | "ceo" | "director" | "manager" | "worker";
+      actorTeamId?: string;
+      notes?: string;
+    }) =>
+      rpcCall("ui.resolve", {
+        workspace_dir: args.workspaceDir,
+        project_id: args.projectId,
+        artifact_id: args.artifactId,
+        decision: args.decision,
+        actor_id: args.actorId,
+        actor_role: args.actorRole,
+        ...(args.actorTeamId ? { actor_team_id: args.actorTeamId } : {}),
+        ...(args.notes?.trim() ? { notes: args.notes.trim() } : {})
+      }),
+    onSuccess: async () => {
+      await invalidateSnapshots();
+      await queryClient.invalidateQueries({ queryKey: ["inbox-snapshot"] });
+    }
+  });
+
   return {
     createProject,
     createChannel,
@@ -279,6 +324,7 @@ export function useDesktopActions() {
     applyAllocations,
     runClientIntake,
     assignDepartmentTasks,
+    resolveInboxItem,
     invalidateSnapshots
   };
 }

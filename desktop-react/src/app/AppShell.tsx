@@ -17,7 +17,7 @@ import { ProjectRail } from "@/features/workspace/ProjectRail";
 import { QuickSwitchModal } from "@/features/workspace/QuickSwitchModal";
 import { ResourcesView } from "@/features/workspace/ResourcesView";
 import { SettingsModal } from "@/features/workspace/SettingsModal";
-import { useAgentProfile, useDesktopActions, useDesktopSnapshot } from "@/services/queries";
+import { useAgentProfile, useDesktopActions, useDesktopSnapshot, useInboxSnapshot } from "@/services/queries";
 import { pickRepoFolder, resolveDefaultWorkspaceDir } from "@/services/rpc";
 import type {
   AgentSummary,
@@ -161,11 +161,41 @@ export function AppShell() {
   );
 
   const actions = useDesktopActions();
+  const projectInbox = useInboxSnapshot(
+    {
+      workspaceDir,
+      projectId: scope.kind === "project" ? scope.projectId : undefined
+    },
+    Boolean(workspaceDir && scope.kind === "project")
+  );
 
   const projects = snapshot.data?.projects ?? [];
   const teams = snapshot.data?.teams ?? [];
   const agents = snapshot.data?.agents ?? [];
   const conversations = snapshot.data?.conversations ?? [];
+  const actorContext = useMemo(() => {
+    if (actorId === "human_ceo") {
+      return { role: "human" as const, teamId: undefined };
+    }
+    const actorAgent = agents.find((agent) => agent.agent_id === actorId);
+    if (!actorAgent) return { role: "human" as const, teamId: undefined };
+    return { role: actorAgent.role, teamId: actorAgent.team_id };
+  }, [actorId, agents]);
+  const executivePlanApprovals = useMemo(() => {
+    if (scope.kind !== "project") return [] as Array<{ artifact_id: string; title?: string | null; created_at?: string | null }>;
+    const pending = projectInbox.data?.pending ?? [];
+    return pending
+      .filter(
+        (row) =>
+          row.artifact_type === "heartbeat_action_proposal" &&
+          (row.title?.toLowerCase().includes("executive plan") ?? false)
+      )
+      .map((row) => ({
+        artifact_id: row.artifact_id,
+        title: row.title,
+        created_at: row.created_at
+      }));
+  }, [scope.kind, projectInbox.data?.pending]);
 
   useEffect(() => {
     if (scope.kind === "project" && scope.projectId && !projects.some((p) => p.project_id === scope.projectId)) {
@@ -360,6 +390,8 @@ export function AppShell() {
               sending={actions.sendMessage.isPending}
               applying={actions.applyAllocations.isPending}
               assigningDepartmentTasks={actions.assignDepartmentTasks.isPending}
+              resolvingExecutivePlan={actions.resolveInboxItem.isPending}
+              executivePlanApprovals={executivePlanApprovals}
               workspaceDir={workspaceDir}
               actorId={actorId}
               teams={teams}
@@ -422,6 +454,23 @@ export function AppShell() {
                       approvedExecutivePlanArtifactId
                     });
                   }
+                  setInlineError("");
+                } catch (error) {
+                  setInlineError(error instanceof Error ? error.message : String(error));
+                }
+              }}
+              onResolveExecutivePlanApproval={async (artifactId, decision) => {
+                try {
+                  if (scope.kind !== "project" || !scope.projectId) return;
+                  await actions.resolveInboxItem.mutateAsync({
+                    workspaceDir,
+                    projectId: scope.projectId,
+                    artifactId,
+                    decision,
+                    actorId,
+                    actorRole: actorContext.role,
+                    actorTeamId: actorContext.teamId
+                  });
                   setInlineError("");
                 } catch (error) {
                   setInlineError(error instanceof Error ? error.message : String(error));
@@ -588,9 +637,19 @@ function ContentView(props: {
   sending: boolean;
   applying: boolean;
   assigningDepartmentTasks: boolean;
+  resolvingExecutivePlan: boolean;
+  executivePlanApprovals: Array<{
+    artifact_id: string;
+    title?: string | null;
+    created_at?: string | null;
+  }>;
   onOpenProject: (projectId: string) => void;
   onRunClientIntake: () => Promise<void>;
   onAssignDepartmentTasks: (approvedExecutivePlanArtifactId: string) => Promise<void>;
+  onResolveExecutivePlanApproval: (
+    artifactId: string,
+    decision: "approved" | "denied"
+  ) => Promise<void>;
   onSendMessage: (body: string) => Promise<void>;
   onApplyAllocation: (items: Array<{
     task_id: string;
@@ -631,10 +690,15 @@ function ContentView(props: {
             recommendations={home.recommendations ?? []}
             applying={props.applying}
             assigningDepartmentTasks={props.assigningDepartmentTasks}
+            executivePlanApprovals={props.executivePlanApprovals}
+            resolvingExecutivePlan={props.resolvingExecutivePlan}
             onApplyAll={props.onApplyAllocation}
             onApplyOne={async (item) => props.onApplyAllocation([item])}
             onAssignDepartmentTasks={async (approvedExecutivePlanArtifactId) =>
               props.onAssignDepartmentTasks(approvedExecutivePlanArtifactId)
+            }
+            onResolveExecutivePlanApproval={async (artifactId, decision) =>
+              props.onResolveExecutivePlanApproval(artifactId, decision)
             }
           />
         </section>
