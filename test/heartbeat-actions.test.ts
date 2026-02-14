@@ -3,8 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { initWorkspace } from "../src/workspace/init.js";
+import { createTeam } from "../src/org/teams.js";
+import { createAgent } from "../src/org/agents.js";
 import { createProject } from "../src/work/projects.js";
 import { listComments } from "../src/comments/comment.js";
+import { createRun } from "../src/runtime/run.js";
 import { DEFAULT_HEARTBEAT_CONFIG, DEFAULT_HEARTBEAT_STATE } from "../src/schemas/heartbeat.js";
 import { applyHeartbeatWorkerReportActions } from "../src/runtime/heartbeat_actions.js";
 
@@ -174,5 +177,66 @@ describe("heartbeat actions", () => {
       project_id
     });
     expect(comments).toHaveLength(0);
+  });
+
+  test("policy-denied hard stop emits policy.denied event when source run exists", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Ops" });
+    const worker = await createAgent({
+      workspace_dir: dir,
+      name: "Worker",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+    const run = await createRun({
+      workspace_dir: dir,
+      project_id,
+      agent_id: worker.agent_id,
+      provider: "codex"
+    });
+
+    const applied = await applyHeartbeatWorkerReportActions({
+      workspace_dir: dir,
+      report: {
+        schema_version: 1,
+        type: "heartbeat_worker_report",
+        status: "actions",
+        summary: "policy gate",
+        actions: [
+          {
+            kind: "launch_job",
+            idempotency_key: "policy:deny:launch:1",
+            risk: "low",
+            needs_approval: false,
+            project_id,
+            goal: "Attempt worker launch denied by policy visibility",
+            constraints: [],
+            deliverables: [],
+            permission_level: "read-only"
+          }
+        ]
+      },
+      source_worker_agent_id: worker.agent_id,
+      source_run_id: run.run_id,
+      source_context_pack_id: run.context_pack_id,
+      config: {
+        ...structuredClone(DEFAULT_HEARTBEAT_CONFIG),
+        quiet_hours_start_hour: 23,
+        quiet_hours_end_hour: 23
+      },
+      state: structuredClone(DEFAULT_HEARTBEAT_STATE),
+      actor_id: worker.agent_id,
+      actor_role: "worker",
+      actor_team_id: team_id
+    });
+
+    expect(applied.summary.executed_actions).toBe(0);
+    expect(applied.summary.queued_for_approval).toBe(1);
+    const eventsAbs = path.join(dir, "work", "projects", project_id, "runs", run.run_id, "events.jsonl");
+    const eventsRaw = await fs.readFile(eventsAbs, { encoding: "utf8" });
+    expect(eventsRaw).toContain('"type":"policy.denied"');
   });
 });

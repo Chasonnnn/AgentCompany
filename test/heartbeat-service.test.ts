@@ -9,7 +9,7 @@ import { createProject } from "../src/work/projects.js";
 import { createTaskFile } from "../src/work/tasks.js";
 import { updateTaskPlan } from "../src/work/tasks_plan_update.js";
 import { createRun } from "../src/runtime/run.js";
-import { HeartbeatService } from "../src/runtime/heartbeat_service.js";
+import { HeartbeatService, resolveWakeProjectId } from "../src/runtime/heartbeat_service.js";
 
 async function mkTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentcompany-heartbeat-service-"));
@@ -141,5 +141,34 @@ describe("heartbeat service", () => {
     expect(status.config.allow_director_to_spawn_workers).toBe(true);
 
     await service.close();
+  });
+
+  test("resolveWakeProjectId prefers wake target, then latest worker project, then global fallback", () => {
+    expect(
+      resolveWakeProjectId({
+        wake_project_id: "proj_wake",
+        worker_agent_id: "agent_w",
+        latest_project_by_worker: new Map([["agent_w", "proj_latest"]]),
+        global_fallback_project_id: "proj_global"
+      })
+    ).toBe("proj_wake");
+
+    expect(
+      resolveWakeProjectId({
+        wake_project_id: undefined,
+        worker_agent_id: "agent_w",
+        latest_project_by_worker: new Map([["agent_w", "proj_latest"]]),
+        global_fallback_project_id: "proj_global"
+      })
+    ).toBe("proj_latest");
+
+    expect(
+      resolveWakeProjectId({
+        wake_project_id: undefined,
+        worker_agent_id: "agent_unknown",
+        latest_project_by_worker: new Map([["agent_w", "proj_latest"]]),
+        global_fallback_project_id: "proj_global"
+      })
+    ).toBe("proj_global");
   });
 });

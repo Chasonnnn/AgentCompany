@@ -32,6 +32,7 @@ export type HeartbeatWorkerCandidate = {
 export type HeartbeatWakeTarget = {
   worker_agent_id: string;
   team_id?: string;
+  project_id?: string;
   score: number;
   jitter_seconds: number;
   context_hash: string;
@@ -44,6 +45,44 @@ export type HeartbeatTriageResult = {
   woken_workers: HeartbeatWakeTarget[];
   context_hashes: Record<string, string>;
 };
+
+function workerProjectKey(workerAgentId: string, projectId: string): string {
+  return `${workerAgentId}::${projectId}`;
+}
+
+function bumpWorkerProjectCounter(
+  map: Map<string, number>,
+  workerAgentId: string,
+  projectId: string,
+  delta = 1
+): void {
+  const key = workerProjectKey(workerAgentId, projectId);
+  map.set(key, (map.get(key) ?? 0) + delta);
+}
+
+function chooseWakeProjectId(args: {
+  worker_agent_id: string;
+  project_signal_scores: Map<string, number>;
+  latest_project_id?: string;
+}): string | undefined {
+  const prefix = `${args.worker_agent_id}::`;
+  const scored = [...args.project_signal_scores.entries()]
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([key, score]) => ({
+      project_id: key.slice(prefix.length),
+      score
+    }))
+    .filter((row) => row.project_id.length > 0);
+  if (scored.length === 0) return args.latest_project_id;
+
+  const maxScore = Math.max(...scored.map((row) => row.score));
+  const tied = scored.filter((row) => row.score === maxScore).map((row) => row.project_id);
+  if (args.latest_project_id && tied.includes(args.latest_project_id)) {
+    return args.latest_project_id;
+  }
+  tied.sort((a, b) => a.localeCompare(b));
+  return tied[0];
+}
 
 function sha256Hex(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -130,6 +169,7 @@ export async function buildHeartbeatTriage(args: {
   const dueByWorker = new Map<string, number>();
   const overdueByWorker = new Map<string, number>();
   const stuckByWorker = new Map<string, number>();
+  const projectSignalScores = new Map<string, number>();
   const runEventCursors = { ...args.state.run_event_cursors };
 
   const bump = (map: Map<string, number>, key: string, delta = 1): void => {
@@ -137,6 +177,12 @@ export async function buildHeartbeatTriage(args: {
   };
 
   const indexedRuns = await listIndexedRuns({ workspace_dir: args.workspace_dir, limit: 5000 }).catch(() => []);
+  const latestProjectByWorker = new Map<string, string>();
+  for (const run of indexedRuns) {
+    if (!latestProjectByWorker.has(run.agent_id)) {
+      latestProjectByWorker.set(run.agent_id, run.project_id);
+    }
+  }
   for (const run of indexedRuns) {
     const cursorKey = `${run.project_id}::${run.run_id}`;
     const since = args.state.run_event_cursors[cursorKey] ?? 0;
@@ -152,10 +198,16 @@ export async function buildHeartbeatTriage(args: {
     const maxSeq = Math.max(...events.map((e) => e.seq));
     runEventCursors[cursorKey] = maxSeq;
 
-    if (workersById.has(run.agent_id)) bump(newSignalsByWorker, run.agent_id, 1);
+    if (workersById.has(run.agent_id)) {
+      bump(newSignalsByWorker, run.agent_id, 1);
+      bumpWorkerProjectCounter(projectSignalScores, run.agent_id, run.project_id, 5);
+    }
 
     for (const ev of events) {
-      if (ev.actor && workersById.has(ev.actor)) bump(newSignalsByWorker, ev.actor, 1);
+      if (ev.actor && workersById.has(ev.actor)) {
+        bump(newSignalsByWorker, ev.actor, 1);
+        bumpWorkerProjectCounter(projectSignalScores, ev.actor, run.project_id, 5);
+      }
     }
   }
 
@@ -180,9 +232,15 @@ export async function buildHeartbeatTriage(args: {
       if (!targets.length) continue;
 
       if (plannedEndMs < nowMs) {
-        for (const t of targets) bump(overdueByWorker, t, 1);
+        for (const t of targets) {
+          bump(overdueByWorker, t, 1);
+          bumpWorkerProjectCounter(projectSignalScores, t, project.project_id, 2);
+        }
       } else if (plannedEndMs <= nowMs + horizonMs) {
-        for (const t of targets) bump(dueByWorker, t, 1);
+        for (const t of targets) {
+          bump(dueByWorker, t, 1);
+          bumpWorkerProjectCounter(projectSignalScores, t, project.project_id, 3);
+        }
       }
     }
 
@@ -202,7 +260,10 @@ export async function buildHeartbeatTriage(args: {
       if (!isStuck) continue;
 
       const target = lastAttempt?.worker_agent_id;
-      if (target && workersById.has(target)) bump(stuckByWorker, target, 1);
+      if (target && workersById.has(target)) {
+        bump(stuckByWorker, target, 1);
+        bumpWorkerProjectCounter(projectSignalScores, target, project.project_id, 4);
+      }
     }
   }
 
@@ -295,6 +356,11 @@ export async function buildHeartbeatTriage(args: {
     .map((c) => ({
       worker_agent_id: c.worker_agent_id,
       team_id: c.team_id,
+      project_id: chooseWakeProjectId({
+        worker_agent_id: c.worker_agent_id,
+        project_signal_scores: projectSignalScores,
+        latest_project_id: latestProjectByWorker.get(c.worker_agent_id)
+      }),
       score: c.score,
       jitter_seconds: Math.floor(Math.max(0, Math.min(1, random())) * (args.config.jitter_max_seconds + 1)),
       context_hash: c.context_hash

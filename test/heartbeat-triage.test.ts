@@ -258,4 +258,72 @@ describe("heartbeat triage", () => {
     // keep ts from "unused variable" in a way that's semantically useful for this test setup
     expect(typeof run.run_id).toBe("string");
   });
+
+  test("routes wake target project_id from strongest per-project signals", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+
+    const { team_id } = await createTeam({ workspace_dir: dir, name: "Ops" });
+    const worker = await createAgent({
+      workspace_dir: dir,
+      name: "Worker A",
+      role: "worker",
+      provider: "codex",
+      team_id
+    });
+
+    const projA = await createProject({ workspace_dir: dir, name: "Signals A" });
+    const projB = await createProject({ workspace_dir: dir, name: "Signals B" });
+
+    await createRun({
+      workspace_dir: dir,
+      project_id: projA.project_id,
+      agent_id: worker.agent_id,
+      provider: "codex"
+    });
+
+    const dueTask = await createTaskFile({
+      workspace_dir: dir,
+      project_id: projB.project_id,
+      title: "Due in B",
+      visibility: "team",
+      assignee_agent_id: worker.agent_id,
+      team_id
+    });
+    await updateTaskPlan({
+      workspace_dir: dir,
+      project_id: projB.project_id,
+      task_id: dueTask.task_id,
+      schedule: {
+        planned_end: isoIn(15),
+        depends_on_task_ids: []
+      }
+    });
+    await writeRunningJob({
+      workspace_dir: dir,
+      project_id: projB.project_id,
+      job_id: "job_stuck_b",
+      worker_agent_id: worker.agent_id,
+      started_at: isoIn(-120)
+    });
+
+    await rebuildSqliteIndex(dir);
+
+    const triage = await buildHeartbeatTriage({
+      workspace_dir: dir,
+      config: {
+        ...DEFAULT_HEARTBEAT_CONFIG,
+        top_k_workers: 3,
+        min_wake_score: 1,
+        quiet_hours_start_hour: 23,
+        quiet_hours_end_hour: 23
+      },
+      state: DEFAULT_HEARTBEAT_STATE,
+      random: () => 0
+    });
+
+    const wake = triage.woken_workers.find((w) => w.worker_agent_id === worker.agent_id);
+    expect(wake).toBeTruthy();
+    expect(wake?.project_id).toBe(projB.project_id);
+  });
 });

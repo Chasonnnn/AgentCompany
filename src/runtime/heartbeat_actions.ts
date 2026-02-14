@@ -169,6 +169,7 @@ async function hardStopReason(args: {
   actor_id: string;
   actor_role: "human" | "ceo" | "director" | "manager" | "worker";
   actor_team_id?: string;
+  source_run_id?: string;
 }): Promise<string | undefined> {
   const policy = policyArgsForAuto(args);
   if (policy) {
@@ -178,6 +179,12 @@ async function hardStopReason(args: {
       policy.resource
     );
     if (!decision.allowed) {
+      if (args.source_run_id) {
+        await enforcePolicy({
+          ...policy,
+          run_id: args.source_run_id
+        }).catch(() => {});
+      }
       return `policy_denied:${decision.rule_id}`;
     }
   }
@@ -335,7 +342,8 @@ async function executeOneAction(args: {
     action: args.action,
     actor_id: args.actor_id,
     actor_role: args.actor_role,
-    actor_team_id: args.actor_team_id
+    actor_team_id: args.actor_team_id,
+    source_run_id: args.source_run_id
   });
 
   const needsApprovalByPolicy =

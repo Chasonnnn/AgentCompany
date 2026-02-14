@@ -1,6 +1,7 @@
 import path from "node:path";
 import { listAgents } from "../org/agents_list.js";
 import { listProjects } from "../work/projects_list.js";
+import { listIndexedRuns } from "../index/sqlite.js";
 import type {
   HeartbeatConfig,
   HeartbeatState,
@@ -129,6 +130,18 @@ export type HeartbeatWorkspaceStatus = {
     last_tick_summary?: HeartbeatTickSummary;
   };
 };
+
+export function resolveWakeProjectId(args: {
+  wake_project_id?: string;
+  worker_agent_id: string;
+  latest_project_by_worker: Map<string, string>;
+  global_fallback_project_id?: string;
+}): string | undefined {
+  if (args.wake_project_id) return args.wake_project_id;
+  const latest = args.latest_project_by_worker.get(args.worker_agent_id);
+  if (latest) return latest;
+  return args.global_fallback_project_id;
+}
 
 export class HeartbeatService {
   private readonly runtimes = new Map<string, WorkspaceRuntime>();
@@ -350,11 +363,18 @@ export class HeartbeatService {
       let skippedActions = 0;
 
       if (!dryRun) {
-        const [agents, projects] = await Promise.all([
+        const [agents, projects, indexedRuns] = await Promise.all([
           listAgents({ workspace_dir: args.workspace_dir }),
-          listProjects({ workspace_dir: args.workspace_dir })
+          listProjects({ workspace_dir: args.workspace_dir }),
+          listIndexedRuns({ workspace_dir: args.workspace_dir, limit: 5000 }).catch(() => [])
         ]);
-        const defaultProjectId = projects[0]?.project_id;
+        const latestProjectByWorker = new Map<string, string>();
+        for (const run of indexedRuns) {
+          if (!latestProjectByWorker.has(run.agent_id)) {
+            latestProjectByWorker.set(run.agent_id, run.project_id);
+          }
+        }
+        const globalFallbackProjectId = projects[0]?.project_id;
         const agentById = new Map(agents.map((a) => [a.agent_id, a]));
         const coordinatorActorId =
           config.hierarchy_mode === "enterprise_v1" && config.executive_manager_agent_id
@@ -375,9 +395,15 @@ export class HeartbeatService {
         });
 
         for (const wake of wakeTargets) {
-          if (!defaultProjectId) break;
           const agent = agentById.get(wake.worker_agent_id);
           if (!agent) continue;
+          const routedProjectId = resolveWakeProjectId({
+            wake_project_id: wake.project_id,
+            worker_agent_id: wake.worker_agent_id,
+            latest_project_by_worker: latestProjectByWorker,
+            global_fallback_project_id: globalFallbackProjectId
+          });
+          if (!routedProjectId) continue;
           const targetRoleHint = agent.role === "director" ? "director" : "worker";
           const context = candidateByWorker[wake.worker_agent_id];
           const note = context
@@ -391,7 +417,7 @@ export class HeartbeatService {
               job_kind: "heartbeat",
               worker_kind: workerKindFromProvider(agent.provider),
               workspace_dir: args.workspace_dir,
-              project_id: defaultProjectId,
+              project_id: routedProjectId,
               goal: `Heartbeat triage check for worker ${wake.worker_agent_id}`,
               constraints: [
                 "Use heartbeat_worker_report contract",
