@@ -128,7 +128,7 @@ program
     "Legacy alias for --department",
     undefined
   )
-  .option("--workers-per-dept <n>", "Workers per department (min: 1)", (v) => parseInt(v, 10), 1)
+  .option("--workers-per-dept <n>", "Workers per department (min: 1)", (v) => parseInt(v, 10), 2)
   .option("--force", "Reset controlled workspace state before bootstrap", false)
   .option("--no-ceo", "Do not create a CEO agent")
   .option("--no-director", "Do not create a Director agent")

@@ -179,8 +179,8 @@ function normalizeDepartmentKeys(raw: string[] | undefined, orgMode: OrgMode): D
 }
 
 function normalizeWorkersPerDept(raw?: number): number {
-  if (raw == null) return 1;
-  if (!Number.isFinite(raw)) return 1;
+  if (raw == null) return 2;
+  if (!Number.isFinite(raw)) return 2;
   return Math.max(1, Math.floor(raw));
 }
 

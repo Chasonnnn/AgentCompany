@@ -66,6 +66,18 @@ describe("workspace preset bootstrap", () => {
     expect(res.agents.director_agent_id).toBe(res.default_session.actor_id);
   });
 
+  test("enterprise mode defaults to a few workers per department", async () => {
+    const dir = await mkTmpDir();
+    const res = await bootstrapWorkspacePresets({
+      workspace_dir: dir,
+      org_mode: "enterprise",
+      departments: ["frontend", "backend"]
+    });
+    for (const dept of res.departments) {
+      expect(dept.worker_agent_ids.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
   test("force reset rewrites controlled workspace state and avoids stale team accumulation", async () => {
     const dir = await mkTmpDir();
     await bootstrapWorkspacePresets({

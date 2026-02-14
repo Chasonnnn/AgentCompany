@@ -103,7 +103,7 @@ const WorkspaceBootstrapEnterpriseParams = z
     org_mode: z.enum(["enterprise", "standard"]).default("enterprise"),
     executive_manager_name: z.string().min(1).default("Executive Manager"),
     departments: z.array(z.string().min(1)).optional(),
-    workers_per_dept: z.number().int().min(1).max(20).default(1),
+    workers_per_dept: z.number().int().min(1).max(20).default(2),
     include_ceo: z.boolean().default(true),
     include_director: z.boolean().default(true),
     force: z.boolean().default(false)
