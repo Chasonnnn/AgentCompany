@@ -88,4 +88,30 @@ describe("policy", () => {
     );
     expect(decision.allowed).toBe(true);
   });
+
+  test("manager cannot compose restricted context", () => {
+    const decision = evaluatePolicy(
+      { actor_id: "agent_mgr_a", role: "manager", team_id: "team_a" },
+      "compose_context",
+      {
+        resource_id: "art_mem_restricted",
+        visibility: "managers",
+        sensitivity: "restricted"
+      }
+    );
+    expect(decision.allowed).toBe(false);
+  });
+
+  test("director can compose restricted context", () => {
+    const decision = evaluatePolicy(
+      { actor_id: "agent_dir_a", role: "director", team_id: "team_a" },
+      "compose_context",
+      {
+        resource_id: "art_mem_restricted",
+        visibility: "managers",
+        sensitivity: "restricted"
+      }
+    );
+    expect(decision.allowed).toBe(true);
+  });
 });

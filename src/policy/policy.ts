@@ -2,7 +2,7 @@ export type ActorRole = "human" | "ceo" | "director" | "manager" | "worker";
 
 export type Visibility = "private_agent" | "team" | "managers" | "org";
 
-export type PolicyAction = "read" | "approve" | "launch";
+export type PolicyAction = "read" | "approve" | "launch" | "compose_context";
 
 export type PolicyActor = {
   actor_id: string;
@@ -16,6 +16,7 @@ export type Resource = {
   team_id?: string;
   producing_actor_id?: string;
   kind?: string;
+  sensitivity?: "public" | "internal" | "restricted";
 };
 
 export type PolicyDecision =
@@ -44,6 +45,18 @@ export function evaluatePolicy(
   action: PolicyAction,
   resource: Resource
 ): PolicyDecision {
+  if (
+    action === "compose_context" &&
+    resource.sensitivity === "restricted" &&
+    !DIRECTOR_ROLES.has(actor.role)
+  ) {
+    return {
+      allowed: false,
+      rule_id: "compose.sensitivity.restricted",
+      reason: "restricted_requires_director"
+    };
+  }
+
   // v0 governance: memory approvals require director+ roles only.
   if (action === "approve" && resource.kind === "memory_delta" && !DIRECTOR_ROLES.has(actor.role)) {
     return { allowed: false, rule_id: "approve.memory.role", reason: "role_not_allowed" };

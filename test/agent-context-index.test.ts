@@ -17,7 +17,7 @@ async function mkTmpDir(): Promise<string> {
 }
 
 describe("agent context index", () => {
-  test("writes per-agent context_index.md from assigned tasks without mutating AGENTS.md", async () => {
+  test("writes per-agent context_index.md from assigned tasks and role/skills files without mutating AGENTS.md", async () => {
     const dir = await mkTmpDir();
     await initWorkspace({ root_dir: dir, company_name: "Acme" });
 
@@ -85,6 +85,15 @@ describe("agent context index", () => {
 
     const contextPath = path.join(dir, first.context_index_relpath);
     const context = await fs.readFile(contextPath, { encoding: "utf8" });
+    const rolePath = path.join(dir, "org/agents", workerA.agent_id, "role.md");
+    const skillsPath = path.join(dir, "org/agents", workerA.agent_id, "skills_index.md");
+    await fs.access(rolePath);
+    await fs.access(skillsPath);
+    const roleContent = await fs.readFile(rolePath, { encoding: "utf8" });
+    const skillsContent = await fs.readFile(skillsPath, { encoding: "utf8" });
+    expect(roleContent).toContain("Escalation");
+    expect(skillsContent).toContain("Approved Skills");
+
     expect(context.includes(path.join("work/projects", project_id, "tasks", `${taskA.task_id}.md`))).toBe(
       true
     );
@@ -93,6 +102,8 @@ describe("agent context index", () => {
     );
     expect(context.includes("task_scope_repo_id")).toBe(true);
     expect(context.includes("task_scope_path")).toBe(true);
+    expect(context.includes(`org/agents/${workerA.agent_id}/role.md`)).toBe(true);
+    expect(context.includes(`org/agents/${workerA.agent_id}/skills_index.md`)).toBe(true);
 
     const agentsPath = path.join(dir, "org/agents", workerA.agent_id, "AGENTS.md");
     let agents = "";

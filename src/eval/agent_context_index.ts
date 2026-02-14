@@ -119,6 +119,8 @@ function buildContextLines(args: {
   appendUnique(lines, seen, `- company_contract: \`company/company.yaml\``);
   appendUnique(lines, seen, `- org_visibility_policy: \`company/policy.yaml\``);
   appendUnique(lines, seen, `- agent_profile: \`org/agents/${args.agent_id}/agent.yaml\``);
+  appendUnique(lines, seen, `- agent_role: \`org/agents/${args.agent_id}/role.md\``);
+  appendUnique(lines, seen, `- agent_skills_index: \`org/agents/${args.agent_id}/skills_index.md\``);
   appendUnique(lines, seen, `- agent_journal: \`org/agents/${args.agent_id}/journal.md\``);
   if (args.include_mistakes_log) {
     appendUnique(lines, seen, `- mistakes_log: \`org/agents/${args.agent_id}/mistakes.yaml\``);
