@@ -116,4 +116,30 @@ describe("heartbeat service", () => {
 
     await service.close();
   });
+
+  test("persists enterprise hierarchy config fields", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const service = new HeartbeatService();
+
+    await service.observeWorkspace(dir);
+    const cfg = await service.setConfig({
+      workspace_dir: dir,
+      config: {
+        hierarchy_mode: "enterprise_v1",
+        executive_manager_agent_id: "agent_exec_mgr",
+        allow_director_to_spawn_workers: true
+      }
+    });
+    expect(cfg.hierarchy_mode).toBe("enterprise_v1");
+    expect(cfg.executive_manager_agent_id).toBe("agent_exec_mgr");
+    expect(cfg.allow_director_to_spawn_workers).toBe(true);
+
+    const status = await service.getStatus({ workspace_dir: dir });
+    expect(status.config.hierarchy_mode).toBe("enterprise_v1");
+    expect(status.config.executive_manager_agent_id).toBe("agent_exec_mgr");
+    expect(status.config.allow_director_to_spawn_workers).toBe(true);
+
+    await service.close();
+  });
 });

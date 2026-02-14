@@ -206,4 +206,60 @@ describe("heartbeat approval flow", () => {
       )
     ).toBe(true);
   });
+
+  test("secret-risk launch action is blocked and queued for approval", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+    const { project_id } = await createProject({ workspace_dir: dir, name: "Proj" });
+
+    const applied = await applyHeartbeatWorkerReportActions({
+      workspace_dir: dir,
+      report: {
+        schema_version: 1,
+        type: "heartbeat_worker_report",
+        status: "actions",
+        summary: "contains secret",
+        actions: [
+          {
+            kind: "launch_job",
+            idempotency_key: "approval:secret:1",
+            risk: "low",
+            needs_approval: false,
+            project_id,
+            goal: "Investigate leaked token sk-abcdefghijklmnopqrstuvwxyz",
+            constraints: [],
+            deliverables: [],
+            permission_level: "read-only"
+          }
+        ]
+      },
+      source_worker_agent_id: "agent_worker",
+      source_run_id: "run_worker",
+      source_context_pack_id: "ctx_worker",
+      config: {
+        ...structuredClone(DEFAULT_HEARTBEAT_CONFIG),
+        quiet_hours_start_hour: 23,
+        quiet_hours_end_hour: 23
+      },
+      state: structuredClone(DEFAULT_HEARTBEAT_STATE),
+      actor_id: "agent_manager",
+      actor_role: "manager"
+    });
+
+    expect(applied.summary.executed_actions).toBe(0);
+    expect(applied.summary.queued_for_approval).toBe(1);
+    const proposalId = applied.summary.proposal_artifact_ids[0];
+    expect(typeof proposalId).toBe("string");
+
+    const inbox = await buildReviewInboxSnapshot({
+      workspace_dir: dir,
+      project_id,
+      refresh_index: true
+    });
+    expect(
+      inbox.pending.some(
+        (p) => p.artifact_id === proposalId && p.artifact_type === "heartbeat_action_proposal"
+      )
+    ).toBe(true);
+  });
 });

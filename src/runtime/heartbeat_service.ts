@@ -356,10 +356,29 @@ export class HeartbeatService {
         ]);
         const defaultProjectId = projects[0]?.project_id;
         const agentById = new Map(agents.map((a) => [a.agent_id, a]));
-        for (const wake of triage.woken_workers) {
+        const coordinatorActorId =
+          config.hierarchy_mode === "enterprise_v1" && config.executive_manager_agent_id
+            ? config.executive_manager_agent_id
+            : "heartbeat_coordinator";
+
+        const wakeTargets = [...triage.woken_workers].sort((a, b) => {
+          const roleRank = (agentId: string): number => {
+            const role = agentById.get(agentId)?.role;
+            if (role === "director") return 0;
+            if (role === "worker") return 1;
+            if (role === "manager") return 2;
+            return 3;
+          };
+          const rankDiff = roleRank(a.worker_agent_id) - roleRank(b.worker_agent_id);
+          if (rankDiff !== 0) return rankDiff;
+          return a.worker_agent_id.localeCompare(b.worker_agent_id);
+        });
+
+        for (const wake of wakeTargets) {
           if (!defaultProjectId) break;
           const agent = agentById.get(wake.worker_agent_id);
           if (!agent) continue;
+          const targetRoleHint = agent.role === "director" ? "director" : "worker";
           const context = candidateByWorker[wake.worker_agent_id];
           const note = context
             ? `signals=${context.counts.new_signals}, due=${context.counts.due_tasks}, overdue=${context.counts.overdue_tasks}, stuck=${context.counts.stuck_jobs}, score=${wake.score}`
@@ -380,9 +399,13 @@ export class HeartbeatService {
               ],
               deliverables: ["Heartbeat worker report JSON"],
               permission_level: "read-only",
-              context_refs: [{ kind: "note", value: note }],
+              context_refs: [
+                { kind: "note", value: note },
+                { kind: "note", value: `target_role=${targetRoleHint}` }
+              ],
+              max_context_refs: 8,
               worker_agent_id: wake.worker_agent_id,
-              manager_actor_id: "heartbeat_coordinator",
+              manager_actor_id: coordinatorActorId,
               manager_role: "manager"
             }
           });
@@ -441,6 +464,11 @@ export class HeartbeatService {
           }
 
           const sourceAttempt = collected.attempts.at(-1);
+          const sourceAgent = agentById.get(submitted.worker_agent_id);
+          const directorAutoActor =
+            config.hierarchy_mode === "enterprise_v1" &&
+            config.allow_director_to_spawn_workers &&
+            sourceAgent?.role === "director";
           const applied = await applyHeartbeatWorkerReportActions({
             workspace_dir: args.workspace_dir,
             report: report as HeartbeatWorkerReport,
@@ -449,8 +477,9 @@ export class HeartbeatService {
             source_context_pack_id: sourceAttempt?.context_pack_id ?? "ctx_heartbeat",
             config,
             state,
-            actor_id: "heartbeat_coordinator",
-            actor_role: "manager"
+            actor_id: directorAutoActor ? sourceAgent.agent_id : coordinatorActorId,
+            actor_role: directorAutoActor ? "director" : "manager",
+            actor_team_id: directorAutoActor ? sourceAgent.team_id : undefined
           });
           actionsExecuted += applied.summary.executed_actions;
           approvalsQueued += applied.summary.queued_for_approval;

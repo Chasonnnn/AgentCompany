@@ -17,6 +17,8 @@ const HeartbeatActionBase = z
 export const HeartbeatActionLaunchJob = HeartbeatActionBase.extend({
   kind: z.literal("launch_job"),
   project_id: z.string().min(1),
+  job_kind: z.enum(["execution", "heartbeat"]).optional(),
+  target_role: z.enum(["director", "worker"]).optional(),
   worker_kind: z.enum(["codex", "claude", "gemini"]).default("codex"),
   worker_agent_id: z.string().min(1).optional(),
   goal: z.string().min(1),
@@ -113,6 +115,9 @@ export const HeartbeatConfig = z
     due_horizon_minutes: z.number().int().min(1).max(24 * 60).default(120),
     max_auto_actions_per_tick: z.number().int().min(1).max(10_000).default(10),
     max_auto_actions_per_hour: z.number().int().min(1).max(100_000).default(60),
+    hierarchy_mode: z.enum(["standard", "enterprise_v1"]).default("standard"),
+    executive_manager_agent_id: z.string().min(1).optional(),
+    allow_director_to_spawn_workers: z.boolean().default(false),
     quiet_hours_start_hour: z.number().int().min(0).max(23).default(22),
     quiet_hours_end_hour: z.number().int().min(0).max(23).default(7),
     stuck_job_running_minutes: z.number().int().min(1).max(24 * 60).default(30),

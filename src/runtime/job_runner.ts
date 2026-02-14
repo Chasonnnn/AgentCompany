@@ -20,6 +20,8 @@ import {
 import { buildManagerDigest } from "./manager_digest.js";
 import { buildInitialAttemptPrompt, runWorkerAttempt, type WorkerIdentity } from "./worker_adapter.js";
 import { reportProviderBackpressure, type BackpressureClass } from "./launch_lane.js";
+import { planContextForJob, type PlanContextForJobResult } from "./context_plan.js";
+import { extractSessionCommitCandidates } from "../memory/extract_session_commit_candidates.js";
 
 type ActiveJob = {
   workspace_dir: string;
@@ -153,6 +155,21 @@ function workerKindFromProvider(provider: string): JobSpec["worker_kind"] {
   return "gemini";
 }
 
+function mergeContextRefs(
+  seed: JobSpec["context_refs"],
+  planned: JobSpec["context_refs"]
+): JobSpec["context_refs"] {
+  const out: JobSpec["context_refs"] = [];
+  const seen = new Set<string>();
+  for (const ref of [...seed, ...planned]) {
+    const key = `${ref.kind}::${ref.value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ref);
+  }
+  return out;
+}
+
 function providerSupportsNativeSchema(provider: string): boolean {
   const p = provider.toLowerCase();
   return p.startsWith("codex") || p.startsWith("claude");
@@ -264,6 +281,23 @@ async function finalizeJob(args: {
   args.record.updated_at = nowIso();
   args.record.final_result_relpath = relResult;
   await writeJobRecord(args.record);
+
+  const runId = args.result.attempt_run_id;
+  if (!runId || runId === "none") return;
+  if (!args.record.job.manager_actor_id || !args.record.job.manager_role) return;
+  try {
+    await extractSessionCommitCandidates({
+      workspace_dir: args.record.job.workspace_dir,
+      project_id: args.record.job.project_id,
+      job_id: args.record.job.job_id,
+      run_id: runId,
+      actor_id: args.record.job.manager_actor_id,
+      actor_role: args.record.job.manager_role,
+      actor_team_id: args.record.job.manager_team_id
+    });
+  } catch {
+    // Best effort: candidate extraction should not fail job finalization.
+  }
 }
 
 export type SubmitJobResult = {
@@ -291,10 +325,37 @@ export type JobCollectResult = JobPollResult & {
 };
 
 export async function submitJob(args: { job: JobSpec }): Promise<SubmitJobResult> {
-  const job = JobSpec.parse({
+  let job = JobSpec.parse({
     ...args.job,
     job_id: args.job.job_id?.trim() ? args.job.job_id : newId("job")
   });
+  if (!job.context_mode) {
+    job = JobSpec.parse({ ...job, context_mode: "auto" });
+  }
+  let plannedContext: PlanContextForJobResult | null = null;
+  if ((job.context_mode ?? "auto") === "auto") {
+    if (!job.manager_actor_id || !job.manager_role) {
+      throw new Error(
+        "job.context_mode=auto requires manager_actor_id and manager_role for policy-filtered context planning"
+      );
+    }
+    plannedContext = await planContextForJob({
+      workspace_dir: job.workspace_dir,
+      project_id: job.project_id,
+      worker_agent_id: job.worker_agent_id,
+      manager_actor_id: job.manager_actor_id,
+      manager_role: job.manager_role,
+      manager_team_id: job.manager_team_id,
+      job_kind: job.job_kind,
+      goal: job.goal,
+      constraints: job.constraints,
+      deliverables: job.deliverables,
+      context_refs: job.context_refs,
+      max_refs: job.max_context_refs
+    });
+    const mergedRefs = mergeContextRefs(job.context_refs, plannedContext.context_refs);
+    job = JobSpec.parse({ ...job, context_refs: mergedRefs });
+  }
   const key = activeJobKey(job.workspace_dir, job.project_id, job.job_id);
   if (ACTIVE_JOBS.has(key)) {
     const active = ACTIVE_JOBS.get(key)!;
@@ -438,6 +499,7 @@ export async function submitJob(args: { job: JobSpec }): Promise<SubmitJobResult
           worker_kind: attemptNo === 3 ? workerKindFromProvider(worker.provider) : job.worker_kind,
           prompt,
           attempt: attemptNo,
+          context_plan: plannedContext ?? undefined,
           result_contract_mode: providerSupportsNativeSchema(worker.provider)
             ? "provider_schema"
             : "prompt_only",
@@ -458,6 +520,8 @@ export async function submitJob(args: { job: JobSpec }): Promise<SubmitJobResult
           provider_version: attempt.provider_version,
           provider_help_hash: attempt.provider_help_hash,
           output_format: attempt.output_format,
+          context_plan_relpath: attempt.context_plan_relpath,
+          context_plan_hash: attempt.context_plan_hash,
           started_at: startedAt,
           ended_at: endedAt,
           status: attempt.status,

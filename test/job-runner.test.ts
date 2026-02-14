@@ -225,7 +225,9 @@ describe("job runner dual-path orchestration", () => {
           deliverables: ["Code patch"],
           permission_level: "patch",
           context_refs: [{ kind: "note", value: "test context" }],
-          worker_agent_id: ws.worker_agent_id
+          worker_agent_id: ws.worker_agent_id,
+          manager_actor_id: "manager_test",
+          manager_role: "manager"
         }
       });
       expect(submitted.job_id).toBe("job_retry_success");
@@ -245,6 +247,40 @@ describe("job runner dual-path orchestration", () => {
       expect(collected.result?.status).toBe("succeeded");
       expect(collected.result?.summary).toContain("fixed via retry");
       expect(collected.manager_digest).toBeDefined();
+      const firstAttempt = collected.attempts[0];
+      expect(typeof firstAttempt?.context_plan_relpath).toBe("string");
+      expect(typeof firstAttempt?.context_plan_hash).toBe("string");
+      await fs.access(path.join(dir, String(firstAttempt?.context_plan_relpath)));
+    } finally {
+      if (prevOpenAi === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = prevOpenAi;
+    }
+  }, 15_000);
+
+  test("fails closed when auto context mode has no manager actor context", async () => {
+    const dir = await mkTmpDir();
+    const prevOpenAi = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const ws = await createWorkspaceWithCodexWorker(dir, "retryable");
+      await expect(
+        submitJob({
+          job: {
+            schema_version: 1,
+            type: "job",
+            job_id: "job_missing_manager_context",
+            worker_kind: "codex",
+            workspace_dir: dir,
+            project_id: ws.project_id,
+            goal: "Should fail",
+            constraints: ["JSON only"],
+            deliverables: ["Result"],
+            permission_level: "patch",
+            context_refs: [{ kind: "note", value: "x" }],
+            worker_agent_id: ws.worker_agent_id
+          }
+        })
+      ).rejects.toThrow(/manager_actor_id|manager_role/i);
     } finally {
       if (prevOpenAi === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = prevOpenAi;
@@ -270,7 +306,9 @@ describe("job runner dual-path orchestration", () => {
           deliverables: ["Result"],
           permission_level: "patch",
           context_refs: [{ kind: "note", value: "x" }],
-          worker_agent_id: ws.worker_agent_id
+          worker_agent_id: ws.worker_agent_id,
+          manager_actor_id: "manager_test",
+          manager_role: "manager"
         }
       });
 
@@ -291,7 +329,7 @@ describe("job runner dual-path orchestration", () => {
       if (prevOpenAi === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = prevOpenAi;
     }
-  });
+  }, 15_000);
 
   test("cancel marks running job as canceled", async () => {
     const dir = await mkTmpDir();
@@ -312,7 +350,9 @@ describe("job runner dual-path orchestration", () => {
           deliverables: ["Result"],
           permission_level: "patch",
           context_refs: [{ kind: "note", value: "cancel test" }],
-          worker_agent_id: ws.worker_agent_id
+          worker_agent_id: ws.worker_agent_id,
+          manager_actor_id: "manager_test",
+          manager_role: "manager"
         }
       });
       await new Promise((resolve) => setTimeout(resolve, 120));
@@ -360,7 +400,9 @@ describe("job runner dual-path orchestration", () => {
           deliverables: ["Result"],
           permission_level: "read-only",
           context_refs: [{ kind: "note", value: "security" }],
-          worker_agent_id: ws.worker_agent_id
+          worker_agent_id: ws.worker_agent_id,
+          manager_actor_id: "manager_test",
+          manager_role: "manager"
         }
       });
       await waitForJobTerminal({
@@ -400,7 +442,9 @@ describe("job runner dual-path orchestration", () => {
           deliverables: ["ResultSpec"],
           permission_level: "read-only",
           context_refs: [{ kind: "note", value: "native schema mode test" }],
-          worker_agent_id: ws.worker_agent_id
+          worker_agent_id: ws.worker_agent_id,
+          manager_actor_id: "manager_test",
+          manager_role: "manager"
         }
       });
       const terminal = await waitForJobTerminal({
@@ -487,7 +531,9 @@ process.exit(0);
           deliverables: ["Result"],
           permission_level: "read-only",
           context_refs: [{ kind: "note", value: "gemini output format test" }],
-          worker_agent_id: agent_id
+          worker_agent_id: agent_id,
+          manager_actor_id: "manager_test",
+          manager_role: "manager"
         }
       });
       await waitForJobTerminal({
@@ -553,7 +599,9 @@ process.exit(0);
           deliverables: ["Result"],
           permission_level: "read-only",
           context_refs: [{ kind: "note", value: "missing gemini API key test" }],
-          worker_agent_id: agent_id
+          worker_agent_id: agent_id,
+          manager_actor_id: "manager_test",
+          manager_role: "manager"
         }
       });
       await waitForJobTerminal({

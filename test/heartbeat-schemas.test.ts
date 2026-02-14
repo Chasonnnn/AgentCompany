@@ -77,4 +77,33 @@ describe("heartbeat schemas", () => {
     expect(() => HeartbeatConfig.parse(DEFAULT_HEARTBEAT_CONFIG)).not.toThrow();
     expect(() => HeartbeatState.parse(DEFAULT_HEARTBEAT_STATE)).not.toThrow();
   });
+
+  test("supports enterprise hierarchy config and launch job routing hints", () => {
+    const cfg = HeartbeatConfig.parse({
+      ...DEFAULT_HEARTBEAT_CONFIG,
+      hierarchy_mode: "enterprise_v1",
+      executive_manager_agent_id: "agent_exec_mgr",
+      allow_director_to_spawn_workers: true
+    });
+    expect(cfg.hierarchy_mode).toBe("enterprise_v1");
+    expect(cfg.executive_manager_agent_id).toBe("agent_exec_mgr");
+    expect(cfg.allow_director_to_spawn_workers).toBe(true);
+
+    const action = HeartbeatAction.parse({
+      kind: "launch_job",
+      idempotency_key: "hb:launch:1",
+      risk: "low",
+      needs_approval: false,
+      project_id: "proj_1",
+      goal: "Do a follow-up run",
+      constraints: [],
+      deliverables: [],
+      permission_level: "read-only",
+      job_kind: "heartbeat",
+      target_role: "director"
+    });
+    expect(action.kind).toBe("launch_job");
+    expect(action.job_kind).toBe("heartbeat");
+    expect(action.target_role).toBe("director");
+  });
 });

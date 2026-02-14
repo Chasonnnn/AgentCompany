@@ -12,6 +12,7 @@ import type { JobPermissionLevel, JobSpec, WorkerKind } from "../schemas/job.js"
 import { resolveProviderBin } from "../drivers/resolve_bin.js";
 import { extractClaudeMarkdownFromStreamJson } from "../drivers/claude_stream_json.js";
 import { enforceSubscriptionExecutionPolicy } from "./subscription_guard.js";
+import { persistContextPlanForRun, type PlanContextForJobResult } from "./context_plan.js";
 
 export type WorkerIdentity = {
   agent_id: string;
@@ -26,6 +27,7 @@ export type WorkerAttemptArgs = {
   worker_kind: WorkerKind;
   prompt: string;
   attempt: number;
+  context_plan?: PlanContextForJobResult;
   result_contract_mode?: WorkerResultContractMode;
   output_contract?: WorkerOutputContract;
   abort_signal?: AbortSignal;
@@ -45,6 +47,8 @@ export type WorkerAttemptResult = {
   output_format?: string;
   raw_output: string;
   output_relpaths: string[];
+  context_plan_relpath?: string;
+  context_plan_hash?: string;
   error?: string;
   blocked_reason?: "subscription_unverified";
 };
@@ -765,6 +769,47 @@ export async function runWorkerAttempt(args: WorkerAttemptArgs): Promise<WorkerA
     run.run_id,
     "events.jsonl"
   );
+  let contextPlanRelpath: string | undefined;
+  let contextPlanHash: string | undefined;
+
+  if (args.context_plan) {
+    const persisted = await persistContextPlanForRun({
+      workspace_dir: args.job.workspace_dir,
+      project_id: args.job.project_id,
+      run_id: run.run_id,
+      context_pack_id: run.context_pack_id,
+      worker_agent_id: args.job.worker_agent_id,
+      manager_actor_id: args.job.manager_actor_id ?? "manager",
+      manager_role: args.job.manager_role ?? "manager",
+      goal: args.job.goal,
+      job_kind: args.job.job_kind,
+      plan: args.context_plan
+    });
+    contextPlanRelpath = persisted.context_plan_relpath;
+    contextPlanHash = persisted.context_plan_hash;
+    await appendEventJsonl(
+      eventsPath,
+      newEnvelope({
+        schema_version: 1,
+        ts_wallclock: nowIso(),
+        run_id: run.run_id,
+        session_ref: sessionRef,
+        actor: args.job.manager_actor_id ?? "manager",
+        visibility: "managers",
+        type: "context.plan.generated",
+        payload: {
+          context_pack_id: run.context_pack_id,
+          context_plan_relpath: contextPlanRelpath,
+          context_plan_hash: contextPlanHash,
+          layers_used: args.context_plan.layers_used,
+          context_ref_count: args.context_plan.context_refs.length,
+          filtered_by_policy_count: args.context_plan.filtered_by_policy_count,
+          filtered_by_sensitivity_count: args.context_plan.filtered_by_sensitivity_count,
+          filtered_by_secret_count: args.context_plan.filtered_by_secret_count
+        }
+      })
+    ).catch(() => {});
+  }
 
   const launchBuild = await buildLaunchCommand({
     workspace_dir: args.job.workspace_dir,
@@ -813,6 +858,8 @@ export async function runWorkerAttempt(args: WorkerAttemptArgs): Promise<WorkerA
       output_format: launchBuild.output_format,
       raw_output: "",
       output_relpaths: [],
+      context_plan_relpath: contextPlanRelpath,
+      context_plan_hash: contextPlanHash,
       error: subscription.message,
       blocked_reason: "subscription_unverified"
     };
@@ -879,6 +926,8 @@ export async function runWorkerAttempt(args: WorkerAttemptArgs): Promise<WorkerA
     output_format: launchBuild.output_format,
     raw_output: rawText,
     output_relpaths: collected.output_relpaths,
+    context_plan_relpath: contextPlanRelpath,
+    context_plan_hash: contextPlanHash,
     error: terminal.error
   };
 }

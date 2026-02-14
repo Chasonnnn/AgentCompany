@@ -1,7 +1,9 @@
 import { newId } from "../core/ids.js";
 import { nowIso } from "../core/time.js";
+import path from "node:path";
 import { createComment } from "../comments/comment.js";
 import { enforcePolicy, type EnforcePolicyArgs } from "../policy/enforce.js";
+import { evaluatePolicy } from "../policy/policy.js";
 import {
   HeartbeatAction,
   type HeartbeatAction as HeartbeatActionType,
@@ -10,11 +12,15 @@ import {
   type HeartbeatWorkerReport
 } from "../schemas/heartbeat.js";
 import { submitJob } from "./job_runner.js";
+import { evaluateBudgetPreflight } from "./budget.js";
+import { detectSensitiveText } from "../core/redaction.js";
 import {
   createHeartbeatActionProposal,
   type HeartbeatActionProposalFrontmatter
 } from "../heartbeat/action_proposal.js";
 import { readHeartbeatConfig, readHeartbeatState, writeHeartbeatState } from "./heartbeat_store.js";
+import { AgentYaml } from "../schemas/agent.js";
+import { readYamlFile } from "../store/yaml.js";
 
 type ExecOutcome = {
   executed: boolean;
@@ -147,6 +153,76 @@ function policyArgsForAuto(args: {
   };
 }
 
+async function readAgentTeamId(workspaceDir: string, agentId: string): Promise<string | undefined> {
+  const abs = path.join(workspaceDir, "org", "agents", agentId, "agent.yaml");
+  try {
+    const agent = AgentYaml.parse(await readYamlFile(abs));
+    return agent.team_id;
+  } catch {
+    return undefined;
+  }
+}
+
+async function hardStopReason(args: {
+  workspace_dir: string;
+  action: HeartbeatActionType;
+  actor_id: string;
+  actor_role: "human" | "ceo" | "director" | "manager" | "worker";
+  actor_team_id?: string;
+}): Promise<string | undefined> {
+  const policy = policyArgsForAuto(args);
+  if (policy) {
+    const decision = evaluatePolicy(
+      { actor_id: args.actor_id, role: args.actor_role, team_id: args.actor_team_id },
+      policy.action,
+      policy.resource
+    );
+    if (!decision.allowed) {
+      return `policy_denied:${decision.rule_id}`;
+    }
+  }
+
+  const secretInputs: string[] = [];
+  if (args.action.kind === "launch_job") {
+    secretInputs.push(args.action.goal);
+    if (args.action.context_note) secretInputs.push(args.action.context_note);
+  } else if (args.action.kind === "add_comment") {
+    secretInputs.push(args.action.body);
+  } else if (args.action.kind === "create_approval_item") {
+    secretInputs.push(args.action.title);
+    if (args.action.rationale) secretInputs.push(args.action.rationale);
+  }
+  const secretSummary = detectSensitiveText(secretInputs.join("\n"));
+  if (secretSummary.total_matches > 0) {
+    return "secret_risk_detected";
+  }
+
+  if (args.action.kind === "launch_job") {
+    if (
+      args.actor_role === "director" &&
+      args.actor_team_id &&
+      args.action.target_role === "worker" &&
+      args.action.worker_agent_id
+    ) {
+      const workerTeam = await readAgentTeamId(args.workspace_dir, args.action.worker_agent_id);
+      if (!workerTeam || workerTeam !== args.actor_team_id) {
+        return "director_cross_team_worker_spawn_denied";
+      }
+    }
+
+    const budget = await evaluateBudgetPreflight({
+      workspace_dir: args.workspace_dir,
+      project_id: args.action.project_id,
+      task_id: args.action.task_id
+    }).catch(() => ({ exceeded: [] as Array<unknown> }));
+    if (Array.isArray(budget.exceeded) && budget.exceeded.length > 0) {
+      return "budget_limit_exceeded";
+    }
+  }
+
+  return undefined;
+}
+
 async function executeAutoAction(args: {
   workspace_dir: string;
   action: HeartbeatActionType;
@@ -169,7 +245,7 @@ async function executeAutoAction(args: {
         schema_version: 1,
         type: "job",
         job_id: jobId,
-        job_kind: "execution",
+        job_kind: args.action.job_kind ?? "execution",
         worker_kind: args.action.worker_kind,
         workspace_dir: args.workspace_dir,
         project_id: args.action.project_id,
@@ -178,9 +254,22 @@ async function executeAutoAction(args: {
         deliverables: args.action.deliverables.length ? args.action.deliverables : ["Follow-up action"],
         permission_level: args.action.permission_level,
         context_refs: args.action.context_note
-          ? [{ kind: "note", value: args.action.context_note }]
-          : [{ kind: "note", value: `Created by heartbeat action ${args.action.idempotency_key}` }],
-        worker_agent_id: args.action.worker_agent_id
+          ? [
+              { kind: "note", value: args.action.context_note },
+              ...(args.action.target_role
+                ? [{ kind: "note" as const, value: `target_role=${args.action.target_role}` }]
+                : [])
+            ]
+          : [
+              { kind: "note", value: `Created by heartbeat action ${args.action.idempotency_key}` },
+              ...(args.action.target_role
+                ? [{ kind: "note" as const, value: `target_role=${args.action.target_role}` }]
+                : [])
+            ],
+        worker_agent_id: args.action.worker_agent_id,
+        manager_actor_id: args.actor_id,
+        manager_role: args.actor_role,
+        manager_team_id: args.actor_team_id
       }
     });
     return { launched_job_id: jobId };
@@ -241,10 +330,18 @@ async function executeOneAction(args: {
   const quiet = isQuietHours(now, args.config.quiet_hours_start_hour, args.config.quiet_hours_end_hour);
   const exceededTick = args.tick_auto_executed_count >= args.config.max_auto_actions_per_tick;
   const exceededHour = hourCount >= args.config.max_auto_actions_per_hour;
+  const hardStop = await hardStopReason({
+    workspace_dir: args.workspace_dir,
+    action: args.action,
+    actor_id: args.actor_id,
+    actor_role: args.actor_role,
+    actor_team_id: args.actor_team_id
+  });
 
   const needsApprovalByPolicy =
     !args.bypass_approval_gate &&
-    (args.action.kind === "create_approval_item" ||
+    (Boolean(hardStop) ||
+      args.action.kind === "create_approval_item" ||
       args.action.needs_approval ||
       args.action.risk !== "low" ||
       (quiet && args.action.kind === "add_comment") ||
@@ -288,6 +385,8 @@ async function executeOneAction(args: {
       rationale:
         args.action.kind === "create_approval_item"
           ? args.action.rationale
+          : hardStop
+            ? `Hard stop: ${hardStop}`
           : exceededTick
             ? "Auto-action per-tick limit reached"
             : exceededHour
@@ -320,14 +419,49 @@ async function executeOneAction(args: {
     };
   }
 
-  const executed = await executeAutoAction({
-    workspace_dir: args.workspace_dir,
-    action: args.action,
-    actor_id: args.actor_id,
-    actor_role: args.actor_role,
-    actor_team_id: args.actor_team_id,
-    dry_run: args.dry_run
-  });
+  let executed: { launched_job_id?: string };
+  try {
+    executed = await executeAutoAction({
+      workspace_dir: args.workspace_dir,
+      action: args.action,
+      actor_id: args.actor_id,
+      actor_role: args.actor_role,
+      actor_team_id: args.actor_team_id,
+      dry_run: args.dry_run
+    });
+  } catch (err) {
+    const projectId = "project_id" in args.action ? args.action.project_id : undefined;
+    if (!projectId) {
+      throw err;
+    }
+    const proposal = await queueProposal({
+      workspace_dir: args.workspace_dir,
+      project_id: projectId,
+      title: `Heartbeat hard stop: ${args.action.kind}`,
+      summary: `Execution blocked by guardrail: ${err instanceof Error ? err.message : String(err)}`,
+      rationale: "policy/budget/secret hard stop",
+      produced_by: args.source_worker_agent_id,
+      run_id: args.source_run_id,
+      context_pack_id: args.source_context_pack_id,
+      action: args.action,
+      dry_run: args.dry_run
+    });
+    rememberIdempotency({
+      state: args.state,
+      action: args.action,
+      status: "queued",
+      nowIso: nowText,
+      ttl_days: args.config.idempotency_ttl_days
+    });
+    return {
+      executed: false,
+      queued: true,
+      deduped: false,
+      skipped: false,
+      proposal_artifact_id: proposal.artifact_id,
+      reason: "queued_for_approval_after_execution_error"
+    };
+  }
 
   rememberIdempotency({
     state: args.state,

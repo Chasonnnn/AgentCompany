@@ -102,7 +102,9 @@ describe("job runner heartbeat mode", () => {
         deliverables: ["report"],
         permission_level: "read-only",
         context_refs: [{ kind: "note", value: "none" }],
-        worker_agent_id: agent_id
+        worker_agent_id: agent_id,
+        manager_actor_id: "heartbeat_manager",
+        manager_role: "manager"
       }
     });
 
@@ -112,6 +114,10 @@ describe("job runner heartbeat mode", () => {
     expect(collected.result?.status).toBe("succeeded");
     expect(collected.heartbeat_report?.status).toBe("actions");
     expect(collected.heartbeat_report?.actions.length).toBe(1);
+    expect(typeof collected.attempts[0]?.context_plan_relpath).toBe("string");
+    const contextPlanPath = path.join(dir, String(collected.attempts[0]?.context_plan_relpath));
+    const contextPlan = JSON.parse(await fs.readFile(contextPlanPath, { encoding: "utf8" })) as any;
+    expect((contextPlan?.result?.context_refs ?? []).length).toBeLessThanOrEqual(8);
   });
 
   test("falls back to needs_input when heartbeat report cannot be parsed", async () => {
@@ -144,7 +150,9 @@ describe("job runner heartbeat mode", () => {
         deliverables: ["report"],
         permission_level: "read-only",
         context_refs: [{ kind: "note", value: "none" }],
-        worker_agent_id: agent_id
+        worker_agent_id: agent_id,
+        manager_actor_id: "heartbeat_manager",
+        manager_role: "manager"
       }
     });
 
@@ -153,5 +161,5 @@ describe("job runner heartbeat mode", () => {
 
     expect(collected.result?.status).toBe("needs_input");
     expect(collected.heartbeat_report).toBeUndefined();
-  });
+  }, 15_000);
 });

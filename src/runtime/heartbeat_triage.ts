@@ -66,7 +66,13 @@ function isQuietHours(now: Date, startHour: number, endHour: number): boolean {
   return h >= startHour || h < endHour;
 }
 
-function buildWorkerPool(agents: ListedAgent[]): ListedAgent[] {
+function buildWorkerPool(agents: ListedAgent[], hierarchyMode: "standard" | "enterprise_v1"): ListedAgent[] {
+  if (hierarchyMode === "enterprise_v1") {
+    return agents
+      .filter((a) => a.role === "director" || a.role === "worker")
+      .sort((a, b) => a.agent_id.localeCompare(b.agent_id));
+  }
+
   const workers = agents.filter((a) => a.role === "worker");
   const managers = agents.filter((a) => a.role === "manager");
 
@@ -110,7 +116,7 @@ export async function buildHeartbeatTriage(args: {
   await syncSqliteIndex(args.workspace_dir).catch(() => {});
 
   const agents = await listAgents({ workspace_dir: args.workspace_dir });
-  const workers = buildWorkerPool(agents);
+  const workers = buildWorkerPool(agents, args.config.hierarchy_mode);
   const workersById = new Map(workers.map((w) => [w.agent_id, w]));
   const workersByTeam = new Map<string, string[]>();
   for (const w of workers) {

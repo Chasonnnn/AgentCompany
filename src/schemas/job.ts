@@ -14,6 +14,7 @@ export const JobContextRef = z
     description: z.string().min(1).optional()
   })
   .strict();
+export type JobContextRef = z.infer<typeof JobContextRef>;
 
 export const JobSpec = z
   .object({
@@ -21,6 +22,7 @@ export const JobSpec = z
     type: z.literal("job").default("job"),
     job_id: z.string().min(1),
     job_kind: z.enum(["execution", "heartbeat"]).default("execution"),
+    context_mode: z.enum(["auto", "manual"]).optional(),
     worker_kind: WorkerKind,
     workspace_dir: z.string().min(1),
     project_id: z.string().min(1),
@@ -29,10 +31,12 @@ export const JobSpec = z
     deliverables: z.array(z.string().min(1)),
     permission_level: JobPermissionLevel,
     context_refs: z.array(JobContextRef),
+    max_context_refs: z.number().int().positive().max(200).optional(),
     worker_agent_id: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
     manager_actor_id: z.string().min(1).optional(),
-    manager_role: z.enum(["human", "ceo", "director", "manager", "worker"]).optional()
+    manager_role: z.enum(["human", "ceo", "director", "manager", "worker"]).optional(),
+    manager_team_id: z.string().min(1).optional()
   })
   .strict();
 
@@ -51,6 +55,8 @@ export const JobAttempt = z
     provider_version: z.string().min(1).optional(),
     provider_help_hash: z.string().min(1).optional(),
     output_format: z.string().min(1).optional(),
+    context_plan_relpath: z.string().min(1).optional(),
+    context_plan_hash: z.string().min(1).optional(),
     started_at: IsoDateTime,
     ended_at: IsoDateTime.optional(),
     status: z.enum(["running", "ended", "failed", "stopped"]),
