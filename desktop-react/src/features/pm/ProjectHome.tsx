@@ -3,13 +3,20 @@ import { Button } from "@/components/primitives/Button";
 import { Badge } from "@/components/primitives/Badge";
 import { EmptyState } from "@/components/primitives/EmptyState";
 import { Gantt } from "./Gantt";
-import type { AllocationRecommendation, AllocationApplyPayload, ProjectPMViewModel, ResourcesSnapshot } from "@/types";
+import type {
+  AllocationRecommendation,
+  AllocationApplyPayload,
+  AllocationForecast,
+  ProjectPMViewModel,
+  ResourcesSnapshot
+} from "@/types";
 import { formatNumber, formatPercent, formatUsd } from "@/utils/format";
 
 type Props = {
   projectPm: ProjectPMViewModel;
   resources: ResourcesSnapshot;
   recommendations: AllocationRecommendation[];
+  forecast?: AllocationForecast;
   applying: boolean;
   assigningDepartmentTasks?: boolean;
   executivePlanApprovals?: Array<{
@@ -31,6 +38,7 @@ export function ProjectHome({
   projectPm,
   resources,
   recommendations,
+  forecast,
   applying,
   assigningDepartmentTasks,
   executivePlanApprovals = [],
@@ -64,6 +72,47 @@ export function ProjectHome({
       <Panel title="CPM / Gantt">
         <Gantt gantt={projectPm.gantt} />
       </Panel>
+
+      {forecast ? (
+        <Panel title="Forecast Simulation">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Span (days)</th>
+                <th>Tokens</th>
+                <th>Cost</th>
+                <th>Pressure</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Baseline</td>
+                <td>{formatNumber(forecast.baseline.projected_span_days)}</td>
+                <td>{formatNumber(forecast.baseline.projected_tokens)}</td>
+                <td>{formatUsd(forecast.baseline.projected_cost_usd)}</td>
+                <td>{forecast.baseline.capacity_pressure}</td>
+              </tr>
+              <tr>
+                <td>Recommended</td>
+                <td>{formatNumber(forecast.recommended.projected_span_days)}</td>
+                <td>{formatNumber(forecast.recommended.projected_tokens)}</td>
+                <td>{formatUsd(forecast.recommended.projected_cost_usd)}</td>
+                <td>{forecast.recommended.capacity_pressure}</td>
+              </tr>
+              {forecast.scenarios.map((scenario) => (
+                <tr key={scenario.scenario}>
+                  <td>{scenario.scenario}</td>
+                  <td>{formatNumber(scenario.projected_span_days)}</td>
+                  <td>{formatNumber(scenario.projected_tokens)}</td>
+                  <td>{formatUsd(scenario.projected_cost_usd)}</td>
+                  <td>{scenario.capacity_pressure}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Panel>
+      ) : null}
 
       <Panel title="Planning Council">
         <div className="stack" style={{ gap: 8 }}>

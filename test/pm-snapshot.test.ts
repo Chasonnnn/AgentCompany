@@ -78,6 +78,11 @@ describe("pm snapshot + allocations", () => {
       project_id: created.project_id
     })) as any;
     expect(Array.isArray(recs.recommendations)).toBe(true);
+    expect(recs.forecast.mode).toBe("simulation_v1");
+    expect(typeof recs.forecast.baseline.projected_span_days).toBe("number");
+    expect(typeof recs.forecast.recommended.projected_span_days).toBe("number");
+    expect(Array.isArray(recs.forecast.scenarios)).toBe(true);
+    expect(recs.forecast.scenarios.length).toBeGreaterThanOrEqual(2);
 
     const first = recs.recommendations.find((r: any) => r.task_id === task.task_id);
     expect(first).toBeDefined();
