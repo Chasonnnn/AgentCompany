@@ -43,6 +43,69 @@ export function ResourcesView({ resources }: { resources: ResourcesSnapshot }) {
         </table>
       </Panel>
 
+      <Panel title="Invoice Reconciliation">
+        <div className="kpi-grid" style={{ marginBottom: 10 }}>
+          <Kpi
+            label="Internal Cost"
+            value={formatUsd(resources.reconciliation.totals.internal_cost_usd)}
+            meta={`${formatNumber(resources.reconciliation.coverage.priced_run_count)} priced runs`}
+          />
+          <Kpi
+            label="Billed Cost"
+            value={formatUsd(resources.reconciliation.totals.billed_cost_usd)}
+            meta={`${formatNumber(resources.reconciliation.totals.billed_line_count)} statement lines`}
+          />
+          <Kpi
+            label="Cost Delta"
+            value={formatUsd(resources.reconciliation.totals.cost_delta_usd)}
+            meta="billed - internal"
+          />
+          <Kpi
+            label="Token Delta"
+            value={
+              resources.reconciliation.totals.token_delta == null
+                ? "N/A"
+                : formatNumber(resources.reconciliation.totals.token_delta)
+            }
+            meta="billed - internal"
+          />
+        </div>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Internal Cost</th>
+              <th>Billed Cost</th>
+              <th>Cost Delta</th>
+              <th>Internal Tokens</th>
+              <th>Billed Tokens</th>
+              <th>Token Delta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {resources.reconciliation.by_provider.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="muted">
+                  No billing statements recorded yet. Add statements through `usage.reconciliation.record`.
+                </td>
+              </tr>
+            ) : (
+              resources.reconciliation.by_provider.map((row) => (
+                <tr key={row.provider}>
+                  <td>{row.provider}</td>
+                  <td>{formatUsd(row.internal_cost_usd)}</td>
+                  <td>{formatUsd(row.billed_cost_usd)}</td>
+                  <td>{formatUsd(row.cost_delta_usd)}</td>
+                  <td>{formatNumber(row.internal_tokens)}</td>
+                  <td>{row.billed_tokens == null ? "N/A" : formatNumber(row.billed_tokens)}</td>
+                  <td>{row.token_delta == null ? "N/A" : formatNumber(row.token_delta)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </Panel>
+
       <Panel title="Model Distribution">
         <table className="table">
           <thead>
@@ -74,4 +137,3 @@ function Kpi({ label, value, meta }: { label: string; value: string; meta: strin
     </article>
   );
 }
-

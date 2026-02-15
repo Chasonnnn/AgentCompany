@@ -164,6 +164,33 @@ export type AllocationRecommendation = {
   reason: string;
 };
 
+export type AllocationForecast = {
+  mode: "simulation_v1";
+  baseline: {
+    projected_span_days: number;
+    projected_tokens: number;
+    projected_cost_usd: number;
+    capacity_pressure: "low" | "moderate" | "high";
+    bottleneck_team_id?: string;
+  };
+  recommended: {
+    projected_span_days: number;
+    projected_tokens: number;
+    projected_cost_usd: number;
+    capacity_pressure: "low" | "moderate" | "high";
+    bottleneck_team_id?: string;
+  };
+  scenarios: Array<{
+    scenario: "throughput_bias" | "cost_bias";
+    projected_span_days: number;
+    projected_tokens: number;
+    projected_cost_usd: number;
+    capacity_pressure: "low" | "moderate" | "high";
+    bottleneck_team_id?: string;
+    notes: string;
+  }>;
+};
+
 export type ResourcesSnapshot = {
   workspace_dir: string;
   generated_at: string;
@@ -189,6 +216,33 @@ export type ResourcesSnapshot = {
     model: string;
     agent_count: number;
   }>;
+  reconciliation: {
+    totals: {
+      internal_cost_usd: number;
+      billed_cost_usd: number;
+      cost_delta_usd: number;
+      internal_tokens: number;
+      billed_tokens: number;
+      token_delta: number | null;
+      provider_count: number;
+      billed_line_count: number;
+    };
+    by_provider: Array<{
+      provider: string;
+      internal_cost_usd: number;
+      billed_cost_usd: number;
+      cost_delta_usd: number;
+      internal_tokens: number;
+      billed_tokens: number | null;
+      token_delta: number | null;
+    }>;
+    coverage: {
+      priced_run_count: number;
+      unpriced_run_count: number;
+      provider_reported_run_count: number;
+      estimated_run_count: number;
+    };
+  };
 };
 
 export type UiSnapshot = {
@@ -354,6 +408,7 @@ export type BootstrapHomeViewData = {
   pm: PmSnapshot;
   resources: ResourcesSnapshot;
   recommendations?: AllocationRecommendation[];
+  forecast?: AllocationForecast;
 };
 
 export type BootstrapConversationViewData = {

@@ -1,5 +1,6 @@
 import { nowIso } from "../core/time.js";
 import { buildUsageAnalyticsSnapshot } from "./usage_analytics.js";
+import { buildUsageReconciliationSnapshot } from "./usage_reconciliation.js";
 import { buildRunMonitorSnapshot } from "./run_monitor.js";
 import {
   indexDbPath,
@@ -35,6 +36,33 @@ export type ResourcesSnapshot = {
     model: string;
     agent_count: number;
   }>;
+  reconciliation: {
+    totals: {
+      internal_cost_usd: number;
+      billed_cost_usd: number;
+      cost_delta_usd: number;
+      internal_tokens: number;
+      billed_tokens: number;
+      token_delta: number | null;
+      provider_count: number;
+      billed_line_count: number;
+    };
+    by_provider: Array<{
+      provider: string;
+      internal_cost_usd: number;
+      billed_cost_usd: number;
+      cost_delta_usd: number;
+      internal_tokens: number;
+      billed_tokens: number | null;
+      token_delta: number | null;
+    }>;
+    coverage: {
+      priced_run_count: number;
+      unpriced_run_count: number;
+      provider_reported_run_count: number;
+      estimated_run_count: number;
+    };
+  };
 };
 
 export async function buildResourcesSnapshot(args: {
@@ -63,6 +91,11 @@ export async function buildResourcesSnapshot(args: {
     readIndexStats(args.workspace_dir),
     listIndexedRuns({ workspace_dir: args.workspace_dir, project_id: args.project_id, limit: 10000 })
   ]);
+  const reconciliation = await buildUsageReconciliationSnapshot({
+    workspace_dir: args.workspace_dir,
+    project_id: args.project_id,
+    internal_usage: usage
+  });
 
   const activeWorkerIds = new Set(
     monitor.rows
@@ -133,6 +166,28 @@ export async function buildResourcesSnapshot(args: {
     })),
     models: [...modelCounts.entries()]
       .map(([model, agent_count]) => ({ model, agent_count }))
-      .sort((a, b) => b.agent_count - a.agent_count || a.model.localeCompare(b.model))
+      .sort((a, b) => b.agent_count - a.agent_count || a.model.localeCompare(b.model)),
+    reconciliation: {
+      totals: {
+        internal_cost_usd: reconciliation.totals.internal_cost_usd,
+        billed_cost_usd: reconciliation.totals.billed_cost_usd,
+        cost_delta_usd: reconciliation.totals.cost_delta_usd,
+        internal_tokens: reconciliation.totals.internal_tokens,
+        billed_tokens: reconciliation.totals.billed_tokens,
+        token_delta: reconciliation.totals.token_delta,
+        provider_count: reconciliation.totals.provider_count,
+        billed_line_count: reconciliation.totals.billed_line_count
+      },
+      by_provider: reconciliation.by_provider.map((row) => ({
+        provider: row.provider,
+        internal_cost_usd: row.internal_cost_usd,
+        billed_cost_usd: row.billed_cost_usd,
+        cost_delta_usd: row.cost_delta_usd,
+        internal_tokens: row.internal_tokens,
+        billed_tokens: row.billed_tokens,
+        token_delta: row.token_delta
+      })),
+      coverage: reconciliation.coverage
+    }
   };
 }
