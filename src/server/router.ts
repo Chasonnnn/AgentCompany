@@ -8,6 +8,7 @@ import { createWorkspaceDiagnosticsBundle } from "../workspace/diagnostics.js";
 import { migrateWorkspace } from "../workspace/migrate.js";
 import { exportWorkspace, importWorkspace } from "../workspace/export_import.js";
 import { bootstrapWorkspacePresets } from "../workspace/bootstrap_presets.js";
+import { ensureEnterpriseDefaults } from "../workspace/enterprise_defaults.js";
 import { createRun } from "../runtime/run.js";
 import {
   launchSession,
@@ -22,6 +23,10 @@ import { buildRunMonitorSnapshot } from "../runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "../runtime/review_inbox.js";
 import { buildUiSnapshot } from "../runtime/ui_bundle.js";
 import { buildUsageAnalyticsSnapshot } from "../runtime/usage_analytics.js";
+import {
+  buildUsageReconciliationSnapshot,
+  recordUsageReconciliationStatement
+} from "../runtime/usage_reconciliation.js";
 import { readIndexSyncWorkerStatus, flushIndexSyncWorker } from "../runtime/index_sync_service.js";
 import { getDefaultHeartbeatService } from "../runtime/heartbeat_service.js";
 import { resolveInboxItem } from "../inbox/resolve.js";
@@ -107,6 +112,17 @@ const WorkspaceBootstrapEnterpriseParams = z
     include_ceo: z.boolean().default(true),
     include_director: z.boolean().default(true),
     force: z.boolean().default(false)
+  })
+  .strict();
+
+const WorkspaceEnterpriseEnsureDefaultsParams = z
+  .object({
+    workspace_dir: z.string().min(1),
+    company_name: z.string().min(1).default("AgentCompany"),
+    project_name: z.string().min(1).default("AgentCompany Ops"),
+    executive_manager_name: z.string().min(1).default("Executive Manager"),
+    departments: z.array(z.string().min(1)).optional(),
+    workers_per_dept: z.number().int().min(1).max(20).default(2)
   })
   .strict();
 
@@ -519,10 +535,13 @@ const SYSTEM_CAPABILITIES = {
     "ui.resolve",
     "ui.snapshot",
     "usage.analytics",
+    "usage.reconciliation.record",
+    "usage.reconciliation.snapshot",
     "workspace.agents.list",
     "workspace.bootstrap.enterprise",
     "workspace.diagnostics",
     "workspace.doctor",
+    "workspace.enterprise.ensure_defaults",
     "workspace.export",
     "workspace.home.snapshot",
     "workspace.import",
@@ -627,6 +646,31 @@ const UsageAnalyticsParams = z.object({
   refresh_index: z.boolean().optional(),
   sync_index: z.boolean().optional()
 });
+
+const UsageReconciliationRecordParams = z
+  .object({
+    workspace_dir: z.string().min(1),
+    statement_id: z.string().min(1).optional(),
+    provider: z.string().min(1),
+    period_start: z.string().min(1),
+    period_end: z.string().min(1),
+    billed_cost_usd: z.number().finite().nonnegative(),
+    billed_tokens: z.number().int().nonnegative().optional(),
+    currency: z.literal("USD").optional(),
+    source: z.enum(["manual", "api"]).optional(),
+    external_ref: z.string().min(1).optional(),
+    notes: z.string().min(1).optional()
+  })
+  .strict();
+
+const UsageReconciliationSnapshotParams = z
+  .object({
+    workspace_dir: z.string().min(1),
+    project_id: z.string().min(1).optional(),
+    period_start: z.string().min(1).optional(),
+    period_end: z.string().min(1).optional()
+  })
+  .strict();
 
 const WorkspaceProjectsListParams = z.object({
   workspace_dir: z.string().min(1)
@@ -960,6 +1004,17 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         force: p.force
       });
     }
+    case "workspace.enterprise.ensure_defaults": {
+      const p = WorkspaceEnterpriseEnsureDefaultsParams.parse(params);
+      return ensureEnterpriseDefaults({
+        workspace_dir: p.workspace_dir,
+        company_name: p.company_name,
+        project_name: p.project_name,
+        executive_manager_name: p.executive_manager_name,
+        departments: p.departments,
+        workers_per_dept: p.workers_per_dept
+      });
+    }
     case "workspace.validate": {
       const p = WorkspaceValidateParams.parse(params);
       return validateWorkspace(p.workspace_dir);
@@ -1136,6 +1191,11 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
       if (p.view === "conversation" && !p.conversation_id) {
         throw new RpcUserError("conversation_id is required when view=conversation");
       }
+      if (p.scope === "workspace") {
+        await ensureEnterpriseDefaults({
+          workspace_dir: p.workspace_dir
+        });
+      }
 
       if (p.scope === "project" && p.project_id) {
         await ensureProjectDefaults({
@@ -1185,6 +1245,7 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
 
       if (p.view === "home") {
         let recommendations: unknown[] = [];
+        let forecast: unknown;
         if (p.scope === "project" && p.project_id) {
           const rec = await recommendTaskAllocations({
             workspace_dir: p.workspace_dir,
@@ -1196,12 +1257,14 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
                 reason: row.rationale
               }))
             : [];
+          forecast = rec.forecast;
         }
         viewData = {
           workspace_home: workspaceHome,
           pm,
           resources,
-          recommendations
+          recommendations,
+          forecast
         };
       } else if (p.view === "activities") {
         const ui = await buildUiSnapshot({
@@ -1841,6 +1904,31 @@ export async function routeRpcMethod(method: string, params: unknown): Promise<u
         limit: p.limit,
         refresh_index: p.refresh_index,
         sync_index: p.sync_index
+      });
+    }
+    case "usage.reconciliation.record": {
+      const p = UsageReconciliationRecordParams.parse(params);
+      return recordUsageReconciliationStatement({
+        workspace_dir: p.workspace_dir,
+        statement_id: p.statement_id,
+        provider: p.provider,
+        period_start: p.period_start,
+        period_end: p.period_end,
+        billed_cost_usd: p.billed_cost_usd,
+        billed_tokens: p.billed_tokens,
+        currency: p.currency,
+        source: p.source,
+        external_ref: p.external_ref,
+        notes: p.notes
+      });
+    }
+    case "usage.reconciliation.snapshot": {
+      const p = UsageReconciliationSnapshotParams.parse(params);
+      return buildUsageReconciliationSnapshot({
+        workspace_dir: p.workspace_dir,
+        project_id: p.project_id,
+        period_start: p.period_start,
+        period_end: p.period_end
       });
     }
     case "ui.snapshot": {

@@ -10,6 +10,7 @@ import { createWorkspaceDiagnosticsBundle } from "./workspace/diagnostics.js";
 import { migrateWorkspace } from "./workspace/migrate.js";
 import { exportWorkspace, importWorkspace } from "./workspace/export_import.js";
 import { bootstrapWorkspacePresets } from "./workspace/bootstrap_presets.js";
+import { ensureEnterpriseDefaults } from "./workspace/enterprise_defaults.js";
 import { ArtifactType, newArtifactMarkdown, validateMarkdownArtifact } from "./artifacts/markdown.js";
 import { readArtifactWithPolicy } from "./artifacts/read_artifact.js";
 import { writeFileAtomic } from "./store/fs.js";
@@ -56,6 +57,10 @@ import { runJsonRpcServer } from "./server/main.js";
 import { routeRpcMethod } from "./server/router.js";
 import { buildRunMonitorSnapshot } from "./runtime/run_monitor.js";
 import { buildReviewInboxSnapshot } from "./runtime/review_inbox.js";
+import {
+  buildUsageReconciliationSnapshot,
+  recordUsageReconciliationStatement
+} from "./runtime/usage_reconciliation.js";
 import { buildUiSnapshot } from "./runtime/ui_bundle.js";
 import { planContextForJob } from "./runtime/context_plan.js";
 import {
@@ -187,6 +192,46 @@ program
       process.exitCode = 2;
     });
   });
+
+program
+  .command("workspace:enterprise:ensure")
+  .description("Ensure enterprise defaults exist (idempotent; bootstraps empty workspaces)")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--name <name>", "Company name", "AgentCompany")
+  .option("--project-name <name>", "Initial project name when bootstrapping", "AgentCompany Ops")
+  .option("--executive-manager-name <name>", "Executive manager display name", "Executive Manager")
+  .option(
+    "--department <keys...>",
+    "Department keys (frontend, backend, agent_resources, marketing, infra, data, engineering, product, design, operations, qa, security)"
+  )
+  .option("--workers-per-dept <n>", "Workers per department (min: 1)", (v) => parseInt(v, 10), 2)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        name: string;
+        projectName: string;
+        executiveManagerName: string;
+        department?: string[];
+        workersPerDept: number;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!Number.isInteger(opts.workersPerDept) || opts.workersPerDept < 1) {
+          throw new UserError("--workers-per-dept must be an integer >= 1");
+        }
+        const res = await ensureEnterpriseDefaults({
+          workspace_dir: workspaceDir,
+          company_name: opts.name,
+          project_name: opts.projectName,
+          executive_manager_name: opts.executiveManagerName,
+          departments: opts.department,
+          workers_per_dept: opts.workersPerDept
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
 
 program
   .command("workspace:doctor")
@@ -1244,6 +1289,92 @@ program
           notes: opts.notes
         });
         process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("usage:reconcile:record")
+  .description("Record or update external billing statement totals for reconciliation")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--provider <provider>", "Provider name", "")
+  .option("--period-start <iso>", "Billing period start (ISO datetime)", "")
+  .option("--period-end <iso>", "Billing period end (ISO datetime)", "")
+  .option("--billed-cost-usd <value>", "Billed cost in USD", (v) => parseFloat(v), Number.NaN)
+  .option("--billed-tokens <value>", "Optional billed tokens", (v) => parseInt(v, 10), undefined)
+  .option("--statement-id <id>", "Statement id for upsert (optional)", undefined)
+  .option("--source <source>", "Statement source (manual|api)", "manual")
+  .option("--external-ref <ref>", "External invoice reference", undefined)
+  .option("--notes <notes>", "Optional notes", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        provider: string;
+        periodStart: string;
+        periodEnd: string;
+        billedCostUsd: number;
+        billedTokens?: number;
+        statementId?: string;
+        source: string;
+        externalRef?: string;
+        notes?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        if (!opts.provider.trim()) throw new UserError("--provider is required");
+        if (!opts.periodStart.trim()) throw new UserError("--period-start is required");
+        if (!opts.periodEnd.trim()) throw new UserError("--period-end is required");
+        if (!Number.isFinite(opts.billedCostUsd) || opts.billedCostUsd < 0) {
+          throw new UserError("--billed-cost-usd must be a non-negative number");
+        }
+        if (opts.billedTokens != null && (!Number.isInteger(opts.billedTokens) || opts.billedTokens < 0)) {
+          throw new UserError("--billed-tokens must be an integer >= 0");
+        }
+        if (opts.source !== "manual" && opts.source !== "api") {
+          throw new UserError("--source must be one of: manual, api");
+        }
+        const res = await recordUsageReconciliationStatement({
+          workspace_dir: workspaceDir,
+          statement_id: opts.statementId,
+          provider: opts.provider,
+          period_start: opts.periodStart,
+          period_end: opts.periodEnd,
+          billed_cost_usd: opts.billedCostUsd,
+          billed_tokens: opts.billedTokens,
+          source: opts.source as "manual" | "api",
+          external_ref: opts.externalRef,
+          notes: opts.notes
+        });
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      });
+    }
+  );
+
+program
+  .command("usage:reconcile:snapshot")
+  .description("Build usage-vs-billing reconciliation snapshot")
+  .argument("<workspace_dir>", "Workspace root directory")
+  .option("--project <project_id>", "Optional project id filter", undefined)
+  .option("--period-start <iso>", "Optional start datetime (ISO)", undefined)
+  .option("--period-end <iso>", "Optional end datetime (ISO)", undefined)
+  .action(
+    async (
+      workspaceDir: string,
+      opts: {
+        project?: string;
+        periodStart?: string;
+        periodEnd?: string;
+      }
+    ) => {
+      await runAction(async () => {
+        const snapshot = await buildUsageReconciliationSnapshot({
+          workspace_dir: workspaceDir,
+          project_id: opts.project,
+          period_start: opts.periodStart,
+          period_end: opts.periodEnd
+        });
+        process.stdout.write(JSON.stringify(snapshot, null, 2) + "\n");
       });
     }
   );

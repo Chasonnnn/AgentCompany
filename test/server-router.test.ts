@@ -674,6 +674,9 @@ process.stdin.on("end", () => {
     expect(capabilities.available_methods).toContain("system.capabilities");
     expect(capabilities.available_methods).toContain("workspace.repo_root.set");
     expect(capabilities.available_methods).toContain("usage.analytics");
+    expect(capabilities.available_methods).toContain("usage.reconciliation.record");
+    expect(capabilities.available_methods).toContain("usage.reconciliation.snapshot");
+    expect(capabilities.available_methods).toContain("workspace.enterprise.ensure_defaults");
     expect(capabilities.available_methods).toContain("events.subscribe");
     expect(capabilities.available_methods).toContain("memory.list_deltas");
     expect(capabilities.available_methods).toContain("context.plan_for_job");
@@ -684,6 +687,24 @@ process.stdin.on("end", () => {
     expect(capabilities.context.job_submit_auto_default).toBe(true);
     expect(capabilities.memory.session_candidate_mode).toBe("review_only");
     expect(capabilities.retrieval.storage).toBe("sqlite_metadata");
+  });
+
+  test("workspace.enterprise.ensure_defaults bootstraps enterprise topology idempotently", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+
+    const first = (await routeRpcMethod("workspace.enterprise.ensure_defaults", {
+      workspace_dir: dir
+    })) as any;
+    expect(first.bootstrapped).toBe(true);
+    expect(typeof first.agents.executive_manager_agent_id).toBe("string");
+    expect(first.departments.length).toBeGreaterThanOrEqual(1);
+
+    const second = (await routeRpcMethod("workspace.enterprise.ensure_defaults", {
+      workspace_dir: dir
+    })) as any;
+    expect(second.bootstrapped).toBe(false);
+    expect(second.departments.length).toBe(first.departments.length);
   });
 
   test("context.plan_for_job returns layered context refs and trace counters", async () => {
@@ -958,6 +979,55 @@ process.stdin.on("end", () => {
     })) as any;
     expect(res.artifact_id).toBe(artifactId);
     expect(typeof res.markdown).toBe("string");
+  });
+
+  test("desktop.bootstrap.snapshot auto-bootstraps enterprise org on an empty workspace", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Acme" });
+
+    const first = (await routeRpcMethod("desktop.bootstrap.snapshot", {
+      workspace_dir: dir,
+      actor_id: "human_ceo",
+      scope: "workspace",
+      view: "home"
+    })) as any;
+
+    const executiveManager = first.agents.find(
+      (a: any) => a.role === "manager" && a.display_title === "Executive Manager"
+    );
+    expect(executiveManager?.provider).toBe("gemini");
+    expect(first.projects.length).toBeGreaterThanOrEqual(1);
+    const departmentTeams = first.teams.filter((t: any) => Boolean(t.department_key));
+    expect(departmentTeams.length).toBeGreaterThanOrEqual(1);
+    const unscopedDirectors = first.agents.filter((a: any) => a.role === "director" && !a.team_id);
+    expect(unscopedDirectors).toHaveLength(0);
+    for (const team of departmentTeams) {
+      const directorCount = first.agents.filter(
+        (a: any) => a.role === "director" && a.team_id === team.team_id
+      ).length;
+      const workerCount = first.agents.filter(
+        (a: any) => a.role === "worker" && a.team_id === team.team_id
+      ).length;
+      expect(directorCount).toBeGreaterThanOrEqual(1);
+      expect(workerCount).toBeGreaterThanOrEqual(1);
+    }
+
+    const heartbeatConfig = (await routeRpcMethod("heartbeat.config.get", {
+      workspace_dir: dir
+    })) as any;
+    expect(heartbeatConfig.hierarchy_mode).toBe("enterprise_v1");
+    expect(heartbeatConfig.executive_manager_agent_id).toBe(executiveManager.agent_id);
+    expect(heartbeatConfig.allow_director_to_spawn_workers).toBe(true);
+
+    const second = (await routeRpcMethod("desktop.bootstrap.snapshot", {
+      workspace_dir: dir,
+      actor_id: "human_ceo",
+      scope: "workspace",
+      view: "home"
+    })) as any;
+    expect(second.projects.length).toBe(first.projects.length);
+    expect(second.teams.length).toBe(first.teams.length);
+    expect(second.agents.length).toBe(first.agents.length);
   });
 
   test("desktop.bootstrap.snapshot returns scoped payloads for home and conversation views", async () => {

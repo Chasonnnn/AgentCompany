@@ -18,7 +18,7 @@ import { QuickSwitchModal } from "@/features/workspace/QuickSwitchModal";
 import { ResourcesView } from "@/features/workspace/ResourcesView";
 import { SettingsModal } from "@/features/workspace/SettingsModal";
 import { useAgentProfile, useDesktopActions, useDesktopSnapshot, useInboxSnapshot } from "@/services/queries";
-import { pickRepoFolder, resolveDefaultWorkspaceDir } from "@/services/rpc";
+import { pickRepoFolder, resolveDefaultWorkspaceDir, rpcCall } from "@/services/rpc";
 import type {
   AgentSummary,
   BootstrapActivitiesViewData,
@@ -102,6 +102,8 @@ export function AppShell() {
   const [showQuickSwitch, setShowQuickSwitch] = useState(false);
   const [showLiveOps, setShowLiveOps] = useState(false);
   const [inlineError, setInlineError] = useState("");
+  const [enterpriseReady, setEnterpriseReady] = useState(false);
+  const [enterpriseEnsureError, setEnterpriseEnsureError] = useState("");
 
   useEffect(() => {
     localStorage.setItem(
@@ -138,6 +140,46 @@ export function AppShell() {
   }, [reduceTransparency]);
 
   useEffect(() => {
+    const workspace = workspaceDir.trim();
+    if (!workspace) {
+      setEnterpriseReady(false);
+      setEnterpriseEnsureError("");
+      return;
+    }
+    let canceled = false;
+    setEnterpriseReady(false);
+    setEnterpriseEnsureError("");
+    void rpcCall<{
+      ready: boolean;
+      reason:
+        | "already_ready"
+        | "bootstrapped_empty_workspace"
+        | "skipped_existing_non_enterprise_topology";
+    }>("workspace.enterprise.ensure_defaults", {
+      workspace_dir: workspace
+    })
+      .then((result) => {
+        if (canceled) return;
+        if (!result.ready && result.reason === "skipped_existing_non_enterprise_topology") {
+          setEnterpriseEnsureError(
+            "Workspace has existing non-enterprise topology. Run enterprise bootstrap manually to standardize department staffing."
+          );
+        } else {
+          setEnterpriseEnsureError("");
+        }
+        setEnterpriseReady(true);
+      })
+      .catch((error) => {
+        if (canceled) return;
+        setEnterpriseEnsureError(error instanceof Error ? error.message : String(error));
+        setEnterpriseReady(true);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [workspaceDir]);
+
+  useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -157,7 +199,7 @@ export function AppShell() {
       view: view.kind,
       conversationId: view.conversationId
     },
-    Boolean(workspaceDir)
+    Boolean(workspaceDir && enterpriseReady)
   );
 
   const actions = useDesktopActions();
@@ -296,8 +338,9 @@ export function AppShell() {
     }
   }
 
-  const isLoading = snapshot.isPending;
-  const loadError = snapshot.error instanceof Error ? snapshot.error.message : "";
+  const isLoading = Boolean(workspaceDir) && (!enterpriseReady || snapshot.isPending);
+  const loadError =
+    enterpriseEnsureError || (snapshot.error instanceof Error ? snapshot.error.message : "");
 
   return (
     <div className="app-shell">
@@ -513,7 +556,7 @@ export function AppShell() {
         />
       </main>
 
-      {inlineError ? (
+      {inlineError || enterpriseEnsureError ? (
         <div
           style={{
             position: "fixed",
@@ -528,7 +571,7 @@ export function AppShell() {
             zIndex: 900
           }}
         >
-          {inlineError}
+          {inlineError || enterpriseEnsureError}
         </div>
       ) : null}
 
@@ -688,6 +731,7 @@ function ContentView(props: {
             projectPm={home.pm.project}
             resources={home.resources}
             recommendations={home.recommendations ?? []}
+            forecast={home.forecast}
             applying={props.applying}
             assigningDepartmentTasks={props.assigningDepartmentTasks}
             executivePlanApprovals={props.executivePlanApprovals}
