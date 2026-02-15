@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { newId } from "../core/ids.js";
+import { nowIso } from "../core/time.js";
+import { ensureDir } from "../store/fs.js";
+import { writeYamlFile } from "../store/yaml.js";
 import { initWorkspace } from "./init.js";
+import { REQUIRED_DIRS } from "./layout.js";
 import { createTeam } from "../org/teams.js";
 import { createAgent } from "../org/agents.js";
 import { createProject } from "../work/projects.js";
@@ -117,6 +122,62 @@ const ENTERPRISE_DEFAULT_DEPARTMENTS: DepartmentPresetKey[] = [
 const STANDARD_DEFAULT_DEPARTMENTS: DepartmentPresetKey[] = ["engineering", "product"];
 
 const CONTROLLED_ROOTS = ["company", "org", "work", "inbox", ".local"] as const;
+function workspacePolicyDefaults() {
+  return {
+    schema_version: 1,
+    type: "policy",
+    id: newId("art"),
+    visibility_defaults: {
+      worker_journal: "private_agent",
+      worker_milestone_artifact: "team",
+      manager_proposal: "managers",
+      director_workplan: "org"
+    }
+  } as const;
+}
+const MACHINE_POLICY_DEFAULTS = {
+  schema_version: 1,
+  type: "machine",
+  repo_roots: {},
+  provider_bins: {},
+  provider_execution_policy: {
+    codex: {
+      channel: "subscription_cli",
+      require_subscription_proof: true,
+      proof_strategy: "codex_cli",
+      allowed_bin_patterns: ["codex"]
+    },
+    codex_app_server: {
+      channel: "subscription_cli",
+      require_subscription_proof: true,
+      proof_strategy: "codex_cli",
+      allowed_bin_patterns: ["codex"]
+    },
+    claude: {
+      channel: "subscription_cli",
+      require_subscription_proof: true,
+      proof_strategy: "claude_cli",
+      allowed_bin_patterns: ["claude"]
+    },
+    claude_code: {
+      channel: "subscription_cli",
+      require_subscription_proof: true,
+      proof_strategy: "claude_cli",
+      allowed_bin_patterns: ["claude"]
+    },
+    gemini: {
+      channel: "api",
+      require_subscription_proof: false,
+      allowed_bin_patterns: ["gemini"]
+    },
+    manager: {
+      channel: "api",
+      require_subscription_proof: false,
+      allowed_bin_patterns: []
+    }
+  },
+  provider_pricing_usd_per_1k_tokens: {}
+} as const;
 
 export type BootstrapWorkspacePresetsArgs = {
   workspace_dir: string;
@@ -190,6 +251,42 @@ async function resetControlledWorkspaceState(workspaceDir: string): Promise<void
   }
 }
 
+async function pathExists(absPath: string): Promise<boolean> {
+  try {
+    await fs.access(absPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureWorkspaceScaffold(workspaceDir: string, companyName: string): Promise<void> {
+  for (const rel of REQUIRED_DIRS) {
+    await ensureDir(path.join(workspaceDir, rel));
+  }
+
+  const companyPath = path.join(workspaceDir, "company", "company.yaml");
+  if (!(await pathExists(companyPath))) {
+    await writeYamlFile(companyPath, {
+      schema_version: 1,
+      type: "company",
+      id: newId("cmp"),
+      name: companyName,
+      created_at: nowIso()
+    });
+  }
+
+  const policyPath = path.join(workspaceDir, "company", "policy.yaml");
+  if (!(await pathExists(policyPath))) {
+    await writeYamlFile(policyPath, workspacePolicyDefaults());
+  }
+
+  const machinePath = path.join(workspaceDir, ".local", "machine.yaml");
+  if (!(await pathExists(machinePath))) {
+    await writeYamlFile(machinePath, MACHINE_POLICY_DEFAULTS);
+  }
+}
+
 export async function bootstrapWorkspacePresets(
   args: BootstrapWorkspacePresetsArgs
 ): Promise<BootstrapWorkspacePresetsResult> {
@@ -205,13 +302,14 @@ export async function bootstrapWorkspacePresets(
 
   if (args.force) {
     await resetControlledWorkspaceState(workspaceDir);
+    await initWorkspace({
+      root_dir: workspaceDir,
+      company_name: companyName,
+      force: true
+    });
+  } else {
+    await ensureWorkspaceScaffold(workspaceDir, companyName);
   }
-
-  await initWorkspace({
-    root_dir: workspaceDir,
-    company_name: companyName,
-    force: args.force
-  });
 
   let ceoAgentId: string | undefined;
   let directorAgentId: string | undefined;

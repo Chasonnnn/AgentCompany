@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { bootstrapWorkspacePresets } from "../src/workspace/bootstrap_presets.js";
 import { validateWorkspace } from "../src/workspace/validate.js";
+import { initWorkspace } from "../src/workspace/init.js";
 import { listAgents } from "../src/org/agents_list.js";
 import { readHeartbeatConfig } from "../src/runtime/heartbeat_store.js";
 
@@ -97,4 +98,21 @@ describe("workspace preset bootstrap", () => {
     const secondTeams = await fs.readdir(path.join(dir, "org", "teams"));
     expect(secondTeams.length).toBe(1);
   }, 15000);
+
+  test("enterprise bootstrap can run on an already initialized workspace without --force", async () => {
+    const dir = await mkTmpDir();
+    await initWorkspace({ root_dir: dir, company_name: "Initialized Co" });
+    await fs.writeFile(path.join(dir, "README.keep"), "preserve me\n", { encoding: "utf8" });
+
+    const res = await bootstrapWorkspacePresets({
+      workspace_dir: dir,
+      org_mode: "enterprise",
+      departments: ["frontend", "backend"],
+      workers_per_dept: 1
+    });
+
+    expect(res.org_mode).toBe("enterprise");
+    expect(res.departments).toHaveLength(2);
+    await expect(fs.access(path.join(dir, "README.keep"))).resolves.toBeUndefined();
+  });
 });
