@@ -1,0 +1,18 @@
+services:
+  paperclip:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "${AGENTCOMPANY_PORT:-3100}:3100"
+    environment:
+      HOST: "0.0.0.0"
+      AGENTCOMPANY_HOME: "/paperclip"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      AGENTCOMPANY_DEPLOYMENT_MODE: "authenticated"
+      AGENTCOMPANY_DEPLOYMENT_EXPOSURE: "private"
+      AGENTCOMPANY_PUBLIC_URL: "${AGENTCOMPANY_PUBLIC_URL:-http://localhost:3100}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+    volumes:
+      - "${AGENTCOMPANY_DATA_DIR:-../data/docker-paperclip}:/paperclip"

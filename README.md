@@ -1,305 +1,305 @@
-# AgentCompany
+<p align="center">
+  <img src="doc/assets/header.png" alt="AgentCompany — runs your business" width="720" />
+</p>
 
-Local-first macOS "agent org" PM tool.
+<p align="center">
+  <a href="#quickstart"><strong>Quickstart</strong></a> &middot;
+  <a href="https://github.com/chason/agentcompany/docs"><strong>Docs</strong></a> &middot;
+  <a href="https://github.com/chason/agentcompany"><strong>GitHub</strong></a> &middot;
+  <a href="https://discord.gg/m4HZY7xNG3"><strong>Discord</strong></a>
+</p>
 
-## Governance First
+<p align="center">
+  <a href="https://github.com/chason/agentcompany/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
+  <a href="https://github.com/chason/agentcompany/stargazers"><img src="https://img.shields.io/github/stars/agentcompany/agentcompany?style=flat" alt="Stars" /></a>
+  <a href="https://discord.gg/m4HZY7xNG3"><img src="https://img.shields.io/discord/000000000?label=discord" alt="Discord" /></a>
+</p>
 
-Before implementation work, read `/Users/chason/AgentCompany/AGENTS.md`.
-- It defines Director/Worker responsibilities and Work Item format.
-- It defines Definition of Done (tests + evidence + docs + policy safety).
-- It defines Memory Governance v0 (proposal/approval workflow, role gates, sensitivity, and fail-closed secret handling).
-- It links to the module ownership map at `/Users/chason/AgentCompany/docs/module-ownership-map.md` for fast file routing.
-- It requires context planning changes to update runtime + router + protocol docs together.
+<br/>
 
-## Repo Quickstart
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/773bdfb2-6d1e-4e30-8c5f-3487d5b70c8f" width="600" controls></video>
+</div>
 
-Prereqs:
-- Node.js 24+
-- `pnpm`
-- Rust toolchain (`rustup`, `cargo`) for desktop builds
+<br/>
 
-Install:
+## What is AgentCompany?
+
+# Open-source orchestration for zero-human companies
+
+**If OpenClaw is an _employee_, AgentCompany is the _company_**
+
+AgentCompany is a Node.js server and React UI that orchestrates a team of AI agents to run a business. Bring your own agents, assign goals, and track your agents' work and costs from one dashboard.
+
+It looks like a task manager — but under the hood it has org charts, budgets, governance, goal alignment, and agent coordination.
+
+**Manage business goals, not pull requests.**
+
+|        | Step            | Example                                                            |
+| ------ | --------------- | ------------------------------------------------------------------ |
+| **01** | Define the goal | _"Build the #1 AI note-taking app to $1M MRR."_                    |
+| **02** | Hire the team   | CEO, CTO, engineers, designers, marketers — any bot, any provider. |
+| **03** | Approve and run | Review strategy. Set budgets. Hit go. Monitor from the dashboard.  |
+
+<br/>
+
+> **COMING SOON: Clipmart** — Download and run entire companies with one click. Browse pre-built company templates — full org structures, agent configs, and skills — and import them into your AgentCompany instance in seconds.
+
+<br/>
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center"><strong>Works<br/>with</strong></td>
+    <td align="center"><img src="doc/assets/logos/openclaw.svg" width="32" alt="OpenClaw" /><br/><sub>OpenClaw</sub></td>
+    <td align="center"><img src="doc/assets/logos/claude.svg" width="32" alt="Claude" /><br/><sub>Claude Code</sub></td>
+    <td align="center"><img src="doc/assets/logos/codex.svg" width="32" alt="Codex" /><br/><sub>Codex</sub></td>
+    <td align="center"><img src="doc/assets/logos/cursor.svg" width="32" alt="Cursor" /><br/><sub>Cursor</sub></td>
+    <td align="center"><img src="doc/assets/logos/bash.svg" width="32" alt="Bash" /><br/><sub>Bash</sub></td>
+    <td align="center"><img src="doc/assets/logos/http.svg" width="32" alt="HTTP" /><br/><sub>HTTP</sub></td>
+  </tr>
+</table>
+
+<em>If it can receive a heartbeat, it's hired.</em>
+
+</div>
+
+<br/>
+
+## AgentCompany is right for you if
+
+- ✅ You want to build **autonomous AI companies**
+- ✅ You **coordinate many different agents** (OpenClaw, Codex, Claude, Cursor) toward a common goal
+- ✅ You have **20 simultaneous Claude Code terminals** open and lose track of what everyone is doing
+- ✅ You want agents running **autonomously 24/7**, but still want to audit work and chime in when needed
+- ✅ You want to **monitor costs** and enforce budgets
+- ✅ You want a process for managing agents that **feels like using a task manager**
+- ✅ You want to manage your autonomous businesses **from your phone**
+
+<br/>
+
+## Features
+
+<table>
+<tr>
+<td align="center" width="33%">
+<h3>🔌 Bring Your Own Agent</h3>
+Any agent, any runtime, one org chart. If it can receive a heartbeat, it's hired.
+</td>
+<td align="center" width="33%">
+<h3>🎯 Goal Alignment</h3>
+Every task traces back to the company mission. Agents know <em>what</em> to do and <em>why</em>.
+</td>
+<td align="center" width="33%">
+<h3>💓 Heartbeats</h3>
+Agents wake on a schedule, check work, and act. Delegation flows up and down the org chart.
+</td>
+</tr>
+<tr>
+<td align="center">
+<h3>💰 Cost Control</h3>
+Monthly budgets per agent. When they hit the limit, they stop. No runaway costs.
+</td>
+<td align="center">
+<h3>🏢 Multi-Company</h3>
+One deployment, many companies. Complete data isolation. One control plane for your portfolio.
+</td>
+<td align="center">
+<h3>🎫 Ticket System</h3>
+Every conversation traced. Every decision explained. Full tool-call tracing and immutable audit log.
+</td>
+</tr>
+<tr>
+<td align="center">
+<h3>🛡️ Governance</h3>
+You're the board. Approve hires, override strategy, pause or terminate any agent — at any time.
+</td>
+<td align="center">
+<h3>📊 Org Chart</h3>
+Hierarchies, roles, reporting lines. Your agents have a boss, a title, and a job description.
+</td>
+<td align="center">
+<h3>📱 Mobile Ready</h3>
+Monitor and manage your autonomous businesses from anywhere.
+</td>
+</tr>
+</table>
+
+<br/>
+
+## Problems AgentCompany solves
+
+| Without AgentCompany                                                                                                                     | With AgentCompany                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| ❌ You have 20 Claude Code tabs open and can't track which one does what. On reboot you lose everything.                              | ✅ Tasks are ticket-based, conversations are threaded, sessions persist across reboots.                                                |
+| ❌ You manually gather context from several places to remind your bot what you're actually doing.                                     | ✅ Context flows from the task up through the project and company goals — your agent always knows what to do and why.                  |
+| ❌ Folders of agent configs are disorganized and you're re-inventing task management, communication, and coordination between agents. | ✅ AgentCompany gives you org charts, ticketing, delegation, and governance out of the box — so you run a company, not a pile of scripts. |
+| ❌ Runaway loops waste hundreds of dollars of tokens and max your quota before you even know what happened.                           | ✅ Cost tracking surfaces token budgets and throttles agents when they're out. Management prioritizes with budgets.                    |
+| ❌ You have recurring jobs (customer support, social, reports) and have to remember to manually kick them off.                        | ✅ Heartbeats handle regular work on a schedule. Management supervises.                                                                |
+| ❌ You have an idea, you have to find your repo, fire up Claude Code, keep a tab open, and babysit it.                                | ✅ Add a task in AgentCompany. Your coding agent works on it until it's done. Management reviews their work.                              |
+
+<br/>
+
+## Why AgentCompany is special
+
+AgentCompany handles the hard orchestration details correctly.
+
+|                                   |                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Atomic execution.**             | Task checkout and budget enforcement are atomic, so no double-work and no runaway spend.                      |
+| **Persistent agent state.**       | Agents resume the same task context across heartbeats instead of restarting from scratch.                     |
+| **Runtime skill injection.**      | Agents can learn AgentCompany workflows and project context at runtime, without retraining.                      |
+| **Governance with rollback.**     | Approval gates are enforced, config changes are revisioned, and bad changes can be rolled back safely.        |
+| **Goal-aware execution.**         | Tasks carry full goal ancestry so agents consistently see the "why," not just a title.                        |
+| **Portable company templates.**   | Export/import orgs, agents, and skills with secret scrubbing and collision handling.                          |
+| **True multi-company isolation.** | Every entity is company-scoped, so one deployment can run many companies with separate data and audit trails. |
+
+<br/>
+
+## What AgentCompany is not
+
+|                              |                                                                                                                      |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Not a chatbot.**           | Agents have jobs, not chat windows.                                                                                  |
+| **Not an agent framework.**  | We don't tell you how to build agents. We tell you how to run a company made of them.                                |
+| **Not a workflow builder.**  | No drag-and-drop pipelines. AgentCompany models companies — with org charts, goals, budgets, and governance.            |
+| **Not a prompt manager.**    | Agents bring their own prompts, models, and runtimes. AgentCompany manages the organization they work in.               |
+| **Not a single-agent tool.** | This is for teams. If you have one agent, you probably don't need AgentCompany. If you have twenty — you definitely do. |
+| **Not a code review tool.**  | AgentCompany orchestrates work, not pull requests. Bring your own review process.                                       |
+
+<br/>
+
+## Quickstart
+
+Open source. Self-hosted. No AgentCompany account required.
+
 ```bash
+npx agentcompany onboard --yes
+```
+
+If you already have AgentCompany configured, rerunning `onboard` keeps the existing config in place. Use `agentcompany configure` to edit settings.
+
+Or manually:
+
+```bash
+git clone https://github.com/chason/agentcompany.git
+cd paperclip
 pnpm install
+pnpm dev
 ```
 
-Build:
+This starts the API server at `http://localhost:3100`. An embedded PostgreSQL database is created automatically — no setup required.
+
+> **Requirements:** Node.js 20+, pnpm 9.15+
+
+<br/>
+
+## FAQ
+
+**What does a typical setup look like?**
+Locally, a single Node.js process manages an embedded Postgres and local file storage. For production, point it at your own Postgres and deploy however you like. Configure projects, agents, and goals — the agents take care of the rest.
+
+If you're a solo-entreprenuer you can use Tailscale to access AgentCompany on the go. Then later you can deploy to e.g. Vercel when you need it.
+
+**Can I run multiple companies?**
+Yes. A single deployment can run an unlimited number of companies with complete data isolation.
+
+**How is AgentCompany different from agents like OpenClaw or Claude Code?**
+AgentCompany _uses_ those agents. It orchestrates them into a company — with org charts, budgets, goals, governance, and accountability.
+
+**Why should I use AgentCompany instead of just pointing my OpenClaw to Asana or Trello?**
+Agent orchestration has subtleties in how you coordinate who has work checked out, how to maintain sessions, monitoring costs, establishing governance - AgentCompany does this for you.
+
+(Bring-your-own-ticket-system is on the Roadmap)
+
+**Do agents run continuously?**
+By default, agents run on scheduled heartbeats and event-based triggers (task assignment, @-mentions). You can also hook in continuous agents like OpenClaw. You bring your agent and AgentCompany coordinates.
+
+<br/>
+
+## Development
+
 ```bash
-pnpm build
+pnpm dev              # Full dev (API + UI, watch mode)
+pnpm dev:once         # Full dev without file watching
+pnpm dev:server       # Server only
+pnpm build            # Build all
+pnpm typecheck        # Type checking
+pnpm test:run         # Run tests
+pnpm db:generate      # Generate DB migration
+pnpm db:migrate       # Apply migrations
 ```
 
-Run the CLI:
-```bash
-node dist/cli.js --help
-```
+See [doc/DEVELOPING.md](doc/DEVELOPING.md) for the full development guide.
 
-Run the desktop shell (Tauri, no Docker):
-```bash
-pnpm build
-pnpm tauri:dev
-```
-`tauri:dev` runs in local mode (`--no-dev-server`) and launches from the bundled React desktop frontend.
+<br/>
 
-Desktop UX contract (current):
-- The user is always treated as `CEO` in the desktop shell session flow.
-- Session role is fixed to `ceo` (no role switching in desktop UI).
-- Quick Setup always includes a CEO agent.
-- "Onboard Agent" panel can create any agent role (`ceo|director|manager|worker`) and can create a team on demand.
+## Roadmap
 
-Check desktop prerequisites (Node/CLI bundle/Tauri CLI/Rust toolchain):
-```bash
-node dist/cli.js desktop:doctor /path/to/workspace --project "$PROJECT_ID"
-```
+- ✅ Plugin system (e.g. add a knowledge base, custom tracing, queues, etc)
+- ✅ Get OpenClaw / claw-style agent employees
+- ✅ companies.sh - import and export entire organizations
+- ✅ Easy AGENTS.md configurations
+- ✅ Skills Manager
+- ✅ Scheduled Routines
+- ✅ Better Budgeting
+- ⚪ Artifacts & Deployments
+- ⚪ CEO Chat
+- ⚪ MAXIMIZER MODE
+- ⚪ Multiple Human Users
+- ⚪ Cloud / Sandbox agents (e.g. Cursor / e2b agents)
+- ⚪ Cloud deployments
+- ⚪ Desktop App
 
-If the desktop shell cannot find the CLI bundle automatically, set:
-```bash
-export AGENTCOMPANY_CLI_PATH=/absolute/path/to/AgentCompany/dist/cli.js
-```
+<br/>
 
-Start the local JSON-RPC server (stdio transport):
-```bash
-node dist/cli.js server:start
-```
+## Community & Plugins
 
-Initialize a Company Workspace folder:
-```bash
-node dist/cli.js workspace:init /path/to/workspace --name "Acme"
-```
+Find Plugins and more at [awesome-paperclip](https://github.com/gsxdsm/awesome-paperclip)
 
-Gemini CLI API mode (new workspaces):
-- New workspaces now default Gemini execution policy to `api` channel.
-- The runtime fails fast for Gemini jobs unless one of these auth paths is configured:
-  - `GEMINI_API_KEY`
-  - `GOOGLE_API_KEY`
-  - Vertex AI env: `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`
+## Telemetry
 
-Example:
-```bash
-export GEMINI_API_KEY=your_key_here
-```
+AgentCompany collects anonymous usage telemetry to help us understand how the product is used and improve it. No personal information, issue content, prompts, file paths, or secrets are ever collected. Private repository references are hashed with a per-install salt before being sent.
 
-Existing workspaces are unchanged:
-- If your workspace was initialized before this change, Gemini may still be configured as `subscription_cli`.
-- To switch an existing workspace to API channel, edit `.local/machine.yaml`:
-```yaml
-provider_execution_policy:
-  gemini:
-    channel: api
-    require_subscription_proof: false
-    allowed_bin_patterns: ["gemini"]
-```
+Telemetry is **enabled by default** and can be disabled with any of the following:
 
-Bootstrap a workspace with preset departments and default org roles (easy-start path):
-```bash
-node dist/cli.js workspace:bootstrap /path/to/workspace \
-  --name "Acme" \
-  --project-name "AgentCompany Ops" \
-  --departments engineering product operations \
-  --force
-```
-Tip: the desktop Quick Setup flow auto-fills `ceo_actor_id` for you after bootstrap.
+| Method | How |
+|---|---|
+| Environment variable | `AGENTCOMPANY_TELEMETRY_DISABLED=1` |
+| Standard convention | `DO_NOT_TRACK=1` |
+| CI environments | Automatically disabled when `CI=true` |
+| Config file | Set `telemetry.enabled: false` in your AgentCompany config |
 
-Initialize a demo workspace (2 teams, managers/workers, sample project):
-```bash
-node dist/cli.js demo:init /path/to/workspace --name "Acme Demo" --force
-```
+## Contributing
 
-Scaffold a planning pipeline (CEO -> Managers -> Director):
-```bash
-node dist/cli.js pipeline:intake /path/to/workspace --name "Project X" --ceo <ceo_agent_id> --director <director_agent_id> --managers <mgr_id_1> <mgr_id_2>
-```
+We welcome contributions. See the [contributing guide](CONTRIBUTING.md) for details.
 
-Create org structure:
-```bash
-TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Payments")
-MANAGER_ID=$(node dist/cli.js agent:new /path/to/workspace --name "Payments Manager" --role manager --provider codex --team "$TEAM_ID")
-PROJECT_ID=$(node dist/cli.js project:new /path/to/workspace --name "Project X")
-node dist/cli.js agent:refresh-context /path/to/workspace --agent "$MANAGER_ID"
-```
+<br/>
 
-Onboard an additional agent manually (CLI equivalent of desktop "Onboard Agent"):
-```bash
-TEAM_ID=$(node dist/cli.js team:new /path/to/workspace --name "Design")
-AGENT_ID=$(node dist/cli.js agent:new /path/to/workspace --name "Design Worker 2" --role worker --provider codex --team "$TEAM_ID")
-echo "$AGENT_ID"
-```
+## Community
 
-Run a governed self-improvement cycle for repeated worker mistakes:
-```bash
-node dist/cli.js agent:self-improve-cycle /path/to/workspace \
-  --project "$PROJECT_ID" \
-  --worker <worker_agent_id> \
-  --manager "$MANAGER_ID" \
-  --manager-role manager \
-  --key missing_tests_evidence \
-  --summary "Missing tests evidence in milestone report" \
-  --rule "Always attach tests artifact links before requesting approval." \
-  --proposal-threshold 3
-```
+- [Discord](https://discord.gg/m4HZY7xNG3) — Join the community
+- [GitHub Issues](https://github.com/chason/agentcompany/issues) — bugs and feature requests
+- [GitHub Discussions](https://github.com/chason/agentcompany/discussions) — ideas and RFC
 
-Create a run (run.yaml + events.jsonl + context pack skeleton):
-```bash
-node dist/cli.js run:new /path/to/workspace --project "$PROJECT_ID" --agent <agent_id> --provider codex
-```
+<br/>
 
-Execute a run command (writes `provider.raw` events and updates `run.yaml` status):
-```bash
-node dist/cli.js run:execute /path/to/workspace --project "$PROJECT_ID" --run <run_id> --argv node -e "console.log('hello')"
-```
+## License
 
-Pipe stdin from a file (useful for CLIs that accept prompts on stdin):
-```bash
-node dist/cli.js run:execute /path/to/workspace --project "$PROJECT_ID" --run <run_id> --argv codex exec --json - --stdin-file /path/to/prompt.txt
-```
+MIT &copy; 2026 AgentCompany
 
-Create a task and add a milestone:
-```bash
-TASK_ID=$(node dist/cli.js task:new /path/to/workspace --project "$PROJECT_ID" --title "Run Monitor v0")
-node dist/cli.js task:add-milestone /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --title "List runs" --kind coding --status ready --accept "Shows recent runs with status"
-```
+## Star History
 
-Propose and approve a curated memory delta (project memory):
-```bash
-DELTA=$(node dist/cli.js memory:delta /path/to/workspace \
-  --project "$PROJECT_ID" \
-  --title "Decision: strict JSONL envelope" \
-  --scope-kind project_memory \
-  --sensitivity internal \
-  --rationale "Capture a durable event-envelope decision with run evidence." \
-  --under "## Decisions" \
-  --insert "- Events are strict-envelope JSONL and append-only." \
-  --by human \
-  --evidence art_evidence_event_envelope)
-ARTIFACT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$DELTA")
-node dist/cli.js memory:approve /path/to/workspace --project "$PROJECT_ID" --artifact "$ARTIFACT_ID" --actor <ceo_actor_id> --role ceo --notes "LGTM"
-node dist/cli.js memory:list /path/to/workspace --actor <ceo_actor_id> --role ceo --project "$PROJECT_ID" --status all
-node dist/cli.js system:capabilities
-```
+[![Star History Chart](https://api.star-history.com/image?repos=agentcompany/agentcompany&type=date&legend=top-left)](https://www.star-history.com/?repos=agentcompany%2Fpaperclip&type=date&legend=top-left)
 
-Plan layered context for a job and extract review-only memory candidates from a completed run:
-```bash
-node dist/cli.js context:plan /path/to/workspace \
-  --project "$PROJECT_ID" \
-  --worker <worker_agent_id> \
-  --manager <manager_actor_id> \
-  --role manager \
-  --goal "Ship monitor improvements without policy regressions" \
-  --constraint "No policy bypass" \
-  --deliverable "ResultSpec JSON"
+<br/>
 
-node dist/cli.js memory:candidates /path/to/workspace \
-  --project "$PROJECT_ID" \
-  --job <job_id> \
-  --actor <manager_actor_id> \
-  --role manager
-```
+---
 
-Milestone report and approval:
-```bash
-REPORT=$(node dist/cli.js milestone:report:new /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --milestone <ms_id> --title "Milestone 1 report" --by <worker_agent_id> --run <run_id> --ctx <ctx_id> --evidence <patch_art_id> --tests <test_art_id>)
-REPORT_ID=$(node -e "console.log(JSON.parse(process.argv[1]).artifact_id)" "$REPORT")
-node dist/cli.js milestone:approve /path/to/workspace --project "$PROJECT_ID" --task "$TASK_ID" --milestone <ms_id> --report "$REPORT_ID" --actor <ceo_actor_id> --role ceo --notes "Approved"
-```
+<p align="center">
+  <img src="doc/assets/footer.jpg" alt="" width="720" />
+</p>
 
-Validate a Company Workspace folder:
-```bash
-node dist/cli.js workspace:validate /path/to/workspace
-```
-
-Run workspace health checks (optionally rebuilding index cache):
-```bash
-node dist/cli.js workspace:doctor /path/to/workspace --rebuild-index
-node dist/cli.js workspace:doctor /path/to/workspace --sync-index
-```
-
-Export a diagnostics bundle (doctor + adapters + sessions + monitor + inbox snapshots):
-```bash
-node dist/cli.js workspace:diagnostics /path/to/workspace /tmp/agentcompany-diag
-```
-
-Apply workspace migrations (event envelope/schema upgrades):
-```bash
-node dist/cli.js workspace:migrate /path/to/workspace --dry-run
-node dist/cli.js workspace:migrate /path/to/workspace
-```
-
-Run monitor helpers:
-```bash
-node dist/cli.js run:list /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --tail 50
-node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --mode deterministic
-node dist/cli.js run:replay /path/to/workspace --project "$PROJECT_ID" --run <run_id> --mode live
-```
-
-SQLite cache/index helpers:
-```bash
-node dist/cli.js index:rebuild /path/to/workspace
-node dist/cli.js index:sync /path/to/workspace
-node dist/cli.js index:stats /path/to/workspace
-node dist/cli.js index:runs /path/to/workspace --project "$PROJECT_ID" --status ended
-node dist/cli.js index:reviews /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js index:help /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js index:events /path/to/workspace --project "$PROJECT_ID" --run <run_id> --limit 100
-node dist/cli.js index:event-errors /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js monitor:runs /path/to/workspace --project "$PROJECT_ID" --no-sync-index
-node dist/cli.js inbox:snapshot /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js inbox:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor <ceo_actor_id> --role ceo
-node dist/cli.js comment:add /path/to/workspace --project "$PROJECT_ID" --author <ceo_actor_id> --role ceo --target-agent <agent_id> --body "Needs tests before merge"
-node dist/cli.js comment:list /path/to/workspace --project "$PROJECT_ID" --target-agent <agent_id> --target-run <run_id>
-node dist/cli.js ui:snapshot /path/to/workspace --project "$PROJECT_ID"
-node dist/cli.js ui:resolve /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --decision approved --actor <ceo_actor_id> --role ceo
-node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor <ceo_actor_id> --role ceo
-node dist/cli.js ui:manager-dashboard /path/to/workspace --project "$PROJECT_ID" --actor <ceo_actor_id> --role ceo --json
-node dist/cli.js ui:web /path/to/workspace --project "$PROJECT_ID" --actor <ceo_actor_id> --role ceo --port 8787
-```
-
-Manager web thin APIs (for desktop/web sidebars):
-- `GET /api/monitor/snapshot`
-- `GET /api/inbox/snapshot`
-- `GET /api/comments?target_agent_id=<id>&target_artifact_id=<id>&target_run_id=<id>&limit=<n>`
-- `POST /api/comments`
-- `GET /api/ui/snapshot` (full snapshot; used periodically for colleague directory refresh)
-
-Heartbeat orchestration (workspace-level coordinator + targeted workers):
-- Durable config/state live at:
-  - `.local/heartbeat/config.yaml`
-  - `.local/heartbeat/state.yaml`
-- JSON-RPC methods:
-  - `heartbeat.status`
-  - `heartbeat.tick`
-  - `heartbeat.config.get`
-  - `heartbeat.config.set`
-- Default behavior:
-  - heartbeat loop auto-starts when a workspace is observed via server traffic/events
-  - deterministic triage scores workers and wakes only top-K above threshold
-  - worker heartbeat reports are policy-gated with idempotency, budgets, quiet hours, and inbox approvals for risky actions
-
-Desktop shell behavior:
-- The Tauri app starts/stops the existing `ui:web` process.
-- The app embeds the Manager Web UI in a native window.
-- The desktop session actor role is fixed to `ceo`.
-- The desktop setup sidebar supports one-click agent onboarding (including team creation when needed).
-- This keeps the architecture local-first and protocol/event-log based without introducing Docker.
-
-Desktop release readiness checks:
-```bash
-node dist/cli.js desktop:release-doctor
-```
-
-Cross-team sharing:
-```bash
-node dist/cli.js sharepack:create /path/to/workspace --project "$PROJECT_ID" --by <ceo_actor_id>
-node dist/cli.js sharepack:replay /path/to/workspace --project "$PROJECT_ID" --share <share_pack_id> --mode deterministic
-node dist/cli.js help:new /path/to/workspace --title "Need help reviewing this workplan" --requester <ceo_actor_id> --target <manager_agent_id> --project "$PROJECT_ID" --visibility managers
-```
-
-Create and validate an artifact template:
-```bash
-node dist/cli.js artifact:new proposal /tmp/proposal.md --title "Payments Proposal" --visibility managers --by agent_mgr_payments --run run_123 --ctx ctx_123
-node dist/cli.js artifact:validate /tmp/proposal.md
-node dist/cli.js artifact:read /path/to/workspace --project "$PROJECT_ID" --artifact <artifact_id> --actor <ceo_actor_id> --role ceo
-```
-
-Debugging:
-- Set `AC_DEBUG=1` to include stack traces on unexpected errors.
+<p align="center">
+  <sub>Open source under MIT. Built for people who want to run companies, not babysit agents.</sub>
+</p>

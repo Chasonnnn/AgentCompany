@@ -1,0 +1,14 @@
+/**
+ * Adapter types shipped with AgentCompany. External plugins must not replace these.
+ */
+export const BUILTIN_ADAPTER_TYPES = new Set([
+  "claude_local",
+  "codex_local",
+  "cursor",
+  "gemini_local",
+  "openclaw_gateway",
+  "opencode_local",
+  "pi_local",
+  "process",
+  "http",
+]);

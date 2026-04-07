@@ -1,162 +1,201 @@
-# AGENTS.md - AgentCompany (Local macOS "Agent Org" PM Tool)
+# AGENTS.md
 
-> Single source of truth for building this project. Every contributor (human or AI) follows these rules.
+Guidance for human and AI contributors working in this repository.
 
-## 0) Documentation First (Non-Negotiable)
+## 1. Purpose
 
-Before implementing or changing behavior that depends on external systems/frameworks (provider CLIs, Electron/Tauri, SQLite, filesystem semantics, PTY behavior, git worktree/branch workflows, JSONL parsing, etc.), read the official documentation or upstream release notes first.
-- Prefer official domains/repos as sources of truth.
-- If docs are missing/unclear, inspect upstream source or create a minimal reproduction; do not guess.
-- For provider integrations, capture and version example outputs in tests/fixtures so parsing remains stable.
+AgentCompany is a control plane for AI-agent companies.
+The current implementation target is V1 and is defined in `doc/SPEC-implementation.md`.
 
-## 1) Production-Quality Standard (Non-Negotiable)
+## 2. Read This First
 
-Build fully functional, polished features, not "toy scripts".
+Before making changes, read in this order:
 
-Required:
-- Friendly error handling (actionable messages; no raw stack traces as UX)
-- Validation and edge cases covered (schemas, ids, visibility rules, missing artifacts, empty inputs)
-- Reproducible runs (append-only events + artifacts with provenance)
-- UI loading/empty/error states (Run Monitor, Review Inbox, Setup flows)
-- Drift resilience (unknown event types never break indexing or replay)
+1. `doc/GOAL.md`
+2. `doc/PRODUCT.md`
+3. `doc/SPEC-implementation.md`
+4. `doc/DEVELOPING.md`
+5. `doc/DATABASE.md`
 
-Forbidden:
-- "Minimal" implementations that skip validation or governance
-- Silent failure modes (e.g., missing evidence accepted as "done")
-- "TODO: add X later" comments in production code
-- Placeholder UX copy instead of real behavior
-- Downgrading dependencies without explicit user approval
+`doc/SPEC.md` is long-horizon product context.
+`doc/SPEC-implementation.md` is the concrete V1 build contract.
 
-## 1.1) No Backward Compatibility (Early Project)
+## 3. Repo Map
 
-This project is under active development. Breaking changes are acceptable.
-- Prioritize clean design over compatibility (schema formats, UI flows, driver internals can change).
-- When breaking canonical formats, bump `schema_version` and add a migration note/test.
+- `server/`: Express REST API and orchestration services
+- `ui/`: React + Vite board UI
+- `packages/db/`: Drizzle schema, migrations, DB clients
+- `packages/shared/`: shared types, constants, validators, API path constants
+- `packages/adapters/`: agent adapter implementations (Claude, Codex, Cursor, etc.)
+- `packages/adapter-utils/`: shared adapter utilities
+- `packages/plugins/`: plugin system packages
+- `doc/`: operational and product docs
 
-## 2) Git Rules
+## 4. Dev Setup (Auto DB)
 
-### Commit Prefix Rule
-All commits must start with: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, or `chore:`.
+Use embedded PGlite in dev by leaving `DATABASE_URL` unset.
 
-### Commit Message Format
-```text
-feat: Add policy engine allow/deny audit trail
-fix: Prevent cross-team artifact leakage via share pack
-docs: Document context pack schema v1
-refactor: Centralize run event envelope writing
-test: Add replay timeline drift resilience coverage
-chore: Add CI for lint and tests
+```sh
+pnpm install
+pnpm dev
 ```
 
-## 3) TDD Rule
+This starts:
 
-Write or update tests first.
-- Start with a failing test capturing the behavior/bug.
-- Implement until it passes.
-- If behavior changes, update tests in the same PR.
-- For provider drivers, prefer recorded fixtures and contract tests over brittle string matching.
+- API: `http://localhost:3100`
+- UI: `http://localhost:3100` (served by API server in dev middleware mode)
 
-## 4) Security / Privacy Boundaries (Zero Tolerance)
+Quick checks:
 
-- Never commit secrets (tokens, keys). Use `.env` locally if needed and keep `.env.example` updated.
-- Never log or persist sensitive repo contents outside the workspace artifacts that are explicitly governed by visibility.
-- Never leak cross-team private artifacts (worker journals, raw logs) by accident:
-  - enforce policy checks at read time and at index time
-  - record `policy.denied` events on blocks
-  - require explicit, auditable exceptions to attach private artifacts to help requests
-- Treat any imported customer/company workspace as potentially sensitive:
-  - do not print raw content to console logs
-  - prefer counts, ids, hashes, and summaries in logs/reports
+```sh
+curl http://localhost:3100/api/health
+curl http://localhost:3100/api/companies
+```
 
-## 5) Centralized Core Logic (Zero Tolerance)
+Reset local dev DB:
 
-All business logic must live in reusable core modules (UI-agnostic).
-- UI should be a thin layer over core modules.
-- Provider drivers must implement a stable driver contract and emit strict-envelope events.
-- Canonical store, schema validation, policy evaluation, and replay must not be duplicated across UI and CLI.
+```sh
+rm -rf data/pglite
+pnpm dev
+```
 
-Recommended top-level module split (adjust if the chosen stack requires it):
-- `src/core/` (domain model: projects/tasks/milestones/artifacts)
-- `src/store/` (canonical filesystem store + migrations)
-- `src/index/` (SQLite indexer/rebuilder)
-- `src/policy/` (policy engine + visibility model)
-- `src/runtime/` (runs, event recorder, replay)
-- `src/drivers/` (provider integrations + capabilities)
-- `src/ui/` (desktop UI)
+## 5. Core Engineering Rules
 
-## 6) Roles and Work Item Contract
+1. Keep changes company-scoped.
+Every domain entity should be scoped to a company and company boundaries must be enforced in routes/services.
 
-### Director
-Responsibilities:
-- Decompose requests into concrete Work Items.
-- Assign owner modules/files and required tests.
-- Review evidence artifacts and accept/reject outcomes.
-- Approve governed memory deltas.
-- Ensure public interface changes update docs/contracts.
+2. Keep contracts synchronized.
+If you change schema/API behavior, update all impacted layers:
+- `packages/db` schema and exports
+- `packages/shared` types/constants/validators
+- `server` routes/services
+- `ui` API clients and pages
 
-Constraints:
-- Must not bypass policy enforcement or visibility rules for convenience.
-- Must reject Work Items that lack required evidence or tests.
+3. Preserve control-plane invariants.
+- Single-assignee task model
+- Atomic issue checkout semantics
+- Approval gates for governed actions
+- Budget hard-stop auto-pause behavior
+- Activity logging for mutating actions
 
-### Worker
-Responsibilities:
-- Execute one Work Item at a time in the assigned owner area.
-- Run required tests and attach evidence artifacts.
-- Keep changes scoped to the Work Item acceptance criteria.
-- May propose memory deltas but may not approve them.
+4. Do not replace strategic docs wholesale unless asked.
+Prefer additive updates. Keep `doc/SPEC.md` and `doc/SPEC-implementation.md` aligned.
 
-Constraints:
-- Must not directly bypass governance workflows (reviews, policy, memory approval).
-- Must not ship changes without matching tests/evidence.
+5. Keep plan docs dated and centralized.
+New plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames.
 
-### Required Work Item Format
-Every implementation Work Item must include:
-- `Area`
-- `Owner files to edit first`
-- `Paired docs/contracts`
-- `Tests to run`
-- `Acceptance criteria`
-- `Evidence required`
-- `Routing reference` (link to `/Users/chason/AgentCompany/docs/module-ownership-map.md`)
+## 6. Database Change Workflow
 
-## 7) Fast Routing Rules
+When changing data model:
 
-- If you change routing/contract behavior:
-  - Update `src/server/router.ts` + `src/cli.ts` + `docs/protocol/v1.md`.
-  - Add/update server/router tests.
-- If you change runtime execution behavior:
-  - Start in `src/runtime/`.
-  - Verify read-model/index impact in `src/index/sqlite.ts`.
-- If you change policy/visibility/security behavior:
-  - Start in `src/policy/`.
-  - Verify both read-time and index-time guard paths.
-- If you change memory governance:
-  - Use memory delta propose/approve paths only.
-  - Ensure review and policy audit artifacts remain complete.
-- If you change context planning/retrieval:
-  - Update `src/runtime/context_plan.ts` + `src/server/router.ts` + `docs/protocol/v1.md`.
-  - Verify policy-filtered composition behavior and context trace outputs in tests.
+1. Edit `packages/db/src/schema/*.ts`
+2. Ensure new tables are exported from `packages/db/src/schema/index.ts`
+3. Generate migration:
 
-## 8) Definition of Done (Required)
+```sh
+pnpm db:generate
+```
 
-- Required tests for the changed area pass.
-- Evidence artifacts are attached and auditable.
-- Public-surface docs/contracts are updated when interfaces change.
-- No policy bypass introduced:
-  - read paths enforce policy
-  - index/read-model paths do not leak restricted data
+4. Validate compile:
 
-## 9) Memory Governance v0
+```sh
+pnpm -r typecheck
+```
 
-- Memory changes are written only via memory delta workflow:
-  - `memory.propose_delta` / `memory:delta`
-  - `memory.approve_delta` / `memory:approve`
-- Approval authority for memory deltas is Director+/CEO/Human only.
-- Workers may propose memory deltas but may not approve them.
-- Sensitivity classification is required (`public|internal|restricted`) and separate from visibility ACL.
-- Secret-like content is fail-closed (proposal/approval blocked until sanitized).
-- `AGENTS.md` is curated memory; generated context index data is stored separately.
+Notes:
+- `packages/db/drizzle.config.ts` reads compiled schema from `dist/schema/*.js`
+- `pnpm db:generate` compiles `packages/db` first
 
-## 10) Module Ownership Map
+## 7. Verification Before Hand-off
 
-- Use `/Users/chason/AgentCompany/docs/module-ownership-map.md` to route changes quickly to owner files, paired docs, and required tests.
+Run this full check before claiming done:
+
+```sh
+pnpm -r typecheck
+pnpm test:run
+pnpm build
+```
+
+If anything cannot be run, explicitly report what was not run and why.
+
+## 8. API and Auth Expectations
+
+- Base path: `/api`
+- Board access is treated as full-control operator context
+- Agent access uses bearer API keys (`agent_api_keys`), hashed at rest
+- Agent keys must not access other companies
+
+When adding endpoints:
+
+- apply company access checks
+- enforce actor permissions (board vs agent)
+- write activity log entries for mutations
+- return consistent HTTP errors (`400/401/403/404/409/422/500`)
+
+## 9. UI Expectations
+
+- Keep routes and nav aligned with available API surface
+- Use company selection context for company-scoped pages
+- Surface failures clearly; do not silently ignore API errors
+
+## 10. Pull Request Requirements
+
+When creating a pull request (via `gh pr create` or any other method), you **must** read and fill in every section of [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). Do not craft ad-hoc PR bodies — use the template as the structure for your PR description. Required sections:
+
+- **Thinking Path** — trace reasoning from project context to this change (see `CONTRIBUTING.md` for examples)
+- **What Changed** — bullet list of concrete changes
+- **Verification** — how a reviewer can confirm it works
+- **Risks** — what could go wrong
+- **Model Used** — the AI model that produced or assisted with the change (provider, exact model ID, context window, capabilities). Write "None — human-authored" if no AI was used.
+- **Checklist** — all items checked
+
+## 11. Definition of Done
+
+A change is done when all are true:
+
+1. Behavior matches `doc/SPEC-implementation.md`
+2. Typecheck, tests, and build pass
+3. Contracts are synced across db/shared/server/ui
+4. Docs updated when behavior or commands change
+5. PR description follows the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with all sections filled in (including Model Used)
+
+## 11. Fork-Specific: HenkDz/paperclip
+
+This is a fork of `agentcompany/agentcompany` with QoL patches and an **external-only** Hermes adapter story on branch `feat/externalize-hermes-adapter` ([tree](https://github.com/HenkDz/paperclip/tree/feat/externalize-hermes-adapter)).
+
+### Branch Strategy
+
+- `feat/externalize-hermes-adapter` → core has **no** `hermes-paperclip-adapter` dependency and **no** built-in `hermes_local` registration. Install Hermes via the Adapter Plugin manager (`@henkey/hermes-paperclip-adapter` or a `file:` path).
+- Older fork branches may still document built-in Hermes; treat this file as authoritative for the externalize branch.
+
+### Hermes (plugin only)
+
+- Register through **Board → Adapter manager** (same as Droid). Type remains `hermes_local` once the package is loaded.
+- UI uses generic **config-schema** + **ui-parser.js** from the package — no Hermes imports in `server/` or `ui/` source.
+- Optional: `file:` entry in `~/.agentcompany/adapter-plugins.json` for local dev of the adapter repo.
+
+### Local Dev
+
+- Fork runs on port 3101+ (auto-detects if 3100 is taken by upstream instance)
+- `npx vite build` hangs on NTFS — use `node node_modules/vite/bin/vite.js build` instead
+- Server startup from NTFS takes 30-60s — don't assume failure immediately
+- Kill ALL paperclip processes before starting: `pkill -f "paperclip"; pkill -f "tsx.*index.ts"`
+- Vite cache survives `rm -rf dist` — delete both: `rm -rf ui/dist ui/node_modules/.vite`
+
+### Fork QoL Patches (not in upstream)
+
+These are local modifications in the fork's UI. If re-copying source, these must be re-applied:
+
+1. **stderr_group** — amber accordion for MCP init noise in `RunTranscriptView.tsx`
+2. **tool_group** — accordion for consecutive non-terminal tools (write, read, search, browser)
+3. **Dashboard excerpt** — `LatestRunCard` strips markdown, shows first 3 lines/280 chars
+
+### Plugin System
+
+PR #2218 (`feat/external-adapter-phase1`) adds external adapter support. See root `AGENTS.md` for full details.
+
+- Adapters can be loaded as external plugins via `~/.agentcompany/adapter-plugins.json`
+- The plugin-loader should have ZERO hardcoded adapter imports — pure dynamic loading
+- `createServerAdapter()` must include ALL optional fields (especially `detectModel`)
+- Built-in UI adapters can shadow external plugin parsers — remove built-in when fully externalizing
+- Reference external adapters: Hermes (`@henkey/hermes-paperclip-adapter` or `file:`) and Droid (npm)

@@ -1,0 +1,62 @@
+{
+  "name": "agentcompany",
+  "version": "0.3.1",
+  "description": "AgentCompany CLI — orchestrate AI agent teams to run a business",
+  "type": "module",
+  "bin": {
+    "agentcompany": "./dist/index.js"
+  },
+  "keywords": [
+    "paperclip",
+    "ai",
+    "agents",
+    "orchestration",
+    "cli"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chason/agentcompany",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/chason/agentcompany",
+  "bugs": {
+    "url": "https://github.com/chason/agentcompany/issues"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "node --input-type=module -e \"import esbuild from 'esbuild'; import config from './esbuild.config.mjs'; await esbuild.build(config);\" && chmod +x dist/index.js",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.10.0",
+    "@agentcompany/adapter-claude-local": "workspace:*",
+    "@agentcompany/adapter-codex-local": "workspace:*",
+    "@agentcompany/adapter-cursor-local": "workspace:*",
+    "@agentcompany/adapter-gemini-local": "workspace:*",
+    "@agentcompany/adapter-opencode-local": "workspace:*",
+    "@agentcompany/adapter-pi-local": "workspace:*",
+    "@agentcompany/adapter-openclaw-gateway": "workspace:*",
+    "@agentcompany/adapter-utils": "workspace:*",
+    "@agentcompany/db": "workspace:*",
+    "@agentcompany/server": "workspace:*",
+    "@agentcompany/shared": "workspace:*",
+    "drizzle-orm": "0.38.4",
+    "dotenv": "^17.0.1",
+    "commander": "^13.1.0",
+    "embedded-postgres": "^18.1.0-beta.16",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
