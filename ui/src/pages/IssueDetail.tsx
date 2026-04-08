@@ -45,6 +45,7 @@ import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { LiveRunWidget } from "../components/LiveRunWidget";
+import { BoardRoomPanel } from "../components/BoardRoomPanel";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -71,6 +72,7 @@ import {
   MoreHorizontal,
   Paperclip,
   Repeat,
+  ShieldCheck,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
@@ -301,6 +303,7 @@ export function IssueDetail() {
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("comments");
+  const [boardRoomComposerOpen, setBoardRoomComposerOpen] = useState(false);
   const [pendingApprovalAction, setPendingApprovalAction] = useState<{
     approvalId: string;
     action: "approve" | "reject";
@@ -734,6 +737,43 @@ export function IssueDetail() {
     },
     onSettled: () => {
       setPendingApprovalAction(null);
+    },
+  });
+
+  const requestBoardDecision = useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      if (!issue) {
+        throw new Error("Issue context unavailable");
+      }
+      return approvalsApi.create(issue.companyId, {
+        type: "request_board_approval",
+        issueIds: [issue.id],
+        payload,
+      });
+    },
+    onSuccess: (approval) => {
+      invalidateIssue();
+      if (resolvedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(resolvedCompanyId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(resolvedCompanyId) });
+      }
+      pushToast({
+        title: "Board request created",
+        body: "The issue now has a structured board-room decision request.",
+        tone: "success",
+        action: {
+          label: "Open approval",
+          href: `/approvals/${approval.id}`,
+        },
+      });
+      setDetailTab("board-room");
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Board request failed",
+        body: err instanceof Error ? err.message : "Unable to create board request",
+        tone: "error",
+      });
     },
   });
 
@@ -1250,6 +1290,21 @@ export function IssueDetail() {
       </Button>
     </>
   );
+  const boardRoomActionButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        setDetailTab("board-room");
+        setBoardRoomComposerOpen(true);
+      }}
+      disabled={requestBoardDecision.isPending}
+      className="shadow-none"
+    >
+      <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
+      {requestBoardDecision.isPending ? "Creating..." : "Request board decision"}
+    </Button>
+  );
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -1554,6 +1609,7 @@ export function IssueDetail() {
         }}
         extraActions={
           <>
+            {boardRoomActionButton}
             {!hasAttachments && attachmentUploadButton}
             {childIssues.length === 0 && (
               <Button variant="outline" size="sm" onClick={openNewSubIssue} className="shadow-none">
@@ -1717,6 +1773,10 @@ export function IssueDetail() {
             <MessageSquare className="h-3.5 w-3.5" />
             Comments
           </TabsTrigger>
+          <TabsTrigger value="board-room" className="gap-1.5">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Board Room
+          </TabsTrigger>
           <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
             Activity
@@ -1786,6 +1846,26 @@ export function IssueDetail() {
               await uploadAttachment.mutateAsync(file);
             }}
             liveRunSlot={<LiveRunWidget issueId={issueId!} companyId={issue.companyId} />}
+          />
+        </TabsContent>
+
+        <TabsContent value="board-room">
+          <BoardRoomPanel
+            approvals={linkedApprovals}
+            agentMap={agentMap}
+            onRequestBoardDecision={async (payload) => {
+              await requestBoardDecision.mutateAsync(payload);
+            }}
+            onApproveApproval={async (approvalId) => {
+              await approvalDecision.mutateAsync({ approvalId, action: "approve" });
+            }}
+            onRejectApproval={async (approvalId) => {
+              await approvalDecision.mutateAsync({ approvalId, action: "reject" });
+            }}
+            pendingApprovalAction={pendingApprovalAction}
+            requestPending={requestBoardDecision.isPending}
+            composerOpen={boardRoomComposerOpen}
+            onComposerOpenChange={setBoardRoomComposerOpen}
           />
         </TabsContent>
 

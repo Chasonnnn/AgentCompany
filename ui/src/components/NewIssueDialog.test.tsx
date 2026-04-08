@@ -418,6 +418,7 @@ describe("NewIssueDialog", () => {
 
     const { root } = renderDialog(container);
     await flush();
+    await flush();
 
     expect(container.textContent).not.toContain("will no longer use the parent issue workspace");
 
