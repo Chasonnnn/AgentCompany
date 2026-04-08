@@ -185,11 +185,14 @@ export {
 
 export {
   createApprovalSchema,
+  requestBoardApprovalPayloadSchema,
+  normalizeRequestBoardApprovalPayload,
   resolveApprovalSchema,
   requestApprovalRevisionSchema,
   resubmitApprovalSchema,
   addApprovalCommentSchema,
   type CreateApproval,
+  type RequestBoardApprovalPayloadInput,
   type ResolveApproval,
   type RequestApprovalRevision,
   type ResubmitApproval,

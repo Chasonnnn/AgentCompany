@@ -448,6 +448,7 @@ export const PLUGIN_CAPABILITIES = [
   "issues.create",
   "issues.update",
   "issue.comments.create",
+  "issue.approvals.create",
   "issue.documents.write",
   "agents.pause",
   "agents.resume",

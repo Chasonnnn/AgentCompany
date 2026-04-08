@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
+  normalizeRequestBoardApprovalPayload,
   requestApprovalRevisionSchema,
   resolveApprovalSchema,
   resubmitApprovalSchema,
@@ -69,6 +70,8 @@ export function approvalRoutes(db: Db) {
             approvalInput.payload,
             { strictMode: strictSecretsMode },
           )
+        : approvalInput.type === "request_board_approval"
+          ? normalizeRequestBoardApprovalPayload(approvalInput.payload)
         : approvalInput.payload;
 
     const actor = getActorInfo(req);

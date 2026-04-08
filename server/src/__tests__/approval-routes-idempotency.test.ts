@@ -134,7 +134,12 @@ describe("approval routes idempotent retries", () => {
       requestedByAgentId: "agent-1",
       requestedByUserId: null,
       status: "pending",
-      payload: { title: "Approve hosting spend" },
+      payload: {
+        title: "Approve hosting spend",
+        summary: "Need board signoff before increasing hosting spend.",
+        decisionTier: "board",
+        roomKind: "issue_board_room",
+      },
       decisionNote: null,
       decidedByUserId: null,
       decidedAt: null,
@@ -147,7 +152,10 @@ describe("approval routes idempotent retries", () => {
       .send({
         type: "request_board_approval",
         issueIds: ["00000000-0000-0000-0000-000000000001"],
-        payload: { title: "Approve hosting spend" },
+        payload: {
+          title: "Approve hosting spend",
+          summary: "Need board signoff before increasing hosting spend.",
+        },
       });
 
     expect(res.status).toBe(201);

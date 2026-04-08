@@ -1,5 +1,16 @@
 import type { ApprovalStatus, ApprovalType } from "../constants.js";
 
+export type RequestBoardApprovalPayload = Record<string, unknown> & {
+  title: string;
+  summary: string;
+  recommendedAction?: string;
+  nextActionOnApproval?: string;
+  risks?: string[];
+  proposedComment?: string;
+  decisionTier: "board";
+  roomKind: "issue_board_room";
+};
+
 export interface Approval {
   id: string;
   companyId: string;
