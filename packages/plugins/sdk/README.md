@@ -310,6 +310,7 @@ Declare in `manifest.capabilities`. Grouped by scope:
 | | `issues.create` |
 | | `issues.update` |
 | | `issue.comments.create` |
+| | `issue.approvals.create` |
 | | `activity.log.write` |
 | | `metrics.write` |
 | | `telemetry.track` |
@@ -336,6 +337,28 @@ Declare in `manifest.capabilities`. Grouped by scope:
 | | `ui.action.register` |
 
 Full list in code: import `PLUGIN_CAPABILITIES` from `@paperclipai/plugin-sdk`.
+
+### Issue Board Approvals
+
+Plugins that need to escalate an issue for explicit human signoff can use the issue-scoped board approval helper:
+
+```ts
+await ctx.issues.requestBoardApproval(
+  issueId,
+  companyId,
+  {
+    title: "Approve production rollout",
+    summary: "The rollout is blocked pending board signoff.",
+    recommendedAction: "Proceed with the rollout for internal tenants first.",
+    nextActionOnApproval: "Start the internal rollout and post evidence back to the issue.",
+    decisionTier: "board",
+    roomKind: "issue_board_room",
+  },
+  { requestedByAgentId: agentId },
+);
+```
+
+This requires the `issue.approvals.create` capability and creates the same `request_board_approval` records used by the Paperclip UI.
 
 ## UI quick start
 

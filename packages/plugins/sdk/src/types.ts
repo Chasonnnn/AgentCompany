@@ -21,6 +21,8 @@ import type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  Approval,
+  RequestBoardApprovalPayload,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -65,6 +67,8 @@ export type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  Approval,
+  RequestBoardApprovalPayload,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -876,6 +880,7 @@ export interface PluginIssueDocumentsClient {
  * - `issues.update` for update
  * - `issue.comments.read` for `listComments`
  * - `issue.comments.create` for `createComment`
+ * - `issue.approvals.create` for `requestBoardApproval`
  * - `issue.documents.read` for `documents.list` and `documents.get`
  * - `issue.documents.write` for `documents.upsert` and `documents.delete`
  */
@@ -915,6 +920,12 @@ export interface PluginIssuesClient {
     companyId: string,
     options?: { authorAgentId?: string },
   ): Promise<IssueComment>;
+  requestBoardApproval(
+    issueId: string,
+    companyId: string,
+    payload: RequestBoardApprovalPayload,
+    options: { requestedByAgentId: string },
+  ): Promise<Approval>;
   /** Read and write issue documents. Requires `issue.documents.read` / `issue.documents.write`. */
   documents: PluginIssueDocumentsClient;
 }

@@ -203,6 +203,8 @@ export type {
   Project,
   Issue,
   IssueComment,
+  Approval,
+  RequestBoardApprovalPayload,
   Agent,
   Goal,
 } from "./types.js";

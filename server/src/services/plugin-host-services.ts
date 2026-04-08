@@ -11,10 +11,13 @@ import type {
   PluginWorkspace,
   IssueComment,
 } from "@paperclipai/plugin-sdk";
+import { normalizeRequestBoardApprovalPayload } from "@paperclipai/shared";
 import { companyService } from "./companies.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
 import { issueService } from "./issues.js";
+import { approvalService } from "./approvals.js";
+import { issueApprovalService } from "./issue-approvals.js";
 import { goalService } from "./goals.js";
 import { documentService } from "./documents.js";
 import { heartbeatService } from "./heartbeat.js";
@@ -453,6 +456,8 @@ export function buildHostServices(
   const heartbeat = heartbeatService(db);
   const projects = projectService(db);
   const issues = issueService(db);
+  const approvals = approvalService(db);
+  const issueApprovals = issueApprovalService(db);
   const documents = documentService(db);
   const goals = goalService(db);
   const activity = activityService(db);
@@ -809,6 +814,42 @@ export function buildHostServices(
           params.body,
           { agentId: params.authorAgentId },
         )) as IssueComment;
+      },
+      async requestBoardApproval(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        requireInCompany("Issue", await issues.getById(params.issueId), companyId);
+
+        const payload = normalizeRequestBoardApprovalPayload(params.payload);
+        const approval = await approvals.create(companyId, {
+          type: "request_board_approval",
+          payload,
+          requestedByAgentId: params.requestedByAgentId,
+          requestedByUserId: null,
+          status: "pending",
+          decisionNote: null,
+          decidedByUserId: null,
+          decidedAt: null,
+          updatedAt: new Date(),
+        });
+
+        await issueApprovals.linkManyForApproval(approval.id, [params.issueId], {
+          agentId: params.requestedByAgentId,
+          userId: null,
+        });
+
+        await logActivity(db, {
+          companyId,
+          actorType: "agent",
+          actorId: params.requestedByAgentId,
+          agentId: params.requestedByAgentId,
+          action: "approval.created",
+          entityType: "approval",
+          entityId: approval.id,
+          details: { type: approval.type, issueIds: [params.issueId] },
+        });
+
+        return approval as any;
       },
     },
 

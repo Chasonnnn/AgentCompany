@@ -27,6 +27,8 @@ import type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  Approval,
+  RequestBoardApprovalPayload,
   Agent,
   Goal,
 } from "@paperclipai/shared";
@@ -608,6 +610,15 @@ export interface WorkerToHostMethods {
   "issues.createComment": [
     params: { issueId: string; body: string; companyId: string; authorAgentId?: string },
     result: IssueComment,
+  ];
+  "issues.requestBoardApproval": [
+    params: {
+      issueId: string;
+      companyId: string;
+      requestedByAgentId: string;
+      payload: RequestBoardApprovalPayload;
+    },
+    result: Approval,
   ];
 
   // Issue Documents

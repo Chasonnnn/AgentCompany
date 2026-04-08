@@ -614,6 +614,15 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
           return callHost("issues.createComment", { issueId, body, companyId, authorAgentId: options?.authorAgentId });
         },
 
+        async requestBoardApproval(issueId: string, companyId: string, payload, options) {
+          return callHost("issues.requestBoardApproval", {
+            issueId,
+            companyId,
+            requestedByAgentId: options.requestedByAgentId,
+            payload,
+          });
+        },
+
         documents: {
           async list(issueId: string, companyId: string) {
             return callHost("issues.documents.list", { issueId, companyId });

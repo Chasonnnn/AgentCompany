@@ -7,9 +7,11 @@ import type {
   Project,
   Issue,
   IssueComment,
+  Approval,
   Agent,
   Goal,
 } from "@paperclipai/shared";
+import { normalizeRequestBoardApprovalPayload } from "@paperclipai/shared";
 import type {
   EventFilter,
   PluginContext,
@@ -142,6 +144,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const projects = new Map<string, Project>();
   const issues = new Map<string, Issue>();
   const issueComments = new Map<string, IssueComment[]>();
+  const approvals = new Map<string, Approval>();
   const agents = new Map<string, Agent>();
   const goals = new Map<string, Goal>();
   const projectWorkspaces = new Map<string, PluginWorkspace[]>();
@@ -426,6 +429,30 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         current.push(comment);
         issueComments.set(issueId, current);
         return comment;
+      },
+      async requestBoardApproval(issueId, companyId, payload, options) {
+        requireCapability(manifest, capabilitySet, "issue.approvals.create");
+        const parentIssue = issues.get(issueId);
+        if (!isInCompany(parentIssue, companyId)) {
+          throw new Error(`Issue not found: ${issueId}`);
+        }
+        const now = new Date();
+        const approval: Approval = {
+          id: randomUUID(),
+          companyId: parentIssue.companyId,
+          type: "request_board_approval",
+          requestedByAgentId: options.requestedByAgentId,
+          requestedByUserId: null,
+          status: "pending",
+          payload: normalizeRequestBoardApprovalPayload(payload),
+          decisionNote: null,
+          decidedByUserId: null,
+          decidedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        approvals.set(approval.id, approval);
+        return approval;
       },
       documents: {
         async list(issueId, companyId) {
