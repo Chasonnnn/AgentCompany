@@ -1,0 +1,105 @@
+name: Desktop Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Resolve GitHub Pages feed URL
+        id: pages
+        shell: bash
+        run: |
+          owner="${{ github.repository_owner }}"
+          repo="${{ github.event.repository.name }}"
+          if [[ "$repo" == "${owner}.github.io" ]]; then
+            base_url="https://${owner}.github.io"
+          else
+            base_url="https://${owner}.github.io/${repo}"
+          fi
+          echo "base_url=$base_url" >> "$GITHUB_OUTPUT"
+          echo "feed_url=${base_url}/desktop/latest/macos/arm64" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Run tests
+        run: pnpm test:run
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build desktop distribution artifacts
+        env:
+          PAPERCLIP_DESKTOP_RELEASE_CHANNEL: main
+          PAPERCLIP_DESKTOP_FEED_URL: ${{ steps.pages.outputs.feed_url }}
+        run: pnpm desktop:dist
+
+      - name: Prepare GitHub Pages desktop channel
+        run: pnpm desktop:prepare-pages-release
+
+      - name: Upload desktop release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-${{ github.run_number }}
+          path: |
+            desktop/dist/build-metadata.json
+            desktop/dist/release/raw/
+            desktop/dist/release/pages/
+          retention-days: 14
+
+      - name: Upload GitHub Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: desktop/dist/release/pages
+
+  deploy_pages:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

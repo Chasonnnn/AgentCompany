@@ -50,6 +50,83 @@ pnpm dev:list
 pnpm dev:stop
 ```
 
+## Desktop Shell (macOS local app)
+
+Paperclip also ships with a local Electron shell that wraps the existing board UI and server runtime without changing the product surface.
+
+For desktop shell development, start the normal app first:
+
+```sh
+pnpm dev
+```
+
+Then launch Electron against that running local instance:
+
+```sh
+PAPERCLIP_DESKTOP_DEV_URL=http://127.0.0.1:3100 pnpm desktop:dev
+```
+
+If `PAPERCLIP_DESKTOP_DEV_URL` is unset, `desktop:dev` defaults to `http://127.0.0.1:3100`.
+
+Build the desktop shell code:
+
+```sh
+pnpm desktop:build
+```
+
+Package a local unsigned macOS `.app` directory build:
+
+```sh
+pnpm desktop:package
+```
+
+`desktop:package` stages the built server runtime into `desktop/.stage/server/` and then runs Electron Builder with the `mac dir` target. This is the local developer packaging flow: it stays unsigned/unnotarized and does not bundle an update feed URL, so in-app update checks remain disabled for those builds.
+
+Build CI-style desktop release artifacts:
+
+```sh
+pnpm desktop:dist
+```
+
+This produces versioned ARM64 macOS release artifacts in `desktop/dist/release/raw/`, including:
+
+- `.zip` for updater installs
+- `.dmg` for manual downloads
+- `latest-mac.yml`
+- matching `.blockmap`
+
+Rewrite those release artifacts into the stable GitHub Pages channel layout:
+
+```sh
+pnpm desktop:prepare-pages-release
+```
+
+That writes a stable `latest` channel under:
+
+- `desktop/dist/release/pages/desktop/latest/macos/arm64/`
+
+The Pages channel contains:
+
+- `Paperclip-macos-arm64.zip`
+- `Paperclip-macos-arm64.dmg`
+- `latest-mac.yml`
+- `Paperclip-macos-arm64.zip.blockmap`
+- `build.json`
+
+The desktop workflow publishes that folder to GitHub Pages on every push to `main` and on manual `workflow_dispatch` runs from `main`. The public latest-download/update URL follows this pattern:
+
+- `https://<owner>.github.io/<repo>/desktop/latest/macos/arm64/`
+
+CI-built desktop releases embed that feed URL and enable native in-app update checks. The updater starts about 30 seconds after launch, re-checks roughly every 6 hours while the app is open, downloads updates in the background, and prompts to restart when the new build is ready.
+
+To force a manual update check in a CI-built desktop release, use the app menu:
+
+- `Paperclip > Check for Updates…`
+
+If an update has already been downloaded, that same menu item changes to:
+
+- `Paperclip > Install Update and Restart…`
+
 `pnpm dev:once` now tracks backend-relevant file changes and pending migrations. When the current boot is stale, the board UI shows a `Restart required` banner. You can also enable guarded auto-restart in `Instance Settings > Experimental`, which waits for queued/running local agent runs to finish before restarting the dev server.
 
 Tailscale/private-auth dev mode:
