@@ -8,6 +8,7 @@ import {
   asBoolean,
   asNumber,
   asStringArray,
+  parseJson,
   parseObject,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
@@ -48,6 +49,48 @@ function summarizeProbeDetail(stdout: string, stderr: string): string | null {
   const clean = raw.replace(/\s+/g, " ").trim();
   const max = 240;
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+type ClaudeAuthStatusProbe = {
+  loggedIn: boolean;
+  authMethod: string | null;
+  subscriptionType: string | null;
+};
+
+async function readClaudeAuthStatus(
+  command: string,
+  cwd: string,
+  env: Record<string, string>,
+): Promise<ClaudeAuthStatusProbe | null> {
+  if (!commandLooksLike(command, "claude")) return null;
+  const probe = await runChildProcess(
+    `claude-auth-status-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    command,
+    ["auth", "status"],
+    {
+      cwd,
+      env,
+      timeoutSec: 10,
+      graceSec: 2,
+      onLog: async () => {},
+    },
+  );
+  if (probe.timedOut || (probe.exitCode ?? 1) !== 0) return null;
+
+  const parsed = parseJson(probe.stdout.trim());
+  if (!parsed) return null;
+  return {
+    loggedIn: parsed.loggedIn === true,
+    authMethod: typeof parsed.authMethod === "string" ? parsed.authMethod : null,
+    subscriptionType: typeof parsed.subscriptionType === "string" ? parsed.subscriptionType : null,
+  };
+}
+
+function describeClaudeNativeAuth(status: ClaudeAuthStatusProbe | null): string | null {
+  if (!status?.loggedIn || status.authMethod !== "claude.ai") return null;
+  return status.subscriptionType
+    ? `Claude is authenticated via claude.ai (${status.subscriptionType}).`
+    : "Claude is authenticated via claude.ai.";
 }
 
 export async function testEnvironment(
@@ -131,11 +174,21 @@ export async function testEnvironment(
       hint: "Unset ANTHROPIC_API_KEY if you want subscription-based Claude login behavior.",
     });
   } else {
-    checks.push({
-      code: "claude_subscription_mode_possible",
-      level: "info",
-      message: "ANTHROPIC_API_KEY is not set; subscription-based auth can be used if Claude is logged in.",
-    });
+    const authStatus = await readClaudeAuthStatus(command, cwd, env).catch(() => null);
+    const authDescription = describeClaudeNativeAuth(authStatus);
+    if (authDescription) {
+      checks.push({
+        code: "claude_native_auth_present",
+        level: "info",
+        message: authDescription,
+      });
+    } else {
+      checks.push({
+        code: "claude_subscription_mode_possible",
+        level: "info",
+        message: "ANTHROPIC_API_KEY is not set; subscription-based auth can be used if Claude is logged in.",
+      });
+    }
   }
 
   const canRunProbe =

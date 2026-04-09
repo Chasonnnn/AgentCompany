@@ -49,6 +49,38 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+async function readCodexLoginStatus(
+  command: string,
+  cwd: string,
+  env: Record<string, string>,
+): Promise<{ loggedIn: boolean; detail: string | null } | null> {
+  if (!commandLooksLike(command, "codex")) return null;
+  const probe = await runChildProcess(
+    `codex-login-status-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    command,
+    ["login", "status"],
+    {
+      cwd,
+      env,
+      timeoutSec: 10,
+      graceSec: 2,
+      onLog: async () => {},
+    },
+  );
+  if (probe.timedOut) return null;
+
+  const detail = firstNonEmptyLine(probe.stdout) || firstNonEmptyLine(probe.stderr) || null;
+  if ((probe.exitCode ?? 1) === 0) {
+    return { loggedIn: true, detail };
+  }
+
+  const evidence = `${probe.stdout}\n${probe.stderr}`;
+  if (/(?:not\s+logged\s+in|login\s+required|logged\s+out|authentication\s+required)/i.test(evidence)) {
+    return { loggedIn: false, detail };
+  }
+  return null;
+}
+
 const CODEX_AUTH_REQUIRED_RE =
   /(?:not\s+logged\s+in|login\s+required|authentication\s+required|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|openai[_\s-]?api[_\s-]?key|api[_\s-]?key.*required|please\s+run\s+`?codex\s+login`?)/i;
 
@@ -110,20 +142,28 @@ export async function testEnvironment(
     });
   } else {
     const codexHome = isNonEmpty(env.CODEX_HOME) ? env.CODEX_HOME : undefined;
-    const codexAuth = await readCodexAuthInfo(codexHome).catch(() => null);
-    if (codexAuth) {
+    const loginStatus = await readCodexLoginStatus(command, cwd, env).catch(() => null);
+    const codexAuth =
+      loginStatus?.loggedIn === false
+        ? null
+        : await readCodexAuthInfo(codexHome).catch(() => null);
+    if (loginStatus?.loggedIn || codexAuth) {
       checks.push({
         code: "codex_native_auth_present",
         level: "info",
         message: "Codex is authenticated via its own auth configuration.",
-        detail: codexAuth.email ? `Logged in as ${codexAuth.email}.` : `Credentials found in ${path.join(codexHome ?? codexHomeDir(), "auth.json")}.`,
+        detail:
+          codexAuth?.email
+            ? `Logged in as ${codexAuth.email}.`
+            : loginStatus?.detail ?? `Credentials found in ${path.join(codexHome ?? codexHomeDir(), "auth.json")}.`,
       });
     } else {
       checks.push({
         code: "codex_openai_api_key_missing",
         level: "warn",
         message: "OPENAI_API_KEY is not set. Codex runs may fail until authentication is configured.",
-        hint: "Set OPENAI_API_KEY in adapter env, shell environment, or run `codex auth` to log in.",
+        ...(loginStatus?.detail ? { detail: loginStatus.detail } : {}),
+        hint: "Set OPENAI_API_KEY in adapter env, shell environment, or run `codex login` to log in.",
       });
     }
   }

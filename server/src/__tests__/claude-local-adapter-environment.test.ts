@@ -180,4 +180,54 @@ describe("claude_local environment diagnostics", () => {
     expect(stats.isDirectory()).toBe(true);
     await fs.rm(path.dirname(cwd), { recursive: true, force: true });
   });
+
+  it("trusts `claude auth status` when the CLI reports a logged-in subscription session", async () => {
+    const root = path.join(
+      os.tmpdir(),
+      `paperclip-claude-auth-status-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const binDir = path.join(root, "bin");
+    const cwd = path.join(root, "workspace");
+    const fakeClaude = path.join(binDir, "claude");
+    const script = [
+      "#!/bin/sh",
+      "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then",
+      "  echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"subscriptionType\":\"max\"}'",
+      "  exit 0",
+      "fi",
+      "if [ \"$1\" = \"--print\" ]; then",
+      "  echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\",\"model\":\"claude-opus-4-6\"}'",
+      "  echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Hello.\"}]},\"session_id\":\"session-1\"}'",
+      "  echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"session-1\",\"result\":\"Hello.\",\"usage\":{\"input_tokens\":1,\"cache_read_input_tokens\":0,\"output_tokens\":1}}'",
+      "  exit 0",
+      "fi",
+      "echo \"unexpected args: $*\" >&2",
+      "exit 1",
+      "",
+    ].join("\n");
+
+    try {
+      await fs.mkdir(binDir, { recursive: true });
+      await fs.writeFile(fakeClaude, script, "utf8");
+      await fs.chmod(fakeClaude, 0o755);
+
+      const result = await testEnvironment({
+        companyId: "company-1",
+        adapterType: "claude_local",
+        config: {
+          command: "claude",
+          cwd,
+          env: {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+        },
+      });
+
+      expect(result.checks.some((check) => check.code === "claude_native_auth_present")).toBe(true);
+      expect(result.checks.some((check) => check.code === "claude_subscription_mode_possible")).toBe(false);
+      expect(result.checks.some((check) => check.code === "claude_hello_probe_passed")).toBe(true);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });
