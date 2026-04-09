@@ -8,6 +8,7 @@ import {
   jsonb,
   index,
 } from "drizzle-orm/pg-core";
+import type { AgentDepartmentKey, AgentOrgLevel, AgentRole, AgentStatus } from "@paperclipai/shared";
 import { companies } from "./companies.js";
 
 export const agents = pgTable(
@@ -16,11 +17,14 @@ export const agents = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull().references(() => companies.id),
     name: text("name").notNull(),
-    role: text("role").notNull().default("general"),
+    role: text("role").$type<AgentRole>().notNull().default("general"),
     title: text("title"),
     icon: text("icon"),
-    status: text("status").notNull().default("idle"),
+    status: text("status").$type<AgentStatus>().notNull().default("idle"),
     reportsTo: uuid("reports_to").references((): AnyPgColumn => agents.id),
+    orgLevel: text("org_level").$type<AgentOrgLevel>().notNull().default("staff"),
+    departmentKey: text("department_key").$type<AgentDepartmentKey>().notNull().default("general"),
+    departmentName: text("department_name"),
     capabilities: text("capabilities"),
     adapterType: text("adapter_type").notNull().default("process"),
     adapterConfig: jsonb("adapter_config").$type<Record<string, unknown>>().notNull().default({}),

@@ -131,6 +131,23 @@ The database mode is controlled by `DATABASE_URL`:
 
 Your Drizzle schema (`packages/db/src/schema/`) stays the same regardless of mode.
 
+## Schema notes
+
+Recent V1 schema additions include:
+
+- agent hierarchy fields on `agents`:
+  - `org_level`
+  - `department_key`
+  - `department_name`
+- first-class conference room tables:
+  - `conference_rooms`
+  - `conference_room_participants`
+  - `conference_room_comments`
+  - `conference_room_issue_links`
+  - `conference_room_approvals`
+
+These changes are applied through Drizzle migrations and are backfilled automatically for existing local databases when the app starts or when you run `pnpm db:migrate`.
+
 ## Secret storage
 
 Paperclip stores secret metadata and versions in:

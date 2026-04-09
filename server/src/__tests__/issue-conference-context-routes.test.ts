@@ -181,7 +181,7 @@ function createApproval() {
 
 describe("issue conference context routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockIssueService.getById.mockResolvedValue({
       id: "issue-1",
       companyId: "company-1",

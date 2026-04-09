@@ -1,5 +1,7 @@
 import type {
   AgentAdapterType,
+  AgentDepartmentKey,
+  AgentOrgLevel,
   PauseReason,
   AgentRole,
   AgentStatus,
@@ -57,6 +59,48 @@ export interface AgentChainOfCommandEntry {
   name: string;
   role: AgentRole;
   title: string | null;
+  orgLevel: AgentOrgLevel;
+  departmentKey: AgentDepartmentKey;
+  departmentName: string | null;
+}
+
+export interface AgentHierarchyMemberSummary {
+  id: string;
+  name: string;
+  urlKey: string;
+  role: AgentRole;
+  title: string | null;
+  icon: string | null;
+  status: AgentStatus;
+  reportsTo: string | null;
+  orgLevel: AgentOrgLevel;
+  departmentKey: AgentDepartmentKey;
+  departmentName: string | null;
+}
+
+export interface CompanyAgentHierarchyDepartment {
+  key: AgentDepartmentKey;
+  name: string;
+  ownerExecutiveId: string | null;
+  ownerExecutiveName: string | null;
+  directors: AgentHierarchyMemberSummary[];
+  staff: AgentHierarchyMemberSummary[];
+}
+
+export interface CompanyAgentHierarchyExecutiveGroup {
+  executive: AgentHierarchyMemberSummary;
+  departments: CompanyAgentHierarchyDepartment[];
+}
+
+export interface CompanyAgentHierarchyUnassigned {
+  executives: AgentHierarchyMemberSummary[];
+  directors: AgentHierarchyMemberSummary[];
+  staff: AgentHierarchyMemberSummary[];
+}
+
+export interface CompanyAgentHierarchy {
+  executives: CompanyAgentHierarchyExecutiveGroup[];
+  unassigned: CompanyAgentHierarchyUnassigned;
 }
 
 export interface Agent {
@@ -69,6 +113,9 @@ export interface Agent {
   icon: string | null;
   status: AgentStatus;
   reportsTo: string | null;
+  orgLevel: AgentOrgLevel;
+  departmentKey: AgentDepartmentKey;
+  departmentName: string | null;
   capabilities: string | null;
   adapterType: AgentAdapterType;
   adapterConfig: Record<string, unknown>;

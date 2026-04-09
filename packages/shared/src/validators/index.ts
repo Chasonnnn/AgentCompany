@@ -95,6 +95,13 @@ export {
 } from "./company-portability.js";
 
 export {
+  agentOrgLevelSchema,
+  agentDepartmentKeySchema,
+  agentHierarchyMemberSummarySchema,
+  companyAgentHierarchyDepartmentSchema,
+  companyAgentHierarchyExecutiveGroupSchema,
+  companyAgentHierarchyUnassignedSchema,
+  companyAgentHierarchySchema,
   createAgentSchema,
   createAgentHireSchema,
   updateAgentSchema,
@@ -122,6 +129,23 @@ export {
   type TestAdapterEnvironment,
   type UpdateAgentPermissions,
 } from "./agent.js";
+
+export {
+  conferenceRoomStatusSchema,
+  createConferenceRoomSchema,
+  updateConferenceRoomSchema,
+  addConferenceRoomCommentSchema,
+  requestConferenceRoomDecisionSchema,
+  conferenceRoomParticipantSchema,
+  conferenceRoomCommentSchema,
+  conferenceRoomIssueLinkSummarySchema,
+  conferenceRoomDecisionSummarySchema,
+  conferenceRoomSchema,
+  type CreateConferenceRoom,
+  type UpdateConferenceRoom,
+  type AddConferenceRoomComment,
+  type RequestConferenceRoomDecision,
+} from "./conference-room.js";
 
 export {
   createProjectSchema,

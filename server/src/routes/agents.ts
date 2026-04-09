@@ -750,6 +750,10 @@ export function agentRoutes(db: Db) {
       name: String(node.name),
       role: String(node.role),
       status: String(node.status),
+      orgLevel: typeof node.orgLevel === "string" ? node.orgLevel : undefined,
+      departmentKey: typeof node.departmentKey === "string" ? node.departmentKey : undefined,
+      departmentName: typeof node.departmentName === "string" ? node.departmentName : null,
+      title: typeof node.title === "string" ? node.title : null,
       reports,
     };
   }
@@ -1028,6 +1032,13 @@ export function agentRoutes(db: Db) {
     const tree = await svc.orgForCompany(companyId);
     const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
     res.json(leanTree);
+  });
+
+  router.get("/companies/:companyId/agent-hierarchy", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const hierarchy = await svc.hierarchyForCompany(companyId);
+    res.json(hierarchy);
   });
 
   router.get("/companies/:companyId/org.svg", async (req, res) => {

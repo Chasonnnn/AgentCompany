@@ -1,20 +1,32 @@
 import type { ApprovalStatus, ApprovalType } from "../constants.js";
 import type { ConferenceContext } from "./conference-context.js";
 
-export type RequestBoardApprovalPayload = Record<string, unknown> & {
+type BaseRequestBoardApprovalPayload = Record<string, unknown> & {
   title: string;
   summary: string;
-  roomTitle?: string;
-  agenda?: string;
   recommendedAction?: string;
   nextActionOnApproval?: string;
   risks?: string[];
   proposedComment?: string;
-  participantAgentIds?: string[];
   repoContext?: ConferenceContext;
   decisionTier: "board";
+};
+
+export type LegacyIssueBoardRoomApprovalPayload = BaseRequestBoardApprovalPayload & {
+  roomTitle?: string;
+  agenda?: string;
+  participantAgentIds?: string[];
   roomKind: "issue_board_room";
 };
+
+export type CompanyConferenceRoomApprovalPayload = BaseRequestBoardApprovalPayload & {
+  conferenceRoomId: string;
+  roomKind: "company_conference_room";
+};
+
+export type RequestBoardApprovalPayload =
+  | LegacyIssueBoardRoomApprovalPayload
+  | CompanyConferenceRoomApprovalPayload;
 
 export interface Approval {
   id: string;

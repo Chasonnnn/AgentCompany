@@ -259,8 +259,7 @@ describe("agent instructions bundle routes", () => {
       });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockAgentService.update).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
+    expect(res.body).toMatchObject(
       expect.objectContaining({
         adapterConfig: expect.objectContaining({
           command: "codex --profile engineer",
@@ -271,7 +270,6 @@ describe("agent instructions bundle routes", () => {
           instructionsFilePath: "/tmp/agent-1/AGENTS.md",
         }),
       }),
-      expect.any(Object),
     );
   });
 

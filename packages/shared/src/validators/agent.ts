@@ -1,11 +1,20 @@
 import { z } from "zod";
 import {
+  AGENT_DEPARTMENT_KEYS,
   AGENT_ICON_NAMES,
+  AGENT_ORG_LEVELS,
   AGENT_ROLES,
   AGENT_STATUSES,
   INBOX_MINE_ISSUE_STATUS_FILTER,
 } from "../constants.js";
 import { agentAdapterTypeSchema } from "../adapter-type.js";
+import type {
+  AgentHierarchyMemberSummary,
+  CompanyAgentHierarchy,
+  CompanyAgentHierarchyDepartment,
+  CompanyAgentHierarchyExecutiveGroup,
+  CompanyAgentHierarchyUnassigned,
+} from "../types/agent.js";
 import { envConfigSchema } from "./secret.js";
 
 export const agentPermissionsSchema = z.object({
@@ -44,12 +53,57 @@ const adapterConfigSchema = z.record(z.unknown()).superRefine((value, ctx) => {
   }
 });
 
-export const createAgentSchema = z.object({
+export const agentOrgLevelSchema = z.enum(AGENT_ORG_LEVELS);
+export const agentDepartmentKeySchema = z.enum(AGENT_DEPARTMENT_KEYS);
+
+export const agentHierarchyMemberSummarySchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  urlKey: z.string().min(1),
+  role: z.enum(AGENT_ROLES),
+  title: z.string().nullable(),
+  icon: z.enum(AGENT_ICON_NAMES).nullable(),
+  status: z.enum(AGENT_STATUSES),
+  reportsTo: z.string().uuid().nullable(),
+  orgLevel: agentOrgLevelSchema,
+  departmentKey: agentDepartmentKeySchema,
+  departmentName: z.string().nullable(),
+}).strict() satisfies z.ZodType<AgentHierarchyMemberSummary>;
+
+export const companyAgentHierarchyDepartmentSchema = z.object({
+  key: agentDepartmentKeySchema,
+  name: z.string().min(1),
+  ownerExecutiveId: z.string().uuid().nullable(),
+  ownerExecutiveName: z.string().nullable(),
+  directors: z.array(agentHierarchyMemberSummarySchema),
+  staff: z.array(agentHierarchyMemberSummarySchema),
+}).strict() satisfies z.ZodType<CompanyAgentHierarchyDepartment>;
+
+export const companyAgentHierarchyExecutiveGroupSchema = z.object({
+  executive: agentHierarchyMemberSummarySchema,
+  departments: z.array(companyAgentHierarchyDepartmentSchema),
+}).strict() satisfies z.ZodType<CompanyAgentHierarchyExecutiveGroup>;
+
+export const companyAgentHierarchyUnassignedSchema = z.object({
+  executives: z.array(agentHierarchyMemberSummarySchema),
+  directors: z.array(agentHierarchyMemberSummarySchema),
+  staff: z.array(agentHierarchyMemberSummarySchema),
+}).strict() satisfies z.ZodType<CompanyAgentHierarchyUnassigned>;
+
+export const companyAgentHierarchySchema = z.object({
+  executives: z.array(companyAgentHierarchyExecutiveGroupSchema),
+  unassigned: companyAgentHierarchyUnassignedSchema,
+}).strict() satisfies z.ZodType<CompanyAgentHierarchy>;
+
+const createAgentSchemaBase = z.object({
   name: z.string().min(1),
   role: z.enum(AGENT_ROLES).optional().default("general"),
   title: z.string().optional().nullable(),
   icon: z.enum(AGENT_ICON_NAMES).optional().nullable(),
   reportsTo: z.string().uuid().optional().nullable(),
+  orgLevel: agentOrgLevelSchema.optional(),
+  departmentKey: agentDepartmentKeySchema.optional(),
+  departmentName: z.string().trim().min(1).optional().nullable(),
   capabilities: z.string().optional().nullable(),
   desiredSkills: z.array(z.string().min(1)).optional(),
   adapterType: agentAdapterTypeSchema,
@@ -60,16 +114,38 @@ export const createAgentSchema = z.object({
   metadata: z.record(z.unknown()).optional().nullable(),
 });
 
+const validateAgentDepartment = (
+  value: { departmentKey?: z.infer<typeof agentDepartmentKeySchema>; departmentName?: string | null },
+  ctx: z.RefinementCtx,
+) => {
+  if (value.departmentKey === "custom" && (!value.departmentName || value.departmentName.trim().length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "departmentName is required when departmentKey is custom",
+      path: ["departmentName"],
+    });
+  }
+  if (value.departmentKey !== "custom" && value.departmentName && value.departmentName.trim().length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "departmentName is only allowed when departmentKey is custom",
+      path: ["departmentName"],
+    });
+  }
+};
+
+export const createAgentSchema = createAgentSchemaBase.superRefine(validateAgentDepartment);
+
 export type CreateAgent = z.infer<typeof createAgentSchema>;
 
-export const createAgentHireSchema = createAgentSchema.extend({
+export const createAgentHireSchema = createAgentSchemaBase.extend({
   sourceIssueId: z.string().uuid().optional().nullable(),
   sourceIssueIds: z.array(z.string().uuid()).optional(),
-});
+}).superRefine(validateAgentDepartment);
 
 export type CreateAgentHire = z.infer<typeof createAgentHireSchema>;
 
-export const updateAgentSchema = createAgentSchema
+export const updateAgentSchema = createAgentSchemaBase
   .omit({ permissions: true })
   .partial()
   .extend({
@@ -77,7 +153,8 @@ export const updateAgentSchema = createAgentSchema
     replaceAdapterConfig: z.boolean().optional(),
     status: z.enum(AGENT_STATUSES).optional(),
     spentMonthlyCents: z.number().int().nonnegative().optional(),
-  });
+  })
+  .superRefine(validateAgentDepartment);
 
 export type UpdateAgent = z.infer<typeof updateAgentSchema>;
 

@@ -39,6 +39,7 @@ export const AGENT_ROLES = [
   "cto",
   "cmo",
   "cfo",
+  "coo",
   "engineer",
   "designer",
   "pm",
@@ -54,6 +55,7 @@ export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   cto: "CTO",
   cmo: "CMO",
   cfo: "CFO",
+  coo: "COO",
   engineer: "Engineer",
   designer: "Designer",
   pm: "PM",
@@ -61,6 +63,36 @@ export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   devops: "DevOps",
   researcher: "Researcher",
   general: "General",
+};
+
+export const AGENT_ORG_LEVELS = ["executive", "director", "staff"] as const;
+export type AgentOrgLevel = (typeof AGENT_ORG_LEVELS)[number];
+
+export const AGENT_DEPARTMENT_KEYS = [
+  "executive",
+  "engineering",
+  "product",
+  "design",
+  "marketing",
+  "finance",
+  "operations",
+  "research",
+  "general",
+  "custom",
+] as const;
+export type AgentDepartmentKey = (typeof AGENT_DEPARTMENT_KEYS)[number];
+
+export const AGENT_DEPARTMENT_LABELS: Record<AgentDepartmentKey, string> = {
+  executive: "Executive",
+  engineering: "Engineering",
+  product: "Product",
+  design: "Design",
+  marketing: "Marketing",
+  finance: "Finance",
+  operations: "Operations",
+  research: "Research",
+  general: "General",
+  custom: "Custom",
 };
 
 export const AGENT_ICON_NAMES = [
@@ -228,6 +260,9 @@ export const APPROVAL_STATUSES = [
   "cancelled",
 ] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+
+export const CONFERENCE_ROOM_STATUSES = ["open", "closed", "archived"] as const;
+export type ConferenceRoomStatus = (typeof CONFERENCE_ROOM_STATUSES)[number];
 
 export const SECRET_PROVIDERS = [
   "local_encrypted",

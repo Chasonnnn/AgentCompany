@@ -16,7 +16,15 @@ import {
   issues,
   issueComments,
 } from "@paperclipai/db";
-import { isUuidLike, normalizeAgentUrlKey } from "@paperclipai/shared";
+import {
+  AGENT_ROLES,
+  AGENT_DEPARTMENT_LABELS,
+  type AgentDepartmentKey,
+  type AgentOrgLevel,
+  type AgentRole,
+  isUuidLike,
+  normalizeAgentUrlKey,
+} from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
@@ -34,6 +42,9 @@ const CONFIG_REVISION_FIELDS = [
   "role",
   "title",
   "reportsTo",
+  "orgLevel",
+  "departmentKey",
+  "departmentName",
   "capabilities",
   "adapterType",
   "adapterConfig",
@@ -66,6 +77,67 @@ interface AgentShortnameCollisionOptions {
   excludeAgentId?: string | null;
 }
 
+const EXECUTIVE_ROLES = new Set(["ceo", "cto", "cfo", "cmo", "coo"]);
+const EXECUTIVE_SORT_ORDER = ["ceo", "cto", "cfo", "coo", "cmo"] as const;
+const DEPARTMENT_SORT_ORDER: AgentDepartmentKey[] = [
+  "engineering",
+  "product",
+  "design",
+  "marketing",
+  "finance",
+  "operations",
+  "research",
+  "general",
+  "custom",
+];
+
+const ROLE_DEPARTMENT_DEFAULTS: Record<string, AgentDepartmentKey> = {
+  ceo: "executive",
+  cto: "engineering",
+  cfo: "finance",
+  cmo: "marketing",
+  coo: "operations",
+  engineer: "engineering",
+  qa: "engineering",
+  devops: "engineering",
+  pm: "product",
+  designer: "design",
+  researcher: "research",
+  general: "general",
+};
+
+interface AgentHierarchyState {
+  role: string;
+  reportsTo: string | null;
+  orgLevel: AgentOrgLevel;
+  departmentKey: AgentDepartmentKey;
+  departmentName: string | null;
+}
+
+interface NormalizedAgentRow
+  extends Omit<typeof agents.$inferSelect, "role" | "orgLevel" | "departmentKey" | "departmentName" | "permissions"> {
+  role: AgentRole;
+  urlKey: string;
+  orgLevel: AgentOrgLevel;
+  departmentKey: AgentDepartmentKey;
+  departmentName: string | null;
+  permissions: ReturnType<typeof normalizeAgentPermissions>;
+}
+
+interface HierarchyDepartmentGroup {
+  key: AgentDepartmentKey;
+  name: string;
+  ownerExecutiveId: string | null;
+  ownerExecutiveName: string | null;
+  directors: NormalizedAgentRow[];
+  staff: NormalizedAgentRow[];
+}
+
+interface HierarchyExecutiveGroup {
+  executive: NormalizedAgentRow;
+  departments: Map<string, HierarchyDepartmentGroup>;
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -94,6 +166,9 @@ function buildConfigSnapshot(
     role: row.role,
     title: row.title,
     reportsTo: row.reportsTo,
+    orgLevel: row.orgLevel,
+    departmentKey: row.departmentKey,
+    departmentName: row.departmentName,
     capabilities: row.capabilities,
     adapterType: row.adapterType,
     adapterConfig,
@@ -139,10 +214,31 @@ function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agents.$infe
 
   return {
     name: snapshot.name,
-    role: snapshot.role,
+    role: normalizeAgentRole(snapshot.role),
     title: typeof snapshot.title === "string" || snapshot.title === null ? snapshot.title : null,
     reportsTo:
       typeof snapshot.reportsTo === "string" || snapshot.reportsTo === null ? snapshot.reportsTo : null,
+    orgLevel:
+      snapshot.orgLevel === "executive" || snapshot.orgLevel === "director" || snapshot.orgLevel === "staff"
+        ? snapshot.orgLevel
+        : undefined,
+    departmentKey:
+      snapshot.departmentKey === "executive" ||
+      snapshot.departmentKey === "engineering" ||
+      snapshot.departmentKey === "product" ||
+      snapshot.departmentKey === "design" ||
+      snapshot.departmentKey === "marketing" ||
+      snapshot.departmentKey === "finance" ||
+      snapshot.departmentKey === "operations" ||
+      snapshot.departmentKey === "research" ||
+      snapshot.departmentKey === "general" ||
+      snapshot.departmentKey === "custom"
+        ? snapshot.departmentKey
+        : undefined,
+    departmentName:
+      typeof snapshot.departmentName === "string" || snapshot.departmentName === null
+        ? snapshot.departmentName
+        : null,
     capabilities:
       typeof snapshot.capabilities === "string" || snapshot.capabilities === null
         ? snapshot.capabilities
@@ -186,6 +282,43 @@ export function deduplicateAgentName(
   return `${candidateName} ${Date.now()}`;
 }
 
+function defaultOrgLevelForRole(role: string): AgentOrgLevel {
+  return EXECUTIVE_ROLES.has(role) ? "executive" : "staff";
+}
+
+function normalizeAgentRole(role: unknown): AgentRole {
+  return AGENT_ROLES.includes(role as AgentRole) ? (role as AgentRole) : "general";
+}
+
+function defaultDepartmentKeyForRole(role: string): AgentDepartmentKey {
+  return ROLE_DEPARTMENT_DEFAULTS[role] ?? "general";
+}
+
+function normalizeDepartmentName(
+  departmentKey: AgentDepartmentKey,
+  departmentName: string | null | undefined,
+) {
+  if (departmentKey !== "custom") return null;
+  if (typeof departmentName !== "string") return null;
+  const trimmed = departmentName.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function departmentDisplayName(departmentKey: AgentDepartmentKey, departmentName: string | null) {
+  if (departmentKey === "custom") return departmentName ?? AGENT_DEPARTMENT_LABELS.custom;
+  return AGENT_DEPARTMENT_LABELS[departmentKey];
+}
+
+function executiveSortKey(role: string, name: string) {
+  const roleIndex = EXECUTIVE_SORT_ORDER.indexOf(role as (typeof EXECUTIVE_SORT_ORDER)[number]);
+  return `${roleIndex === -1 ? 99 : roleIndex}:${name.toLowerCase()}`;
+}
+
+function departmentSortKey(key: AgentDepartmentKey, name: string) {
+  const index = DEPARTMENT_SORT_ORDER.indexOf(key);
+  return `${index === -1 ? 99 : index}:${name.toLowerCase()}`;
+}
+
 export function agentService(db: Db) {
   function currentUtcMonthWindow(now = new Date()) {
     const year = now.getUTCFullYear();
@@ -203,11 +336,86 @@ export function agentService(db: Db) {
     };
   }
 
-  function normalizeAgentRow(row: typeof agents.$inferSelect) {
+  function normalizeAgentRow(row: typeof agents.$inferSelect): NormalizedAgentRow {
+    const orgLevel = row.orgLevel ?? defaultOrgLevelForRole(row.role);
+    const departmentKey = row.departmentKey ?? defaultDepartmentKeyForRole(row.role);
     return withUrlKey({
       ...row,
+      role: normalizeAgentRole(row.role),
+      orgLevel,
+      departmentKey,
+      departmentName: normalizeDepartmentName(departmentKey, row.departmentName),
       permissions: normalizeAgentPermissions(row.permissions, row.role),
     });
+  }
+
+  function resolveHierarchyState(
+    data: Partial<typeof agents.$inferInsert>,
+    existing?: Partial<typeof agents.$inferSelect> | null,
+  ): AgentHierarchyState {
+    const role = (data.role ?? existing?.role ?? "general") as string;
+    const reportsTo =
+      data.reportsTo !== undefined
+        ? data.reportsTo ?? null
+        : existing?.reportsTo ?? null;
+    const orgLevel = (data.orgLevel ?? existing?.orgLevel ?? defaultOrgLevelForRole(role)) as AgentOrgLevel;
+    const departmentKey = (data.departmentKey ?? existing?.departmentKey ?? defaultDepartmentKeyForRole(role)) as AgentDepartmentKey;
+    const departmentName = normalizeDepartmentName(
+      departmentKey,
+      data.departmentName !== undefined ? data.departmentName : existing?.departmentName ?? null,
+    );
+
+    if (departmentKey === "custom" && !departmentName) {
+      throw unprocessable("Custom departments require a department name");
+    }
+
+    return {
+      role,
+      reportsTo,
+      orgLevel,
+      departmentKey,
+      departmentName,
+    };
+  }
+
+  async function assertHierarchyRules(
+    companyId: string,
+    state: AgentHierarchyState,
+    selfId?: string,
+  ) {
+    if (!state.reportsTo) {
+      if (state.orgLevel === "director") {
+        throw unprocessable("Directors must report to an executive");
+      }
+      return;
+    }
+
+    const manager = await ensureManager(companyId, state.reportsTo);
+    if (selfId) {
+      await assertNoCycle(selfId, state.reportsTo);
+    }
+
+    if (state.orgLevel === "executive") {
+      if (manager.orgLevel !== "executive") {
+        throw unprocessable("Executives may only report to another executive");
+      }
+      return;
+    }
+
+    if (state.orgLevel === "director") {
+      if (manager.orgLevel !== "executive") {
+        throw unprocessable("Directors must report to an executive");
+      }
+      return;
+    }
+
+    if (state.orgLevel === "staff" && manager.orgLevel !== "executive" && manager.orgLevel !== "director") {
+      throw unprocessable("Staff must report to a director or executive");
+    }
+
+    if (manager.orgLevel !== "executive" && state.departmentKey !== manager.departmentKey) {
+      throw unprocessable("Agents must share the same department as their manager unless the manager is an executive");
+    }
   }
 
   async function getMonthlySpendByAgentIds(companyId: string, agentIds: string[]) {
@@ -319,12 +527,8 @@ export function agentService(db: Db) {
       throw conflict("Pending approval agents cannot be activated directly");
     }
 
-    if (data.reportsTo !== undefined) {
-      if (data.reportsTo) {
-        await ensureManager(existing.companyId, data.reportsTo);
-      }
-      await assertNoCycle(id, data.reportsTo);
-    }
+    const hierarchyState = resolveHierarchyState(data, existing);
+    await assertHierarchyRules(existing.companyId, hierarchyState, id);
 
     if (data.name !== undefined) {
       const previousShortname = normalizeAgentUrlKey(existing.name);
@@ -334,7 +538,12 @@ export function agentService(db: Db) {
       }
     }
 
-    const normalizedPatch = { ...data } as Partial<typeof agents.$inferInsert>;
+    const normalizedPatch = {
+      ...data,
+      orgLevel: hierarchyState.orgLevel,
+      departmentKey: hierarchyState.departmentKey,
+      departmentName: hierarchyState.departmentName,
+    } as Partial<typeof agents.$inferInsert>;
     if (data.permissions !== undefined) {
       const role = (data.role ?? existing.role) as string;
       normalizedPatch.permissions = normalizeAgentPermissions(data.permissions, role);
@@ -386,9 +595,8 @@ export function agentService(db: Db) {
     getById,
 
     create: async (companyId: string, data: Omit<typeof agents.$inferInsert, "companyId">) => {
-      if (data.reportsTo) {
-        await ensureManager(companyId, data.reportsTo);
-      }
+      const hierarchyState = resolveHierarchyState(data);
+      await assertHierarchyRules(companyId, hierarchyState);
 
       const existingAgents = await db
         .select({ id: agents.id, name: agents.name, status: agents.status })
@@ -400,7 +608,16 @@ export function agentService(db: Db) {
       const normalizedPermissions = normalizeAgentPermissions(data.permissions, role);
       const created = await db
         .insert(agents)
-        .values({ ...data, name: uniqueName, companyId, role, permissions: normalizedPermissions })
+        .values({
+          ...data,
+          name: uniqueName,
+          companyId,
+          role,
+          permissions: normalizedPermissions,
+          orgLevel: hierarchyState.orgLevel,
+          departmentKey: hierarchyState.departmentKey,
+          departmentName: hierarchyState.departmentName,
+        })
         .returning()
         .then((rows) => rows[0]);
 
@@ -633,7 +850,7 @@ export function agentService(db: Db) {
         .select()
         .from(agents)
         .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
-      const normalizedRows = rows.map(normalizeAgentRow);
+      const normalizedRows: NormalizedAgentRow[] = rows.map(normalizeAgentRow);
       const byManager = new Map<string | null, typeof normalizedRows>();
       for (const row of normalizedRows) {
         const key = row.reportsTo ?? null;
@@ -643,7 +860,7 @@ export function agentService(db: Db) {
       }
 
       const build = (managerId: string | null): Array<Record<string, unknown>> => {
-        const members = byManager.get(managerId) ?? [];
+        const members = (byManager.get(managerId) ?? []).sort((left, right) => left.name.localeCompare(right.name));
         return members.map((member) => ({
           ...member,
           reports: build(member.id),
@@ -653,8 +870,120 @@ export function agentService(db: Db) {
       return build(null);
     },
 
+    hierarchyForCompany: async (companyId: string) => {
+      const rows = await db
+        .select()
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
+      const normalizedRows: NormalizedAgentRow[] = rows.map(normalizeAgentRow);
+      const byId = new Map(normalizedRows.map((row) => [row.id, row]));
+
+      const groups = new Map<string, HierarchyExecutiveGroup>();
+
+      const unassigned = {
+        executives: [] as NormalizedAgentRow[],
+        directors: [] as NormalizedAgentRow[],
+        staff: [] as NormalizedAgentRow[],
+      };
+
+      const resolveOwningExecutive = (agent: NormalizedAgentRow) => {
+        const visited = new Set<string>([agent.id]);
+        let currentId = agent.reportsTo;
+        while (currentId && !visited.has(currentId)) {
+          visited.add(currentId);
+          const manager = byId.get(currentId);
+          if (!manager) return null;
+          if (manager.orgLevel === "executive") return manager;
+          currentId = manager.reportsTo;
+        }
+        return null;
+      };
+
+      for (const row of normalizedRows) {
+        if (row.orgLevel === "executive") {
+          groups.set(row.id, {
+            executive: row,
+            departments: new Map<string, HierarchyDepartmentGroup>(),
+          });
+        }
+      }
+
+      for (const row of normalizedRows) {
+        if (row.orgLevel === "executive") continue;
+
+        const executive = resolveOwningExecutive(row);
+        if (!executive) {
+          if (row.orgLevel === "director") {
+            unassigned.directors.push(row);
+          } else {
+            unassigned.staff.push(row);
+          }
+          continue;
+        }
+
+        const executiveGroup = groups.get(executive.id);
+        if (!executiveGroup) {
+          if (row.orgLevel === "director") {
+            unassigned.directors.push(row);
+          } else {
+            unassigned.staff.push(row);
+          }
+          continue;
+        }
+
+        const departmentName = departmentDisplayName(row.departmentKey, row.departmentName);
+        const departmentKeyValue = `${row.departmentKey}:${departmentName.toLowerCase()}`;
+        const department = executiveGroup.departments.get(departmentKeyValue) ?? {
+          key: row.departmentKey,
+          name: departmentName,
+          ownerExecutiveId: executive.id,
+          ownerExecutiveName: executive.name,
+          directors: [] as NormalizedAgentRow[],
+          staff: [] as NormalizedAgentRow[],
+        };
+        if (row.orgLevel === "director") {
+          department.directors.push(row);
+        } else {
+          department.staff.push(row);
+        }
+        executiveGroup.departments.set(departmentKeyValue, department);
+      }
+
+      return {
+        executives: Array.from(groups.values())
+          .sort((left, right) => executiveSortKey(left.executive.role, left.executive.name).localeCompare(
+            executiveSortKey(right.executive.role, right.executive.name),
+          ))
+          .map((group) => ({
+            executive: group.executive,
+            departments: Array.from(group.departments.values())
+              .sort((left, right) => departmentSortKey(left.key, left.name).localeCompare(
+                departmentSortKey(right.key, right.name),
+              ))
+              .map((department) => ({
+                ...department,
+                directors: [...department.directors].sort((left, right) => left.name.localeCompare(right.name)),
+                staff: [...department.staff].sort((left, right) => left.name.localeCompare(right.name)),
+              })),
+          })),
+        unassigned: {
+          executives: unassigned.executives.sort((left, right) => left.name.localeCompare(right.name)),
+          directors: unassigned.directors.sort((left, right) => left.name.localeCompare(right.name)),
+          staff: unassigned.staff.sort((left, right) => left.name.localeCompare(right.name)),
+        },
+      };
+    },
+
     getChainOfCommand: async (agentId: string) => {
-      const chain: { id: string; name: string; role: string; title: string | null }[] = [];
+      const chain: {
+        id: string;
+        name: string;
+        role: string;
+        title: string | null;
+        orgLevel: AgentOrgLevel;
+        departmentKey: AgentDepartmentKey;
+        departmentName: string | null;
+      }[] = [];
       const visited = new Set<string>([agentId]);
       const start = await getById(agentId);
       let currentId = start?.reportsTo ?? null;
@@ -662,7 +991,15 @@ export function agentService(db: Db) {
         visited.add(currentId);
         const mgr = await getById(currentId);
         if (!mgr) break;
-        chain.push({ id: mgr.id, name: mgr.name, role: mgr.role, title: mgr.title ?? null });
+        chain.push({
+          id: mgr.id,
+          name: mgr.name,
+          role: mgr.role,
+          title: mgr.title ?? null,
+          orgLevel: mgr.orgLevel,
+          departmentKey: mgr.departmentKey,
+          departmentName: mgr.departmentName,
+        });
         currentId = mgr.reportsTo ?? null;
       }
       return chain;

@@ -46,7 +46,12 @@ export type {
   AgentAccessState,
   AgentChainOfCommandEntry,
   AgentDetail,
+  AgentHierarchyMemberSummary,
   AgentPermissions,
+  CompanyAgentHierarchy,
+  CompanyAgentHierarchyDepartment,
+  CompanyAgentHierarchyExecutiveGroup,
+  CompanyAgentHierarchyUnassigned,
   AgentInstructionsBundleMode,
   AgentInstructionsFileSummary,
   AgentInstructionsFileDetail,
@@ -69,6 +74,13 @@ export type {
   GitSnapshotFileStatus,
   GitSnapshotStatusCode,
 } from "./conference-context.js";
+export type {
+  ConferenceRoom,
+  ConferenceRoomComment,
+  ConferenceRoomDecisionSummary,
+  ConferenceRoomIssueLinkSummary,
+  ConferenceRoomParticipant,
+} from "./conference-room.js";
 export type {
   ExecutionWorkspace,
   ExecutionWorkspaceConfig,
@@ -126,7 +138,13 @@ export type {
   IssueLabel,
 } from "./issue.js";
 export type { Goal } from "./goal.js";
-export type { Approval, ApprovalComment, RequestBoardApprovalPayload } from "./approval.js";
+export type {
+  Approval,
+  ApprovalComment,
+  CompanyConferenceRoomApprovalPayload,
+  LegacyIssueBoardRoomApprovalPayload,
+  RequestBoardApprovalPayload,
+} from "./approval.js";
 export type {
   BudgetPolicy,
   BudgetPolicySummary,

@@ -31,6 +31,7 @@ import type {
   RoutineVariable,
 } from "@paperclipai/shared";
 import {
+  AGENT_ROLES,
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
   PROJECT_STATUSES,
@@ -42,6 +43,7 @@ import {
   deriveProjectUrlKey,
   envConfigSchema,
   normalizeAgentUrlKey,
+  type AgentRole,
 } from "@paperclipai/shared";
 import {
   readPaperclipSkillSyncPreference,
@@ -143,6 +145,11 @@ function classifyPortableFileKind(pathValue: string): CompanyPortabilityExportPr
 
 function normalizeSkillSlug(value: string | null | undefined) {
   return value ? normalizeAgentUrlKey(value) ?? null : null;
+}
+
+function normalizePortableAgentRole(value: string | null | undefined): AgentRole {
+  if (value === "agent") return "general";
+  return AGENT_ROLES.includes(value as AgentRole) ? (value as AgentRole) : "general";
 }
 
 function normalizeSkillKey(value: string | null | undefined) {
@@ -3197,7 +3204,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         }
 
         const extension = stripEmptyValues({
-          role: agent.role !== "agent" ? agent.role : undefined,
+          role: agent.role !== "general" ? agent.role : undefined,
           icon: agent.icon ?? null,
           capabilities: agent.capabilities ?? null,
           adapter: {
@@ -4067,7 +4074,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         delete adapterConfigWithSkills.instructionsEntryFile;
         const patch = {
           name: planAgent.plannedName,
-          role: manifestAgent.role,
+          role: normalizePortableAgentRole(manifestAgent.role),
           title: manifestAgent.title,
           icon: manifestAgent.icon,
           capabilities: manifestAgent.capabilities,

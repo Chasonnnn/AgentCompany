@@ -135,6 +135,9 @@ Invariant: every business record belongs to exactly one company.
 - `title` text null
 - `status` enum: `active | paused | idle | running | error | terminated`
 - `reports_to` uuid fk `agents.id` null
+- `org_level` enum: `executive | director | staff` not null default `staff`
+- `department_key` enum: `executive | engineering | product | design | marketing | finance | operations | research | general | custom` not null default `general`
+- `department_name` text null
 - `capabilities` text null
 - `adapter_type` enum: `process | http`
 - `adapter_config` jsonb not null
@@ -147,6 +150,11 @@ Invariants:
 
 - agent and manager must be in same company
 - no cycles in reporting tree
+- executives may report to `null` or another executive
+- directors must report to an executive
+- staff may report to a director or executive
+- non-executives must share department with their manager unless the manager is an executive
+- `department_name` is required when `department_key = custom`
 - `terminated` agents cannot be resumed
 
 ## 7.3 `agent_api_keys`
@@ -270,7 +278,61 @@ Invariant: each event must attach to agent and company; rollups are aggregation,
 - `decided_by_user_id` uuid fk `users.id` null
 - `decided_at` timestamptz null
 
-## 7.11 `activity_log`
+Board-decision approvals linked to conference rooms remain the governed decision artifact.
+Conference rooms themselves are not approvals.
+
+## 7.11 `conference_rooms`
+
+- `id` uuid pk
+- `company_id` uuid fk not null
+- `title` text not null
+- `summary` text null
+- `agenda` text null
+- `status` enum: `open | closed | archived`
+- `created_by_user_id` uuid fk `users.id` null
+- `created_by_agent_id` uuid fk `agents.id` null
+- `updated_at` timestamptz not null
+- `closed_at` timestamptz null
+
+## 7.12 `conference_room_participants`
+
+- `id` uuid pk
+- `company_id` uuid fk not null
+- `conference_room_id` uuid fk `conference_rooms.id` not null
+- `agent_id` uuid fk `agents.id` not null
+- `invited_by_user_id` uuid fk `users.id` null
+- `invited_by_agent_id` uuid fk `agents.id` null
+- `created_at` timestamptz not null
+
+Invariant: participants must be leader-tier agents (`executive` or `director`).
+
+## 7.13 `conference_room_comments`
+
+- `id` uuid pk
+- `company_id` uuid fk not null
+- `conference_room_id` uuid fk `conference_rooms.id` not null
+- `author_user_id` uuid fk `users.id` null
+- `author_agent_id` uuid fk `agents.id` null
+- `body` text not null
+- `created_at` timestamptz not null
+
+## 7.14 `conference_room_issue_links`
+
+- `id` uuid pk
+- `company_id` uuid fk not null
+- `conference_room_id` uuid fk `conference_rooms.id` not null
+- `issue_id` uuid fk `issues.id` not null
+- `created_at` timestamptz not null
+
+## 7.15 `conference_room_approvals`
+
+- `id` uuid pk
+- `company_id` uuid fk not null
+- `conference_room_id` uuid fk `conference_rooms.id` not null
+- `approval_id` uuid fk `approvals.id` not null
+- `created_at` timestamptz not null
+
+## 7.16 `activity_log`
 
 - `id` uuid pk
 - `company_id` uuid fk not null
@@ -282,7 +344,7 @@ Invariant: each event must attach to agent and company; rollups are aggregation,
 - `details` jsonb null
 - `created_at` timestamptz not null default now()
 
-## 7.12 `company_secrets` + `company_secret_versions`
+## 7.17 `company_secrets` + `company_secret_versions`
 
 - Secret values are not stored inline in `agents.adapter_config.env`.
 - Agent env entries should use secret refs for sensitive values.
@@ -296,10 +358,11 @@ Operational policy:
 - Activity and approval payloads must not persist raw sensitive values.
 - Config revisions may include redacted placeholders; such revisions are non-restorable for redacted fields.
 
-## 7.13 Required Indexes
+## 7.18 Required Indexes
 
 - `agents(company_id, status)`
 - `agents(company_id, reports_to)`
+- `agents(company_id, org_level, department_key)`
 - `issues(company_id, status)`
 - `issues(company_id, assignee_agent_id, status)`
 - `issues(company_id, parent_id)`
@@ -308,6 +371,11 @@ Operational policy:
 - `cost_events(company_id, agent_id, occurred_at)`
 - `heartbeat_runs(company_id, agent_id, started_at desc)`
 - `approvals(company_id, status, type)`
+- `conference_rooms(company_id, status, updated_at desc)`
+- `conference_room_participants(conference_room_id, agent_id)` unique
+- `conference_room_comments(conference_room_id, created_at desc)`
+- `conference_room_issue_links(conference_room_id, issue_id)` unique
+- `conference_room_approvals(conference_room_id, approval_id)` unique
 - `activity_log(company_id, created_at desc)`
 - `assets(company_id, created_at desc)`
 - `assets(company_id, object_key)` unique
@@ -315,7 +383,7 @@ Operational policy:
 - `company_secrets(company_id, name)` unique
 - `company_secret_versions(secret_id, version)` unique
 
-## 7.14 `assets` + `issue_attachments`
+## 7.19 `assets` + `issue_attachments`
 
 - `assets` stores provider-backed object metadata (not inline bytes):
   - `id` uuid pk
@@ -335,7 +403,7 @@ Operational policy:
   - `asset_id` uuid fk not null
   - `issue_comment_id` uuid fk null
 
-## 7.15 `documents` + `document_revisions` + `issue_documents`
+## 7.20 `documents` + `document_revisions` + `issue_documents`
 
 - `documents` stores editable text-first documents:
   - `id` uuid pk
@@ -460,6 +528,7 @@ All endpoints are under `/api` and return JSON.
 ## 10.3 Agents
 
 - `GET /companies/:companyId/agents`
+- `GET /companies/:companyId/agent-hierarchy`
 - `POST /companies/:companyId/agents`
 - `GET /agents/:agentId`
 - `PATCH /agents/:agentId`
@@ -520,7 +589,21 @@ Server behavior:
 - `POST /approvals/:approvalId/approve`
 - `POST /approvals/:approvalId/reject`
 
-## 10.7 Cost and Budgets
+`request_board_approval` remains the governed decision request, but company conference rooms can now create these decisions later instead of being represented by the approval itself.
+
+## 10.7 Conference Rooms
+
+- `GET /companies/:companyId/conference-rooms`
+- `POST /companies/:companyId/conference-rooms`
+- `GET /conference-rooms/:id`
+- `PATCH /conference-rooms/:id`
+- `GET /conference-rooms/:id/comments`
+- `POST /conference-rooms/:id/comments`
+- `POST /conference-rooms/:id/request-board-decision`
+- `GET /issues/:issueId/conference-rooms`
+- `POST /issues/:issueId/conference-rooms`
+
+## 10.8 Cost and Budgets
 
 - `POST /companies/:companyId/cost-events`
 - `GET /companies/:companyId/costs/summary`
@@ -529,7 +612,7 @@ Server behavior:
 - `PATCH /companies/:companyId/budgets`
 - `PATCH /agents/:agentId/budgets`
 
-## 10.8 Activity and Dashboard
+## 10.9 Activity and Dashboard
 
 - `GET /companies/:companyId/activity`
 - `GET /companies/:companyId/dashboard`
@@ -541,7 +624,7 @@ Dashboard payload must include:
 - month-to-date spend and budget utilization
 - pending approvals count
 
-## 10.9 Error Semantics
+## 10.10 Error Semantics
 
 - `400` validation error
 - `401` unauthenticated
@@ -707,6 +790,8 @@ V1 UI routes:
 - `/` dashboard
 - `/companies` company list/create
 - `/companies/:id/org` org chart and agent status
+- `/companies/:id/conference-room` company-level conference room index
+- `/companies/:id/conference-room/:roomId` conference room detail
 - `/companies/:id/tasks` task list/kanban
 - `/companies/:id/agents/:agentId` agent detail
 - `/companies/:id/costs` cost and budget dashboard
@@ -716,6 +801,8 @@ V1 UI routes:
 Required UX behaviors:
 
 - global company selector
+- hierarchical agent navigation grouped by executives, departments, directors, and staff
+- company-level conference rooms with manual leader bulk-invite actions
 - quick actions: pause/resume agent, create task, approve/reject request
 - conflict toasts on atomic checkout failure
 - no silent background failures; every failed run visible in UI

@@ -28,18 +28,21 @@ function normalizeIdList(value: string[] | undefined): string[] | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-export const requestBoardApprovalPayloadSchema = z.object({
+const baseRequestBoardApprovalPayloadSchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
   summary: z.string().trim().min(1, "Summary is required"),
-  roomTitle: z.string().optional(),
-  agenda: z.string().optional(),
   recommendedAction: z.string().optional(),
   nextActionOnApproval: z.string().optional(),
   risks: z.union([z.string(), z.array(z.string())]).optional(),
   proposedComment: z.string().optional(),
-  participantAgentIds: z.array(z.string()).optional(),
   repoContext: conferenceContextSchema.optional(),
   decisionTier: z.literal("board").optional(),
+});
+
+const legacyIssueBoardRoomApprovalPayloadSchema = baseRequestBoardApprovalPayloadSchema.extend({
+  roomTitle: z.string().optional(),
+  agenda: z.string().optional(),
+  participantAgentIds: z.array(z.string()).optional(),
   roomKind: z.literal("issue_board_room").optional(),
 }).transform((payload): RequestBoardApprovalPayload => {
   const roomTitle = normalizeOptionalText(payload.roomTitle);
@@ -66,6 +69,35 @@ export const requestBoardApprovalPayloadSchema = z.object({
     roomKind: "issue_board_room",
   };
 });
+
+const companyConferenceRoomApprovalPayloadSchema = baseRequestBoardApprovalPayloadSchema.extend({
+  conferenceRoomId: z.string().uuid(),
+  roomKind: z.literal("company_conference_room").optional(),
+}).transform((payload): RequestBoardApprovalPayload => {
+  const recommendedAction = normalizeOptionalText(payload.recommendedAction);
+  const nextActionOnApproval = normalizeOptionalText(payload.nextActionOnApproval);
+  const proposedComment = normalizeOptionalText(payload.proposedComment);
+  const risks = normalizeRisks(payload.risks);
+  const repoContext = payload.repoContext;
+
+  return {
+    title: payload.title.trim(),
+    summary: payload.summary.trim(),
+    conferenceRoomId: payload.conferenceRoomId,
+    ...(recommendedAction ? { recommendedAction } : {}),
+    ...(nextActionOnApproval ? { nextActionOnApproval } : {}),
+    ...(risks ? { risks } : {}),
+    ...(proposedComment ? { proposedComment } : {}),
+    ...(repoContext ? { repoContext } : {}),
+    decisionTier: "board",
+    roomKind: "company_conference_room",
+  };
+});
+
+export const requestBoardApprovalPayloadSchema = z.union([
+  companyConferenceRoomApprovalPayloadSchema,
+  legacyIssueBoardRoomApprovalPayloadSchema,
+]);
 
 export function normalizeRequestBoardApprovalPayload(
   payload: unknown,
