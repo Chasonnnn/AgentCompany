@@ -17,7 +17,7 @@
     "desktop:prepare-pages-release": "pnpm --filter @paperclipai/desktop prepare-pages-release",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test:prepare": "pnpm --filter @paperclipai/db build",
+    "test:prepare": "pnpm --filter @paperclipai/server^... build",
     "test": "pnpm run test:prepare && vitest",
     "test:run": "pnpm run test:prepare && vitest run",
     "db:generate": "pnpm --filter @paperclipai/db generate",
