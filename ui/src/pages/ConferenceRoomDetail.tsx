@@ -64,8 +64,8 @@ export function ConferenceRoomDetail() {
   });
 
   const { data: hierarchy } = useQuery({
-    queryKey: room ? queryKeys.agents.hierarchy(room.companyId) : ["agents", "hierarchy", "missing"],
-    queryFn: () => agentsApi.hierarchy(room!.companyId),
+    queryKey: room ? queryKeys.agents.operatingHierarchy(room.companyId) : ["agents", "operating-hierarchy", "missing"],
+    queryFn: () => agentsApi.operatingHierarchy(room!.companyId),
     enabled: !!room,
   });
 

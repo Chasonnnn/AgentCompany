@@ -28,8 +28,8 @@ export function BoardRoomPanel({
   });
 
   const { data: hierarchy } = useQuery({
-    queryKey: queryKeys.agents.hierarchy(issue.companyId),
-    queryFn: () => agentsApi.hierarchy(issue.companyId),
+    queryKey: queryKeys.agents.operatingHierarchy(issue.companyId),
+    queryFn: () => agentsApi.operatingHierarchy(issue.companyId),
     enabled: composerOpen,
   });
 

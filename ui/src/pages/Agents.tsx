@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useLocation } from "@/lib/router";
+import { Link, useLocation, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import {
   AGENT_DEPARTMENT_LABELS,
   AGENT_ROLE_LABELS,
   type Agent,
   type AgentHierarchyMemberSummary,
-  type CompanyAgentHierarchy,
+  type AgentNavigationDepartmentNode,
+  type AgentNavigationLayout,
+  type AgentNavigationProjectNode,
+  type AgentNavigationTeamNode,
+  type CompanyAgentNavigation,
 } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
+import { authApi } from "../api/auth";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
+import { getStoredAgentLayout, setStoredAgentLayout } from "../lib/agent-layout";
 import { queryKeys } from "../lib/queryKeys";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
@@ -44,8 +50,8 @@ function filterAgents(agents: Agent[], tab: FilterTab, showTerminated: boolean):
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function filterMembers(
-  members: AgentHierarchyMemberSummary[],
+function filterMembers<T extends AgentHierarchyMemberSummary>(
+  members: T[],
   tab: FilterTab,
   showTerminated: boolean,
 ) {
@@ -54,51 +60,100 @@ function filterMembers(
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function filterHierarchy(
-  hierarchy: CompanyAgentHierarchy,
+function filterTeam(
+  team: AgentNavigationTeamNode,
   tab: FilterTab,
   showTerminated: boolean,
-): CompanyAgentHierarchy {
+): AgentNavigationTeamNode | null {
+  const leaders = filterMembers(team.leaders, tab, showTerminated);
+  const workers = filterMembers(team.workers, tab, showTerminated);
+  if (leaders.length === 0 && workers.length === 0) return null;
+  return { ...team, leaders, workers };
+}
+
+function filterProject(
+  project: AgentNavigationProjectNode,
+  tab: FilterTab,
+  showTerminated: boolean,
+): AgentNavigationProjectNode | null {
+  const leaders = filterMembers(project.leaders, tab, showTerminated);
+  const teams = project.teams
+    .map((team) => filterTeam(team, tab, showTerminated))
+    .filter((team): team is AgentNavigationTeamNode => Boolean(team));
+  const workers = filterMembers(project.workers, tab, showTerminated);
+  if (leaders.length === 0 && teams.length === 0 && workers.length === 0) return null;
+  return { ...project, leaders, teams, workers };
+}
+
+function filterDepartment(
+  department: AgentNavigationDepartmentNode,
+  tab: FilterTab,
+  showTerminated: boolean,
+): AgentNavigationDepartmentNode | null {
+  const leaders = filterMembers(department.leaders, tab, showTerminated);
+  const projects = department.projects
+    .map((project) => filterProject(project, tab, showTerminated))
+    .filter((project): project is AgentNavigationProjectNode => Boolean(project));
+  if (leaders.length === 0 && projects.length === 0) return null;
+  return { ...department, leaders, projects };
+}
+
+function filterNavigation(
+  navigation: CompanyAgentNavigation,
+  tab: FilterTab,
+  showTerminated: boolean,
+): CompanyAgentNavigation {
   return {
-    executives: hierarchy.executives
-      .map((group) => ({
-        executive: group.executive,
-        departments: group.departments
-          .map((department) => ({
-            ...department,
-            directors: filterMembers(department.directors, tab, showTerminated),
-            staff: filterMembers(department.staff, tab, showTerminated),
-          }))
-          .filter((department) => department.directors.length > 0 || department.staff.length > 0),
-      }))
-      .filter(
-        (group) =>
-          matchesFilter(group.executive.status, tab, showTerminated) || group.departments.length > 0,
-      ),
-    unassigned: {
-      executives: filterMembers(hierarchy.unassigned.executives, tab, showTerminated),
-      directors: filterMembers(hierarchy.unassigned.directors, tab, showTerminated),
-      staff: filterMembers(hierarchy.unassigned.staff, tab, showTerminated),
-    },
+    ...navigation,
+    executives: filterMembers(navigation.executives, tab, showTerminated),
+    departments: navigation.departments
+      .map((department) => filterDepartment(department, tab, showTerminated))
+      .filter((department): department is AgentNavigationDepartmentNode => Boolean(department)),
+    projectPods: navigation.projectPods
+      .map((project) => filterProject(project, tab, showTerminated))
+      .filter((project): project is AgentNavigationProjectNode => Boolean(project)),
+    sharedServices: navigation.sharedServices
+      .map((department) => filterDepartment(department, tab, showTerminated))
+      .filter((department): department is AgentNavigationDepartmentNode => Boolean(department)),
+    unassigned: filterMembers(navigation.unassigned, tab, showTerminated),
   };
 }
 
-function hierarchyCount(hierarchy: CompanyAgentHierarchy) {
-  return (
-    hierarchy.executives.reduce(
-      (total, group) =>
-        total +
-        1 +
-        group.departments.reduce(
-          (departmentTotal, department) => departmentTotal + department.directors.length + department.staff.length,
-          0,
-        ),
-      0,
-    ) +
-    hierarchy.unassigned.executives.length +
-    hierarchy.unassigned.directors.length +
-    hierarchy.unassigned.staff.length
-  );
+function navigationCount(navigation: CompanyAgentNavigation) {
+  const ids = new Set<string>();
+  for (const agent of navigation.executives) ids.add(agent.id);
+  for (const department of navigation.departments) {
+    for (const leader of department.leaders) ids.add(leader.id);
+    for (const project of department.projects) {
+      for (const leader of project.leaders) ids.add(leader.id);
+      for (const team of project.teams) {
+        for (const leader of team.leaders) ids.add(leader.id);
+        for (const worker of team.workers) ids.add(worker.id);
+      }
+      for (const worker of project.workers) ids.add(worker.id);
+    }
+  }
+  for (const department of navigation.sharedServices) {
+    for (const leader of department.leaders) ids.add(leader.id);
+    for (const project of department.projects) {
+      for (const leader of project.leaders) ids.add(leader.id);
+      for (const team of project.teams) {
+        for (const leader of team.leaders) ids.add(leader.id);
+        for (const worker of team.workers) ids.add(worker.id);
+      }
+      for (const worker of project.workers) ids.add(worker.id);
+    }
+  }
+  for (const project of navigation.projectPods) {
+    for (const leader of project.leaders) ids.add(leader.id);
+    for (const team of project.teams) {
+      for (const leader of team.leaders) ids.add(leader.id);
+      for (const worker of team.workers) ids.add(worker.id);
+    }
+    for (const worker of project.workers) ids.add(worker.id);
+  }
+  for (const agent of navigation.unassigned) ids.add(agent.id);
+  return ids.size;
 }
 
 function levelLabel(level: string) {
@@ -107,7 +162,7 @@ function levelLabel(level: string) {
   return "Staff";
 }
 
-function HierarchyMemberRow({
+function NavigationMemberRow({
   member,
   agent,
   liveRunByAgent,
@@ -181,7 +236,7 @@ function HierarchyMemberRow({
   );
 }
 
-function DepartmentBlock({
+function MemberBlock({
   label,
   members,
   agentMap,
@@ -200,7 +255,7 @@ function DepartmentBlock({
       </div>
       <div className="border border-border">
         {members.map((member) => (
-          <HierarchyMemberRow
+          <NavigationMemberRow
             key={member.id}
             member={member}
             agent={agentMap.get(member.id) ?? null}
@@ -208,6 +263,113 @@ function DepartmentBlock({
           />
         ))}
       </div>
+    </div>
+  );
+}
+
+function TeamBlock({
+  team,
+  agentMap,
+  liveRunByAgent,
+}: {
+  team: AgentNavigationTeamNode;
+  agentMap: Map<string, Agent>;
+  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+}) {
+  return (
+    <section className="space-y-3 rounded-xl border border-border/70 bg-card/40 p-4">
+      <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+        {team.label}
+      </div>
+      <MemberBlock label="Leads" members={team.leaders} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+      <MemberBlock label="Workers" members={team.workers} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+    </section>
+  );
+}
+
+function ProjectBlock({
+  project,
+  agentMap,
+  liveRunByAgent,
+}: {
+  project: AgentNavigationProjectNode;
+  agentMap: Map<string, Agent>;
+  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+}) {
+  return (
+    <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            Project
+          </div>
+          <div className="text-lg font-semibold">{project.projectName}</div>
+        </div>
+      </div>
+      <MemberBlock label="Leadership" members={project.leaders} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+      {project.teams.map((team) => (
+        <TeamBlock
+          key={`${project.projectId}:${team.key}`}
+          team={team}
+          agentMap={agentMap}
+          liveRunByAgent={liveRunByAgent}
+        />
+      ))}
+      <MemberBlock label="Workers" members={project.workers} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+    </section>
+  );
+}
+
+function DepartmentBlock({
+  department,
+  agentMap,
+  liveRunByAgent,
+}: {
+  department: AgentNavigationDepartmentNode;
+  agentMap: Map<string, Agent>;
+  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+        {department.name}
+      </div>
+      <MemberBlock label="Leads" members={department.leaders} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+      {department.projects.map((project) => (
+        <ProjectBlock
+          key={`${department.key}:${project.projectId}`}
+          project={project}
+          agentMap={agentMap}
+          liveRunByAgent={liveRunByAgent}
+        />
+      ))}
+    </section>
+  );
+}
+
+function LayoutToggle({
+  layout,
+  onChange,
+}: {
+  layout: AgentNavigationLayout;
+  onChange: (layout: AgentNavigationLayout) => void;
+}) {
+  return (
+    <div className="flex items-center border border-border">
+      {(["department", "project"] as const).map((value) => (
+        <button
+          key={value}
+          className={cn(
+            "px-2.5 py-1.5 text-xs capitalize transition-colors",
+            layout === value
+              ? "bg-accent text-foreground"
+              : "text-muted-foreground hover:bg-accent/50",
+          )}
+          onClick={() => onChange(value)}
+        >
+          {value}
+        </button>
+      ))}
     </div>
   );
 }
@@ -224,11 +386,23 @@ export function Agents() {
     pathSegment === "all" || pathSegment === "active" || pathSegment === "paused" || pathSegment === "error"
       ? pathSegment
       : "all";
-  const [view, setView] = useState<"list" | "hierarchy">("hierarchy");
+  const [view, setView] = useState<"list" | "tree">("tree");
   const forceListView = isMobile;
   const effectiveView = forceListView ? "list" : view;
   const [showTerminated, setShowTerminated] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const [layout, setLayout] = useState<AgentNavigationLayout>("department");
+
+  useEffect(() => {
+    if (!selectedCompanyId) return;
+    setLayout(getStoredAgentLayout(selectedCompanyId, currentUserId));
+  }, [selectedCompanyId, currentUserId]);
 
   const { data: agents, isLoading, error } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
@@ -236,10 +410,10 @@ export function Agents() {
     enabled: !!selectedCompanyId,
   });
 
-  const { data: hierarchy } = useQuery({
-    queryKey: queryKeys.agents.hierarchy(selectedCompanyId!),
-    queryFn: () => agentsApi.hierarchy(selectedCompanyId!),
-    enabled: !!selectedCompanyId && effectiveView === "hierarchy",
+  const { data: navigation } = useQuery({
+    queryKey: queryKeys.agents.navigation(selectedCompanyId!, layout),
+    queryFn: () => agentsApi.navigation(selectedCompanyId!, layout),
+    enabled: !!selectedCompanyId && effectiveView === "tree",
   });
 
   const { data: runs } = useQuery({
@@ -282,8 +456,14 @@ export function Agents() {
   }
 
   const filteredAgents = filterAgents(agents ?? [], tab, showTerminated);
-  const filteredHierarchy = hierarchy ? filterHierarchy(hierarchy, tab, showTerminated) : null;
-  const filteredHierarchyCount = filteredHierarchy ? hierarchyCount(filteredHierarchy) : 0;
+  const filteredNavigation = navigation ? filterNavigation(navigation, tab, showTerminated) : null;
+  const filteredNavigationCount = filteredNavigation ? navigationCount(filteredNavigation) : 0;
+
+  function updateLayout(next: AgentNavigationLayout) {
+    if (!selectedCompanyId) return;
+    setLayout(next);
+    setStoredAgentLayout(selectedCompanyId, next, currentUserId);
+  }
 
   return (
     <div className="space-y-4">
@@ -338,30 +518,33 @@ export function Agents() {
           </div>
 
           {!forceListView ? (
-            <div className="flex items-center border border-border">
-              <button
-                className={cn(
-                  "p-1.5 transition-colors",
-                  effectiveView === "list"
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/50",
-                )}
-                onClick={() => setView("list")}
-              >
-                <List className="h-3.5 w-3.5" />
-              </button>
-              <button
-                className={cn(
-                  "p-1.5 transition-colors",
-                  effectiveView === "hierarchy"
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/50",
-                )}
-                onClick={() => setView("hierarchy")}
-              >
-                <GitBranch className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <>
+              <LayoutToggle layout={layout} onChange={updateLayout} />
+              <div className="flex items-center border border-border">
+                <button
+                  className={cn(
+                    "p-1.5 transition-colors",
+                    effectiveView === "list"
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent/50",
+                  )}
+                  onClick={() => setView("list")}
+                >
+                  <List className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  className={cn(
+                    "p-1.5 transition-colors",
+                    effectiveView === "tree"
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent/50",
+                  )}
+                  onClick={() => setView("tree")}
+                >
+                  <GitBranch className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </>
           ) : null}
 
           <Button size="sm" variant="outline" onClick={openNewAgent}>
@@ -376,9 +559,9 @@ export function Agents() {
           {filteredAgents.length} agent{filteredAgents.length !== 1 ? "s" : ""}
         </p>
       ) : null}
-      {effectiveView === "hierarchy" && filteredHierarchy ? (
+      {effectiveView === "tree" && filteredNavigation ? (
         <p className="text-xs text-muted-foreground">
-          {filteredHierarchyCount} agent{filteredHierarchyCount !== 1 ? "s" : ""} in hierarchy
+          {filteredNavigationCount} agent{filteredNavigationCount !== 1 ? "s" : ""} in {layout} layout
         </p>
       ) : null}
 
@@ -448,101 +631,64 @@ export function Agents() {
         </p>
       ) : null}
 
-      {effectiveView === "hierarchy" && filteredHierarchy && filteredHierarchyCount > 0 ? (
+      {effectiveView === "tree" && filteredNavigation && filteredNavigationCount > 0 ? (
         <div className="space-y-6">
-          {filteredHierarchy.executives.map((group) => (
-            <section key={group.executive.id} className="space-y-3">
-              <div className="rounded-xl border border-border bg-card p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                      Executive
-                    </div>
-                    <Link
-                      to={agentUrl(agentMap.get(group.executive.id) ?? ({
-                        ...group.executive,
-                        companyId: "",
-                        capabilities: null,
-                        adapterType: "process",
-                        adapterConfig: {},
-                        runtimeConfig: {},
-                        budgetMonthlyCents: 0,
-                        spentMonthlyCents: 0,
-                        pauseReason: null,
-                        pausedAt: null,
-                        permissions: { canCreateAgents: false },
-                        lastHeartbeatAt: null,
-                        metadata: null,
-                        createdAt: new Date(0),
-                        updatedAt: new Date(0),
-                      } as Agent))}
-                      className="text-lg font-semibold hover:underline"
-                    >
-                      {group.executive.name}
-                    </Link>
-                    <p className="text-sm text-muted-foreground">
-                      {AGENT_ROLE_LABELS[group.executive.role] ?? group.executive.role}
-                      {group.executive.title ? ` - ${group.executive.title}` : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground">
-                      {levelLabel(group.executive.orgLevel)}
-                    </span>
-                    <span className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground">
-                      {group.executive.departmentKey === "custom"
-                        ? group.executive.departmentName ?? "Custom"
-                        : AGENT_DEPARTMENT_LABELS[group.executive.departmentKey]}
-                    </span>
-                    <StatusBadge status={group.executive.status} />
-                  </div>
-                </div>
+          {filteredNavigation.executives.length > 0 ? (
+            <section className="space-y-3">
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Executives
               </div>
+              <MemberBlock
+                label="Executive Office"
+                members={filteredNavigation.executives}
+                agentMap={agentMap}
+                liveRunByAgent={liveRunByAgent}
+              />
+            </section>
+          ) : null}
 
-              {group.departments.map((department) => (
-                <section key={`${group.executive.id}-${department.key}-${department.name}`} className="space-y-3">
-                  <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                    {department.name}
-                  </div>
-                  <DepartmentBlock
-                    label="Directors"
-                    members={department.directors}
-                    agentMap={agentMap}
-                    liveRunByAgent={liveRunByAgent}
-                  />
-                  <DepartmentBlock
-                    label="Staff"
-                    members={department.staff}
-                    agentMap={agentMap}
-                    liveRunByAgent={liveRunByAgent}
-                  />
-                </section>
+          {layout === "department"
+            ? filteredNavigation.departments.map((department) => (
+                <DepartmentBlock
+                  key={`${department.key}:${department.name}`}
+                  department={department}
+                  agentMap={agentMap}
+                  liveRunByAgent={liveRunByAgent}
+                />
+              ))
+            : filteredNavigation.projectPods.map((project) => (
+                <ProjectBlock
+                  key={project.projectId}
+                  project={project}
+                  agentMap={agentMap}
+                  liveRunByAgent={liveRunByAgent}
+                />
+              ))}
+
+          {filteredNavigation.sharedServices.length > 0 ? (
+            <section className="space-y-4">
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Shared Services
+              </div>
+              {filteredNavigation.sharedServices.map((department) => (
+                <DepartmentBlock
+                  key={`${department.key}:${department.name}`}
+                  department={department}
+                  agentMap={agentMap}
+                  liveRunByAgent={liveRunByAgent}
+                />
               ))}
             </section>
-          ))}
+          ) : null}
 
-          {filteredHierarchy.unassigned.executives.length > 0 ||
-          filteredHierarchy.unassigned.directors.length > 0 ||
-          filteredHierarchy.unassigned.staff.length > 0 ? (
+          {filteredNavigation.unassigned.length > 0 ? (
             <section className="space-y-3">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
                 Unassigned
               </div>
-              <DepartmentBlock
-                label="Executives"
-                members={filteredHierarchy.unassigned.executives}
-                agentMap={agentMap}
-                liveRunByAgent={liveRunByAgent}
-              />
-              <DepartmentBlock
-                label="Directors"
-                members={filteredHierarchy.unassigned.directors}
-                agentMap={agentMap}
-                liveRunByAgent={liveRunByAgent}
-              />
-              <DepartmentBlock
-                label="Staff"
-                members={filteredHierarchy.unassigned.staff}
+              <MemberBlock
+                label="Needs staffing scope"
+                members={filteredNavigation.unassigned}
                 agentMap={agentMap}
                 liveRunByAgent={liveRunByAgent}
               />
@@ -551,7 +697,7 @@ export function Agents() {
         </div>
       ) : null}
 
-      {effectiveView === "hierarchy" && filteredHierarchy && filteredHierarchyCount === 0 ? (
+      {effectiveView === "tree" && filteredNavigation && filteredNavigationCount === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
           No agents match the selected filter.
         </p>

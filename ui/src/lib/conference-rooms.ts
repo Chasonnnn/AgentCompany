@@ -1,29 +1,32 @@
-import type { CompanyAgentHierarchy } from "@paperclipai/shared";
+import type { CompanyOperatingHierarchy } from "@paperclipai/shared";
 
-export function collectLeaderIds(hierarchy: CompanyAgentHierarchy) {
+export function collectLeaderIds(hierarchy: CompanyOperatingHierarchy) {
   return Array.from(new Set([
-    ...hierarchy.executives.map((group) => group.executive.id),
-    ...hierarchy.executives.flatMap((group) => group.departments.flatMap((department) => department.directors.map((director) => director.id))),
-    ...hierarchy.unassigned.executives.map((agent) => agent.id),
-    ...hierarchy.unassigned.directors.map((agent) => agent.id),
+    ...hierarchy.executiveOffice.map((agent) => agent.id),
+    ...hierarchy.projectPods.flatMap((project) => project.leadership.map((agent) => agent.id)),
+    ...hierarchy.sharedServices.flatMap((department) => department.leaders.map((agent) => agent.id)),
   ]));
 }
 
-export function collectExecutiveIds(hierarchy: CompanyAgentHierarchy) {
-  return Array.from(new Set([
-    ...hierarchy.executives.map((group) => group.executive.id),
-    ...hierarchy.unassigned.executives.map((agent) => agent.id),
-  ]));
+export function collectExecutiveIds(hierarchy: CompanyOperatingHierarchy) {
+  return Array.from(new Set(hierarchy.executiveOffice.map((agent) => agent.id)));
 }
 
-export function conferenceRoomLeadershipBulkGroups(hierarchy: CompanyAgentHierarchy) {
-  return hierarchy.executives.flatMap((group) =>
-    group.departments
-      .filter((department) => department.directors.length > 0)
-      .map((department) => ({
-        key: `${group.executive.id}:${department.key}:${department.name}`,
-        label: `${department.name} leadership`,
-        agentIds: Array.from(new Set([group.executive.id, ...department.directors.map((director) => director.id)])),
+export function conferenceRoomLeadershipBulkGroups(hierarchy: CompanyOperatingHierarchy) {
+  return [
+    ...hierarchy.projectPods
+      .filter((project) => project.leadership.length > 0)
+      .map((project) => ({
+        key: `project:${project.projectId}`,
+        label: `${project.projectName} leadership`,
+        agentIds: Array.from(new Set(project.leadership.map((leader) => leader.id))),
       })),
-  );
+    ...hierarchy.sharedServices
+      .filter((department) => department.leaders.length > 0)
+      .map((department) => ({
+        key: `shared:${department.key}:${department.name}`,
+        label: `${department.name} leads`,
+        agentIds: Array.from(new Set(department.leaders.map((leader) => leader.id))),
+      })),
+  ];
 }

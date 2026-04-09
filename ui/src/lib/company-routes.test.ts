@@ -21,6 +21,18 @@ describe("company routes", () => {
     );
   });
 
+  it("treats conference room paths as board routes that need a company prefix", () => {
+    expect(isBoardPathWithoutPrefix("/conference-room/open")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/conference-room/open")).toBeNull();
+    expect(applyCompanyPrefix("/conference-room/open", "PAP")).toBe("/PAP/conference-room/open");
+  });
+
+  it("normalizes prefixed conference room paths back to company-relative paths", () => {
+    expect(toCompanyRelativePath("/PAP/conference-room/rooms/room-123")).toBe(
+      "/conference-room/rooms/room-123",
+    );
+  });
+
   /**
    * Regression tests for https://github.com/paperclipai/paperclip/issues/2910
    *
