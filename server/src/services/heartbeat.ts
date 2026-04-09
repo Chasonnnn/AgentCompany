@@ -1865,6 +1865,37 @@ export function heartbeatService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
+  async function findWakeSatisfiedIssueComment(
+    companyId: string,
+    issueId: string,
+    contextSnapshot: Record<string, unknown>,
+  ) {
+    const wakeCommentIds = extractWakeCommentIds(contextSnapshot);
+    if (wakeCommentIds.length === 0) return null;
+
+    const wakeComments = await db
+      .select({
+        id: issueComments.id,
+      })
+      .from(issueComments)
+      .where(
+        and(
+          eq(issueComments.companyId, companyId),
+          eq(issueComments.issueId, issueId),
+          inArray(issueComments.id, wakeCommentIds),
+        ),
+      );
+
+    const commentsById = new Map(wakeComments.map((comment) => [comment.id, comment]));
+    for (let index = wakeCommentIds.length - 1; index >= 0; index -= 1) {
+      const commentId = wakeCommentIds[index];
+      const matched = commentId ? commentsById.get(commentId) ?? null : null;
+      if (matched) return matched;
+    }
+
+    return null;
+  }
+
   async function enqueueMissingIssueCommentRetry(
     run: typeof heartbeatRuns.$inferSelect,
     agent: typeof agents.$inferSelect,
@@ -2002,6 +2033,16 @@ export function heartbeatService(db: Db) {
       await patchRunIssueCommentStatus(run.id, {
         issueCommentStatus: "satisfied",
         issueCommentSatisfiedByCommentId: postedComment.id,
+        issueCommentRetryQueuedAt: null,
+      });
+      return { outcome: "satisfied" as const, queuedRun: null };
+    }
+
+    const wakeSatisfiedComment = await findWakeSatisfiedIssueComment(run.companyId, issueId, contextSnapshot);
+    if (wakeSatisfiedComment) {
+      await patchRunIssueCommentStatus(run.id, {
+        issueCommentStatus: "satisfied",
+        issueCommentSatisfiedByCommentId: wakeSatisfiedComment.id,
         issueCommentRetryQueuedAt: null,
       });
       return { outcome: "satisfied" as const, queuedRun: null };

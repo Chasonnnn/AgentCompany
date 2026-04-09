@@ -404,9 +404,28 @@ describe("heartbeat comment wake batching", () => {
 
       await waitFor(() => gateway.getAgentPayloads().length === 2);
       await waitFor(async () => {
-        const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
-        return runs.length === 2 && runs.every((run) => run.status === "succeeded");
+        const runs = await db
+          .select()
+          .from(heartbeatRuns)
+          .where(eq(heartbeatRuns.agentId, agentId))
+          .orderBy(asc(heartbeatRuns.createdAt));
+        return (
+          runs.length === 2 &&
+          runs.every((run) => run.status === "succeeded") &&
+          runs[1]?.issueCommentStatus === "satisfied" &&
+          runs[1]?.issueCommentSatisfiedByCommentId === comment3.id
+        );
       }, 30_000);
+
+      const runs = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId))
+        .orderBy(asc(heartbeatRuns.createdAt));
+
+      expect(runs).toHaveLength(2);
+      expect(runs[1]?.issueCommentStatus).toBe("satisfied");
+      expect(runs[1]?.issueCommentSatisfiedByCommentId).toBe(comment3.id);
 
       const secondPayload = gateway.getAgentPayloads()[1] ?? {};
       expect(secondPayload.paperclip).toMatchObject({
