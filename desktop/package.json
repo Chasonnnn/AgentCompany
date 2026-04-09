@@ -1,0 +1,30 @@
+{
+  "name": "@paperclipai/desktop",
+  "version": "0.3.1",
+  "private": true,
+  "description": "Local macOS desktop shell for Paperclip.",
+  "author": "Paperclip",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "pnpm run build && electron .",
+    "build": "tsc -p tsconfig.json",
+    "package": "pnpm run build && node ./scripts/stage-server-runtime.mjs && node ./scripts/run-electron-builder.mjs package",
+    "dist": "pnpm run build && node ./scripts/stage-server-runtime.mjs && node ./scripts/run-electron-builder.mjs dist",
+    "prepare-pages-release": "node ./scripts/prepare-pages-release.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "detect-port": "^2.1.0",
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "electron": "^37.2.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
