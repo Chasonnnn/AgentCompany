@@ -172,6 +172,8 @@ function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unkn
     : [];
   const title = firstNonEmptyString(payload.title);
   const summary = firstNonEmptyString(payload.summary);
+  const roomKind = firstNonEmptyString(payload.roomKind);
+  const conferenceRoomId = firstNonEmptyString(payload.conferenceRoomId);
   const roomTitle = firstNonEmptyString(payload.roomTitle);
   const agenda = firstNonEmptyString(payload.agenda);
   const recommendedAction = firstNonEmptyString(payload.recommendedAction);
@@ -182,6 +184,14 @@ function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unkn
 
   return (
     <div className="mt-4 space-y-3.5 text-sm">
+      {roomKind === "company_conference_room" ? (
+        <div className="space-y-1">
+          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Room</p>
+          <p className="font-medium leading-6 text-foreground">
+            Company conference room{conferenceRoomId ? ` (${conferenceRoomId.slice(0, 8)})` : ""}
+          </p>
+        </div>
+      ) : null}
       {roomTitle && (
         <div className="space-y-1">
           <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Conference</p>

@@ -14,6 +14,7 @@ export const queryKeys = {
   },
   agents: {
     list: (companyId: string) => ["agents", companyId] as const,
+    hierarchy: (companyId: string) => ["agents", companyId, "hierarchy"] as const,
     detail: (id: string) => ["agents", "detail", id] as const,
     runtimeState: (id: string) => ["agents", "runtime-state", id] as const,
     taskSessions: (id: string) => ["agents", "task-sessions", id] as const,
@@ -85,6 +86,12 @@ export const queryKeys = {
     detail: (approvalId: string) => ["approvals", "detail", approvalId] as const,
     comments: (approvalId: string) => ["approvals", "comments", approvalId] as const,
     issues: (approvalId: string) => ["approvals", "issues", approvalId] as const,
+  },
+  conferenceRooms: {
+    list: (companyId: string) => ["conference-rooms", companyId] as const,
+    detail: (roomId: string) => ["conference-rooms", "detail", roomId] as const,
+    comments: (roomId: string) => ["conference-rooms", "comments", roomId] as const,
+    issueList: (issueId: string) => ["conference-rooms", "issue", issueId] as const,
   },
   access: {
     joinRequests: (companyId: string, status: string = "pending_approval") =>

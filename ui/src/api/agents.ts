@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentDetail,
+  CompanyAgentHierarchy,
   AgentInstructionsBundle,
   AgentInstructionsFileDetail,
   AgentSkillSnapshot,
@@ -49,6 +50,10 @@ export interface OrgNode {
   name: string;
   role: string;
   status: string;
+  orgLevel?: string;
+  departmentKey?: string;
+  departmentName?: string | null;
+  title?: string | null;
   reports: OrgNode[];
 }
 
@@ -75,6 +80,7 @@ function agentPath(id: string, companyId?: string, suffix = "") {
 export const agentsApi = {
   list: (companyId: string) => api.get<Agent[]>(`/companies/${companyId}/agents`),
   org: (companyId: string) => api.get<OrgNode[]>(`/companies/${companyId}/org`),
+  hierarchy: (companyId: string) => api.get<CompanyAgentHierarchy>(`/companies/${companyId}/agent-hierarchy`),
   listConfigurations: (companyId: string) =>
     api.get<Record<string, unknown>[]>(`/companies/${companyId}/agent-configurations`),
   get: async (id: string, companyId?: string) => {

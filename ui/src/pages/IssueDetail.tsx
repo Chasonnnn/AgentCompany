@@ -730,43 +730,6 @@ export function IssueDetail() {
     },
   });
 
-  const requestBoardDecision = useMutation({
-    mutationFn: async (payload: Record<string, unknown>) => {
-      if (!issue) {
-        throw new Error("Issue context unavailable");
-      }
-      return approvalsApi.create(issue.companyId, {
-        type: "request_board_approval",
-        issueIds: [issue.id],
-        payload,
-      });
-    },
-    onSuccess: (approval) => {
-      invalidateIssue();
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(resolvedCompanyId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(resolvedCompanyId) });
-      }
-      pushToast({
-        title: "Board request created",
-        body: "The issue now has a structured board-room decision request.",
-        tone: "success",
-        action: {
-          label: "Open approval",
-          href: `/approvals/${approval.id}`,
-        },
-      });
-      setDetailTab("board-room");
-    },
-    onError: (err) => {
-      pushToast({
-        title: "Board request failed",
-        body: err instanceof Error ? err.message : "Unable to create board request",
-        tone: "error",
-      });
-    },
-  });
-
   const addComment = useMutation({
     mutationFn: ({ body, reopen, interrupt }: { body: string; reopen?: boolean; interrupt?: boolean }) =>
       issuesApi.addComment(issueId!, body, reopen, interrupt),
@@ -1288,11 +1251,10 @@ export function IssueDetail() {
         setDetailTab("board-room");
         setBoardRoomComposerOpen(true);
       }}
-      disabled={requestBoardDecision.isPending}
       className="shadow-none"
     >
       <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
-      {requestBoardDecision.isPending ? "Creating..." : "Open conference room"}
+      Open conference room
     </Button>
   );
 
@@ -1838,20 +1800,7 @@ export function IssueDetail() {
 
         <TabsContent value="board-room">
           <BoardRoomPanel
-            issueId={issue.id}
-            approvals={linkedApprovals}
-            agentMap={agentMap}
-            onRequestBoardDecision={async (payload) => {
-              await requestBoardDecision.mutateAsync(payload);
-            }}
-            onApproveApproval={async (approvalId) => {
-              await approvalDecision.mutateAsync({ approvalId, action: "approve" });
-            }}
-            onRejectApproval={async (approvalId) => {
-              await approvalDecision.mutateAsync({ approvalId, action: "reject" });
-            }}
-            pendingApprovalAction={pendingApprovalAction}
-            requestPending={requestBoardDecision.isPending}
+            issue={issue}
             composerOpen={boardRoomComposerOpen}
             onComposerOpenChange={setBoardRoomComposerOpen}
           />

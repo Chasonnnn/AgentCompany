@@ -27,6 +27,9 @@ interface LayoutNode {
   name: string;
   role: string;
   status: string;
+  orgLevel?: string;
+  departmentKey?: string;
+  departmentName?: string | null;
   x: number;
   y: number;
   children: LayoutNode[];
@@ -64,6 +67,9 @@ function layoutTree(node: OrgNode, x: number, y: number): LayoutNode {
     name: node.name,
     role: node.role,
     status: node.status,
+    orgLevel: node.orgLevel,
+    departmentKey: node.departmentKey,
+    departmentName: node.departmentName,
     x: x + (totalW - CARD_W) / 2,
     y,
     children: layoutChildren,
@@ -414,6 +420,18 @@ export function OrgChart() {
                   <span className="text-[11px] text-muted-foreground leading-tight mt-0.5">
                     {agent?.title ?? roleLabel(node.role)}
                   </span>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <span className="rounded-full border border-border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+                      {agent?.orgLevel ?? node.orgLevel ?? "staff"}
+                    </span>
+                    <span className="rounded-full border border-border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+                      {agent?.departmentKey === "custom"
+                        ? agent.departmentName ?? "custom"
+                        : node.departmentKey === "custom"
+                          ? node.departmentName ?? "custom"
+                          : node.departmentKey ?? agent?.departmentKey ?? "general"}
+                    </span>
+                  </div>
                   {agent && (
                     <span className="text-[10px] text-muted-foreground/60 font-mono leading-tight mt-1">
                       {getAdapterLabel(agent.adapterType)}

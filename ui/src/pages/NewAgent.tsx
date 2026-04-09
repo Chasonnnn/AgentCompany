@@ -6,7 +6,12 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { agentsApi } from "../api/agents";
 import { companySkillsApi } from "../api/companySkills";
 import { queryKeys } from "../lib/queryKeys";
-import { AGENT_ROLES } from "@paperclipai/shared";
+import {
+  AGENT_DEPARTMENT_KEYS,
+  AGENT_DEPARTMENT_LABELS,
+  AGENT_ORG_LEVELS,
+  AGENT_ROLES,
+} from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -61,6 +66,9 @@ export function NewAgent() {
   const [title, setTitle] = useState("");
   const [role, setRole] = useState("general");
   const [reportsTo, setReportsTo] = useState<string | null>(null);
+  const [orgLevel, setOrgLevel] = useState<(typeof AGENT_ORG_LEVELS)[number]>("staff");
+  const [departmentKey, setDepartmentKey] = useState<(typeof AGENT_DEPARTMENT_KEYS)[number]>("general");
+  const [departmentName, setDepartmentName] = useState("");
   const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
   const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
   const [roleOpen, setRoleOpen] = useState(false);
@@ -105,6 +113,8 @@ export function NewAgent() {
     if (isFirstAgent) {
       if (!name) setName("CEO");
       if (!title) setTitle("CEO");
+      setOrgLevel("executive");
+      setDepartmentKey("executive");
     }
   }, [isFirstAgent]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -172,6 +182,11 @@ export function NewAgent() {
       role: effectiveRole,
       ...(title.trim() ? { title: title.trim() } : {}),
       ...(reportsTo ? { reportsTo } : {}),
+      orgLevel: isFirstAgent ? "executive" : orgLevel,
+      departmentKey: isFirstAgent ? "executive" : departmentKey,
+      ...(departmentKey === "custom" && departmentName.trim()
+        ? { departmentName: departmentName.trim() }
+        : {}),
       ...(selectedSkillKeys.length > 0 ? { desiredSkills: selectedSkillKeys } : {}),
       adapterType: configValues.adapterType,
       adapterConfig: buildAdapterConfig(),
@@ -267,6 +282,49 @@ export function NewAgent() {
             onChange={setReportsTo}
             disabled={isFirstAgent}
           />
+        </div>
+
+        <div className="grid gap-3 border-t border-border px-4 py-3 md:grid-cols-3">
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">Level</span>
+            <select
+              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+              value={isFirstAgent ? "executive" : orgLevel}
+              onChange={(event) => setOrgLevel(event.target.value as (typeof AGENT_ORG_LEVELS)[number])}
+              disabled={isFirstAgent}
+            >
+              {AGENT_ORG_LEVELS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">Department</span>
+            <select
+              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+              value={isFirstAgent ? "executive" : departmentKey}
+              onChange={(event) => setDepartmentKey(event.target.value as (typeof AGENT_DEPARTMENT_KEYS)[number])}
+              disabled={isFirstAgent}
+            >
+              {AGENT_DEPARTMENT_KEYS.map((value) => (
+                <option key={value} value={value}>
+                  {AGENT_DEPARTMENT_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">Custom department</span>
+            <input
+              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
+              value={departmentName}
+              onChange={(event) => setDepartmentName(event.target.value)}
+              placeholder="Only for custom"
+              disabled={isFirstAgent || departmentKey !== "custom"}
+            />
+          </label>
         </div>
 
         {/* Shared config form */}

@@ -64,8 +64,16 @@ export function ApprovalDetail() {
   }, [agents]);
 
   useEffect(() => {
+    const conferenceRoomId =
+      typeof approval?.payload?.conferenceRoomId === "string" ? approval.payload.conferenceRoomId : null;
+    const listLabel = approval?.type === "request_board_approval" ? "Conference Room" : "Approvals";
+    const listHref = approval?.type === "request_board_approval"
+      ? conferenceRoomId
+        ? `/conference-room/rooms/${conferenceRoomId}`
+        : "/conference-room"
+      : "/approvals";
     setBreadcrumbs([
-      { label: "Approvals", href: "/approvals" },
+      { label: listLabel, href: listHref },
       { label: approval?.id?.slice(0, 8) ?? approvalId ?? "Approval" },
     ]);
   }, [setBreadcrumbs, approval, approvalId]);
