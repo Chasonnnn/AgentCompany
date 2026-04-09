@@ -12,6 +12,7 @@ import { accessService, agentService, companySkillService, logActivity } from ".
 import { forbidden } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { getTelemetryClient } from "../telemetry.js";
+import { agentHasCreatePermission } from "../services/agent-permissions.js";
 
 type SkillTelemetryInput = {
   key: string;
@@ -26,11 +27,6 @@ export function companySkillRoutes(db: Db) {
   const agents = agentService(db);
   const access = accessService(db);
   const svc = companySkillService(db);
-
-  function canCreateAgents(agent: { permissions: Record<string, unknown> | null | undefined }) {
-    if (!agent.permissions || typeof agent.permissions !== "object") return false;
-    return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
-  }
 
   function asString(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -74,7 +70,7 @@ export function companySkillRoutes(db: Db) {
     }
 
     const allowedByGrant = await access.hasPermission(companyId, "agent", actorAgent.id, "agents:create");
-    if (allowedByGrant || canCreateAgents(actorAgent)) {
+    if (allowedByGrant || agentHasCreatePermission(actorAgent)) {
       return;
     }
 

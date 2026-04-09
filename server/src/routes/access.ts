@@ -48,6 +48,7 @@ import {
   logActivity,
   notifyHireApproved
 } from "../services/index.js";
+import { agentHasCreatePermission } from "../services/agent-permissions.js";
 import { assertCompanyAccess } from "./authz.js";
 import {
   claimBoardOwnership,
@@ -1833,8 +1834,8 @@ export function accessRoutes(
       if (!actorAgent || actorAgent.companyId !== companyId) {
         throw forbidden("Agent key cannot access another company");
       }
-      if (actorAgent.role !== "ceo") {
-        throw forbidden("Only CEO agents can generate OpenClaw invite prompts");
+      if (!agentHasCreatePermission(actorAgent)) {
+        throw forbidden("Only agents with create authority can generate OpenClaw invite prompts");
       }
       return;
     }

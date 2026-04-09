@@ -88,7 +88,7 @@ describe("PATCH /api/companies/:companyId/branding", () => {
     vi.resetAllMocks();
   });
 
-  it("rejects non-CEO agent callers", async () => {
+  it("rejects agent callers without create authority", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       companyId: "company-1",
@@ -107,11 +107,11 @@ describe("PATCH /api/companies/:companyId/branding", () => {
       .send({ logoAssetId: "11111111-1111-4111-8111-111111111111" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toContain("Only CEO agents");
+    expect(res.body.error).toContain("Only agents with create authority");
     expect(mockCompanyService.update).not.toHaveBeenCalled();
   });
 
-  it("allows CEO agent callers to update branding fields", async () => {
+  it("allows agent callers with create authority to update branding fields", async () => {
     const company = createCompany();
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",

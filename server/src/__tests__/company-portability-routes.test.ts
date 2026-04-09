@@ -74,7 +74,7 @@ describe("company portability routes", () => {
     mockLogActivity.mockReset();
   });
 
-  it("rejects non-CEO agents from CEO-safe export preview routes", async () => {
+  it("rejects agents without create authority from company-scoped export preview routes", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -93,11 +93,11 @@ describe("company portability routes", () => {
       .send({ include: { company: true, agents: true, projects: true } });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toContain("Only CEO agents");
+    expect(res.body.error).toContain("Only agents with create authority");
     expect(mockCompanyPortabilityService.previewExport).not.toHaveBeenCalled();
   });
 
-  it("allows CEO agents to use company-scoped export preview routes", async () => {
+  it("allows agents with create authority to use company-scoped export preview routes", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -130,7 +130,7 @@ describe("company portability routes", () => {
     });
   });
 
-  it("rejects replace collision strategy on CEO-safe import routes", async () => {
+  it("rejects replace collision strategy on create-authority import routes", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",

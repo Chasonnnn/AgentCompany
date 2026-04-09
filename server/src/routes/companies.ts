@@ -25,6 +25,7 @@ import {
 } from "../services/index.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { agentHasCreatePermission } from "../services/agent-permissions.js";
 
 export function companyRoutes(db: Db, storage?: StorageService) {
   const router = Router();
@@ -57,8 +58,8 @@ export function companyRoutes(db: Db, storage?: StorageService) {
     if (!actorAgent || actorAgent.companyId !== companyId) {
       throw forbidden("Agent key cannot access another company");
     }
-    if (actorAgent.role !== "ceo") {
-      throw forbidden("Only CEO agents can update company branding");
+    if (!agentHasCreatePermission(actorAgent)) {
+      throw forbidden("Only agents with create authority can update company branding");
     }
   }
 
@@ -71,8 +72,8 @@ export function companyRoutes(db: Db, storage?: StorageService) {
     if (!actorAgent || actorAgent.companyId !== companyId) {
       throw forbidden("Agent key cannot access another company");
     }
-    if (actorAgent.role !== "ceo") {
-      throw forbidden(`Only CEO agents can manage company ${capability}`);
+    if (!agentHasCreatePermission(actorAgent)) {
+      throw forbidden(`Only agents with create authority can manage company ${capability}`);
     }
   }
 
@@ -301,11 +302,10 @@ export function companyRoutes(db: Db, storage?: StorageService) {
     let body: Record<string, unknown>;
 
     if (req.actor.type === "agent") {
-      // Only CEO agents may update company branding fields
       const agentSvc = agentService(db);
       const actorAgent = req.actor.agentId ? await agentSvc.getById(req.actor.agentId) : null;
-      if (!actorAgent || actorAgent.role !== "ceo") {
-        throw forbidden("Only CEO agents or board users may update company settings");
+      if (!actorAgent || !agentHasCreatePermission(actorAgent)) {
+        throw forbidden("Only agents with create authority or board users may update company settings");
       }
       if (actorAgent.companyId !== companyId) {
         throw forbidden("Agent key cannot access another company");

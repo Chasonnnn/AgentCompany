@@ -62,6 +62,7 @@ import {
   sanitizeConferenceContextForActor,
   serializeApprovalForActor,
 } from "../services/conference-context.js";
+import { agentHasCreatePermission } from "../services/agent-permissions.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -148,7 +149,7 @@ export function issueRoutes(
       res.status(403).json({ error: "Forbidden" });
       return false;
     }
-    if (actorAgent.role === "ceo" || Boolean(actorAgent.permissions?.canCreateAgents)) return true;
+    if (agentHasCreatePermission(actorAgent)) return true;
     res.status(403).json({ error: "Missing permission to link approvals" });
     return false;
   }
@@ -158,12 +159,6 @@ export function issueRoutes(
     if (req.actor.type === "agent") return req.actor.companyId === companyId;
     if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return true;
     return (req.actor.companyIds ?? []).includes(companyId);
-  }
-
-  function canCreateAgentsLegacy(agent: { permissions: Record<string, unknown> | null | undefined; role: string }) {
-    if (agent.role === "ceo") return true;
-    if (!agent.permissions || typeof agent.permissions !== "object") return false;
-    return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
   }
 
   async function assertCanAssignTasks(req: Request, companyId: string) {
@@ -179,7 +174,7 @@ export function issueRoutes(
       const allowedByGrant = await access.hasPermission(companyId, "agent", req.actor.agentId, "tasks:assign");
       if (allowedByGrant) return;
       const actorAgent = await agentsSvc.getById(req.actor.agentId);
-      if (actorAgent && actorAgent.companyId === companyId && canCreateAgentsLegacy(actorAgent)) return;
+      if (actorAgent && actorAgent.companyId === companyId && agentHasCreatePermission(actorAgent)) return;
       throw forbidden("Missing permission: tasks:assign");
     }
     throw unauthorized();

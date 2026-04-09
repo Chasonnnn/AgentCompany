@@ -243,7 +243,7 @@ describe("agent permission routes", () => {
     expect(res.body.access.taskAssignSource).toBe("explicit_grant");
   });
 
-  it("keeps task assignment enabled when agent creation privilege is enabled", async () => {
+  it("keeps task assignment enabled when capability-based create authority is enabled", async () => {
     mockAgentService.updatePermissions.mockResolvedValue({
       ...baseAgent,
       permissions: { canCreateAgents: true },
@@ -271,7 +271,7 @@ describe("agent permission routes", () => {
       "board-user",
     );
     expect(res.body.access.canAssignTasks).toBe(true);
-    expect(res.body.access.taskAssignSource).toBe("agent_creator");
+    expect(res.body.access.taskAssignSource).toBe("capability_profile");
   });
 
   it("exposes a dedicated agent route for the inbox mine view", async () => {

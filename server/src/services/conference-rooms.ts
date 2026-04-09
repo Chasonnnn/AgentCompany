@@ -100,8 +100,12 @@ export function conferenceRoomService(db: Db) {
       if (row.status === "terminated") {
         throw unprocessable("Terminated agents cannot be invited");
       }
-      if (row.orgLevel !== "executive" && row.orgLevel !== "director") {
-        throw unprocessable("Conference rooms only allow executive or director participants");
+      if (
+        row.operatingClass !== "executive" &&
+        row.operatingClass !== "project_leadership" &&
+        row.operatingClass !== "shared_service_lead"
+      ) {
+        throw unprocessable("Conference rooms only allow executive, project leadership, or shared-service lead participants");
       }
     }
     return rows;

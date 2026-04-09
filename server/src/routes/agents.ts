@@ -5,6 +5,7 @@ import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
+  AGENT_NAVIGATION_LAYOUTS,
   agentSkillSyncSchema,
   agentMineInboxQuerySchema,
   createAgentKeySchema,
@@ -70,6 +71,7 @@ import {
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
 import { getTelemetryClient } from "../telemetry.js";
+import { agentHasCreatePermission } from "../services/agent-permissions.js";
 
 export function agentRoutes(db: Db) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
@@ -112,11 +114,6 @@ export function agentRoutes(db: Db) {
     };
   }
 
-  function canCreateAgents(agent: { role: string; permissions: Record<string, unknown> | null | undefined }) {
-    if (!agent.permissions || typeof agent.permissions !== "object") return false;
-    return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
-  }
-
   async function buildAgentAccessState(agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>) {
     const membership = await access.getMembership(agent.companyId, "agent", agent.id);
     const grants = membership
@@ -124,19 +121,10 @@ export function agentRoutes(db: Db) {
       : [];
     const hasExplicitTaskAssignGrant = grants.some((grant) => grant.permissionKey === "tasks:assign");
 
-    if (agent.role === "ceo") {
+    if (agentHasCreatePermission(agent)) {
       return {
         canAssignTasks: true,
-        taskAssignSource: "ceo_role" as const,
-        membership,
-        grants,
-      };
-    }
-
-    if (canCreateAgents(agent)) {
-      return {
-        canAssignTasks: true,
-        taskAssignSource: "agent_creator" as const,
+        taskAssignSource: "capability_profile" as const,
         membership,
         grants,
       };
@@ -207,7 +195,7 @@ export function agentRoutes(db: Db) {
       throw forbidden("Agent key cannot access another company");
     }
     const allowedByGrant = await access.hasPermission(companyId, "agent", actorAgent.id, "agents:create");
-    if (!allowedByGrant && !canCreateAgents(actorAgent)) {
+    if (!allowedByGrant && !agentHasCreatePermission(actorAgent)) {
       throw forbidden("Missing permission: can create agents");
     }
     return actorAgent;
@@ -227,7 +215,7 @@ export function agentRoutes(db: Db) {
     const actorAgent = await svc.getById(req.actor.agentId);
     if (!actorAgent || actorAgent.companyId !== companyId) return false;
     const allowedByGrant = await access.hasPermission(companyId, "agent", actorAgent.id, "agents:create");
-    return allowedByGrant || canCreateAgents(actorAgent);
+    return allowedByGrant || agentHasCreatePermission(actorAgent);
   }
 
   async function buildSkippedWakeupResponse(
@@ -308,15 +296,14 @@ export function agentRoutes(db: Db) {
     }
 
     if (actorAgent.id === targetAgent.id) return;
-    if (actorAgent.role === "ceo") return;
     const allowedByGrant = await access.hasPermission(
       targetAgent.companyId,
       "agent",
       actorAgent.id,
       "agents:create",
     );
-    if (allowedByGrant || canCreateAgents(actorAgent)) return;
-    throw forbidden("Only CEO or agent creators can modify other agents");
+    if (allowedByGrant || agentHasCreatePermission(actorAgent)) return;
+    throw forbidden("Only agents with create authority can modify other agents");
   }
 
   async function assertCanReadAgent(req: Request, targetAgent: { companyId: string }) {
@@ -1041,6 +1028,24 @@ export function agentRoutes(db: Db) {
     res.json(hierarchy);
   });
 
+  router.get("/companies/:companyId/operating-hierarchy", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const hierarchy = await svc.operatingHierarchyForCompany(companyId);
+    res.json(hierarchy);
+  });
+
+  router.get("/companies/:companyId/agent-navigation", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const requestedLayout = typeof req.query.layout === "string" ? req.query.layout : "department";
+    const layout = AGENT_NAVIGATION_LAYOUTS.includes(requestedLayout as (typeof AGENT_NAVIGATION_LAYOUTS)[number])
+      ? (requestedLayout as "department" | "project")
+      : "department";
+    const navigation = await svc.navigationForCompany(companyId, layout);
+    res.json(navigation);
+  });
+
   router.get("/companies/:companyId/org.svg", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -1549,8 +1554,8 @@ export function agentRoutes(db: Db) {
         res.status(403).json({ error: "Forbidden" });
         return;
       }
-      if (actorAgent.role !== "ceo") {
-        res.status(403).json({ error: "Only CEO can manage permissions" });
+      if (!agentHasCreatePermission(actorAgent)) {
+        res.status(403).json({ error: "Only agents with create authority can manage permissions" });
         return;
       }
     }
@@ -1562,7 +1567,7 @@ export function agentRoutes(db: Db) {
     }
 
     const effectiveCanAssignTasks =
-      agent.role === "ceo" || Boolean(agent.permissions?.canCreateAgents) || req.body.canAssignTasks;
+      agentHasCreatePermission(agent) || req.body.canAssignTasks;
     await access.ensureMembership(agent.companyId, "agent", agent.id, "member", "active");
     await access.setPrincipalPermission(
       agent.companyId,

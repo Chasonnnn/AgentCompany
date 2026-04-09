@@ -1,8 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, desc, eq, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
+  agentProjectScopes,
+  agentSecondaryRelationships,
+  agentTemplateRevisions,
+  agentTemplates,
   agentConfigRevisions,
   agentApiKeys,
   agentRuntimeState,
@@ -15,18 +19,27 @@ import {
   issueExecutionDecisions,
   issues,
   issueComments,
+  projects,
 } from "@paperclipai/db";
 import {
   AGENT_ROLES,
   AGENT_DEPARTMENT_LABELS,
   type AgentDepartmentKey,
+  type AgentNavigationLayout,
+  type AgentOperatingClass,
   type AgentOrgLevel,
+  type AgentProjectRole,
   type AgentRole,
   isUuidLike,
   normalizeAgentUrlKey,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
-import { normalizeAgentPermissions } from "./agent-permissions.js";
+import {
+  agentHasCreatePermission,
+  defaultCapabilityProfileKeyForAgent,
+  defaultOperatingClassForLegacyAgent,
+  normalizeAgentPermissions,
+} from "./agent-permissions.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 
 function hashToken(token: string) {
@@ -38,11 +51,17 @@ function createToken() {
 }
 
 const CONFIG_REVISION_FIELDS = [
+  "templateId",
+  "templateRevisionId",
   "name",
   "role",
   "title",
+  "icon",
   "reportsTo",
   "orgLevel",
+  "operatingClass",
+  "capabilityProfileKey",
+  "archetypeKey",
   "departmentKey",
   "departmentName",
   "capabilities",
@@ -50,11 +69,16 @@ const CONFIG_REVISION_FIELDS = [
   "adapterConfig",
   "runtimeConfig",
   "budgetMonthlyCents",
+  "requestedByPrincipalType",
+  "requestedByPrincipalId",
+  "requestedForProjectId",
+  "requestedReason",
   "metadata",
 ] as const;
 
 type ConfigRevisionField = (typeof CONFIG_REVISION_FIELDS)[number];
 type AgentConfigSnapshot = Pick<typeof agents.$inferSelect, ConfigRevisionField>;
+type DbExecutor = Pick<Db, "select" | "insert" | "update">;
 
 interface RevisionMetadata {
   createdByAgentId?: string | null;
@@ -110,15 +134,24 @@ interface AgentHierarchyState {
   role: string;
   reportsTo: string | null;
   orgLevel: AgentOrgLevel;
+  operatingClass: AgentOperatingClass;
+  capabilityProfileKey: string;
+  archetypeKey: string;
   departmentKey: AgentDepartmentKey;
   departmentName: string | null;
 }
 
 interface NormalizedAgentRow
-  extends Omit<typeof agents.$inferSelect, "role" | "orgLevel" | "departmentKey" | "departmentName" | "permissions"> {
+  extends Omit<
+    typeof agents.$inferSelect,
+    "role" | "orgLevel" | "operatingClass" | "capabilityProfileKey" | "departmentKey" | "departmentName" | "permissions"
+  > {
   role: AgentRole;
   urlKey: string;
   orgLevel: AgentOrgLevel;
+  operatingClass: AgentOperatingClass;
+  capabilityProfileKey: string;
+  archetypeKey: string;
   departmentKey: AgentDepartmentKey;
   departmentName: string | null;
   permissions: ReturnType<typeof normalizeAgentPermissions>;
@@ -136,6 +169,45 @@ interface HierarchyDepartmentGroup {
 interface HierarchyExecutiveGroup {
   executive: NormalizedAgentRow;
   departments: Map<string, HierarchyDepartmentGroup>;
+}
+
+interface ActiveScopeRow {
+  scope: typeof agentProjectScopes.$inferSelect;
+  projectId: string;
+  projectName: string;
+  projectColor: string | null;
+}
+
+interface ProjectPodGroup {
+  projectId: string;
+  projectName: string;
+  color: string | null;
+  leadership: NormalizedAgentRow[];
+  workers: NormalizedAgentRow[];
+  consultants: NormalizedAgentRow[];
+}
+
+interface NavigationTeamGroup {
+  key: string;
+  label: string;
+  leaders: NormalizedAgentRow[];
+  workers: NormalizedAgentRow[];
+}
+
+interface NavigationProjectGroup {
+  projectId: string;
+  projectName: string;
+  color: string | null;
+  leaders: NormalizedAgentRow[];
+  teams: Map<string, NavigationTeamGroup>;
+  workers: NormalizedAgentRow[];
+}
+
+interface NavigationDepartmentGroup {
+  key: AgentDepartmentKey | "shared_service";
+  name: string;
+  leaders: NormalizedAgentRow[];
+  projects: Map<string, NavigationProjectGroup>;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -162,11 +234,17 @@ function buildConfigSnapshot(
       ? sanitizeRecord(row.metadata as Record<string, unknown>)
       : row.metadata ?? null;
   return {
+    templateId: row.templateId,
+    templateRevisionId: row.templateRevisionId,
     name: row.name,
     role: row.role,
     title: row.title,
+    icon: row.icon,
     reportsTo: row.reportsTo,
     orgLevel: row.orgLevel,
+    operatingClass: row.operatingClass,
+    capabilityProfileKey: row.capabilityProfileKey,
+    archetypeKey: row.archetypeKey,
     departmentKey: row.departmentKey,
     departmentName: row.departmentName,
     capabilities: row.capabilities,
@@ -174,6 +252,10 @@ function buildConfigSnapshot(
     adapterConfig,
     runtimeConfig,
     budgetMonthlyCents: row.budgetMonthlyCents,
+    requestedByPrincipalType: row.requestedByPrincipalType,
+    requestedByPrincipalId: row.requestedByPrincipalId,
+    requestedForProjectId: row.requestedForProjectId,
+    requestedReason: row.requestedReason,
     metadata,
   };
 }
@@ -213,14 +295,36 @@ function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agents.$infe
   }
 
   return {
+    templateId: typeof snapshot.templateId === "string" || snapshot.templateId === null ? snapshot.templateId : null,
+    templateRevisionId:
+      typeof snapshot.templateRevisionId === "string" || snapshot.templateRevisionId === null
+        ? snapshot.templateRevisionId
+        : null,
     name: snapshot.name,
     role: normalizeAgentRole(snapshot.role),
     title: typeof snapshot.title === "string" || snapshot.title === null ? snapshot.title : null,
+    icon: typeof snapshot.icon === "string" || snapshot.icon === null ? snapshot.icon : null,
     reportsTo:
       typeof snapshot.reportsTo === "string" || snapshot.reportsTo === null ? snapshot.reportsTo : null,
     orgLevel:
       snapshot.orgLevel === "executive" || snapshot.orgLevel === "director" || snapshot.orgLevel === "staff"
         ? snapshot.orgLevel
+        : undefined,
+    operatingClass:
+      snapshot.operatingClass === "executive" ||
+      snapshot.operatingClass === "project_leadership" ||
+      snapshot.operatingClass === "worker" ||
+      snapshot.operatingClass === "shared_service_lead" ||
+      snapshot.operatingClass === "consultant"
+        ? snapshot.operatingClass
+        : undefined,
+    capabilityProfileKey:
+      typeof snapshot.capabilityProfileKey === "string" && snapshot.capabilityProfileKey.trim().length > 0
+        ? snapshot.capabilityProfileKey
+        : undefined,
+    archetypeKey:
+      typeof snapshot.archetypeKey === "string" && snapshot.archetypeKey.trim().length > 0
+        ? snapshot.archetypeKey.trim()
         : undefined,
     departmentKey:
       snapshot.departmentKey === "executive" ||
@@ -247,6 +351,24 @@ function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agents.$infe
     adapterConfig: isPlainRecord(snapshot.adapterConfig) ? snapshot.adapterConfig : {},
     runtimeConfig: isPlainRecord(snapshot.runtimeConfig) ? snapshot.runtimeConfig : {},
     budgetMonthlyCents: Math.max(0, Math.floor(snapshot.budgetMonthlyCents)),
+    requestedByPrincipalType:
+      snapshot.requestedByPrincipalType === "human_operator" ||
+      snapshot.requestedByPrincipalType === "agent_instance" ||
+      snapshot.requestedByPrincipalType === "system_process"
+        ? snapshot.requestedByPrincipalType
+        : undefined,
+    requestedByPrincipalId:
+      typeof snapshot.requestedByPrincipalId === "string" || snapshot.requestedByPrincipalId === null
+        ? snapshot.requestedByPrincipalId
+        : null,
+    requestedForProjectId:
+      typeof snapshot.requestedForProjectId === "string" || snapshot.requestedForProjectId === null
+        ? snapshot.requestedForProjectId
+        : null,
+    requestedReason:
+      typeof snapshot.requestedReason === "string" || snapshot.requestedReason === null
+        ? snapshot.requestedReason
+        : null,
     metadata: isPlainRecord(snapshot.metadata) || snapshot.metadata === null ? snapshot.metadata : null,
   };
 }
@@ -286,6 +408,35 @@ function defaultOrgLevelForRole(role: string): AgentOrgLevel {
   return EXECUTIVE_ROLES.has(role) ? "executive" : "staff";
 }
 
+function defaultArchetypeKeyForRole(role: string): string {
+  switch (role) {
+    case "ceo":
+      return "chief_executive";
+    case "cto":
+      return "chief_technology_officer";
+    case "cfo":
+      return "chief_finance_officer";
+    case "cmo":
+      return "chief_marketing_officer";
+    case "coo":
+      return "chief_of_staff";
+    case "pm":
+      return "product_manager";
+    case "qa":
+      return "qa_engineer";
+    case "devops":
+      return "devops_engineer";
+    case "designer":
+      return "designer";
+    case "researcher":
+      return "researcher";
+    case "engineer":
+      return "engineer";
+    default:
+      return "general";
+  }
+}
+
 function normalizeAgentRole(role: unknown): AgentRole {
   return AGENT_ROLES.includes(role as AgentRole) ? (role as AgentRole) : "general";
 }
@@ -319,6 +470,32 @@ function departmentSortKey(key: AgentDepartmentKey, name: string) {
   return `${index === -1 ? 99 : index}:${name.toLowerCase()}`;
 }
 
+function sortAgentsByName<T extends { name: string }>(items: T[]) {
+  return [...items].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function sortOperatingAgents<T extends { name: string; role: string; operatingClass: AgentOperatingClass }>(
+  items: T[],
+) {
+  return [...items].sort((left, right) => {
+    if (left.operatingClass === "executive" && right.operatingClass === "executive") {
+      return executiveSortKey(left.role, left.name).localeCompare(executiveSortKey(right.role, right.name));
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function dedupeById<T extends { id: string }>(items: T[]) {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const item of items) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    unique.push(item);
+  }
+  return unique;
+}
+
 export function agentService(db: Db) {
   function currentUtcMonthWindow(now = new Date()) {
     const year = now.getUTCFullYear();
@@ -338,14 +515,24 @@ export function agentService(db: Db) {
 
   function normalizeAgentRow(row: typeof agents.$inferSelect): NormalizedAgentRow {
     const orgLevel = row.orgLevel ?? defaultOrgLevelForRole(row.role);
+    const operatingClass = row.operatingClass ?? defaultOperatingClassForLegacyAgent(row.role, orgLevel);
+    const capabilityProfileKey =
+      row.capabilityProfileKey ?? defaultCapabilityProfileKeyForAgent({ role: row.role, operatingClass, orgLevel });
     const departmentKey = row.departmentKey ?? defaultDepartmentKeyForRole(row.role);
     return withUrlKey({
       ...row,
       role: normalizeAgentRole(row.role),
       orgLevel,
+      operatingClass,
+      capabilityProfileKey,
+      archetypeKey: row.archetypeKey?.trim() || defaultArchetypeKeyForRole(row.role),
       departmentKey,
       departmentName: normalizeDepartmentName(departmentKey, row.departmentName),
-      permissions: normalizeAgentPermissions(row.permissions, row.role),
+      permissions: normalizeAgentPermissions(row.permissions, row.role, {
+        capabilityProfileKey,
+        operatingClass,
+        orgLevel,
+      }),
     });
   }
 
@@ -359,6 +546,23 @@ export function agentService(db: Db) {
         ? data.reportsTo ?? null
         : existing?.reportsTo ?? null;
     const orgLevel = (data.orgLevel ?? existing?.orgLevel ?? defaultOrgLevelForRole(role)) as AgentOrgLevel;
+    const operatingClass = (
+      data.operatingClass
+      ?? existing?.operatingClass
+      ?? defaultOperatingClassForLegacyAgent(role, orgLevel)
+    ) as AgentOperatingClass;
+    const capabilityProfileKey = (
+      data.capabilityProfileKey
+      ?? existing?.capabilityProfileKey
+      ?? defaultCapabilityProfileKeyForAgent({ role, operatingClass, orgLevel })
+    ) as string;
+    const archetypeKey = (
+      typeof data.archetypeKey === "string" && data.archetypeKey.trim()
+        ? data.archetypeKey.trim()
+        : typeof existing?.archetypeKey === "string" && existing.archetypeKey.trim()
+          ? existing.archetypeKey.trim()
+          : defaultArchetypeKeyForRole(role)
+    );
     const departmentKey = (data.departmentKey ?? existing?.departmentKey ?? defaultDepartmentKeyForRole(role)) as AgentDepartmentKey;
     const departmentName = normalizeDepartmentName(
       departmentKey,
@@ -373,6 +577,9 @@ export function agentService(db: Db) {
       role,
       reportsTo,
       orgLevel,
+      operatingClass,
+      capabilityProfileKey,
+      archetypeKey,
       departmentKey,
       departmentName,
     };
@@ -470,6 +677,100 @@ export function agentService(db: Db) {
     return manager;
   }
 
+  function buildTemplateSnapshot(row: Pick<typeof agents.$inferSelect, ConfigRevisionField>) {
+    return buildConfigSnapshot(row) as unknown as Record<string, unknown>;
+  }
+
+  async function ensureTemplateRevisionLink(
+    executor: DbExecutor,
+    agentRow: NormalizedAgentRow,
+    options?: RevisionMetadata,
+  ) {
+    let templateId = agentRow.templateId ?? null;
+    if (!templateId) {
+      const createdTemplate = await executor
+        .insert(agentTemplates)
+        .values({
+          companyId: agentRow.companyId,
+          name: agentRow.name,
+          role: agentRow.role,
+          operatingClass: agentRow.operatingClass,
+          capabilityProfileKey: agentRow.capabilityProfileKey,
+          archetypeKey: agentRow.archetypeKey,
+          metadata: agentRow.metadata ?? null,
+          updatedAt: new Date(),
+        })
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      if (!createdTemplate) {
+        throw unprocessable("Unable to create agent template");
+      }
+      templateId = createdTemplate.id;
+    } else {
+      await executor
+        .update(agentTemplates)
+        .set({
+          name: agentRow.name,
+          role: agentRow.role,
+          operatingClass: agentRow.operatingClass,
+          capabilityProfileKey: agentRow.capabilityProfileKey,
+          archetypeKey: agentRow.archetypeKey,
+          metadata: agentRow.metadata ?? null,
+          updatedAt: new Date(),
+        })
+        .where(eq(agentTemplates.id, templateId));
+    }
+
+    const snapshot = buildTemplateSnapshot(agentRow);
+    const currentRevision = agentRow.templateRevisionId
+      ? await executor
+          .select()
+          .from(agentTemplateRevisions)
+          .where(eq(agentTemplateRevisions.id, agentRow.templateRevisionId))
+          .then((rows) => rows[0] ?? null)
+      : null;
+
+    let revisionId = agentRow.templateRevisionId ?? null;
+    if (!currentRevision || !jsonEqual(currentRevision.snapshot, snapshot)) {
+      const latestRevision = await executor
+        .select({ revisionNumber: agentTemplateRevisions.revisionNumber })
+        .from(agentTemplateRevisions)
+        .where(eq(agentTemplateRevisions.templateId, templateId))
+        .orderBy(desc(agentTemplateRevisions.revisionNumber))
+        .then((rows) => rows[0] ?? null);
+
+      const createdRevision = await executor
+        .insert(agentTemplateRevisions)
+        .values({
+          companyId: agentRow.companyId,
+          templateId,
+          revisionNumber: (latestRevision?.revisionNumber ?? 0) + 1,
+          snapshot,
+          createdByAgentId: options?.createdByAgentId ?? null,
+          createdByUserId: options?.createdByUserId ?? null,
+        })
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      if (!createdRevision) {
+        throw unprocessable("Unable to create agent template revision");
+      }
+      revisionId = createdRevision.id;
+    }
+
+    if (templateId !== agentRow.templateId || revisionId !== agentRow.templateRevisionId) {
+      await executor
+        .update(agents)
+        .set({
+          templateId,
+          templateRevisionId: revisionId,
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, agentRow.id));
+    }
+
+    return { templateId, templateRevisionId: revisionId };
+  }
+
   async function assertNoCycle(agentId: string, reportsTo: string | null | undefined) {
     if (!reportsTo) return;
     if (reportsTo === agentId) throw unprocessable("Agent cannot report to itself");
@@ -507,6 +808,230 @@ export function agentService(db: Db) {
     }
   }
 
+  async function listActiveScopesForCompany(companyId: string): Promise<ActiveScopeRow[]> {
+    const now = new Date();
+    const rows = await db
+      .select({
+        scope: agentProjectScopes,
+        projectId: projects.id,
+        projectName: projects.name,
+        projectColor: projects.color,
+      })
+      .from(agentProjectScopes)
+      .innerJoin(
+        projects,
+        and(
+          eq(agentProjectScopes.projectId, projects.id),
+          eq(agentProjectScopes.companyId, projects.companyId),
+        ),
+      )
+      .where(
+        and(
+          eq(agentProjectScopes.companyId, companyId),
+          or(isNull(agentProjectScopes.activeTo), gt(agentProjectScopes.activeTo, now)),
+        ),
+      );
+
+    return rows.map((row) => ({
+      scope: row.scope,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectColor: row.projectColor,
+    }));
+  }
+
+  function toOperatingSummary(row: NormalizedAgentRow) {
+    return {
+      id: row.id,
+      name: row.name,
+      urlKey: row.urlKey,
+      role: row.role,
+      title: row.title ?? null,
+      icon: row.icon ?? null,
+      status: row.status,
+      reportsTo: row.reportsTo ?? null,
+      orgLevel: row.orgLevel,
+      operatingClass: row.operatingClass,
+      capabilityProfileKey: row.capabilityProfileKey,
+      archetypeKey: row.archetypeKey,
+      departmentKey: row.departmentKey,
+      departmentName: row.departmentName ?? null,
+    };
+  }
+
+  function buildProjectPodGroups(
+    scopeRows: ActiveScopeRow[],
+    agentsById: Map<string, NormalizedAgentRow>,
+  ): Map<string, ProjectPodGroup> {
+    const groups = new Map<string, ProjectPodGroup>();
+
+    for (const scopeRow of scopeRows) {
+      const agent = agentsById.get(scopeRow.scope.agentId);
+      if (!agent) continue;
+
+      const group = groups.get(scopeRow.projectId) ?? {
+        projectId: scopeRow.projectId,
+        projectName: scopeRow.projectName,
+        color: scopeRow.projectColor,
+        leadership: [],
+        workers: [],
+        consultants: [],
+      };
+
+      if (scopeRow.scope.scopeMode === "execution") {
+        group.workers.push(agent);
+      } else if (scopeRow.scope.scopeMode === "consulting") {
+        group.consultants.push(agent);
+      } else {
+        group.leadership.push(agent);
+      }
+
+      groups.set(scopeRow.projectId, group);
+    }
+
+    return groups;
+  }
+
+  function buildDepartmentProjectNode(
+    scopeRow: ActiveScopeRow,
+    agent: NormalizedAgentRow,
+    group: NavigationDepartmentGroup,
+  ) {
+    const projectGroup = group.projects.get(scopeRow.projectId) ?? {
+      projectId: scopeRow.projectId,
+      projectName: scopeRow.projectName,
+      color: scopeRow.projectColor,
+      leaders: [],
+      teams: new Map<string, NavigationTeamGroup>(),
+      workers: [],
+    };
+
+    const trimmedWorkstreamLabel = scopeRow.scope.workstreamLabel?.trim() || null;
+    const teamKey = scopeRow.scope.workstreamKey?.trim() || trimmedWorkstreamLabel;
+
+    if (scopeRow.scope.scopeMode === "execution" || scopeRow.scope.scopeMode === "consulting") {
+      if (teamKey && trimmedWorkstreamLabel) {
+        const team = projectGroup.teams.get(teamKey) ?? {
+          key: teamKey,
+          label: trimmedWorkstreamLabel,
+          leaders: [],
+          workers: [],
+        };
+        team.workers.push(agent);
+        projectGroup.teams.set(teamKey, team);
+      } else {
+        projectGroup.workers.push(agent);
+      }
+    } else if (teamKey && trimmedWorkstreamLabel) {
+      const team = projectGroup.teams.get(teamKey) ?? {
+        key: teamKey,
+        label: trimmedWorkstreamLabel,
+        leaders: [],
+        workers: [],
+      };
+      team.leaders.push(agent);
+      projectGroup.teams.set(teamKey, team);
+      projectGroup.leaders.push(agent);
+    } else {
+      projectGroup.leaders.push(agent);
+    }
+
+    group.projects.set(scopeRow.projectId, projectGroup);
+  }
+
+  function serializeNavigationProject(group: NavigationProjectGroup) {
+    return {
+      projectId: group.projectId,
+      projectName: group.projectName,
+      color: group.color,
+      leaders: sortOperatingAgents(dedupeById(group.leaders)).map(toOperatingSummary),
+      teams: Array.from(group.teams.values())
+        .sort((left, right) => left.label.localeCompare(right.label))
+        .map((team) => ({
+          key: team.key,
+          label: team.label,
+          leaders: sortOperatingAgents(dedupeById(team.leaders)).map(toOperatingSummary),
+          workers: sortOperatingAgents(dedupeById(team.workers)).map(toOperatingSummary),
+        })),
+      workers: sortOperatingAgents(dedupeById(group.workers)).map(toOperatingSummary),
+    };
+  }
+
+  function buildNavigationByDepartment(
+    scopeRows: ActiveScopeRow[],
+    agentsById: Map<string, NormalizedAgentRow>,
+  ) {
+    const departments = new Map<string, NavigationDepartmentGroup>();
+    const sharedServices = new Map<string, NavigationDepartmentGroup>();
+
+    for (const agent of agentsById.values()) {
+      if (agent.operatingClass !== "shared_service_lead") continue;
+      const departmentName = departmentDisplayName(agent.departmentKey, agent.departmentName);
+      const key = `${agent.departmentKey}:${departmentName.toLowerCase()}`;
+      const group = sharedServices.get(key) ?? {
+        key: agent.departmentKey,
+        name: departmentName,
+        leaders: [],
+        projects: new Map<string, NavigationProjectGroup>(),
+      };
+      group.leaders.push(agent);
+      sharedServices.set(key, group);
+    }
+
+    for (const scopeRow of scopeRows) {
+      const agent = agentsById.get(scopeRow.scope.agentId);
+      if (!agent || agent.operatingClass === "executive") continue;
+
+      const departmentName = departmentDisplayName(agent.departmentKey, agent.departmentName);
+      const departmentKeyValue = `${agent.departmentKey}:${departmentName.toLowerCase()}`;
+      const targetMap = agent.operatingClass === "shared_service_lead" ? sharedServices : departments;
+      const group = targetMap.get(departmentKeyValue) ?? {
+        key: agent.departmentKey,
+        name: departmentName,
+        leaders: [],
+        projects: new Map<string, NavigationProjectGroup>(),
+      };
+
+      if (
+        scopeRow.scope.scopeMode === "leadership_summary" ||
+        scopeRow.scope.scopeMode === "leadership_raw" ||
+        agent.operatingClass === "project_leadership"
+      ) {
+        group.leaders.push(agent);
+      }
+
+      buildDepartmentProjectNode(scopeRow, agent, group);
+      targetMap.set(departmentKeyValue, group);
+    }
+
+    return {
+      departments: Array.from(departments.values())
+        .sort((left, right) => departmentSortKey(left.key === "shared_service" ? "general" : left.key, left.name).localeCompare(
+          departmentSortKey(right.key === "shared_service" ? "general" : right.key, right.name),
+        ))
+        .map((group) => ({
+          key: group.key,
+          name: group.name,
+          leaders: sortOperatingAgents(dedupeById(group.leaders)).map(toOperatingSummary),
+          projects: Array.from(group.projects.values())
+            .sort((left, right) => left.projectName.localeCompare(right.projectName))
+            .map(serializeNavigationProject),
+        })),
+      sharedServices: Array.from(sharedServices.values())
+        .sort((left, right) => departmentSortKey(left.key === "shared_service" ? "general" : left.key, left.name).localeCompare(
+          departmentSortKey(right.key === "shared_service" ? "general" : right.key, right.name),
+        ))
+        .map((group) => ({
+          key: group.key,
+          name: group.name,
+          leaders: sortOperatingAgents(dedupeById(group.leaders)).map(toOperatingSummary),
+          projects: Array.from(group.projects.values())
+            .sort((left, right) => left.projectName.localeCompare(right.projectName))
+            .map(serializeNavigationProject),
+        })),
+    };
+  }
+
   async function updateAgent(
     id: string,
     data: Partial<typeof agents.$inferInsert>,
@@ -541,24 +1066,41 @@ export function agentService(db: Db) {
     const normalizedPatch = {
       ...data,
       orgLevel: hierarchyState.orgLevel,
+      operatingClass: hierarchyState.operatingClass,
+      capabilityProfileKey: hierarchyState.capabilityProfileKey,
+      archetypeKey: hierarchyState.archetypeKey,
       departmentKey: hierarchyState.departmentKey,
       departmentName: hierarchyState.departmentName,
     } as Partial<typeof agents.$inferInsert>;
     if (data.permissions !== undefined) {
       const role = (data.role ?? existing.role) as string;
-      normalizedPatch.permissions = normalizeAgentPermissions(data.permissions, role);
+      normalizedPatch.permissions = normalizeAgentPermissions(data.permissions, role, {
+        capabilityProfileKey: hierarchyState.capabilityProfileKey,
+        operatingClass: hierarchyState.operatingClass,
+        orgLevel: hierarchyState.orgLevel,
+      });
     }
 
     const shouldRecordRevision = Boolean(options?.recordRevision) && hasConfigPatchFields(normalizedPatch);
     const beforeConfig = shouldRecordRevision ? buildConfigSnapshot(existing) : null;
 
-    const updated = await db
-      .update(agents)
-      .set({ ...normalizedPatch, updatedAt: new Date() })
-      .where(eq(agents.id, id))
-      .returning()
-      .then((rows) => rows[0] ?? null);
-    const normalizedUpdated = updated ? normalizeAgentRow(updated) : null;
+    const normalizedUpdated = await db.transaction(async (tx) => {
+      const updated = await tx
+        .update(agents)
+        .set({ ...normalizedPatch, updatedAt: new Date() })
+        .where(eq(agents.id, id))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      const normalized = updated ? normalizeAgentRow(updated) : null;
+      if (!normalized) return null;
+
+      const templateLinked = await ensureTemplateRevisionLink(tx, normalized, options?.recordRevision);
+      return normalizeAgentRow({
+        ...updated,
+        templateId: templateLinked.templateId,
+        templateRevisionId: templateLinked.templateRevisionId,
+      });
+    });
 
     if (normalizedUpdated && shouldRecordRevision && beforeConfig) {
       const afterConfig = buildConfigSnapshot(normalizedUpdated);
@@ -605,23 +1147,40 @@ export function agentService(db: Db) {
       const uniqueName = deduplicateAgentName(data.name, existingAgents);
 
       const role = data.role ?? "general";
-      const normalizedPermissions = normalizeAgentPermissions(data.permissions, role);
-      const created = await db
-        .insert(agents)
-        .values({
-          ...data,
-          name: uniqueName,
-          companyId,
-          role,
-          permissions: normalizedPermissions,
-          orgLevel: hierarchyState.orgLevel,
-          departmentKey: hierarchyState.departmentKey,
-          departmentName: hierarchyState.departmentName,
-        })
-        .returning()
-        .then((rows) => rows[0]);
+      const normalizedPermissions = normalizeAgentPermissions(data.permissions, role, {
+        capabilityProfileKey: hierarchyState.capabilityProfileKey,
+        operatingClass: hierarchyState.operatingClass,
+        orgLevel: hierarchyState.orgLevel,
+      });
+      const created = await db.transaction(async (tx) => {
+        const inserted = await tx
+          .insert(agents)
+          .values({
+            ...data,
+            name: uniqueName,
+            companyId,
+            role,
+            permissions: normalizedPermissions,
+            orgLevel: hierarchyState.orgLevel,
+            operatingClass: hierarchyState.operatingClass,
+            capabilityProfileKey: hierarchyState.capabilityProfileKey,
+            archetypeKey: hierarchyState.archetypeKey,
+            departmentKey: hierarchyState.departmentKey,
+            departmentName: hierarchyState.departmentName,
+          })
+          .returning()
+          .then((rows) => rows[0]);
 
-      return normalizeAgentRow(created);
+        const normalizedInserted = normalizeAgentRow(inserted);
+        const templateLinked = await ensureTemplateRevisionLink(tx, normalizedInserted);
+        return normalizeAgentRow({
+          ...inserted,
+          templateId: templateLinked.templateId,
+          templateRevisionId: templateLinked.templateRevisionId,
+        });
+      });
+
+      return created;
     },
 
     update: updateAgent,
@@ -744,7 +1303,11 @@ export function agentService(db: Db) {
       const updated = await db
         .update(agents)
         .set({
-          permissions: normalizeAgentPermissions(permissions, existing.role),
+          permissions: normalizeAgentPermissions(permissions, existing.role, {
+            capabilityProfileKey: existing.capabilityProfileKey,
+            operatingClass: existing.operatingClass,
+            orgLevel: existing.orgLevel,
+          }),
           updatedAt: new Date(),
         })
         .where(eq(agents.id, id))
@@ -971,6 +1534,117 @@ export function agentService(db: Db) {
           directors: unassigned.directors.sort((left, right) => left.name.localeCompare(right.name)),
           staff: unassigned.staff.sort((left, right) => left.name.localeCompare(right.name)),
         },
+      };
+    },
+
+    listProjectScopesForCompany: async (companyId: string) => {
+      const scopeRows = await listActiveScopesForCompany(companyId);
+      return scopeRows.map((row) => row.scope);
+    },
+
+    operatingHierarchyForCompany: async (companyId: string) => {
+      const [rows, scopeRows] = await Promise.all([
+        db
+          .select()
+          .from(agents)
+          .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated"))),
+        listActiveScopesForCompany(companyId),
+      ]);
+
+      const normalizedRows: NormalizedAgentRow[] = rows.map(normalizeAgentRow);
+      const byId = new Map(normalizedRows.map((row) => [row.id, row]));
+      const projectPods = buildProjectPodGroups(scopeRows, byId);
+      const sharedServicesByDepartment = new Map<string, NavigationDepartmentGroup>();
+      const scopedAgentIds = new Set(scopeRows.map((row) => row.scope.agentId));
+      const unassigned: NormalizedAgentRow[] = [];
+
+      for (const row of normalizedRows) {
+        if (row.operatingClass === "shared_service_lead") {
+          const departmentName = departmentDisplayName(row.departmentKey, row.departmentName);
+          const key = `${row.departmentKey}:${departmentName.toLowerCase()}`;
+          const group = sharedServicesByDepartment.get(key) ?? {
+            key: row.departmentKey,
+            name: departmentName,
+            leaders: [],
+            projects: new Map<string, NavigationProjectGroup>(),
+          };
+          group.leaders.push(row);
+          sharedServicesByDepartment.set(key, group);
+          continue;
+        }
+        if (row.operatingClass === "executive") continue;
+        if (!scopedAgentIds.has(row.id)) {
+          unassigned.push(row);
+        }
+      }
+
+      return {
+        executiveOffice: sortOperatingAgents(
+          normalizedRows.filter((row) => row.operatingClass === "executive"),
+        ).map(toOperatingSummary),
+        projectPods: Array.from(projectPods.values())
+          .sort((left, right) => left.projectName.localeCompare(right.projectName))
+          .map((group) => ({
+            projectId: group.projectId,
+            projectName: group.projectName,
+            color: group.color,
+            leadership: sortOperatingAgents(dedupeById(group.leadership)).map(toOperatingSummary),
+            workers: sortOperatingAgents(dedupeById(group.workers)).map(toOperatingSummary),
+            consultants: sortOperatingAgents(dedupeById(group.consultants)).map(toOperatingSummary),
+          })),
+        sharedServices: Array.from(sharedServicesByDepartment.values())
+          .sort((left, right) => departmentSortKey(left.key === "shared_service" ? "general" : left.key, left.name).localeCompare(
+            departmentSortKey(right.key === "shared_service" ? "general" : right.key, right.name),
+          ))
+          .map((group) => ({
+            key: group.key,
+            name: group.name,
+            leaders: sortOperatingAgents(dedupeById(group.leaders)).map(toOperatingSummary),
+            projects: [],
+          })),
+        unassigned: sortOperatingAgents(dedupeById(unassigned)).map(toOperatingSummary),
+      };
+    },
+
+    navigationForCompany: async (companyId: string, layout: AgentNavigationLayout = "department") => {
+      const [rows, scopeRows] = await Promise.all([
+        db
+          .select()
+          .from(agents)
+          .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated"))),
+        listActiveScopesForCompany(companyId),
+      ]);
+      const normalizedRows: NormalizedAgentRow[] = rows.map(normalizeAgentRow);
+      const byId = new Map(normalizedRows.map((row) => [row.id, row]));
+      const projectPods = buildProjectPodGroups(scopeRows, byId);
+      const departmentNavigation = buildNavigationByDepartment(scopeRows, byId);
+      const scopedAgentIds = new Set(scopeRows.map((row) => row.scope.agentId));
+
+      return {
+        layout,
+        executives: sortOperatingAgents(
+          normalizedRows.filter((row) => row.operatingClass === "executive"),
+        ).map(toOperatingSummary),
+        departments: departmentNavigation.departments,
+        projectPods: Array.from(projectPods.values())
+          .sort((left, right) => left.projectName.localeCompare(right.projectName))
+          .map((group) => ({
+            projectId: group.projectId,
+            projectName: group.projectName,
+            color: group.color,
+            leaders: sortOperatingAgents(dedupeById(group.leadership)).map(toOperatingSummary),
+            teams: [],
+            workers: sortOperatingAgents(dedupeById([...group.workers, ...group.consultants])).map(toOperatingSummary),
+          })),
+        sharedServices: departmentNavigation.sharedServices,
+        unassigned: sortOperatingAgents(
+          normalizedRows.filter(
+            (row) =>
+              row.operatingClass !== "executive" &&
+              row.operatingClass !== "shared_service_lead" &&
+              !scopedAgentIds.has(row.id),
+          ),
+        ).map(toOperatingSummary),
       };
     },
 
