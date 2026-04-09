@@ -8,7 +8,15 @@ import {
   jsonb,
   index,
 } from "drizzle-orm/pg-core";
-import type { AgentDepartmentKey, AgentOrgLevel, AgentRole, AgentStatus } from "@paperclipai/shared";
+import type {
+  AgentCapabilityProfileKey,
+  AgentDepartmentKey,
+  AgentOperatingClass,
+  AgentOrgLevel,
+  AgentRole,
+  AgentStatus,
+  ActorPrincipalKind,
+} from "@paperclipai/shared";
 import { companies } from "./companies.js";
 
 export const agents = pgTable(
@@ -22,7 +30,15 @@ export const agents = pgTable(
     icon: text("icon"),
     status: text("status").$type<AgentStatus>().notNull().default("idle"),
     reportsTo: uuid("reports_to").references((): AnyPgColumn => agents.id),
+    templateId: uuid("template_id"),
+    templateRevisionId: uuid("template_revision_id"),
     orgLevel: text("org_level").$type<AgentOrgLevel>().notNull().default("staff"),
+    operatingClass: text("operating_class").$type<AgentOperatingClass>().notNull().default("worker"),
+    capabilityProfileKey: text("capability_profile_key")
+      .$type<AgentCapabilityProfileKey>()
+      .notNull()
+      .default("worker"),
+    archetypeKey: text("archetype_key").notNull().default("general"),
     departmentKey: text("department_key").$type<AgentDepartmentKey>().notNull().default("general"),
     departmentName: text("department_name"),
     capabilities: text("capabilities"),
@@ -34,6 +50,10 @@ export const agents = pgTable(
     pauseReason: text("pause_reason"),
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     permissions: jsonb("permissions").$type<Record<string, unknown>>().notNull().default({}),
+    requestedByPrincipalType: text("requested_by_principal_type").$type<ActorPrincipalKind>(),
+    requestedByPrincipalId: text("requested_by_principal_id"),
+    requestedForProjectId: uuid("requested_for_project_id"),
+    requestedReason: text("requested_reason"),
     lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -42,5 +62,6 @@ export const agents = pgTable(
   (table) => ({
     companyStatusIdx: index("agents_company_status_idx").on(table.companyId, table.status),
     companyReportsToIdx: index("agents_company_reports_to_idx").on(table.companyId, table.reportsTo),
+    companyTemplateIdx: index("agents_company_template_idx").on(table.companyId, table.templateId),
   }),
 );

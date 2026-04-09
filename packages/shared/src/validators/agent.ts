@@ -1,19 +1,39 @@
 import { z } from "zod";
 import {
+  ACTOR_PRINCIPAL_KINDS,
+  AGENT_CAPABILITY_PROFILE_KEYS,
   AGENT_DEPARTMENT_KEYS,
   AGENT_ICON_NAMES,
+  AGENT_NAVIGATION_LAYOUTS,
   AGENT_ORG_LEVELS,
+  AGENT_OPERATING_CLASSES,
+  AGENT_PROJECT_ROLES,
+  AGENT_PROJECT_SCOPE_MODES,
   AGENT_ROLES,
+  AGENT_SECONDARY_RELATIONSHIP_TYPES,
   AGENT_STATUSES,
   INBOX_MINE_ISSUE_STATUS_FILTER,
 } from "../constants.js";
-import { agentAdapterTypeSchema } from "../adapter-type.js";
+import { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "../adapter-type.js";
 import type {
   AgentHierarchyMemberSummary,
+  AgentNavigationDepartmentNode,
+  AgentNavigationProjectNode,
+  AgentNavigationTeamNode,
+  AgentProjectScope,
+  AgentSecondaryRelationship,
+  AgentTemplate,
+  AgentTemplateRevision,
+  AgentTemplateSnapshot,
+  CompanyAgentNavigation,
   CompanyAgentHierarchy,
   CompanyAgentHierarchyDepartment,
   CompanyAgentHierarchyExecutiveGroup,
   CompanyAgentHierarchyUnassigned,
+  CompanyOperatingHierarchy,
+  OperatingHierarchyAgentSummary,
+  OperatingHierarchyDepartmentSummary,
+  OperatingHierarchyProjectSummary,
 } from "../types/agent.js";
 import { envConfigSchema } from "./secret.js";
 
@@ -54,7 +74,17 @@ const adapterConfigSchema = z.record(z.unknown()).superRefine((value, ctx) => {
 });
 
 export const agentOrgLevelSchema = z.enum(AGENT_ORG_LEVELS);
+export const agentOperatingClassSchema = z.enum(AGENT_OPERATING_CLASSES);
+export const agentCapabilityProfileKeySchema = z.union([
+  z.enum(AGENT_CAPABILITY_PROFILE_KEYS),
+  z.string().trim().min(1),
+]);
 export const agentDepartmentKeySchema = z.enum(AGENT_DEPARTMENT_KEYS);
+export const agentProjectScopeModeSchema = z.enum(AGENT_PROJECT_SCOPE_MODES);
+export const agentProjectRoleSchema = z.enum(AGENT_PROJECT_ROLES);
+export const agentSecondaryRelationshipTypeSchema = z.enum(AGENT_SECONDARY_RELATIONSHIP_TYPES);
+export const agentNavigationLayoutSchema = z.enum(AGENT_NAVIGATION_LAYOUTS);
+export const actorPrincipalKindSchema = z.enum(ACTOR_PRINCIPAL_KINDS);
 
 export const agentHierarchyMemberSummarySchema = z.object({
   id: z.string().uuid(),
@@ -66,9 +96,148 @@ export const agentHierarchyMemberSummarySchema = z.object({
   status: z.enum(AGENT_STATUSES),
   reportsTo: z.string().uuid().nullable(),
   orgLevel: agentOrgLevelSchema,
+  operatingClass: agentOperatingClassSchema.optional(),
+  capabilityProfileKey: agentCapabilityProfileKeySchema.optional(),
+  archetypeKey: z.string().trim().min(1).nullable().optional(),
   departmentKey: agentDepartmentKeySchema,
   departmentName: z.string().nullable(),
 }).strict() satisfies z.ZodType<AgentHierarchyMemberSummary>;
+
+export const agentTemplateSnapshotSchema = z.object({
+  name: z.string().min(1),
+  role: z.enum(AGENT_ROLES),
+  title: z.string().nullable(),
+  icon: z.enum(AGENT_ICON_NAMES).nullable(),
+  reportsTo: z.string().uuid().nullable(),
+  orgLevel: agentOrgLevelSchema,
+  operatingClass: agentOperatingClassSchema,
+  capabilityProfileKey: agentCapabilityProfileKeySchema,
+  archetypeKey: z.string().trim().min(1),
+  departmentKey: agentDepartmentKeySchema,
+  departmentName: z.string().nullable(),
+  capabilities: z.string().nullable(),
+  adapterType: optionalAgentAdapterTypeSchema.unwrap(),
+  adapterConfig: adapterConfigSchema,
+  runtimeConfig: z.record(z.unknown()),
+  budgetMonthlyCents: z.number().int().nonnegative(),
+  metadata: z.record(z.unknown()).nullable(),
+}).strict() satisfies z.ZodType<AgentTemplateSnapshot>;
+
+export const agentTemplateSchema = z.object({
+  id: z.string().uuid(),
+  companyId: z.string().uuid(),
+  name: z.string().min(1),
+  role: z.enum(AGENT_ROLES),
+  operatingClass: agentOperatingClassSchema,
+  capabilityProfileKey: agentCapabilityProfileKeySchema,
+  archetypeKey: z.string().trim().min(1),
+  metadata: z.record(z.unknown()).nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+  archivedAt: z.coerce.date().nullable(),
+}).strict() satisfies z.ZodType<AgentTemplate>;
+
+export const agentTemplateRevisionSchema = z.object({
+  id: z.string().uuid(),
+  companyId: z.string().uuid(),
+  templateId: z.string().uuid(),
+  revisionNumber: z.number().int().positive(),
+  snapshot: agentTemplateSnapshotSchema,
+  createdByAgentId: z.string().uuid().nullable(),
+  createdByUserId: z.string().nullable(),
+  createdAt: z.coerce.date(),
+}).strict() satisfies z.ZodType<AgentTemplateRevision>;
+
+export const agentProjectScopeSchema = z.object({
+  id: z.string().uuid(),
+  companyId: z.string().uuid(),
+  agentId: z.string().uuid(),
+  projectId: z.string().uuid(),
+  scopeMode: agentProjectScopeModeSchema,
+  projectRole: agentProjectRoleSchema,
+  isPrimary: z.boolean(),
+  workstreamKey: z.string().nullable(),
+  workstreamLabel: z.string().nullable(),
+  grantedByPrincipalType: actorPrincipalKindSchema.nullable(),
+  grantedByPrincipalId: z.string().nullable(),
+  activeFrom: z.coerce.date(),
+  activeTo: z.coerce.date().nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+}).strict() satisfies z.ZodType<AgentProjectScope>;
+
+export const agentSecondaryRelationshipSchema = z.object({
+  id: z.string().uuid(),
+  companyId: z.string().uuid(),
+  agentId: z.string().uuid(),
+  relatedAgentId: z.string().uuid(),
+  relationshipType: agentSecondaryRelationshipTypeSchema,
+  createdByPrincipalType: actorPrincipalKindSchema.nullable(),
+  createdByPrincipalId: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+}).strict() satisfies z.ZodType<AgentSecondaryRelationship>;
+
+export const operatingHierarchyAgentSummarySchema = agentHierarchyMemberSummarySchema.extend({
+  operatingClass: agentOperatingClassSchema,
+  capabilityProfileKey: agentCapabilityProfileKeySchema,
+  archetypeKey: z.string().trim().min(1),
+}).strict() satisfies z.ZodType<OperatingHierarchyAgentSummary>;
+
+export const operatingHierarchyProjectSummarySchema = z.object({
+  projectId: z.string().uuid(),
+  projectName: z.string().min(1),
+  color: z.string().nullable(),
+  leadership: z.array(operatingHierarchyAgentSummarySchema),
+  workers: z.array(operatingHierarchyAgentSummarySchema),
+  consultants: z.array(operatingHierarchyAgentSummarySchema),
+}).strict() satisfies z.ZodType<OperatingHierarchyProjectSummary>;
+
+export const operatingHierarchyDepartmentSummarySchema = z.object({
+  key: agentDepartmentKeySchema,
+  name: z.string().min(1),
+  leaders: z.array(operatingHierarchyAgentSummarySchema),
+  projects: z.array(operatingHierarchyProjectSummarySchema),
+}).strict() satisfies z.ZodType<OperatingHierarchyDepartmentSummary>;
+
+export const companyOperatingHierarchySchema = z.object({
+  executiveOffice: z.array(operatingHierarchyAgentSummarySchema),
+  projectPods: z.array(operatingHierarchyProjectSummarySchema),
+  sharedServices: z.array(operatingHierarchyDepartmentSummarySchema),
+  unassigned: z.array(operatingHierarchyAgentSummarySchema),
+}).strict() satisfies z.ZodType<CompanyOperatingHierarchy>;
+
+export const agentNavigationTeamNodeSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  leaders: z.array(operatingHierarchyAgentSummarySchema),
+  workers: z.array(operatingHierarchyAgentSummarySchema),
+}).strict() satisfies z.ZodType<AgentNavigationTeamNode>;
+
+export const agentNavigationProjectNodeSchema = z.object({
+  projectId: z.string().uuid(),
+  projectName: z.string().min(1),
+  color: z.string().nullable(),
+  leaders: z.array(operatingHierarchyAgentSummarySchema),
+  teams: z.array(agentNavigationTeamNodeSchema),
+  workers: z.array(operatingHierarchyAgentSummarySchema),
+}).strict() satisfies z.ZodType<AgentNavigationProjectNode>;
+
+export const agentNavigationDepartmentNodeSchema = z.object({
+  key: z.union([agentDepartmentKeySchema, z.literal("shared_service")]),
+  name: z.string().min(1),
+  leaders: z.array(operatingHierarchyAgentSummarySchema),
+  projects: z.array(agentNavigationProjectNodeSchema),
+}).strict() satisfies z.ZodType<AgentNavigationDepartmentNode>;
+
+export const companyAgentNavigationSchema = z.object({
+  layout: agentNavigationLayoutSchema,
+  executives: z.array(operatingHierarchyAgentSummarySchema),
+  departments: z.array(agentNavigationDepartmentNodeSchema),
+  projectPods: z.array(agentNavigationProjectNodeSchema),
+  sharedServices: z.array(agentNavigationDepartmentNodeSchema),
+  unassigned: z.array(operatingHierarchyAgentSummarySchema),
+}).strict() satisfies z.ZodType<CompanyAgentNavigation>;
 
 export const companyAgentHierarchyDepartmentSchema = z.object({
   key: agentDepartmentKeySchema,
@@ -102,6 +271,9 @@ const createAgentSchemaBase = z.object({
   icon: z.enum(AGENT_ICON_NAMES).optional().nullable(),
   reportsTo: z.string().uuid().optional().nullable(),
   orgLevel: agentOrgLevelSchema.optional(),
+  operatingClass: agentOperatingClassSchema.optional(),
+  capabilityProfileKey: agentCapabilityProfileKeySchema.optional(),
+  archetypeKey: z.string().trim().min(1).optional(),
   departmentKey: agentDepartmentKeySchema.optional(),
   departmentName: z.string().trim().min(1).optional().nullable(),
   capabilities: z.string().optional().nullable(),
@@ -114,18 +286,30 @@ const createAgentSchemaBase = z.object({
   metadata: z.record(z.unknown()).optional().nullable(),
 });
 
-const validateAgentDepartment = (
-  value: { departmentKey?: z.infer<typeof agentDepartmentKeySchema>; departmentName?: string | null },
-  ctx: z.RefinementCtx,
-) => {
-  if (value.departmentKey === "custom" && (!value.departmentName || value.departmentName.trim().length === 0)) {
+const validateAgentDepartment = (value: Record<string, unknown>, ctx: z.RefinementCtx) => {
+  const departmentKey =
+    value.departmentKey === "general" ||
+    value.departmentKey === "executive" ||
+    value.departmentKey === "engineering" ||
+    value.departmentKey === "product" ||
+    value.departmentKey === "design" ||
+    value.departmentKey === "marketing" ||
+    value.departmentKey === "finance" ||
+    value.departmentKey === "operations" ||
+    value.departmentKey === "research" ||
+    value.departmentKey === "custom"
+      ? value.departmentKey
+      : undefined;
+  const departmentName = typeof value.departmentName === "string" ? value.departmentName : null;
+
+  if (departmentKey === "custom" && (!departmentName || departmentName.trim().length === 0)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "departmentName is required when departmentKey is custom",
       path: ["departmentName"],
     });
   }
-  if (value.departmentKey !== "custom" && value.departmentName && value.departmentName.trim().length > 0) {
+  if (departmentKey !== "custom" && departmentName && departmentName.trim().length > 0) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "departmentName is only allowed when departmentKey is custom",

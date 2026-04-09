@@ -1,10 +1,17 @@
 import type {
   AgentAdapterType,
+  AgentCapabilityProfileKey,
   AgentDepartmentKey,
+  AgentNavigationLayout,
+  AgentOperatingClass,
   AgentOrgLevel,
+  AgentProjectRole,
+  AgentProjectScopeMode,
   PauseReason,
   AgentRole,
+  AgentSecondaryRelationshipType,
   AgentStatus,
+  ActorPrincipalKind,
 } from "../constants.js";
 import type {
   CompanyMembership,
@@ -49,7 +56,7 @@ export interface AgentInstructionsBundle {
 
 export interface AgentAccessState {
   canAssignTasks: boolean;
-  taskAssignSource: "explicit_grant" | "agent_creator" | "ceo_role" | "none";
+  taskAssignSource: "explicit_grant" | "agent_creator" | "capability_profile" | "none";
   membership: CompanyMembership | null;
   grants: PrincipalPermissionGrant[];
 }
@@ -74,6 +81,9 @@ export interface AgentHierarchyMemberSummary {
   status: AgentStatus;
   reportsTo: string | null;
   orgLevel: AgentOrgLevel;
+  operatingClass?: AgentOperatingClass;
+  capabilityProfileKey?: AgentCapabilityProfileKey;
+  archetypeKey?: string | null;
   departmentKey: AgentDepartmentKey;
   departmentName: string | null;
 }
@@ -103,6 +113,142 @@ export interface CompanyAgentHierarchy {
   unassigned: CompanyAgentHierarchyUnassigned;
 }
 
+export interface AgentTemplateSnapshot {
+  name: string;
+  role: AgentRole;
+  title: string | null;
+  icon: string | null;
+  reportsTo: string | null;
+  orgLevel: AgentOrgLevel;
+  operatingClass: AgentOperatingClass;
+  capabilityProfileKey: AgentCapabilityProfileKey;
+  archetypeKey: string;
+  departmentKey: AgentDepartmentKey;
+  departmentName: string | null;
+  capabilities: string | null;
+  adapterType: AgentAdapterType;
+  adapterConfig: Record<string, unknown>;
+  runtimeConfig: Record<string, unknown>;
+  budgetMonthlyCents: number;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface AgentTemplate {
+  id: string;
+  companyId: string;
+  name: string;
+  role: AgentRole;
+  operatingClass: AgentOperatingClass;
+  capabilityProfileKey: AgentCapabilityProfileKey;
+  archetypeKey: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: Date;
+  updatedAt: Date;
+  archivedAt: Date | null;
+}
+
+export interface AgentTemplateRevision {
+  id: string;
+  companyId: string;
+  templateId: string;
+  revisionNumber: number;
+  snapshot: AgentTemplateSnapshot;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  createdAt: Date;
+}
+
+export interface AgentProjectScope {
+  id: string;
+  companyId: string;
+  agentId: string;
+  projectId: string;
+  scopeMode: AgentProjectScopeMode;
+  projectRole: AgentProjectRole;
+  isPrimary: boolean;
+  workstreamKey: string | null;
+  workstreamLabel: string | null;
+  grantedByPrincipalType: ActorPrincipalKind | null;
+  grantedByPrincipalId: string | null;
+  activeFrom: Date;
+  activeTo: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AgentSecondaryRelationship {
+  id: string;
+  companyId: string;
+  agentId: string;
+  relatedAgentId: string;
+  relationshipType: AgentSecondaryRelationshipType;
+  createdByPrincipalType: ActorPrincipalKind | null;
+  createdByPrincipalId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface OperatingHierarchyAgentSummary extends AgentHierarchyMemberSummary {
+  operatingClass: AgentOperatingClass;
+  capabilityProfileKey: AgentCapabilityProfileKey;
+  archetypeKey: string;
+}
+
+export interface OperatingHierarchyProjectSummary {
+  projectId: string;
+  projectName: string;
+  color: string | null;
+  leadership: OperatingHierarchyAgentSummary[];
+  workers: OperatingHierarchyAgentSummary[];
+  consultants: OperatingHierarchyAgentSummary[];
+}
+
+export interface OperatingHierarchyDepartmentSummary {
+  key: AgentDepartmentKey;
+  name: string;
+  leaders: OperatingHierarchyAgentSummary[];
+  projects: OperatingHierarchyProjectSummary[];
+}
+
+export interface CompanyOperatingHierarchy {
+  executiveOffice: OperatingHierarchyAgentSummary[];
+  projectPods: OperatingHierarchyProjectSummary[];
+  sharedServices: OperatingHierarchyDepartmentSummary[];
+  unassigned: OperatingHierarchyAgentSummary[];
+}
+
+export interface AgentNavigationTeamNode {
+  key: string;
+  label: string;
+  leaders: OperatingHierarchyAgentSummary[];
+  workers: OperatingHierarchyAgentSummary[];
+}
+
+export interface AgentNavigationProjectNode {
+  projectId: string;
+  projectName: string;
+  color: string | null;
+  leaders: OperatingHierarchyAgentSummary[];
+  teams: AgentNavigationTeamNode[];
+  workers: OperatingHierarchyAgentSummary[];
+}
+
+export interface AgentNavigationDepartmentNode {
+  key: AgentDepartmentKey | "shared_service";
+  name: string;
+  leaders: OperatingHierarchyAgentSummary[];
+  projects: AgentNavigationProjectNode[];
+}
+
+export interface CompanyAgentNavigation {
+  layout: AgentNavigationLayout;
+  executives: OperatingHierarchyAgentSummary[];
+  departments: AgentNavigationDepartmentNode[];
+  projectPods: AgentNavigationProjectNode[];
+  sharedServices: AgentNavigationDepartmentNode[];
+  unassigned: OperatingHierarchyAgentSummary[];
+}
+
 export interface Agent {
   id: string;
   companyId: string;
@@ -114,6 +260,11 @@ export interface Agent {
   status: AgentStatus;
   reportsTo: string | null;
   orgLevel: AgentOrgLevel;
+  templateId?: string | null;
+  templateRevisionId?: string | null;
+  operatingClass?: AgentOperatingClass;
+  capabilityProfileKey?: AgentCapabilityProfileKey;
+  archetypeKey?: string | null;
   departmentKey: AgentDepartmentKey;
   departmentName: string | null;
   capabilities: string | null;
@@ -125,6 +276,10 @@ export interface Agent {
   pauseReason: PauseReason | null;
   pausedAt: Date | null;
   permissions: AgentPermissions;
+  requestedByPrincipalType?: ActorPrincipalKind | null;
+  requestedByPrincipalId?: string | null;
+  requestedForProjectId?: string | null;
+  requestedReason?: string | null;
   lastHeartbeatAt: Date | null;
   metadata: Record<string, unknown> | null;
   createdAt: Date;

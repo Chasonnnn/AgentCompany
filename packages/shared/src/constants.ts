@@ -68,6 +68,52 @@ export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
 export const AGENT_ORG_LEVELS = ["executive", "director", "staff"] as const;
 export type AgentOrgLevel = (typeof AGENT_ORG_LEVELS)[number];
 
+export const AGENT_OPERATING_CLASSES = [
+  "executive",
+  "project_leadership",
+  "worker",
+  "shared_service_lead",
+  "consultant",
+] as const;
+export type AgentOperatingClass = (typeof AGENT_OPERATING_CLASSES)[number];
+
+export const AGENT_CAPABILITY_PROFILE_KEYS = [
+  "legacy_ceo",
+  "executive_operator",
+  "executive_specialist",
+  "project_lead",
+  "worker",
+  "shared_service_lead",
+  "consultant",
+] as const;
+export type AgentCapabilityProfileKey = (typeof AGENT_CAPABILITY_PROFILE_KEYS)[number] | (string & {});
+
+export const AGENT_PROJECT_SCOPE_MODES = [
+  "execution",
+  "leadership_summary",
+  "leadership_raw",
+  "consulting",
+] as const;
+export type AgentProjectScopeMode = (typeof AGENT_PROJECT_SCOPE_MODES)[number];
+
+export const AGENT_PROJECT_ROLES = [
+  "director",
+  "product_manager",
+  "engineering_manager",
+  "worker",
+  "consultant",
+] as const;
+export type AgentProjectRole = (typeof AGENT_PROJECT_ROLES)[number];
+
+export const AGENT_SECONDARY_RELATIONSHIP_TYPES = ["functional_lead"] as const;
+export type AgentSecondaryRelationshipType = (typeof AGENT_SECONDARY_RELATIONSHIP_TYPES)[number];
+
+export const AGENT_NAVIGATION_LAYOUTS = ["department", "project"] as const;
+export type AgentNavigationLayout = (typeof AGENT_NAVIGATION_LAYOUTS)[number];
+
+export const ACTOR_PRINCIPAL_KINDS = ["human_operator", "agent_instance", "system_process"] as const;
+export type ActorPrincipalKind = (typeof ACTOR_PRINCIPAL_KINDS)[number];
+
 export const AGENT_DEPARTMENT_KEYS = [
   "executive",
   "engineering",

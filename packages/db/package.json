@@ -42,10 +42,10 @@
   ],
   "scripts": {
     "check:migrations": "tsx src/check-migration-numbering.ts",
-    "build": "pnpm run check:migrations && tsc && rm -rf dist/migrations && mkdir -p dist/migrations && cp -R src/migrations/. dist/migrations/",
+    "build": "pnpm --filter @paperclipai/shared build && pnpm run check:migrations && tsc && rm -rf dist/migrations && mkdir -p dist/migrations && cp -R src/migrations/. dist/migrations/",
     "clean": "rm -rf dist",
-    "typecheck": "pnpm run check:migrations && tsc --noEmit",
-    "generate": "pnpm run check:migrations && tsc -p tsconfig.json && drizzle-kit generate",
+    "typecheck": "pnpm --filter @paperclipai/shared build && pnpm run check:migrations && tsc --noEmit",
+    "generate": "pnpm --filter @paperclipai/shared build && pnpm run check:migrations && tsc -p tsconfig.json && drizzle-kit generate",
     "migrate": "pnpm run check:migrations && tsx src/migrate.ts",
     "seed": "tsx src/seed.ts"
   },
