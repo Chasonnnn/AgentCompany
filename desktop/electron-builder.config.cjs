@@ -4,11 +4,14 @@ const publishUrl = process.env.PAPERCLIP_DESKTOP_FEED_URL?.trim();
 module.exports = {
   appId: "com.paperclip.desktop.local",
   productName: "Paperclip",
+  afterPack: "scripts/ad-hoc-sign-app.cjs",
   directories: {
     output: isReleaseBuild ? "dist/release/raw" : "dist/package",
   },
   files: [
     "dist/**/*",
+    "!dist/package{,/**/*}",
+    "!dist/release{,/**/*}",
   ],
   extraResources: [
     {
