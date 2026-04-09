@@ -259,6 +259,13 @@ export type {
   Approval,
   ApprovalComment,
   RequestBoardApprovalPayload,
+  ConferenceContext,
+  ConferenceExecutionWorkspaceSummary,
+  ConferenceProjectWorkspaceSummary,
+  GitSnapshot,
+  GitSnapshotFile,
+  GitSnapshotFileStatus,
+  GitSnapshotStatusCode,
   BudgetPolicy,
   BudgetPolicySummary,
   BudgetIncident,
@@ -619,6 +626,15 @@ export {
 } from "./validators/index.js";
 
 export { API_PREFIX, API } from "./api.js";
+export {
+  conferenceContextSchema,
+  conferenceExecutionWorkspaceModeSchema,
+  conferenceExecutionWorkspaceSummarySchema,
+  conferenceProjectWorkspaceSummarySchema,
+  gitSnapshotFileSchema,
+  gitSnapshotSchema,
+  gitSnapshotStatusCodeSchema,
+} from "./validators/conference-context.js";
 export { normalizeAgentUrlKey, deriveAgentUrlKey, isUuidLike } from "./agent-url-key.js";
 export { deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "./project-url-key.js";
 export {

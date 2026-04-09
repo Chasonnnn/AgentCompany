@@ -61,6 +61,15 @@ export type {
 export type { AssetImage } from "./asset.js";
 export type { Project, ProjectCodebase, ProjectCodebaseOrigin, ProjectGoalRef, ProjectWorkspace } from "./project.js";
 export type {
+  ConferenceContext,
+  ConferenceExecutionWorkspaceSummary,
+  ConferenceProjectWorkspaceSummary,
+  GitSnapshot,
+  GitSnapshotFile,
+  GitSnapshotFileStatus,
+  GitSnapshotStatusCode,
+} from "./conference-context.js";
+export type {
   ExecutionWorkspace,
   ExecutionWorkspaceConfig,
   ExecutionWorkspaceCloseAction,

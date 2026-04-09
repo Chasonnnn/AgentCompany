@@ -1,5 +1,6 @@
 import type {
   Approval,
+  ConferenceContext,
   DocumentRevision,
   FeedbackTargetType,
   FeedbackTrace,
@@ -136,6 +137,7 @@ export const issuesApi = {
   },
   deleteAttachment: (id: string) => api.delete<{ ok: true }>(`/attachments/${id}`),
   listApprovals: (id: string) => api.get<Approval[]>(`/issues/${id}/approvals`),
+  getConferenceContext: (id: string) => api.get<ConferenceContext>(`/issues/${id}/conference-context`),
   linkApproval: (id: string, approvalId: string) =>
     api.post<Approval[]>(`/issues/${id}/approvals`, { approvalId }),
   unlinkApproval: (id: string, approvalId: string) =>

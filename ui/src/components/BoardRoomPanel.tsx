@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Agent, Approval, ApprovalComment } from "@paperclipai/shared";
 import { MessageSquareShare, ShieldCheck } from "lucide-react";
 import { ApprovalCard } from "./ApprovalCard";
+import { ConferenceContextSummary } from "./ConferenceContextSummary";
 import { EmptyState } from "./EmptyState";
 import { Identity } from "./Identity";
 import { MarkdownBody } from "./MarkdownBody";
@@ -12,7 +13,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { approvalsApi } from "@/api/approvals";
+import { issuesApi } from "@/api/issues";
 import {
+  boardRoomAgenda,
+  boardRoomParticipantAgentIds,
+  boardRoomRoomTitle,
   isBoardRoomApproval,
   normalizeBoardRoomRequestPayload,
 } from "@/lib/board-room";
@@ -23,6 +28,70 @@ type PendingApprovalAction = {
   approvalId: string;
   action: "approve" | "reject";
 } | null;
+
+function ConferenceRoomMetadata({
+  approval,
+  agentMap,
+}: {
+  approval: Approval;
+  agentMap: Map<string, Agent>;
+}) {
+  const payload = approval.payload as Record<string, unknown> | null;
+  const roomTitle = boardRoomRoomTitle(payload);
+  const agenda = boardRoomAgenda(payload);
+  const participantIds = boardRoomParticipantAgentIds(payload);
+
+  if (!roomTitle && !agenda && participantIds.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-background/70 p-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        {roomTitle ? (
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+              Conference
+            </p>
+            <p className="text-sm font-medium text-foreground">{roomTitle}</p>
+          </div>
+        ) : null}
+        {agenda ? (
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+              Agenda
+            </p>
+            <p className="text-sm leading-6 text-foreground/90">{agenda}</p>
+          </div>
+        ) : null}
+      </div>
+      {participantIds.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+            Participants
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {participantIds.map((participantId) => {
+              const agent = agentMap.get(participantId);
+              return (
+                <div
+                  key={participantId}
+                  className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card px-2.5 py-1.5 text-xs"
+                >
+                  {agent ? (
+                    <Identity name={agent.name} size="sm" className="inline-flex" />
+                  ) : (
+                    <span className="font-mono text-muted-foreground">{participantId}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function BoardRoomDiscussion({
   approval,
@@ -58,7 +127,7 @@ function BoardRoomDiscussion({
   return (
     <div className="rounded-xl border border-border/60 bg-background/70 p-4">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-sm font-medium text-foreground">Board Discussion</h4>
+        <h4 className="text-sm font-medium text-foreground">Conference Discussion</h4>
         <span className="text-xs text-muted-foreground">
           {comments?.length ?? 0} comments
         </span>
@@ -66,10 +135,10 @@ function BoardRoomDiscussion({
 
       <div className="mt-3 space-y-3">
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading board discussion...</p>
+          <p className="text-sm text-muted-foreground">Loading conference discussion...</p>
         ) : isError ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-            <p>{error instanceof Error ? error.message : "Unable to load board discussion."}</p>
+            <p>{error instanceof Error ? error.message : "Unable to load conference discussion."}</p>
             <Button
               variant="outline"
               size="sm"
@@ -82,7 +151,7 @@ function BoardRoomDiscussion({
             </Button>
           </div>
         ) : (comments ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">No board-room comments yet.</p>
+          <p className="text-sm text-muted-foreground">No conference-room comments yet.</p>
         ) : (
           <div className="space-y-2">
             {(comments ?? []).map((comment) => {
@@ -131,6 +200,7 @@ function BoardRoomDiscussion({
 }
 
 export function BoardRoomPanel({
+  issueId,
   approvals,
   agentMap,
   onRequestBoardDecision,
@@ -141,6 +211,7 @@ export function BoardRoomPanel({
   composerOpen: composerOpenProp,
   onComposerOpenChange,
 }: {
+  issueId?: string;
   approvals: Approval[] | undefined;
   agentMap: Map<string, Agent>;
   onRequestBoardDecision: (payload: Record<string, unknown>) => Promise<void>;
@@ -155,6 +226,19 @@ export function BoardRoomPanel({
   const [expandedApprovalId, setExpandedApprovalId] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const composerOpen = composerOpenProp ?? composerOpenInternal;
+  const conferenceContextQuery = useQuery({
+    queryKey: issueId
+      ? queryKeys.issues.conferenceContext(issueId)
+      : ["issues", "conference-context", "missing"],
+    queryFn: async () => {
+      if (!issueId) {
+        throw new Error("Issue context unavailable");
+      }
+      return issuesApi.getConferenceContext(issueId);
+    },
+    enabled: composerOpen && Boolean(issueId),
+    retry: false,
+  });
 
   const boardApprovals = useMemo(
     () => (approvals ?? []).filter(isBoardRoomApproval),
@@ -193,10 +277,15 @@ export function BoardRoomPanel({
         normalizeBoardRoomRequestPayload({
           title,
           summary,
+          roomTitle: String(formData.get("roomTitle") ?? ""),
+          agenda: String(formData.get("agenda") ?? ""),
           recommendedAction: String(formData.get("recommendedAction") ?? ""),
           nextActionOnApproval: String(formData.get("nextActionOnApproval") ?? ""),
           risks: String(formData.get("risks") ?? ""),
           proposedComment: String(formData.get("proposedComment") ?? ""),
+          participantAgentIds: formData
+            .getAll("participantAgentIds")
+            .filter((value): value is string => typeof value === "string"),
         }),
       );
       setComposerOpen(false);
@@ -212,10 +301,10 @@ export function BoardRoomPanel({
         <div className="space-y-1">
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
             <ShieldCheck className="h-4 w-4 text-amber-600 dark:text-amber-300" />
-            Board Room
+            Conference Room
           </div>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            Create structured board-level decisions for this issue. Use this when agents or operators need explicit human signoff before execution continues.
+            Use an issue-scoped conference room when execution needs coordinated discussion, invited agent participants, and explicit human signoff before work continues.
           </p>
         </div>
         <Button className="sm:self-start" onClick={openComposer} disabled={requestPending}>
@@ -227,7 +316,7 @@ export function BoardRoomPanel({
       {boardApprovals.length === 0 ? (
         <EmptyState
           icon={ShieldCheck}
-          message="No board-room decisions yet for this issue."
+          message="No conference-room decisions yet for this issue."
           action="Request board decision"
           onAction={openComposer}
         />
@@ -248,6 +337,7 @@ export function BoardRoomPanel({
                     : null
                 }
               />
+              <ConferenceRoomMetadata approval={approval} agentMap={agentMap} />
               <div className="flex justify-end">
                 <Button
                   variant="ghost"
@@ -282,9 +372,9 @@ export function BoardRoomPanel({
       }}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Request board decision</DialogTitle>
+            <DialogTitle>Open conference room</DialogTitle>
             <DialogDescription>
-              Capture the decision, rationale, and approval follow-up in a structured board-room request linked to this issue.
+              Capture the decision, agenda, invited participants, and approval follow-up in a structured conference-room request linked to this issue.
             </DialogDescription>
           </DialogHeader>
 
@@ -308,6 +398,26 @@ export function BoardRoomPanel({
                 name="summary"
                 placeholder="Explain what changed, why a board decision is required, and what is blocked."
               />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="board-room-room-title">Conference Title</Label>
+                <Input
+                  id="board-room-room-title"
+                  name="roomTitle"
+                  placeholder="Migration Readiness Council"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="board-room-agenda">Agenda</Label>
+                <Textarea
+                  id="board-room-agenda"
+                  name="agenda"
+                  placeholder="Review blockers, risks, and the staged rollout plan."
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -345,6 +455,57 @@ export function BoardRoomPanel({
                 placeholder="Optional response the board can post when the request is approved."
               />
             </div>
+
+            <div className="space-y-2">
+              <Label>Invite Participants</Label>
+              {Array.from(agentMap.values()).length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No agents are available yet for this conference room.
+                </p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {Array.from(agentMap.values())
+                    .sort((left, right) => left.name.localeCompare(right.name))
+                    .map((agent) => (
+                      <label
+                        key={agent.id}
+                        className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/60 bg-background/60 px-3 py-2.5 text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          name="participantAgentIds"
+                          value={agent.id}
+                          className="h-4 w-4"
+                        />
+                        <div className="min-w-0">
+                          <div className="font-medium text-foreground">{agent.name}</div>
+                          <div className="text-xs text-muted-foreground">{agent.role.replace(/_/g, " ")}</div>
+                        </div>
+                      </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {composerOpen ? (
+              conferenceContextQuery.isLoading ? (
+                <div className="rounded-xl border border-border/60 bg-background/70 p-4 text-sm text-muted-foreground">
+                  Loading repo context...
+                </div>
+              ) : conferenceContextQuery.isError ? (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                  {conferenceContextQuery.error instanceof Error
+                    ? conferenceContextQuery.error.message
+                    : "Unable to load repo context preview."}
+                </div>
+              ) : (
+                <ConferenceContextSummary
+                  context={conferenceContextQuery.data}
+                  title="Live Repo Context Preview"
+                  emptyMessage="No inspectable repo context is available for this issue."
+                />
+              )
+            ) : null}
           </form>
 
           <DialogFooter>

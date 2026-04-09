@@ -57,6 +57,11 @@ import {
 } from "../attachment-types.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { applyIssueExecutionPolicyTransition, normalizeIssueExecutionPolicy } from "../services/issue-execution-policy.js";
+import {
+  conferenceContextService,
+  sanitizeConferenceContextForActor,
+  serializeApprovalForActor,
+} from "../services/conference-context.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -91,6 +96,7 @@ export function issueRoutes(
   const workProductsSvc = workProductService(db);
   const documentsSvc = documentService(db);
   const routinesSvc = routineService(db);
+  const conferenceContext = conferenceContextService(db);
   const feedbackExportService = opts?.feedbackExportService;
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -115,6 +121,10 @@ export function issueRoutes(
       throw new HttpError(400, `Invalid ${field} query value`);
     }
     return parsed;
+  }
+
+  function getConferenceActor(req: Request) {
+    return req.actor.type === "agent" ? "agent" : "board";
   }
 
   async function runSingleFileUpload(req: Request, res: Response) {
@@ -996,7 +1006,26 @@ export function issueRoutes(
     }
     assertCompanyAccess(req, issue.companyId);
     const approvals = await issueApprovalsSvc.listApprovalsForIssue(id);
-    res.json(approvals);
+    const actor = getConferenceActor(req);
+    res.json(approvals.map((approval) => serializeApprovalForActor(approval, actor)));
+  });
+
+  router.get("/issues/:id/conference-context", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    const context = await conferenceContext.resolveForIssueRecord(issue);
+    if (!context) {
+      res.status(404).json({ error: "Conference context not found" });
+      return;
+    }
+
+    res.json(sanitizeConferenceContextForActor(context, getConferenceActor(req)));
   });
 
   router.post("/issues/:id/approvals", validate(linkIssueApprovalSchema), async (req, res) => {
@@ -1027,7 +1056,8 @@ export function issueRoutes(
     });
 
     const approvals = await issueApprovalsSvc.listApprovalsForIssue(id);
-    res.status(201).json(approvals);
+    const conferenceActor = getConferenceActor(req);
+    res.status(201).json(approvals.map((approval) => serializeApprovalForActor(approval, conferenceActor)));
   });
 
   router.delete("/issues/:id/approvals/:approvalId", async (req, res) => {

@@ -1,11 +1,13 @@
+import { conferenceContextSchema } from "@paperclipai/shared";
 import { UserPlus, Lightbulb, ShieldAlert, ShieldCheck } from "lucide-react";
 import { formatCents } from "../lib/utils";
+import { ConferenceContextSummary } from "./ConferenceContextSummary";
 
 export const typeLabel: Record<string, string> = {
   hire_agent: "Hire Agent",
   approve_ceo_strategy: "CEO Strategy",
   budget_override_required: "Budget Override",
-  request_board_approval: "Board Approval",
+  request_board_approval: "Conference Room",
 };
 
 function firstNonEmptyString(...values: unknown[]): string | null {
@@ -170,12 +172,22 @@ function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unkn
     : [];
   const title = firstNonEmptyString(payload.title);
   const summary = firstNonEmptyString(payload.summary);
+  const roomTitle = firstNonEmptyString(payload.roomTitle);
+  const agenda = firstNonEmptyString(payload.agenda);
   const recommendedAction = firstNonEmptyString(payload.recommendedAction);
   const nextActionOnApproval = firstNonEmptyString(payload.nextActionOnApproval);
   const proposedComment = firstNonEmptyString(payload.proposedComment);
+  const repoContextResult = conferenceContextSchema.safeParse(payload.repoContext);
+  const repoContext = repoContextResult.success ? repoContextResult.data : null;
 
   return (
     <div className="mt-4 space-y-3.5 text-sm">
+      {roomTitle && (
+        <div className="space-y-1">
+          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Conference</p>
+          <p className="font-medium leading-6 text-foreground">{roomTitle}</p>
+        </div>
+      )}
       {title && (
         <div className="space-y-1">
           <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Title</p>
@@ -186,6 +198,12 @@ function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unkn
         <div className="space-y-1">
           <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Summary</p>
           <p className="leading-6 text-foreground/90">{summary}</p>
+        </div>
+      )}
+      {agenda && (
+        <div className="space-y-1">
+          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Agenda</p>
+          <p className="leading-6 text-foreground/90">{agenda}</p>
         </div>
       )}
       {recommendedAction && (
@@ -225,6 +243,13 @@ function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unkn
           </pre>
         </div>
       )}
+      {repoContext ? (
+        <ConferenceContextSummary
+          context={repoContext}
+          title="Captured Repo Context"
+          emptyMessage="No repo context was captured for this request."
+        />
+      ) : null}
     </div>
   );
 }

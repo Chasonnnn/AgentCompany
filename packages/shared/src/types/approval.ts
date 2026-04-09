@@ -1,12 +1,17 @@
 import type { ApprovalStatus, ApprovalType } from "../constants.js";
+import type { ConferenceContext } from "./conference-context.js";
 
 export type RequestBoardApprovalPayload = Record<string, unknown> & {
   title: string;
   summary: string;
+  roomTitle?: string;
+  agenda?: string;
   recommendedAction?: string;
   nextActionOnApproval?: string;
   risks?: string[];
   proposedComment?: string;
+  participantAgentIds?: string[];
+  repoContext?: ConferenceContext;
   decisionTier: "board";
   roomKind: "issue_board_room";
 };

@@ -16,6 +16,10 @@ const mockApprovalService = vi.hoisted(() => ({
   addComment: vi.fn(),
 }));
 
+const mockConferenceApprovalService = vi.hoisted(() => ({
+  createRequestBoardApproval: vi.fn(),
+}));
+
 const mockHeartbeatService = vi.hoisted(() => ({
   wakeup: vi.fn(),
 }));
@@ -33,6 +37,7 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   approvalService: () => mockApprovalService,
+  conferenceApprovalService: () => mockConferenceApprovalService,
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
   logActivity: mockLogActivity,
@@ -127,7 +132,7 @@ describe("approval routes idempotent retries", () => {
   });
 
   it("lets agents create generic issue-linked board approval requests", async () => {
-    mockApprovalService.create.mockResolvedValue({
+    mockConferenceApprovalService.createRequestBoardApproval.mockResolvedValue({
       id: "approval-1",
       companyId: "company-1",
       type: "request_board_approval",
@@ -139,6 +144,36 @@ describe("approval routes idempotent retries", () => {
         summary: "Need board signoff before increasing hosting spend.",
         decisionTier: "board",
         roomKind: "issue_board_room",
+        repoContext: {
+          capturedAt: "2026-04-08T12:00:00.000Z",
+          projectWorkspace: null,
+          executionWorkspace: null,
+          git: {
+            rootPath: "/Users/chason/paperclip",
+            workspacePath: "/Users/chason/paperclip/worktrees/issue-1",
+            displayRootPath: "paperclip",
+            displayWorkspacePath: "paperclip/worktrees/issue-1",
+            branchName: "codex/conference-context",
+            baseRef: "origin/main",
+            isGit: true,
+            dirty: true,
+            dirtyEntryCount: 1,
+            untrackedEntryCount: 0,
+            aheadCount: 1,
+            behindCount: 0,
+            changedFileCount: 1,
+            truncated: false,
+            changedFiles: [
+              {
+                path: "server/src/routes/approvals.ts",
+                previousPath: null,
+                indexStatus: "M",
+                worktreeStatus: " ",
+                status: "M ",
+              },
+            ],
+          },
+        },
       },
       decisionNote: null,
       decidedByUserId: null,
@@ -159,30 +194,26 @@ describe("approval routes idempotent retries", () => {
       });
 
     expect(res.status).toBe(201);
-    expect(mockApprovalService.create).toHaveBeenCalledWith(
-      "company-1",
-      expect.objectContaining({
-        type: "request_board_approval",
-        requestedByAgentId: "agent-1",
-        requestedByUserId: null,
-        status: "pending",
-        decisionNote: null,
-      }),
-    );
-    expect(mockSecretService.normalizeHireApprovalPayloadForPersistence).not.toHaveBeenCalled();
-    expect(mockIssueApprovalService.linkManyForApproval).toHaveBeenCalledWith(
-      "approval-1",
-      ["00000000-0000-0000-0000-000000000001"],
-      { agentId: "agent-1", userId: null },
-    );
-    expect(mockLogActivity).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(mockConferenceApprovalService.createRequestBoardApproval).toHaveBeenCalledWith(
       expect.objectContaining({
         companyId: "company-1",
+        issueId: "00000000-0000-0000-0000-000000000001",
         actorType: "agent",
         actorId: "agent-1",
-        action: "approval.created",
+        requestedByAgentId: "agent-1",
+        requestedByUserId: null,
+        payload: {
+          title: "Approve hosting spend",
+          summary: "Need board signoff before increasing hosting spend.",
+        },
       }),
     );
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockSecretService.normalizeHireApprovalPayloadForPersistence).not.toHaveBeenCalled();
+    expect(mockIssueApprovalService.linkManyForApproval).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(res.body.payload.repoContext.git.rootPath).toBeNull();
+    expect(res.body.payload.repoContext.git.workspacePath).toBeNull();
+    expect(res.body.payload.repoContext.git.displayWorkspacePath).toBe("paperclip/worktrees/issue-1");
   });
 });

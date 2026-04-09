@@ -1,7 +1,5 @@
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { executionWorkspaces, issues, projects, projectWorkspaces, workspaceRuntimeServices } from "@paperclipai/db";
@@ -18,10 +16,10 @@ import {
   listCurrentRuntimeServicesForExecutionWorkspaces,
   listCurrentRuntimeServicesForProjectWorkspaces,
 } from "./workspace-runtime-read-model.js";
+import { inspectGitSnapshot } from "./conference-context.js";
 
 type ExecutionWorkspaceRow = typeof executionWorkspaces.$inferSelect;
 type WorkspaceRuntimeServiceRow = typeof workspaceRuntimeServices.$inferSelect;
-const execFileAsync = promisify(execFile);
 const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -47,10 +45,6 @@ async function pathExists(value: string | null | undefined) {
   } catch {
     return false;
   }
-}
-
-async function runGit(args: string[], cwd: string) {
-  return await execFileAsync("git", ["-C", cwd, ...args], { cwd });
 }
 
 async function inspectGitCloseReadiness(workspace: ExecutionWorkspace): Promise<{
@@ -94,87 +88,27 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace): Promise<
     };
   }
 
-  let repoRoot: string | null = null;
-  try {
-    repoRoot = (await runGit(["rev-parse", "--show-toplevel"], workspacePath)).stdout.trim() || null;
-  } catch (error) {
-    warnings.push(
-      `Could not inspect git status for "${workspacePath}": ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  let branchName = workspace.branchName;
-  if (repoRoot && !branchName) {
-    try {
-      branchName = (await runGit(["rev-parse", "--abbrev-ref", "HEAD"], workspacePath)).stdout.trim() || null;
-    } catch {
-      branchName = workspace.branchName;
-    }
-  }
-
-  let dirtyEntryCount = 0;
-  let untrackedEntryCount = 0;
-  if (repoRoot) {
-    try {
-      const statusOutput = (await runGit(["status", "--porcelain=v1", "--untracked-files=all"], workspacePath)).stdout;
-      for (const line of statusOutput.split(/\r?\n/)) {
-        if (!line) continue;
-        if (line.startsWith("??")) {
-          untrackedEntryCount += 1;
-          continue;
-        }
-        dirtyEntryCount += 1;
-      }
-    } catch (error) {
-      warnings.push(
-        `Could not read git working tree status for "${workspacePath}": ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  let aheadCount: number | null = null;
-  let behindCount: number | null = null;
-  let isMergedIntoBase: boolean | null = null;
-  const baseRef = workspace.baseRef;
-
-  if (repoRoot && baseRef) {
-    try {
-      const counts = (await runGit(["rev-list", "--left-right", "--count", `${baseRef}...HEAD`], workspacePath)).stdout.trim();
-      const [behindRaw, aheadRaw] = counts.split(/\s+/);
-      behindCount = behindRaw ? Number.parseInt(behindRaw, 10) : 0;
-      aheadCount = aheadRaw ? Number.parseInt(aheadRaw, 10) : 0;
-    } catch (error) {
-      warnings.push(
-        `Could not compare this workspace against ${baseRef}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-
-    try {
-      await runGit(["merge-base", "--is-ancestor", "HEAD", baseRef], workspacePath);
-      isMergedIntoBase = true;
-    } catch (error) {
-      const code = typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : null;
-      if (code === 1) isMergedIntoBase = false;
-      else {
-        warnings.push(
-          `Could not determine whether this workspace is merged into ${baseRef}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
+  const { snapshot, isMergedIntoBase } = await inspectGitSnapshot({
+    workspacePath,
+    baseRef: workspace.baseRef,
+  });
+  if (!snapshot) {
+    warnings.push(`Could not inspect git status for "${workspacePath}".`);
+    return { git: null, warnings };
   }
 
   return {
     git: {
-      repoRoot,
-      workspacePath,
-      branchName,
-      baseRef,
-      hasDirtyTrackedFiles: dirtyEntryCount > 0,
-      hasUntrackedFiles: untrackedEntryCount > 0,
-      dirtyEntryCount,
-      untrackedEntryCount,
-      aheadCount,
-      behindCount,
+      repoRoot: snapshot.rootPath,
+      workspacePath: snapshot.workspacePath,
+      branchName: snapshot.branchName,
+      baseRef: snapshot.baseRef,
+      hasDirtyTrackedFiles: snapshot.dirtyEntryCount > 0,
+      hasUntrackedFiles: snapshot.untrackedEntryCount > 0,
+      dirtyEntryCount: snapshot.dirtyEntryCount,
+      untrackedEntryCount: snapshot.untrackedEntryCount,
+      aheadCount: snapshot.aheadCount,
+      behindCount: snapshot.behindCount,
       isMergedIntoBase,
       createdByRuntime,
     },

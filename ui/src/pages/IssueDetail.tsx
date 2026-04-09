@@ -1292,7 +1292,7 @@ export function IssueDetail() {
       className="shadow-none"
     >
       <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
-      {requestBoardDecision.isPending ? "Creating..." : "Request board decision"}
+      {requestBoardDecision.isPending ? "Creating..." : "Open conference room"}
     </Button>
   );
 
@@ -1765,7 +1765,7 @@ export function IssueDetail() {
           </TabsTrigger>
           <TabsTrigger value="board-room" className="gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5" />
-            Board Room
+            Conference Room
           </TabsTrigger>
           <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
@@ -1838,6 +1838,7 @@ export function IssueDetail() {
 
         <TabsContent value="board-room">
           <BoardRoomPanel
+            issueId={issue.id}
             approvals={linkedApprovals}
             agentMap={agentMap}
             onRequestBoardDecision={async (payload) => {

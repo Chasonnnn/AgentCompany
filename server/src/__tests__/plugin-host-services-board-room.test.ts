@@ -2,9 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHostServices } from "../services/plugin-host-services.js";
 
 const mockIssueGetById = vi.hoisted(() => vi.fn());
-const mockApprovalCreate = vi.hoisted(() => vi.fn());
-const mockLinkManyForApproval = vi.hoisted(() => vi.fn());
-const mockLogActivity = vi.hoisted(() => vi.fn());
+const mockConferenceApprovalCreate = vi.hoisted(() => vi.fn());
+const mockSerializeApprovalForActor = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/issues.js", () => ({
   issueService: () => ({
@@ -12,20 +11,11 @@ vi.mock("../services/issues.js", () => ({
   }),
 }));
 
-vi.mock("../services/approvals.js", () => ({
-  approvalService: () => ({
-    create: mockApprovalCreate,
+vi.mock("../services/conference-context.js", () => ({
+  conferenceApprovalService: () => ({
+    createRequestBoardApproval: mockConferenceApprovalCreate,
   }),
-}));
-
-vi.mock("../services/issue-approvals.js", () => ({
-  issueApprovalService: () => ({
-    linkManyForApproval: mockLinkManyForApproval,
-  }),
-}));
-
-vi.mock("../services/activity-log.js", () => ({
-  logActivity: mockLogActivity,
+  serializeApprovalForActor: mockSerializeApprovalForActor,
 }));
 
 function createEventBusStub() {
@@ -46,7 +36,7 @@ describe("buildHostServices issues.requestBoardApproval", () => {
       id: "issue-1",
       companyId: "company-1",
     });
-    mockApprovalCreate.mockResolvedValue({
+    const approval = {
       id: "approval-1",
       companyId: "company-1",
       type: "request_board_approval",
@@ -64,9 +54,36 @@ describe("buildHostServices issues.requestBoardApproval", () => {
       decidedAt: null,
       createdAt: new Date("2026-04-08T00:00:00.000Z"),
       updatedAt: new Date("2026-04-08T00:00:00.000Z"),
-    });
-    mockLinkManyForApproval.mockResolvedValue(undefined);
-    mockLogActivity.mockResolvedValue(undefined);
+    };
+    mockConferenceApprovalCreate.mockResolvedValue(approval);
+    mockSerializeApprovalForActor.mockImplementation((input: any) => ({
+      ...input,
+      payload: {
+        ...input.payload,
+        repoContext: {
+          capturedAt: "2026-04-08T12:00:00.000Z",
+          projectWorkspace: null,
+          executionWorkspace: null,
+          git: {
+            rootPath: null,
+            workspacePath: null,
+            displayRootPath: "paperclip",
+            displayWorkspacePath: "paperclip/worktrees/issue-1",
+            branchName: "codex/conference-context",
+            baseRef: "origin/main",
+            isGit: true,
+            dirty: true,
+            dirtyEntryCount: 1,
+            untrackedEntryCount: 0,
+            aheadCount: 1,
+            behindCount: 0,
+            changedFileCount: 1,
+            truncated: false,
+            changedFiles: [],
+          },
+        },
+      },
+    }));
   });
 
   it("creates an agent-authored board approval linked to the issue", async () => {
@@ -84,33 +101,35 @@ describe("buildHostServices issues.requestBoardApproval", () => {
       payload: {
         title: " Approve spend ",
         summary: " Need board signoff ",
+        roomTitle: " Spend Review ",
+        agenda: " Review the overage and invite the right leads. ",
+        participantAgentIds: ["agent-2", " agent-3 "],
       },
     });
 
-    expect(mockApprovalCreate).toHaveBeenCalledWith(
-      "company-1",
-      expect.objectContaining({
-        type: "request_board_approval",
-        requestedByAgentId: "agent-1",
-        requestedByUserId: null,
-        status: "pending",
-        decisionNote: null,
-      }),
-    );
-    expect(mockLinkManyForApproval).toHaveBeenCalledWith(
-      "approval-1",
-      ["issue-1"],
-      { agentId: "agent-1", userId: null },
-    );
-    expect(mockLogActivity).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(mockConferenceApprovalCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         companyId: "company-1",
+        issueId: "issue-1",
         actorType: "agent",
         actorId: "agent-1",
-        action: "approval.created",
+        requestedByAgentId: "agent-1",
+        requestedByUserId: null,
+        payload: {
+          title: " Approve spend ",
+          summary: " Need board signoff ",
+          roomTitle: " Spend Review ",
+          agenda: " Review the overage and invite the right leads. ",
+          participantAgentIds: ["agent-2", " agent-3 "],
+        },
       }),
     );
+    expect(mockSerializeApprovalForActor).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "approval-1" }),
+      "agent",
+    );
     expect(approval.id).toBe("approval-1");
+    expect(approval.payload.repoContext.git.rootPath).toBeNull();
+    expect(approval.payload.repoContext.git.displayWorkspacePath).toBe("paperclip/worktrees/issue-1");
   });
 });

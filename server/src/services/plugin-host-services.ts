@@ -11,13 +11,10 @@ import type {
   PluginWorkspace,
   IssueComment,
 } from "@paperclipai/plugin-sdk";
-import { normalizeRequestBoardApprovalPayload } from "@paperclipai/shared";
 import { companyService } from "./companies.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
 import { issueService } from "./issues.js";
-import { approvalService } from "./approvals.js";
-import { issueApprovalService } from "./issue-approvals.js";
 import { goalService } from "./goals.js";
 import { documentService } from "./documents.js";
 import { heartbeatService } from "./heartbeat.js";
@@ -38,6 +35,7 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { logger } from "../middleware/logger.js";
 import { getTelemetryClient } from "../telemetry.js";
+import { conferenceApprovalService, serializeApprovalForActor } from "./conference-context.js";
 
 // ---------------------------------------------------------------------------
 // SSRF protection for plugin HTTP fetch
@@ -456,8 +454,7 @@ export function buildHostServices(
   const heartbeat = heartbeatService(db);
   const projects = projectService(db);
   const issues = issueService(db);
-  const approvals = approvalService(db);
-  const issueApprovals = issueApprovalService(db);
+  const conferenceApprovals = conferenceApprovalService(db);
   const documents = documentService(db);
   const goals = goalService(db);
   const activity = activityService(db);
@@ -820,36 +817,19 @@ export function buildHostServices(
         await ensurePluginAvailableForCompany(companyId);
         requireInCompany("Issue", await issues.getById(params.issueId), companyId);
 
-        const payload = normalizeRequestBoardApprovalPayload(params.payload);
-        const approval = await approvals.create(companyId, {
-          type: "request_board_approval",
-          payload,
+        const approval = await conferenceApprovals.createRequestBoardApproval({
+          companyId,
+          issueId: params.issueId,
+          payload: params.payload,
           requestedByAgentId: params.requestedByAgentId,
           requestedByUserId: null,
-          status: "pending",
-          decisionNote: null,
-          decidedByUserId: null,
-          decidedAt: null,
-          updatedAt: new Date(),
-        });
-
-        await issueApprovals.linkManyForApproval(approval.id, [params.issueId], {
-          agentId: params.requestedByAgentId,
-          userId: null,
-        });
-
-        await logActivity(db, {
-          companyId,
           actorType: "agent",
           actorId: params.requestedByAgentId,
           agentId: params.requestedByAgentId,
-          action: "approval.created",
-          entityType: "approval",
-          entityId: approval.id,
-          details: { type: approval.type, issueIds: [params.issueId] },
+          runId: null,
         });
 
-        return approval as any;
+        return serializeApprovalForActor(approval, "agent") as any;
       },
     },
 

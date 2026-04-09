@@ -3,7 +3,6 @@ import type { Db } from "@paperclipai/db";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
-  normalizeRequestBoardApprovalPayload,
   requestApprovalRevisionSchema,
   resolveApprovalSchema,
   resubmitApprovalSchema,
@@ -12,35 +11,35 @@ import { validate } from "../middleware/validate.js";
 import { logger } from "../middleware/logger.js";
 import {
   approvalService,
+  conferenceApprovalService,
   heartbeatService,
   issueApprovalService,
   logActivity,
   secretService,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { redactEventPayload } from "../redaction.js";
-
-function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
-  return {
-    ...approval,
-    payload: redactEventPayload(approval.payload) ?? {},
-  };
-}
+import { serializeApprovalForActor } from "../services/conference-context.js";
 
 export function approvalRoutes(db: Db) {
   const router = Router();
   const svc = approvalService(db);
+  const conferenceApprovals = conferenceApprovalService(db);
   const heartbeat = heartbeatService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const secretsSvc = secretService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
+
+  function getConferenceActor(req: Parameters<typeof assertCompanyAccess>[0]) {
+    return req.actor.type === "agent" ? "agent" : "board";
+  }
 
   router.get("/companies/:companyId/approvals", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const status = req.query.status as string | undefined;
     const result = await svc.list(companyId, status);
-    res.json(result.map((approval) => redactApprovalPayload(approval)));
+    const actor = getConferenceActor(req);
+    res.json(result.map((approval) => serializeApprovalForActor(approval, actor)));
   });
 
   router.get("/approvals/:id", async (req, res) => {
@@ -51,7 +50,7 @@ export function approvalRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, approval.companyId);
-    res.json(redactApprovalPayload(approval));
+    res.json(serializeApprovalForActor(approval, getConferenceActor(req)));
   });
 
   router.post("/companies/:companyId/approvals", validate(createApprovalSchema), async (req, res) => {
@@ -63,6 +62,32 @@ export function approvalRoutes(db: Db) {
       : [];
     const uniqueIssueIds = Array.from(new Set(issueIds));
     const { issueIds: _issueIds, ...approvalInput } = req.body;
+    const actor = getActorInfo(req);
+    const requestedByAgentId =
+      approvalInput.requestedByAgentId ?? (actor.actorType === "agent" ? actor.actorId : null);
+
+    if (approvalInput.type === "request_board_approval") {
+      if (uniqueIssueIds.length !== 1) {
+        res.status(422).json({ error: "Conference approvals require exactly one linked issue" });
+        return;
+      }
+
+      const approval = await conferenceApprovals.createRequestBoardApproval({
+        companyId,
+        issueId: uniqueIssueIds[0]!,
+        payload: approvalInput.payload,
+        requestedByAgentId,
+        requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId ?? null,
+        runId: actor.runId ?? null,
+      });
+
+      res.status(201).json(serializeApprovalForActor(approval, getConferenceActor(req)));
+      return;
+    }
+
     const normalizedPayload =
       approvalInput.type === "hire_agent"
         ? await secretsSvc.normalizeHireApprovalPayloadForPersistence(
@@ -70,17 +95,13 @@ export function approvalRoutes(db: Db) {
             approvalInput.payload,
             { strictMode: strictSecretsMode },
           )
-        : approvalInput.type === "request_board_approval"
-          ? normalizeRequestBoardApprovalPayload(approvalInput.payload)
         : approvalInput.payload;
 
-    const actor = getActorInfo(req);
     const approval = await svc.create(companyId, {
       ...approvalInput,
       payload: normalizedPayload,
       requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
-      requestedByAgentId:
-        approvalInput.requestedByAgentId ?? (actor.actorType === "agent" ? actor.actorId : null),
+      requestedByAgentId,
       status: "pending",
       decisionNote: null,
       decidedByUserId: null,
@@ -106,7 +127,7 @@ export function approvalRoutes(db: Db) {
       details: { type: approval.type, issueIds: uniqueIssueIds },
     });
 
-    res.status(201).json(redactApprovalPayload(approval));
+    res.status(201).json(serializeApprovalForActor(approval, getConferenceActor(req)));
   });
 
   router.get("/approvals/:id/issues", async (req, res) => {
@@ -213,7 +234,7 @@ export function approvalRoutes(db: Db) {
       }
     }
 
-    res.json(redactApprovalPayload(approval));
+    res.json(serializeApprovalForActor(approval, getConferenceActor(req)));
   });
 
   router.post("/approvals/:id/reject", validate(resolveApprovalSchema), async (req, res) => {
@@ -237,7 +258,7 @@ export function approvalRoutes(db: Db) {
       });
     }
 
-    res.json(redactApprovalPayload(approval));
+    res.json(serializeApprovalForActor(approval, getConferenceActor(req)));
   });
 
   router.post(
@@ -262,7 +283,7 @@ export function approvalRoutes(db: Db) {
         details: { type: approval.type },
       });
 
-      res.json(redactApprovalPayload(approval));
+      res.json(serializeApprovalForActor(approval, getConferenceActor(req)));
     },
   );
 
@@ -301,7 +322,7 @@ export function approvalRoutes(db: Db) {
       entityId: approval.id,
       details: { type: approval.type },
     });
-    res.json(redactApprovalPayload(approval));
+    res.json(serializeApprovalForActor(approval, getConferenceActor(req)));
   });
 
   router.get("/approvals/:id/comments", async (req, res) => {

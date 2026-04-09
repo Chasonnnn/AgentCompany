@@ -5,7 +5,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import type { Agent, Approval, ApprovalComment } from "@paperclipai/shared";
+import type { Agent, Approval, ApprovalComment, ConferenceContext } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BoardRoomPanel } from "./BoardRoomPanel";
 
@@ -14,8 +14,16 @@ const mockApprovalsApi = vi.hoisted(() => ({
   addComment: vi.fn(),
 }));
 
+const mockIssuesApi = vi.hoisted(() => ({
+  getConferenceContext: vi.fn(),
+}));
+
 vi.mock("@/api/approvals", () => ({
   approvalsApi: mockApprovalsApi,
+}));
+
+vi.mock("@/api/issues", () => ({
+  issuesApi: mockIssuesApi,
 }));
 
 vi.mock("./ApprovalCard", () => ({
@@ -144,6 +152,66 @@ function createApproval(id: string, type: Approval["type"], title: string): Appr
   };
 }
 
+function createConferenceContext(): ConferenceContext {
+  return {
+    capturedAt: "2026-04-08T12:00:00.000Z",
+    projectWorkspace: {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectId: "22222222-2222-4222-8222-222222222222",
+      name: "Primary Repo",
+      sourceType: "local_path",
+      isPrimary: true,
+      repoUrl: "https://github.com/acme/paperclip",
+      repoRef: "main",
+      defaultRef: "main",
+    },
+    executionWorkspace: {
+      id: "33333333-3333-4333-8333-333333333333",
+      projectId: "22222222-2222-4222-8222-222222222222",
+      projectWorkspaceId: "11111111-1111-4111-8111-111111111111",
+      name: "Issue Worktree",
+      mode: "isolated_workspace",
+      status: "active",
+      providerType: "git_worktree",
+      repoUrl: "https://github.com/acme/paperclip",
+      baseRef: "origin/main",
+      branchName: "codex/conference-context",
+    },
+    git: {
+      rootPath: "/Users/chason/paperclip",
+      workspacePath: "/Users/chason/paperclip/worktrees/issue-1",
+      displayRootPath: "paperclip",
+      displayWorkspacePath: "paperclip/worktrees/issue-1",
+      branchName: "codex/conference-context",
+      baseRef: "origin/main",
+      isGit: true,
+      dirty: true,
+      dirtyEntryCount: 2,
+      untrackedEntryCount: 1,
+      aheadCount: 3,
+      behindCount: 0,
+      changedFileCount: 2,
+      truncated: false,
+      changedFiles: [
+        {
+          path: "server/src/routes/issues.ts",
+          previousPath: null,
+          indexStatus: "M",
+          worktreeStatus: " ",
+          status: "M ",
+        },
+        {
+          path: "ui/src/components/BoardRoomPanel.tsx",
+          previousPath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          status: " M",
+        },
+      ],
+    },
+  };
+}
+
 describe("BoardRoomPanel", () => {
   let container: HTMLDivElement;
   let queryClient: QueryClient;
@@ -159,6 +227,7 @@ describe("BoardRoomPanel", () => {
     });
     mockApprovalsApi.listComments.mockReset();
     mockApprovalsApi.addComment.mockReset();
+    mockIssuesApi.getConferenceContext.mockReset();
   });
 
   afterEach(() => {
@@ -239,6 +308,12 @@ describe("BoardRoomPanel", () => {
       titleInput!.dispatchEvent(new Event("change", { bubbles: true }));
       summaryInput!.value = "  Pilot this on issue detail first. ";
       summaryInput!.dispatchEvent(new Event("change", { bubbles: true }));
+      const roomTitleInput = container.querySelector('input[name="roomTitle"]') as HTMLInputElement | null;
+      roomTitleInput!.value = "  Migration Readiness Council ";
+      roomTitleInput!.dispatchEvent(new Event("change", { bubbles: true }));
+      const agendaInput = container.querySelector('textarea[name="agenda"]') as HTMLTextAreaElement | null;
+      agendaInput!.value = "  Review blockers, risks, and the staged rollout plan. ";
+      agendaInput!.dispatchEvent(new Event("change", { bubbles: true }));
       recommendedActionInput!.value = " Launch the board room tab ";
       recommendedActionInput!.dispatchEvent(new Event("change", { bubbles: true }));
       nextActionInput!.value = " Implement the issue-level board room panel ";
@@ -247,6 +322,8 @@ describe("BoardRoomPanel", () => {
       risksInput!.dispatchEvent(new Event("change", { bubbles: true }));
       proposedCommentInput!.value = "  Approved for a narrow pilot. ";
       proposedCommentInput!.dispatchEvent(new Event("change", { bubbles: true }));
+      const participantCheckboxes = container.querySelectorAll('input[name="participantAgentIds"]');
+      (participantCheckboxes[0] as HTMLInputElement | undefined)?.click();
     });
 
     const submitButton = Array.from(container.querySelectorAll("button")).find(
@@ -260,10 +337,13 @@ describe("BoardRoomPanel", () => {
     expect(onRequestBoardDecision).toHaveBeenCalledWith({
       title: "Approve board room rollout",
       summary: "Pilot this on issue detail first.",
+      roomTitle: "Migration Readiness Council",
+      agenda: "Review blockers, risks, and the staged rollout plan.",
       recommendedAction: "Launch the board room tab",
       nextActionOnApproval: "Implement the issue-level board room panel",
       risks: ["Extra review overhead", "Adoption confusion"],
       proposedComment: "Approved for a narrow pilot.",
+      participantAgentIds: ["agent-1"],
       decisionTier: "board",
       roomKind: "issue_board_room",
     });
@@ -308,7 +388,7 @@ describe("BoardRoomPanel", () => {
     });
 
     expect(mockApprovalsApi.listComments).toHaveBeenCalledWith("approval-board");
-    expect(container.textContent).toContain("Loading board discussion");
+    expect(container.textContent).toContain("Loading conference discussion");
 
     await flush();
 
@@ -371,6 +451,86 @@ describe("BoardRoomPanel", () => {
       "Approved with a narrow rollout.",
     );
     expect(container.textContent).toContain("Approved with a narrow rollout.");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows invited conference-room participants when present on the approval payload", async () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <BoardRoomPanel
+              approvals={[{
+                ...createApproval("approval-board", "request_board_approval", "Approve issue strategy"),
+                payload: {
+                  title: "Approve issue strategy",
+                  participantAgentIds: ["agent-1"],
+                  roomTitle: "Readiness Review",
+                  agenda: "Confirm the migration plan.",
+                },
+              }]}
+              agentMap={new Map([["agent-1", createAgent()]])}
+              onRequestBoardDecision={async () => {}}
+              onApproveApproval={async () => {}}
+              onRejectApproval={async () => {}}
+              pendingApprovalAction={null}
+            />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(container.textContent).toContain("Participants");
+    expect(container.textContent).toContain("Director");
+    expect(container.textContent).toContain("Readiness Review");
+    expect(container.textContent).toContain("Confirm the migration plan.");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows a live repo context preview in the composer", async () => {
+    const root = createRoot(container);
+    mockIssuesApi.getConferenceContext.mockResolvedValue(createConferenceContext());
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <BoardRoomPanel
+              issueId="issue-1"
+              approvals={[]}
+              agentMap={new Map([["agent-1", createAgent()]])}
+              onRequestBoardDecision={async () => {}}
+              onApproveApproval={async () => {}}
+              onRejectApproval={async () => {}}
+              pendingApprovalAction={null}
+            />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+
+    const openButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Request board decision"),
+    );
+
+    await act(async () => {
+      openButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(mockIssuesApi.getConferenceContext).toHaveBeenCalledWith("issue-1");
+    expect(container.textContent).toContain("Live Repo Context Preview");
+    expect(container.textContent).toContain("Issue Worktree");
+    expect(container.textContent).toContain("codex/conference-context");
+    expect(container.textContent).toContain("server/src/routes/issues.ts");
 
     act(() => {
       root.unmount();

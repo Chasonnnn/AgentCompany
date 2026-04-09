@@ -11,14 +11,19 @@ describe("board room helpers", () => {
       normalizeBoardRoomRequestPayload({
         title: "  Approve conference-room rollout  ",
         summary: "  We should pilot the board room on issue detail first. ",
+        roomTitle: "  Launch Council  ",
+        agenda: "  Decide the rollout shape and invite the right leads. ",
         recommendedAction: " Launch board room v1 ",
         nextActionOnApproval: " Implement the issue-level board room tab ",
         risks: "  Adds one more review surface \n\n Could slow approvals if overused ",
         proposedComment: "  Approved for the issue-level pilot. ",
+        participantAgentIds: ["agent-1", " agent-2 ", "agent-1"],
       }),
     ).toEqual({
       title: "Approve conference-room rollout",
       summary: "We should pilot the board room on issue detail first.",
+      roomTitle: "Launch Council",
+      agenda: "Decide the rollout shape and invite the right leads.",
       recommendedAction: "Launch board room v1",
       nextActionOnApproval: "Implement the issue-level board room tab",
       risks: [
@@ -26,6 +31,7 @@ describe("board room helpers", () => {
         "Could slow approvals if overused",
       ],
       proposedComment: "Approved for the issue-level pilot.",
+      participantAgentIds: ["agent-1", "agent-2"],
       decisionTier: "board",
       roomKind: "issue_board_room",
     });

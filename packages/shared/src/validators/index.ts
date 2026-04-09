@@ -1,4 +1,14 @@
 export {
+  conferenceContextSchema,
+  conferenceExecutionWorkspaceModeSchema,
+  conferenceExecutionWorkspaceSummarySchema,
+  conferenceProjectWorkspaceSummarySchema,
+  gitSnapshotFileSchema,
+  gitSnapshotSchema,
+  gitSnapshotStatusCodeSchema,
+} from "./conference-context.js";
+
+export {
   instanceGeneralSettingsSchema,
   patchInstanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
