@@ -5,6 +5,7 @@ import type { Issue } from "@paperclipai/shared";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../adapters";
 import { issuesApi } from "../api/issues";
+import { uniqueRunsByAgent } from "../lib/dashboard-runs";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, relativeTime } from "../lib/utils";
 import { ExternalLink } from "lucide-react";
@@ -28,7 +29,7 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
     queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, MIN_DASHBOARD_RUNS),
   });
 
-  const runs = liveRuns ?? [];
+  const runs = useMemo(() => uniqueRunsByAgent(liveRuns ?? []), [liveRuns]);
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(companyId),
     queryFn: () => issuesApi.list(companyId),
