@@ -14,6 +14,11 @@ import {
   writeLocalServiceRegistryRecord,
 } from "../server/src/services/local-service-supervisor.ts";
 
+// Keep these values local so the dev runner can boot from the server package's
+// tsx context without requiring workspace package resolution first.
+const BIND_MODES = ["loopback", "lan", "tailnet", "custom"] as const;
+type BindMode = (typeof BIND_MODES)[number];
+
 const mode = process.argv[2] === "watch" ? "watch" : "dev";
 const cliArgs = process.argv.slice(3);
 const scanIntervalMs = 1500;
