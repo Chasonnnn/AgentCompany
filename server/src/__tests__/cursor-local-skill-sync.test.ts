@@ -18,6 +18,20 @@ async function createSkillDir(root: string, name: string) {
   return skillDir;
 }
 
+function managedCursorSkillsHome(root: string, companyId: string) {
+  return path.join(
+    root,
+    "paperclip-home",
+    "instances",
+    "default",
+    "companies",
+    companyId,
+    "cursor-home",
+    ".cursor",
+    "skills",
+  );
+}
+
 describe("cursor local skill sync", () => {
   const paperclipKey = "paperclipai/paperclip/paperclip";
   const cleanupDirs = new Set<string>();
@@ -30,6 +44,7 @@ describe("cursor local skill sync", () => {
   it("reports configured Paperclip skills and installs them into the Cursor skills home", async () => {
     const home = await makeTempDir("paperclip-cursor-skill-sync-");
     cleanupDirs.add(home);
+    const managedSkillsHome = managedCursorSkillsHome(home, "company-1");
 
     const ctx = {
       agentId: "agent-1",
@@ -38,6 +53,7 @@ describe("cursor local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [paperclipKey],
@@ -53,7 +69,7 @@ describe("cursor local skill sync", () => {
 
     const after = await syncCursorSkills(ctx, [paperclipKey]);
     expect(after.entries.find((entry) => entry.key === paperclipKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".cursor", "skills", "paperclip"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome, "paperclip"))).isSymbolicLink()).toBe(true);
   });
 
   it("recognizes company-library runtime skills supplied outside the bundled Paperclip directory", async () => {
@@ -61,6 +77,7 @@ describe("cursor local skill sync", () => {
     const runtimeSkills = await makeTempDir("paperclip-cursor-runtime-skills-src-");
     cleanupDirs.add(home);
     cleanupDirs.add(runtimeSkills);
+    const managedSkillsHome = managedCursorSkillsHome(home, "company-1");
 
     const paperclipDir = await createSkillDir(runtimeSkills, "paperclip");
     const asciiHeartDir = await createSkillDir(runtimeSkills, "ascii-heart");
@@ -72,6 +89,7 @@ describe("cursor local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipRuntimeSkills: [
           {
@@ -101,12 +119,13 @@ describe("cursor local skill sync", () => {
     const after = await syncCursorSkills(ctx, ["ascii-heart"]);
     expect(after.warnings).toEqual([]);
     expect(after.entries.find((entry) => entry.key === "ascii-heart")?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".cursor", "skills", "ascii-heart"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).isSymbolicLink()).toBe(true);
   });
 
   it("keeps required bundled Paperclip skills installed even when the desired set is emptied", async () => {
     const home = await makeTempDir("paperclip-cursor-skill-prune-");
     cleanupDirs.add(home);
+    const managedSkillsHome = managedCursorSkillsHome(home, "company-1");
 
     const configuredCtx = {
       agentId: "agent-2",
@@ -115,6 +134,7 @@ describe("cursor local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [paperclipKey],
@@ -129,6 +149,7 @@ describe("cursor local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [],
@@ -139,6 +160,6 @@ describe("cursor local skill sync", () => {
     const after = await syncCursorSkills(clearedCtx, []);
     expect(after.desiredSkills).toContain(paperclipKey);
     expect(after.entries.find((entry) => entry.key === paperclipKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".cursor", "skills", "paperclip"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome, "paperclip"))).isSymbolicLink()).toBe(true);
   });
 });

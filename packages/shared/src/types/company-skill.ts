@@ -1,3 +1,5 @@
+import type { AgentDepartmentKey, AgentRole } from "../constants.js";
+
 export type CompanySkillSourceType = "local_path" | "github" | "url" | "catalog" | "skills_sh";
 
 export type CompanySkillTrustLevel = "markdown_only" | "assets" | "scripts_executables";
@@ -5,6 +7,10 @@ export type CompanySkillTrustLevel = "markdown_only" | "assets" | "scripts_execu
 export type CompanySkillCompatibility = "compatible" | "unknown" | "invalid";
 
 export type CompanySkillSourceBadge = "paperclip" | "github" | "local" | "url" | "catalog" | "skills_sh";
+
+export type GlobalSkillCatalogSourceRoot = "codex" | "claude";
+export type BulkSkillGrantTier = "all" | "leaders" | "workers";
+export type BulkSkillGrantMode = "add" | "remove" | "replace";
 
 export interface CompanySkillFileInventoryEntry {
   path: string;
@@ -53,6 +59,20 @@ export interface CompanySkillListItem {
   sourcePath: string | null;
 }
 
+export interface GlobalSkillCatalogItem {
+  catalogKey: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  sourceRoot: GlobalSkillCatalogSourceRoot;
+  sourcePath: string;
+  trustLevel: CompanySkillTrustLevel;
+  compatibility: CompanySkillCompatibility;
+  fileInventory: CompanySkillFileInventoryEntry[];
+  installedSkillId: string | null;
+  installedSkillKey: string | null;
+}
+
 export interface CompanySkillUsageAgent {
   id: string;
   name: string;
@@ -83,6 +103,93 @@ export interface CompanySkillUpdateStatus {
 
 export interface CompanySkillImportRequest {
   source: string;
+}
+
+export interface CompanySkillInstallGlobalRequest {
+  catalogKey: string;
+}
+
+export type BulkSkillGrantTarget =
+  | {
+    kind: "department";
+    departmentKey: AgentDepartmentKey;
+  }
+  | {
+    kind: "project";
+    projectId: string;
+  };
+
+export type BulkSkillGrantTargetSummary =
+  | {
+    kind: "department";
+    departmentKey: AgentDepartmentKey;
+    label: string;
+  }
+  | {
+    kind: "project";
+    projectId: string;
+    label: string;
+  };
+
+export interface BulkSkillGrantRequest {
+  target: BulkSkillGrantTarget;
+  tier: BulkSkillGrantTier;
+  mode: BulkSkillGrantMode;
+}
+
+export interface BulkSkillGrantApplyRequest extends BulkSkillGrantRequest {
+  selectionFingerprint: string;
+}
+
+export interface BulkSkillGrantSkippedAgent {
+  id: string;
+  name: string;
+  reason: string;
+}
+
+export interface BulkSkillGrantPreviewAgent {
+  id: string;
+  name: string;
+  urlKey: string;
+  role: AgentRole;
+  title: string | null;
+  currentDesiredSkills: string[];
+  nextDesiredSkills: string[];
+  change: "unchanged" | "add" | "remove" | "replace";
+}
+
+export interface BulkSkillGrantPreview {
+  skillId: string;
+  skillKey: string;
+  skillName: string;
+  target: BulkSkillGrantTargetSummary;
+  tier: BulkSkillGrantTier;
+  mode: BulkSkillGrantMode;
+  matchedAgentCount: number;
+  changedAgentCount: number;
+  addCount: number;
+  removeCount: number;
+  unchangedCount: number;
+  agents: BulkSkillGrantPreviewAgent[];
+  skippedAgents: BulkSkillGrantSkippedAgent[];
+  selectionFingerprint: string;
+}
+
+export interface BulkSkillGrantResult {
+  skillId: string;
+  skillKey: string;
+  skillName: string;
+  target: BulkSkillGrantTargetSummary;
+  tier: BulkSkillGrantTier;
+  mode: BulkSkillGrantMode;
+  matchedAgentCount: number;
+  changedAgentCount: number;
+  addCount: number;
+  removeCount: number;
+  unchangedCount: number;
+  appliedAgentIds: string[];
+  rollbackPerformed: boolean;
+  rollbackErrors: string[];
 }
 
 export interface CompanySkillImportResult {

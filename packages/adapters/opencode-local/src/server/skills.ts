@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -9,51 +8,73 @@ import type {
 import {
   buildPersistentSkillSnapshot,
   ensurePaperclipSkillSymlink,
+  prepareManagedAdapterHome,
   readPaperclipRuntimeSkillEntries,
   readInstalledSkillTargets,
+  resolveManagedLocalAdapterHomeDir,
+  resolveSharedLocalAdapterHomeDir,
   resolvePaperclipDesiredSkillNames,
 } from "@paperclipai/adapter-utils/server-utils";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+function resolveOpenCodeSkillsHome(config: Record<string, unknown>, companyId?: string) {
+  return path.join(resolveOpenCodeManagedHome(config, companyId), ".claude", "skills");
 }
 
-function resolveOpenCodeSkillsHome(config: Record<string, unknown>) {
+function resolveOpenCodeManagedHome(config: Record<string, unknown>, companyId?: string) {
   const env =
     typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
       ? (config.env as Record<string, unknown>)
       : {};
-  const configuredHome = asString(env.HOME);
-  const home = configuredHome ? path.resolve(configuredHome) : os.homedir();
-  return path.join(home, ".claude", "skills");
+  const runtimeEnv = {
+    ...process.env,
+    ...Object.fromEntries(
+      Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+  };
+  return resolveManagedLocalAdapterHomeDir(runtimeEnv, "opencode", companyId);
 }
 
-async function buildOpenCodeSkillSnapshot(config: Record<string, unknown>): Promise<AdapterSkillSnapshot> {
+function resolveSharedOpenCodeSkillsHome(config: Record<string, unknown>) {
+  const env =
+    typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
+      ? (config.env as Record<string, unknown>)
+      : {};
+  const runtimeEnv = {
+    ...process.env,
+    ...Object.fromEntries(
+      Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+  };
+  return path.join(resolveSharedLocalAdapterHomeDir(runtimeEnv), ".claude", "skills");
+}
+
+async function buildOpenCodeSkillSnapshot(config: Record<string, unknown>, companyId?: string): Promise<AdapterSkillSnapshot> {
   const availableEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredSkills = resolvePaperclipDesiredSkillNames(config, availableEntries);
-  const skillsHome = resolveOpenCodeSkillsHome(config);
+  const skillsHome = resolveOpenCodeSkillsHome(config, companyId);
   const installed = await readInstalledSkillTargets(skillsHome);
+  const diagnosticInstalled = await readInstalledSkillTargets(resolveSharedOpenCodeSkillsHome(config));
   return buildPersistentSkillSnapshot({
     adapterType: "opencode_local",
     availableEntries,
     desiredSkills,
     installed,
+    diagnosticInstalled,
     skillsHome,
-    locationLabel: "~/.claude/skills",
-    installedDetail: "Installed in the shared Claude/OpenCode skills home.",
-    missingDetail: "Configured but not currently linked into the shared Claude/OpenCode skills home.",
-    externalConflictDetail: "Skill name is occupied by an external installation in the shared skills home.",
-    externalDetail: "Installed outside Paperclip management in the shared skills home.",
-    warnings: [
-      "OpenCode currently uses the shared Claude skills home (~/.claude/skills).",
-    ],
+    locationLabel: "~/.paperclip/.../opencode-home/.claude/skills",
+    installedDetail: "Installed in the Paperclip-managed OpenCode skill home.",
+    missingDetail: "Granted but not currently linked into the Paperclip-managed OpenCode skill home.",
+    externalConflictDetail: "Paperclip blocked this runtime slot because it is occupied by an unmanaged installation.",
+    externalDetail: "Installed outside Paperclip management and blocked from this agent.",
+    diagnosticLocationLabel: "~/.claude/skills",
+    diagnosticExternalDetail: "Detected in the shared Claude skills home, but blocked from this agent.",
   });
 }
 
 export async function listOpenCodeSkills(ctx: AdapterSkillContext): Promise<AdapterSkillSnapshot> {
-  return buildOpenCodeSkillSnapshot(ctx.config);
+  return buildOpenCodeSkillSnapshot(ctx.config, ctx.companyId);
 }
 
 export async function syncOpenCodeSkills(
@@ -65,7 +86,26 @@ export async function syncOpenCodeSkills(
     ...desiredSkills,
     ...availableEntries.filter((entry) => entry.required).map((entry) => entry.key),
   ]);
-  const skillsHome = resolveOpenCodeSkillsHome(ctx.config);
+  const runtimeEnv =
+    typeof ctx.config.env === "object" && ctx.config.env !== null && !Array.isArray(ctx.config.env)
+      ? ({
+          ...process.env,
+          ...Object.fromEntries(
+            Object.entries(ctx.config.env as Record<string, unknown>).filter(
+              (entry): entry is [string, string] => typeof entry[1] === "string",
+            ),
+          ),
+        } as NodeJS.ProcessEnv)
+      : process.env;
+  const managedHome = await prepareManagedAdapterHome({
+    env: runtimeEnv,
+    adapterKey: "opencode",
+    companyId: ctx.companyId,
+    sharedHomeDir: resolveSharedLocalAdapterHomeDir(runtimeEnv),
+    logLabel: "OpenCode",
+    subtrees: [{ relativePath: ".claude", excludeChildren: ["skills"] }],
+  });
+  const skillsHome = path.join(managedHome, ".claude", "skills");
   await fs.mkdir(skillsHome, { recursive: true });
   const installed = await readInstalledSkillTargets(skillsHome);
   const availableByRuntimeName = new Map(availableEntries.map((entry) => [entry.runtimeName, entry]));
@@ -84,7 +124,7 @@ export async function syncOpenCodeSkills(
     await fs.unlink(path.join(skillsHome, name)).catch(() => {});
   }
 
-  return buildOpenCodeSkillSnapshot(ctx.config);
+  return buildOpenCodeSkillSnapshot(ctx.config, ctx.companyId);
 }
 
 export function resolveOpenCodeDesiredSkillNames(

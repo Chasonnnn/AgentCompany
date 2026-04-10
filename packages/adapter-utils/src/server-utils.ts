@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants as fsConstants, promises as fs, type Dirent } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type {
   AdapterSkillEntry,
@@ -42,6 +43,7 @@ const PAPERCLIP_SKILL_ROOT_RELATIVE_CANDIDATES = [
   "../../skills",
   "../../../../../skills",
 ];
+const DEFAULT_PAPERCLIP_INSTANCE_ID = "default";
 
 export interface PaperclipSkillEntry {
   key: string;
@@ -61,13 +63,31 @@ interface PersistentSkillSnapshotOptions {
   availableEntries: PaperclipSkillEntry[];
   desiredSkills: string[];
   installed: Map<string, InstalledSkillTarget>;
+  diagnosticInstalled?: Map<string, InstalledSkillTarget>;
   skillsHome: string;
   locationLabel?: string | null;
   installedDetail?: string | null;
   missingDetail: string;
   externalConflictDetail: string;
   externalDetail: string;
+  diagnosticLocationLabel?: string | null;
+  diagnosticExternalDetail?: string | null;
   warnings?: string[];
+}
+
+interface ManagedHomeSubtree {
+  relativePath: string;
+  excludeChildren?: string[];
+}
+
+interface PrepareManagedAdapterHomeOptions {
+  env?: NodeJS.ProcessEnv;
+  adapterKey: string;
+  companyId?: string;
+  sharedHomeDir?: string | null;
+  logLabel: string;
+  subtrees: ManagedHomeSubtree[];
+  onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
 }
 
 function normalizePathSlashes(value: string): string {
@@ -100,6 +120,131 @@ function buildManagedSkillOrigin(entry: { required?: boolean }): Pick<
     originLabel: "Managed by Paperclip",
     readOnly: false,
   };
+}
+
+function nonEmptyString(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeRelativePath(value: string): string {
+  return value
+    .replaceAll("\\", "/")
+    .replace(/^\/+|\/+$/g, "");
+}
+
+function hasNestedExclude(excludes: Set<string>, relativePath: string): boolean {
+  const prefix = `${relativePath}/`;
+  for (const value of excludes) {
+    if (value.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+async function ensureDirectoryAt(targetDir: string): Promise<void> {
+  const existing = await fs.lstat(targetDir).catch(() => null);
+  if (existing?.isDirectory()) return;
+  if (existing) {
+    await fs.rm(targetDir, { recursive: true, force: true });
+  }
+  await fs.mkdir(targetDir, { recursive: true });
+}
+
+async function ensureSymlinkTarget(target: string, source: string): Promise<void> {
+  const existing = await fs.lstat(target).catch(() => null);
+  if (!existing) {
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.symlink(source, target);
+    return;
+  }
+
+  if (existing.isSymbolicLink()) {
+    const linkedPath = await fs.readlink(target).catch(() => null);
+    if (!linkedPath) return;
+    const resolvedLinkedPath = path.resolve(path.dirname(target), linkedPath);
+    if (resolvedLinkedPath === source) return;
+    await fs.unlink(target);
+    await fs.symlink(source, target);
+    return;
+  }
+}
+
+async function mirrorManagedHomeSubtree(
+  sourceRoot: string,
+  targetRoot: string,
+  excludes: Set<string>,
+  relativePath = "",
+): Promise<void> {
+  const entries = await fs.readdir(sourceRoot, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const nextRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+    if (excludes.has(nextRelativePath)) {
+      continue;
+    }
+
+    const sourcePath = path.join(sourceRoot, entry.name);
+    const targetPath = path.join(targetRoot, entry.name);
+    if (entry.isDirectory() && hasNestedExclude(excludes, nextRelativePath)) {
+      await ensureDirectoryAt(targetPath);
+      await mirrorManagedHomeSubtree(sourcePath, targetPath, excludes, nextRelativePath);
+      continue;
+    }
+
+    await ensureSymlinkTarget(targetPath, sourcePath);
+  }
+}
+
+export function resolveSharedLocalAdapterHomeDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.resolve(nonEmptyString(env.HOME) ?? os.homedir());
+}
+
+export function resolveManagedLocalAdapterHomeDir(
+  env: NodeJS.ProcessEnv = process.env,
+  adapterKey: string,
+  companyId?: string,
+): string {
+  const paperclipHome = nonEmptyString(env.PAPERCLIP_HOME) ?? path.resolve(os.homedir(), ".paperclip");
+  const instanceId = nonEmptyString(env.PAPERCLIP_INSTANCE_ID) ?? DEFAULT_PAPERCLIP_INSTANCE_ID;
+  return companyId
+    ? path.resolve(paperclipHome, "instances", instanceId, "companies", companyId, `${adapterKey}-home`)
+    : path.resolve(paperclipHome, "instances", instanceId, `${adapterKey}-home`);
+}
+
+export async function prepareManagedAdapterHome(
+  options: PrepareManagedAdapterHomeOptions,
+): Promise<string> {
+  const env = options.env ?? process.env;
+  const sourceHome = path.resolve(options.sharedHomeDir ?? resolveSharedLocalAdapterHomeDir(env));
+  const targetHome = resolveManagedLocalAdapterHomeDir(env, options.adapterKey, options.companyId);
+  if (path.resolve(sourceHome) === path.resolve(targetHome)) {
+    return targetHome;
+  }
+
+  await fs.mkdir(targetHome, { recursive: true });
+  for (const subtree of options.subtrees) {
+    const normalizedRelativePath = normalizeRelativePath(subtree.relativePath);
+    if (!normalizedRelativePath) continue;
+    const sourceRoot = path.join(sourceHome, normalizedRelativePath);
+    const sourceExists = await fs.access(sourceRoot).then(() => true).catch(() => false);
+    if (!sourceExists) continue;
+
+    const targetRoot = path.join(targetHome, normalizedRelativePath);
+    await ensureDirectoryAt(targetRoot);
+    const excludes = new Set(
+      (subtree.excludeChildren ?? [])
+        .map((value) => normalizeRelativePath(value))
+        .filter(Boolean),
+    );
+    await mirrorManagedHomeSubtree(sourceRoot, targetRoot, excludes);
+  }
+
+  if (options.onLog) {
+    await options.onLog(
+      "stdout",
+      `[paperclip] Using Paperclip-managed ${options.logLabel} home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    );
+  }
+
+  return targetHome;
 }
 
 function resolveInstalledEntryTarget(
@@ -737,7 +882,7 @@ export function buildPersistentSkillSnapshot(
       state = desired ? "installed" : "stale";
       detail = installedDetail ?? null;
     } else if (installedEntry) {
-      state = "external";
+      state = "blocked";
       detail = desired ? externalConflictDetail : externalDetail;
     } else if (desired) {
       state = "missing";
@@ -777,6 +922,8 @@ export function buildPersistentSkillSnapshot(
     });
   }
 
+  const diagnosticInstalled = options.diagnosticInstalled ?? new Map<string, InstalledSkillTarget>();
+
   for (const [name, installedEntry] of installed.entries()) {
     if (availableEntries.some((entry) => entry.runtimeName === name)) continue;
     entries.push({
@@ -784,7 +931,7 @@ export function buildPersistentSkillSnapshot(
       runtimeName: name,
       desired: false,
       managed: false,
-      state: "external",
+      state: "blocked",
       origin: "user_installed",
       originLabel: "User-installed",
       locationLabel: skillLocationLabel(locationLabel),
@@ -792,6 +939,25 @@ export function buildPersistentSkillSnapshot(
       sourcePath: null,
       targetPath: installedEntry.targetPath ?? path.join(skillsHome, name),
       detail: externalDetail,
+    });
+  }
+
+  for (const [name, installedEntry] of diagnosticInstalled.entries()) {
+    if (installed.has(name)) continue;
+    if (availableEntries.some((entry) => entry.runtimeName === name)) continue;
+    entries.push({
+      key: name,
+      runtimeName: name,
+      desired: false,
+      managed: false,
+      state: "blocked",
+      origin: "user_installed",
+      originLabel: "Blocked unmanaged skill",
+      locationLabel: skillLocationLabel(options.diagnosticLocationLabel ?? locationLabel),
+      readOnly: true,
+      sourcePath: null,
+      targetPath: installedEntry.targetPath ?? null,
+      detail: options.diagnosticExternalDetail ?? externalDetail,
     });
   }
 

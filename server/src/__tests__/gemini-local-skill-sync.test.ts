@@ -11,6 +11,20 @@ async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
+function managedGeminiSkillsHome(root: string, companyId: string) {
+  return path.join(
+    root,
+    "paperclip-home",
+    "instances",
+    "default",
+    "companies",
+    companyId,
+    "gemini-home",
+    ".gemini",
+    "skills",
+  );
+}
+
 describe("gemini local skill sync", () => {
   const paperclipKey = "paperclipai/paperclip/paperclip";
   const cleanupDirs = new Set<string>();
@@ -23,6 +37,7 @@ describe("gemini local skill sync", () => {
   it("reports configured Paperclip skills and installs them into the Gemini skills home", async () => {
     const home = await makeTempDir("paperclip-gemini-skill-sync-");
     cleanupDirs.add(home);
+    const managedSkillsHome = managedGeminiSkillsHome(home, "company-1");
 
     const ctx = {
       agentId: "agent-1",
@@ -31,6 +46,7 @@ describe("gemini local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [paperclipKey],
@@ -46,12 +62,13 @@ describe("gemini local skill sync", () => {
 
     const after = await syncGeminiSkills(ctx, [paperclipKey]);
     expect(after.entries.find((entry) => entry.key === paperclipKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".gemini", "skills", "paperclip"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome, "paperclip"))).isSymbolicLink()).toBe(true);
   });
 
   it("keeps required bundled Paperclip skills installed even when the desired set is emptied", async () => {
     const home = await makeTempDir("paperclip-gemini-skill-prune-");
     cleanupDirs.add(home);
+    const managedSkillsHome = managedGeminiSkillsHome(home, "company-1");
 
     const configuredCtx = {
       agentId: "agent-2",
@@ -60,6 +77,7 @@ describe("gemini local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [paperclipKey],
@@ -74,6 +92,7 @@ describe("gemini local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [],
@@ -84,6 +103,6 @@ describe("gemini local skill sync", () => {
     const after = await syncGeminiSkills(clearedCtx, []);
     expect(after.desiredSkills).toContain(paperclipKey);
     expect(after.entries.find((entry) => entry.key === paperclipKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".gemini", "skills", "paperclip"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome, "paperclip"))).isSymbolicLink()).toBe(true);
   });
 });

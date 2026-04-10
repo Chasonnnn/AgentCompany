@@ -11,7 +11,7 @@ describe("agent skill contract", () => {
       runtimeName: "crack-python",
       desired: false,
       managed: false,
-      state: "external",
+      state: "blocked",
       origin: "user_installed",
       originLabel: "User-installed",
       locationLabel: "~/.claude/skills",
@@ -29,6 +29,7 @@ describe("agent skill contract", () => {
       adapterType: "claude_local",
       supported: true,
       mode: "ephemeral",
+      canManage: false,
       desiredSkills: [],
       entries: [{
         key: "paperclipai/paperclip/paperclip",

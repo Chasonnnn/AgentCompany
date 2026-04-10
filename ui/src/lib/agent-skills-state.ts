@@ -36,5 +36,5 @@ export function isReadOnlyUnmanagedSkillEntry(
 ): boolean {
   if (companySkillKeys.has(entry.key)) return false;
   if (entry.origin === "user_installed" || entry.origin === "external_unknown") return true;
-  return entry.managed === false && entry.state === "external";
+  return entry.managed === false && (entry.state === "external" || entry.state === "blocked");
 }

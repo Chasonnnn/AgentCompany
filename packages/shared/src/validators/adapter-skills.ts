@@ -7,6 +7,7 @@ export const agentSkillStateSchema = z.enum([
   "missing",
   "stale",
   "external",
+  "blocked",
 ]);
 
 export const agentSkillOriginSchema = z.enum([
@@ -43,6 +44,7 @@ export const agentSkillSnapshotSchema = z.object({
   adapterType: z.string().min(1),
   supported: z.boolean(),
   mode: agentSkillSyncModeSchema,
+  canManage: z.boolean().optional(),
   desiredSkills: z.array(z.string().min(1)),
   entries: z.array(agentSkillEntrySchema),
   warnings: z.array(z.string()),

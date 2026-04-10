@@ -1,16 +1,19 @@
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
 import {
+  bulkSkillGrantApplyRequestSchema,
+  bulkSkillGrantRequestSchema,
   companySkillCreateSchema,
   companySkillFileUpdateSchema,
   companySkillImportSchema,
+  companySkillInstallGlobalSchema,
   companySkillProjectScanRequestSchema,
 } from "@paperclipai/shared";
 import { trackSkillImported } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { accessService, agentService, companySkillService, logActivity } from "../services/index.js";
+import { accessService, agentService, agentSkillService, companySkillService, logActivity } from "../services/index.js";
 import { forbidden } from "../errors.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
 
@@ -27,6 +30,7 @@ export function companySkillRoutes(db: Db) {
   const agents = agentService(db);
   const access = accessService(db);
   const svc = companySkillService(db);
+  const skillGrants = agentSkillService(db);
 
   function asString(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -84,6 +88,13 @@ export function companySkillRoutes(db: Db) {
     res.json(result);
   });
 
+  router.get("/companies/:companyId/skills/global-catalog", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    await assertCanMutateCompanySkills(req, companyId);
+    const result = await svc.listGlobalCatalog(companyId);
+    res.json(result);
+  });
+
   router.get("/companies/:companyId/skills/:skillId", async (req, res) => {
     const companyId = req.params.companyId as string;
     const skillId = req.params.skillId as string;
@@ -95,6 +106,56 @@ export function companySkillRoutes(db: Db) {
     }
     res.json(result);
   });
+
+  router.post(
+    "/companies/:companyId/skills/:skillId/bulk-preview",
+    validate(bulkSkillGrantRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      const skillId = req.params.skillId as string;
+      assertBoard(req);
+      await assertCanMutateCompanySkills(req, companyId);
+      const result = await skillGrants.previewBulkSkillGrant(companyId, skillId, req.body);
+      res.json(result);
+    },
+  );
+
+  router.post(
+    "/companies/:companyId/skills/:skillId/bulk-apply",
+    validate(bulkSkillGrantApplyRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      const skillId = req.params.skillId as string;
+      assertBoard(req);
+      await assertCanMutateCompanySkills(req, companyId);
+      const actor = getActorInfo(req);
+      const result = await skillGrants.applyBulkSkillGrant(companyId, skillId, req.body, actor);
+
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "company.skill_bulk_grant_applied",
+        entityType: "company_skill",
+        entityId: skillId,
+        details: {
+          skillKey: result.skillKey,
+          skillName: result.skillName,
+          target: result.target,
+          tier: result.tier,
+          mode: result.mode,
+          appliedAgentIds: result.appliedAgentIds,
+          matchedAgentCount: result.matchedAgentCount,
+          changedAgentCount: result.changedAgentCount,
+          rollbackPerformed: result.rollbackPerformed,
+        },
+      });
+
+      res.json(result);
+    },
+  );
 
   router.get("/companies/:companyId/skills/:skillId/update-status", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -180,6 +241,38 @@ export function companySkillRoutes(db: Db) {
       });
 
       res.json(result);
+    },
+  );
+
+  router.post(
+    "/companies/:companyId/skills/install-global",
+    validate(companySkillInstallGlobalSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      await assertCanMutateCompanySkills(req, companyId);
+      const result = await svc.installGlobalCatalogSkill(companyId, req.body);
+
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "company.skill_global_installed",
+        entityType: "company_skill",
+        entityId: result.id,
+        details: {
+          key: result.key,
+          slug: result.slug,
+          sourceType: result.sourceType,
+          catalogKey: typeof result.metadata?.catalogKey === "string" ? result.metadata.catalogKey : null,
+          catalogSourceRoot:
+            typeof result.metadata?.catalogSourceRoot === "string" ? result.metadata.catalogSourceRoot : null,
+        },
+      });
+
+      res.status(201).json(result);
     },
   );
 

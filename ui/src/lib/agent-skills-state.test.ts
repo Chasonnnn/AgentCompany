@@ -62,7 +62,7 @@ describe("applyAgentSkillSnapshot", () => {
       runtimeName: "crack-python",
       desired: false,
       managed: false,
-      state: "external",
+      state: "blocked",
       origin: "user_installed",
     }, new Set(["paperclip"]))).toBe(true);
   });
@@ -85,6 +85,16 @@ describe("applyAgentSkillSnapshot", () => {
       desired: false,
       managed: false,
       state: "external",
+    }, new Set())).toBe(true);
+  });
+
+  it("treats blocked unmanaged entries as read-only diagnostics", () => {
+    expect(isReadOnlyUnmanagedSkillEntry({
+      key: "rogue-skill",
+      runtimeName: "rogue-skill",
+      desired: false,
+      managed: false,
+      state: "blocked",
     }, new Set())).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { and, asc, eq } from "drizzle-orm";
@@ -15,6 +16,7 @@ import type {
   CompanySkillFileDetail,
   CompanySkillFileInventoryEntry,
   CompanySkillImportResult,
+  CompanySkillInstallGlobalRequest,
   CompanySkillListItem,
   CompanySkillProjectScanConflict,
   CompanySkillProjectScanRequest,
@@ -25,11 +27,13 @@ import type {
   CompanySkillTrustLevel,
   CompanySkillUpdateStatus,
   CompanySkillUsageAgent,
+  GlobalSkillCatalogItem,
+  GlobalSkillCatalogSourceRoot,
 } from "@paperclipai/shared";
 import { normalizeAgentUrlKey } from "@paperclipai/shared";
 import { findActiveServerAdapter } from "../adapters/index.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
-import { notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { ghFetch, gitHubApiBase, resolveRawGitHubUrl } from "./github-fetch.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
@@ -85,6 +89,17 @@ type SkillSourceMeta = {
   workspaceId?: string;
   workspaceName?: string;
   workspaceCwd?: string;
+  catalogKey?: string;
+  catalogSourceRoot?: string;
+  catalogSourcePath?: string;
+};
+
+type GlobalCatalogDiscoveredSkill = {
+  catalogKey: string;
+  sourceRoot: GlobalSkillCatalogSourceRoot;
+  sourcePath: string;
+  realPath: string;
+  importedSkill: ImportedSkill;
 };
 
 export type LocalSkillInventoryMode = "full" | "project_root";
@@ -146,6 +161,14 @@ const PROJECT_ROOT_SKILL_SUBDIRECTORIES = [
   "assets",
 ] as const;
 
+const GLOBAL_SKILL_CATALOG_ROOTS: Array<{
+  sourceRoot: GlobalSkillCatalogSourceRoot;
+  relativeRoot: string;
+}> = [
+  { sourceRoot: "codex", relativeRoot: ".codex/skills" },
+  { sourceRoot: "claude", relativeRoot: ".claude/skills" },
+];
+
 function asString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -206,6 +229,22 @@ export function normalizeGitHubSkillDirectory(
 
 function hashSkillValue(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 10);
+}
+
+function resolveGlobalSkillCatalogHome(options?: { homeDir?: string }) {
+  const overrideHome = options?.homeDir?.trim();
+  if (overrideHome) return path.resolve(overrideHome);
+  const envHome = process.env.HOME?.trim();
+  if (envHome) return path.resolve(envHome);
+  return path.resolve(os.homedir());
+}
+
+function buildGlobalSkillCatalogKey(
+  sourceRoot: GlobalSkillCatalogSourceRoot,
+  realPath: string,
+  slug: string,
+) {
+  return `global/${sourceRoot}/${hashSkillValue(realPath)}/${slug}`;
 }
 
 function uniqueSkillSlug(baseSlug: string, usedSlugs: Set<string>) {
@@ -830,6 +869,59 @@ async function collectLocalSkillInventory(
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
+async function discoverGlobalSkillCatalogEntries(
+  companyId: string,
+  options?: { homeDir?: string },
+): Promise<GlobalCatalogDiscoveredSkill[]> {
+  const homeDir = resolveGlobalSkillCatalogHome(options);
+  const discoveredRealPaths = new Set<string>();
+  const out: GlobalCatalogDiscoveredSkill[] = [];
+
+  for (const root of GLOBAL_SKILL_CATALOG_ROOTS) {
+    const absoluteRoot = path.resolve(homeDir, root.relativeRoot);
+    const rootStat = await statPath(absoluteRoot);
+    if (!rootStat?.isDirectory()) continue;
+
+    const entries = await fs.readdir(absoluteRoot, { withFileTypes: true }).catch(() => []);
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      const absoluteSkillDir = path.resolve(absoluteRoot, entry.name);
+      if (!(await statPath(path.join(absoluteSkillDir, "SKILL.md")))?.isFile()) continue;
+
+      const realSkillDir = await fs.realpath(absoluteSkillDir).catch(() => absoluteSkillDir);
+      if (discoveredRealPaths.has(realSkillDir)) continue;
+
+      const importedSkill = await readLocalSkillImportFromDirectory(companyId, realSkillDir, {
+        metadata: {
+          sourceKind: "global_catalog",
+          catalogSourceRoot: root.sourceRoot,
+          catalogSourcePath: realSkillDir,
+        },
+      }).catch(() => null);
+      if (!importedSkill) continue;
+
+      discoveredRealPaths.add(realSkillDir);
+      out.push({
+        catalogKey: buildGlobalSkillCatalogKey(root.sourceRoot, realSkillDir, importedSkill.slug),
+        sourceRoot: root.sourceRoot,
+        sourcePath: realSkillDir,
+        realPath: realSkillDir,
+        importedSkill,
+      });
+    }
+  }
+
+  out.sort((left, right) => {
+    const nameDiff = left.importedSkill.name.localeCompare(right.importedSkill.name);
+    if (nameDiff !== 0) return nameDiff;
+    return left.catalogKey.localeCompare(right.catalogKey);
+  });
+
+  return out;
+}
+
 export async function readLocalSkillImportFromDirectory(
   companyId: string,
   skillDir: string,
@@ -1382,6 +1474,19 @@ function deriveSkillSourceInfo(skill: CompanySkill): {
     };
   }
 
+  if (skill.sourceType === "catalog" && metadata.sourceKind === "global_catalog") {
+    const sourceRoot = asString(metadata.catalogSourceRoot);
+    const sourcePath = asString(metadata.catalogSourcePath);
+    const sourceRootLabel = sourceRoot === "claude" ? "Claude" : "Codex";
+    return {
+      editable: false,
+      editableReason: "Global catalog skills are read-only. Reinstall them from the global catalog to refresh the snapshot.",
+      sourceLabel: `${sourceRootLabel} global catalog`,
+      sourceBadge: "catalog",
+      sourcePath,
+    };
+  }
+
   if (skill.sourceType === "local_path") {
     const managedRoot = resolveManagedSkillsRoot(skill.companyId);
     const projectName = asString(metadata.projectName);
@@ -1547,6 +1652,39 @@ export function companySkillService(db: Db) {
     return rows.map((row) => toCompanySkill(row));
   }
 
+  async function listGlobalCatalog(companyId: string): Promise<GlobalSkillCatalogItem[]> {
+    const [installedSkills, discoveredSkills] = await Promise.all([
+      listFull(companyId),
+      discoverGlobalSkillCatalogEntries(companyId),
+    ]);
+    const installedByCatalogKey = new Map<string, CompanySkill>();
+
+    for (const skill of installedSkills) {
+      const metadata = getSkillMeta(skill);
+      if (metadata.sourceKind !== "global_catalog") continue;
+      const catalogKey = asString(metadata.catalogKey);
+      if (!catalogKey) continue;
+      installedByCatalogKey.set(catalogKey, skill);
+    }
+
+    return discoveredSkills.map((entry) => {
+      const installed = installedByCatalogKey.get(entry.catalogKey) ?? null;
+      return {
+        catalogKey: entry.catalogKey,
+        slug: entry.importedSkill.slug,
+        name: entry.importedSkill.name,
+        description: entry.importedSkill.description,
+        sourceRoot: entry.sourceRoot,
+        sourcePath: entry.sourcePath,
+        trustLevel: entry.importedSkill.trustLevel,
+        compatibility: entry.importedSkill.compatibility,
+        fileInventory: entry.importedSkill.fileInventory,
+        installedSkillId: installed?.id ?? null,
+        installedSkillKey: installed?.key ?? null,
+      };
+    });
+  }
+
   async function getById(id: string) {
     const row = await db
       .select()
@@ -1563,6 +1701,84 @@ export function companySkillService(db: Db) {
       .where(and(eq(companySkills.companyId, companyId), eq(companySkills.key, key)))
       .then((rows) => rows[0] ?? null);
     return row ? toCompanySkill(row) : null;
+  }
+
+  async function installGlobalCatalogSkill(
+    companyId: string,
+    input: CompanySkillInstallGlobalRequest,
+  ): Promise<CompanySkill> {
+    await ensureSkillInventoryCurrent(companyId);
+    const catalogKey = asString(input.catalogKey);
+    if (!catalogKey) {
+      throw unprocessable("Catalog key is required.");
+    }
+
+    const [existingSkills, discoveredSkills] = await Promise.all([
+      listFull(companyId),
+      discoverGlobalSkillCatalogEntries(companyId),
+    ]);
+    const catalogEntry = discoveredSkills.find((entry) => entry.catalogKey === catalogKey);
+    if (!catalogEntry) {
+      throw notFound("Global catalog skill not found.");
+    }
+
+    const existingInstalled = existingSkills.find((skill) => {
+      const metadata = getSkillMeta(skill);
+      return metadata.sourceKind === "global_catalog" && asString(metadata.catalogKey) === catalogKey;
+    }) ?? null;
+
+    const conflictingSkill = existingSkills.find((skill) => {
+      if (existingInstalled && skill.id === existingInstalled.id) return false;
+      return skill.key === catalogEntry.importedSkill.key;
+    });
+    if (conflictingSkill) {
+      throw conflict(
+        `Cannot install ${catalogEntry.importedSkill.name}: skill key ${catalogEntry.importedSkill.key} is already used by ${conflictingSkill.name}.`,
+        {
+          catalogKey,
+          conflictingSkillId: conflictingSkill.id,
+          conflictingSkillKey: conflictingSkill.key,
+        },
+      );
+    }
+
+    const nextSkill: ImportedSkill = {
+      ...catalogEntry.importedSkill,
+      key: existingInstalled?.key ?? catalogEntry.importedSkill.key,
+      sourceType: "catalog",
+      sourceLocator: null,
+      sourceRef: null,
+      metadata: {
+        ...(catalogEntry.importedSkill.metadata ?? {}),
+        sourceKind: "global_catalog",
+        catalogKey,
+        catalogSourceRoot: catalogEntry.sourceRoot,
+        catalogSourcePath: catalogEntry.sourcePath,
+      },
+    };
+    const materializedDir = await materializeCatalogSkillDirectory(
+      companyId,
+      nextSkill,
+      catalogEntry.sourcePath,
+    );
+    if (!materializedDir) {
+      throw unprocessable("Global catalog skill files could not be materialized.");
+    }
+    nextSkill.sourceLocator = materializedDir;
+
+    const persisted = await upsertImportedSkills(companyId, [nextSkill]);
+    const installedSkill = persisted[0];
+    if (!installedSkill) {
+      throw notFound("Failed to install global catalog skill.");
+    }
+
+    const previousCatalogDir = existingInstalled ? normalizeSkillDirectory(existingInstalled) : null;
+    const nextCatalogDir = normalizeSkillDirectory(installedSkill);
+    if (previousCatalogDir && nextCatalogDir && previousCatalogDir !== nextCatalogDir) {
+      await fs.rm(previousCatalogDir, { recursive: true, force: true });
+    }
+
+    return installedSkill;
   }
 
   async function usage(companyId: string, key: string): Promise<CompanySkillUsageAgent[]> {
@@ -2031,6 +2247,27 @@ export function companySkillService(db: Db) {
     return skillDir;
   }
 
+  async function materializeCatalogSkillDirectory(
+    companyId: string,
+    skill: ImportedSkill,
+    sourceDir: string,
+  ) {
+    const resolvedSourceDir = path.resolve(sourceDir);
+    const catalogRoot = path.resolve(resolveManagedSkillsRoot(companyId), "__catalog__");
+    const skillDir = path.resolve(catalogRoot, buildSkillRuntimeName(skill.key, skill.slug));
+    await fs.rm(skillDir, { recursive: true, force: true });
+    await fs.mkdir(skillDir, { recursive: true });
+
+    for (const entry of skill.fileInventory) {
+      const sourcePath = path.resolve(resolvedSourceDir, entry.path);
+      const targetPath = path.resolve(skillDir, entry.path);
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.copyFile(sourcePath, targetPath);
+    }
+
+    return skillDir;
+  }
+
   async function materializeRuntimeSkillFiles(companyId: string, skill: CompanySkill) {
     const runtimeRoot = path.resolve(resolveManagedSkillsRoot(companyId), "__runtime__");
     const skillDir = path.resolve(runtimeRoot, buildSkillRuntimeName(skill.key, skill.slug));
@@ -2359,6 +2596,8 @@ export function companySkillService(db: Db) {
     updateFile,
     createLocalSkill,
     deleteSkill,
+    listGlobalCatalog,
+    installGlobalCatalogSkill,
     importFromSource,
     scanProjectWorkspaces,
     importPackageFiles,

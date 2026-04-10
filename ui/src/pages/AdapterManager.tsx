@@ -461,7 +461,10 @@ export function AdapterManager() {
                       value={installPackage}
                       onChange={(e) => setInstallPackage(e.target.value)}
                     />
-                    <ChoosePathButton />
+                    <ChoosePathButton
+                      currentPath={installPackage}
+                      onChoose={(nextPath) => setInstallPackage(nextPath)}
+                    />
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Accepts Linux, WSL, and Windows paths. Windows paths are auto-converted.

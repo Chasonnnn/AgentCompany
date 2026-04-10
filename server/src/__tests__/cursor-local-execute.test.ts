@@ -12,6 +12,7 @@ const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
 const payload = {
   argv: process.argv.slice(2),
   prompt: fs.readFileSync(0, "utf8"),
+  cursorHome: process.env.CURSOR_HOME || null,
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
     .sort(),
@@ -43,6 +44,7 @@ console.log(JSON.stringify({
 type CapturePayload = {
   argv: string[];
   prompt: string;
+  cursorHome: string | null;
   paperclipEnvKeys: string[];
 };
 
@@ -53,12 +55,17 @@ async function createSkillDir(root: string, name: string) {
   return skillDir;
 }
 
+function managedCursorHome(root: string, companyId: string) {
+  return path.join(root, "paperclip-home", "instances", "default", "companies", companyId, "cursor-home");
+}
+
 describe("cursor execute", () => {
   it("injects paperclip env vars and prompt note by default", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-cursor-execute-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
     const capturePath = path.join(root, "capture.json");
+    const managedHome = managedCursorHome(root, "company-1");
     await fs.mkdir(workspace, { recursive: true });
     await writeFakeCursorCommand(commandPath);
 
@@ -88,6 +95,7 @@ describe("cursor execute", () => {
           model: "auto",
           env: {
             PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PAPERCLIP_HOME: path.join(root, "paperclip-home"),
           },
           promptTemplate: "Follow the paperclip heartbeat.",
         },
@@ -115,6 +123,7 @@ describe("cursor execute", () => {
           "PAPERCLIP_RUN_ID",
         ]),
       );
+      expect(capture.cursorHome).toBe(path.join(managedHome, ".cursor"));
       expect(capture.prompt).toContain("Paperclip runtime note:");
       expect(capture.prompt).toContain("PAPERCLIP_API_KEY");
       expect(invocationPrompt).toContain("Paperclip runtime note:");
@@ -134,6 +143,7 @@ describe("cursor execute", () => {
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
     const capturePath = path.join(root, "capture.json");
+    const managedHome = managedCursorHome(root, "company-1");
     await fs.mkdir(workspace, { recursive: true });
     await writeFakeCursorCommand(commandPath);
 
@@ -163,6 +173,7 @@ describe("cursor execute", () => {
           mode: "ask",
           env: {
             PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PAPERCLIP_HOME: path.join(root, "paperclip-home"),
           },
           promptTemplate: "Follow the paperclip heartbeat.",
         },
@@ -177,6 +188,7 @@ describe("cursor execute", () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.argv).toContain("--mode");
       expect(capture.argv).toContain("ask");
+      expect(capture.cursorHome).toBe(path.join(managedHome, ".cursor"));
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;
@@ -192,6 +204,7 @@ describe("cursor execute", () => {
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
     const runtimeSkillsRoot = path.join(root, "runtime-skills");
+    const managedHome = managedCursorHome(root, "company-1");
     await fs.mkdir(workspace, { recursive: true });
     await writeFakeCursorCommand(commandPath);
 
@@ -236,6 +249,9 @@ describe("cursor execute", () => {
           paperclipSkillSync: {
             desiredSkills: ["ascii-heart"],
           },
+          env: {
+            PAPERCLIP_HOME: path.join(root, "paperclip-home"),
+          },
           promptTemplate: "Follow the paperclip heartbeat.",
         },
         context: {},
@@ -246,10 +262,11 @@ describe("cursor execute", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
-      expect((await fs.lstat(path.join(root, ".cursor", "skills", "ascii-heart"))).isSymbolicLink()).toBe(true);
-      expect(await fs.realpath(path.join(root, ".cursor", "skills", "ascii-heart"))).toBe(
+      expect((await fs.lstat(path.join(managedHome, ".cursor", "skills", "ascii-heart"))).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(path.join(managedHome, ".cursor", "skills", "ascii-heart"))).toBe(
         await fs.realpath(asciiHeartDir),
       );
+      await expect(fs.lstat(path.join(root, ".cursor", "skills", "ascii-heart"))).rejects.toThrow();
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;

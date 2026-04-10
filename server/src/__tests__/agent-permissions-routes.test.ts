@@ -81,6 +81,11 @@ const mockCompanySkillService = vi.hoisted(() => ({
   listRuntimeSkillEntries: vi.fn(),
   resolveRequestedSkillKeys: vi.fn(),
 }));
+const mockAgentSkillService = vi.hoisted(() => ({
+  listSkills: vi.fn(),
+  syncAgentSkills: vi.fn(),
+  resolveDesiredSkillAssignment: vi.fn(),
+}));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
@@ -101,6 +106,7 @@ function registerServiceMocks() {
     agentInstructionsService: () => mockAgentInstructionsService,
     accessService: () => mockAccessService,
     approvalService: () => mockApprovalService,
+    agentSkillService: () => mockAgentSkillService,
     companySkillService: () => mockCompanySkillService,
     budgetService: () => mockBudgetService,
     heartbeatService: () => mockHeartbeatService,
@@ -171,6 +177,18 @@ describe("agent permission routes", () => {
     mockAccessService.setPrincipalPermission.mockResolvedValue(undefined);
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
     mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(async (_companyId, requested) => requested);
+    mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
+      async (
+        _companyId: string,
+        _adapterType: string,
+        adapterConfig: Record<string, unknown>,
+        requestedDesiredSkills: string[] | undefined,
+      ) => ({
+        adapterConfig,
+        desiredSkills: requestedDesiredSkills ?? null,
+        runtimeSkillEntries: null,
+      }),
+    );
     mockBudgetService.upsertPolicy.mockResolvedValue(undefined);
     mockAgentInstructionsService.materializeManagedBundle.mockImplementation(
       async (agent: Record<string, unknown>, files: Record<string, string>) => ({

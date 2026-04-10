@@ -30,6 +30,11 @@ const mockSecretService = vi.hoisted(() => ({
   resolveAdapterConfigForRuntime: vi.fn(),
   normalizeAdapterConfigForPersistence: vi.fn(async (_companyId: string, config: Record<string, unknown>) => config),
 }));
+const mockAgentSkillService = vi.hoisted(() => ({
+  listSkills: vi.fn(),
+  syncAgentSkills: vi.fn(),
+  resolveDesiredSkillAssignment: vi.fn(),
+}));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
@@ -38,6 +43,7 @@ vi.mock("../services/index.js", () => ({
   agentInstructionsService: () => mockAgentInstructionsService,
   accessService: () => mockAccessService,
   approvalService: () => ({}),
+  agentSkillService: () => mockAgentSkillService,
   companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
   budgetService: () => ({}),
   heartbeatService: () => ({}),
@@ -93,6 +99,18 @@ function makeAgent() {
 describe("agent instructions bundle routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
+      async (
+        _companyId: string,
+        _adapterType: string,
+        adapterConfig: Record<string, unknown>,
+        requestedDesiredSkills: string[] | undefined,
+      ) => ({
+        adapterConfig,
+        desiredSkills: requestedDesiredSkills ?? null,
+        runtimeSkillEntries: null,
+      }),
+    );
     mockAgentService.getById.mockResolvedValue(makeAgent());
     mockAgentService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
       ...makeAgent(),

@@ -122,7 +122,29 @@ async function createAppWithActor(actor: any) {
 beforeEach(() => {
   vi.resetModules();
   registerRouteMocks();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  mockCostService.createEvent.mockResolvedValue(undefined);
+  mockCostService.summary.mockResolvedValue({ spendCents: 0 });
+  mockCostService.byAgent.mockResolvedValue([]);
+  mockCostService.byAgentModel.mockResolvedValue([]);
+  mockCostService.byProvider.mockResolvedValue([]);
+  mockCostService.byBiller.mockResolvedValue([]);
+  mockCostService.windowSpend.mockResolvedValue([]);
+  mockCostService.byProject.mockResolvedValue([]);
+  mockFinanceService.createEvent.mockResolvedValue(undefined);
+  mockFinanceService.summary.mockResolvedValue({
+    debitCents: 0,
+    creditCents: 0,
+    netCents: 0,
+    estimatedDebitCents: 0,
+    eventCount: 0,
+  });
+  mockFinanceService.byBiller.mockResolvedValue([]);
+  mockFinanceService.byKind.mockResolvedValue([]);
+  mockFinanceService.list.mockResolvedValue([]);
+  mockHeartbeatService.cancelBudgetScopeWork.mockResolvedValue(undefined);
+  mockLogActivity.mockResolvedValue(undefined);
+  mockFetchAllQuotaWindows.mockResolvedValue([]);
   mockCompanyService.update.mockResolvedValue({
     id: "company-1",
     name: "Paperclip",

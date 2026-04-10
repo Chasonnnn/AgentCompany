@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
@@ -15,6 +14,7 @@ import {
   ensureCommandResolvable,
   ensurePaperclipSkillSymlink,
   ensurePathInEnv,
+  prepareManagedAdapterHome,
   resolveCommandForLogs,
   renderTemplate,
   renderPaperclipWakePrompt,
@@ -22,6 +22,7 @@ import {
   runChildProcess,
   readPaperclipRuntimeSkillEntries,
   resolvePaperclipDesiredSkillNames,
+  resolveSharedLocalAdapterHomeDir,
 } from "@paperclipai/adapter-utils/server-utils";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
@@ -50,16 +51,12 @@ function resolveOpenCodeBiller(env: Record<string, string>, provider: string | n
   return inferOpenAiCompatibleBiller(env, null) ?? provider ?? "unknown";
 }
 
-function claudeSkillsHome(): string {
-  return path.join(os.homedir(), ".claude", "skills");
-}
-
 async function ensureOpenCodeSkillsInjected(
   onLog: AdapterExecutionContext["onLog"],
   skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
+  skillsHome: string,
   desiredSkillNames?: string[],
 ) {
-  const skillsHome = claudeSkillsHome();
   await fs.mkdir(skillsHome, { recursive: true });
   const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
@@ -120,13 +117,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-  const openCodeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredOpenCodeSkillNames = resolvePaperclipDesiredSkillNames(config, openCodeSkillEntries);
-  await ensureOpenCodeSkillsInjected(
-    onLog,
-    openCodeSkillEntries,
-    desiredOpenCodeSkillNames,
-  );
 
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
@@ -183,6 +173,25 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
+  const sharedHome = resolveSharedLocalAdapterHomeDir({ ...process.env, ...env });
+  const managedHome = await prepareManagedAdapterHome({
+    env: { ...process.env, ...env },
+    adapterKey: "opencode",
+    companyId: agent.companyId,
+    sharedHomeDir: sharedHome,
+    logLabel: "OpenCode",
+    subtrees: [{ relativePath: ".claude", excludeChildren: ["skills"] }],
+    onLog,
+  });
+  env.HOME = managedHome;
+  const openCodeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+  const desiredOpenCodeSkillNames = resolvePaperclipDesiredSkillNames(config, openCodeSkillEntries);
+  await ensureOpenCodeSkillsInjected(
+    onLog,
+    openCodeSkillEntries,
+    path.join(managedHome, ".claude", "skills"),
+    desiredOpenCodeSkillNames,
+  );
   const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
   try {
     const runtimeEnv = Object.fromEntries(

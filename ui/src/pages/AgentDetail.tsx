@@ -1178,7 +1178,7 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
     : run.error ?? "";
 
   // Extract a clean 2-3 line excerpt: first non-empty, non-header, non-list-mark lines
-  const summary = useMemo(() => {
+  const summary = (() => {
     if (!summaryRaw) return "";
     const lines = summaryRaw
       .replace(/^#{1,6}\s+/gm, "")
@@ -1193,7 +1193,7 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
       chars += line.length;
     }
     return excerpt.join(" ");
-  }, [summaryRaw]);
+  })();
 
   return (
     <div className="space-y-3">
@@ -2494,8 +2494,11 @@ function AgentSkillsTab({
     setLastSavedSkills(nextState.lastSaved);
   }, [skillDraft, skillSnapshot]);
 
+  const canManageSkills = Boolean(skillSnapshot?.canManage);
+
   useEffect(() => {
     if (!skillSnapshot) return;
+    if (!canManageSkills) return;
     if (skipNextSkillAutosaveRef.current) {
       skipNextSkillAutosaveRef.current = false;
       return;
@@ -2510,7 +2513,7 @@ function AgentSkillsTab({
     }, 250);
 
     return () => window.clearTimeout(timeout);
-  }, [skillDraft, skillSnapshot, syncSkills.isPending, syncSkills.mutate]);
+  }, [canManageSkills, skillDraft, skillSnapshot, syncSkills.isPending, syncSkills.mutate]);
 
   const companySkillByKey = useMemo(
     () => new Map((companySkills ?? []).map((skill) => [skill.key, skill])),
@@ -2524,7 +2527,7 @@ function AgentSkillsTab({
     () => new Map((skillSnapshot?.entries ?? []).map((entry) => [entry.key, entry])),
     [skillSnapshot],
   );
-  const optionalSkillRows = useMemo<SkillRow[]>(
+  const librarySkillRows = useMemo<SkillRow[]>(
     () =>
       (companySkills ?? [])
         .filter((skill) => !adapterEntryByKey.get(skill.key)?.required)
@@ -2541,6 +2544,14 @@ function AgentSkillsTab({
           adapterEntry: adapterEntryByKey.get(skill.key) ?? null,
         })),
     [adapterEntryByKey, companySkills],
+  );
+  const grantedSkillRows = useMemo<SkillRow[]>(
+    () => librarySkillRows.filter((skill) => skillDraft.includes(skill.key)),
+    [librarySkillRows, skillDraft],
+  );
+  const availableSkillRows = useMemo<SkillRow[]>(
+    () => librarySkillRows.filter((skill) => !skillDraft.includes(skill.key)),
+    [librarySkillRows, skillDraft],
   );
   const requiredSkillRows = useMemo<SkillRow[]>(
     () =>
@@ -2605,9 +2616,9 @@ function AgentSkillsTab({
     return "Paperclip cannot manage skills for this adapter yet. Manage them in the adapter directly.";
   }, [agent.adapterType, skillSnapshot?.mode]);
   const hasUnsavedChanges = !arraysEqual(skillDraft, lastSavedSkills);
-  const saveStatusLabel = syncSkills.isPending
+  const saveStatusLabel = canManageSkills && syncSkills.isPending
     ? "Saving changes..."
-    : hasUnsavedChanges
+    : canManageSkills && hasUnsavedChanges
       ? "Saving soon..."
       : null;
 
@@ -2618,7 +2629,7 @@ function AgentSkillsTab({
           to="/skills"
           className="text-sm font-medium text-foreground underline-offset-4 no-underline transition-colors hover:text-foreground/70 hover:underline"
         >
-          View company skills library
+          Manage company skills library
         </Link>
         {saveStatusLabel ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -2642,12 +2653,24 @@ function AgentSkillsTab({
         </div>
       ) : null}
 
+      <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+        {canManageSkills
+          ? "Company-installed skills stay in the library until you explicitly grant them to this agent. Only granted skills plus required Paperclip skills are applied at runtime."
+          : "Company-installed skills stay in the library until a board operator explicitly grants them to this agent. This view is read-only for non-board actors."}
+      </div>
+
       {isLoading ? (
         <PageSkeleton variant="list" />
       ) : (
         <>
           {(() => {
-            const renderSkillRow = (skill: SkillRow) => {
+            const renderSkillRow = (
+              skill: SkillRow,
+              options?: {
+                selectionState?: "granted" | "available" | "required";
+                editable?: boolean;
+              },
+            ) => {
               const adapterEntry = skill.adapterEntry ?? adapterEntryByKey.get(skill.key);
               const required = Boolean(adapterEntry?.required);
               const rowClassName = cn(
@@ -2696,7 +2719,21 @@ function AgentSkillsTab({
               }
 
               const checked = required || skillDraft.includes(skill.key);
+              const editable = options?.editable ?? false;
               const disabled = required || skillSnapshot?.mode === "unsupported";
+              if (!editable) {
+                const selected = options?.selectionState === "granted" || options?.selectionState === "required";
+                return (
+                  <div key={skill.id} className={rowClassName}>
+                    {selected ? (
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 text-foreground/70" />
+                    ) : (
+                      <span className="mt-0.5 h-4 w-4 rounded-sm border border-border bg-background" />
+                    )}
+                    {body}
+                  </div>
+                );
+              }
               const checkbox = (
                 <input
                   type="checkbox"
@@ -2738,11 +2775,75 @@ function AgentSkillsTab({
               );
             };
 
-            if (optionalSkillRows.length === 0 && requiredSkillRows.length === 0 && unmanagedSkillRows.length === 0) {
+            const renderSection = (
+              title: string,
+              description: string,
+              rows: SkillRow[],
+              options?: {
+                selectionState?: "granted" | "available" | "required";
+                editable?: boolean;
+                collapsible?: boolean;
+                open?: boolean;
+                onToggle?: () => void;
+              },
+            ) => {
+              if (rows.length === 0) return null;
+              const editable = options?.editable ?? false;
+              const collapsible = options?.collapsible ?? false;
+              const isOpen = options?.open ?? true;
+
+              return (
+                <section className="border-y border-border">
+                  {collapsible ? (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className="flex cursor-pointer items-start justify-between gap-3 border-b border-border bg-muted/40 px-3 py-2 select-none"
+                      onClick={options?.onToggle}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          options?.onToggle?.();
+                        }
+                      }}
+                    >
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+                        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+                      </div>
+                      {isOpen ? (
+                        <ChevronDown className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="border-b border-border bg-muted/40 px-3 py-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+                      <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+                    </div>
+                  )}
+                  {(!collapsible || isOpen) &&
+                    rows.map((row) =>
+                      renderSkillRow(row, {
+                        selectionState: options?.selectionState,
+                        editable,
+                      }),
+                    )}
+                </section>
+              );
+            };
+
+            if (
+              grantedSkillRows.length === 0 &&
+              availableSkillRows.length === 0 &&
+              requiredSkillRows.length === 0 &&
+              unmanagedSkillRows.length === 0
+            ) {
               return (
                 <section className="border-y border-border">
                   <div className="px-3 py-6 text-sm text-muted-foreground">
-                    Import skills into the company library first, then attach them here.
+                    Install skills into the company library first, then grant them here.
                   </div>
                 </section>
               );
@@ -2750,39 +2851,40 @@ function AgentSkillsTab({
 
             return (
               <>
-                {optionalSkillRows.length > 0 && (
-                  <section className="border-y border-border">
-                    {optionalSkillRows.map(renderSkillRow)}
-                  </section>
+                {renderSection(
+                  "Granted Skills",
+                  canManageSkills
+                    ? "These company skills are explicitly granted to this agent."
+                    : "These company skills are currently granted to this agent.",
+                  grantedSkillRows,
+                  { selectionState: "granted", editable: canManageSkills && skillSnapshot?.mode !== "unsupported" },
                 )}
 
-                {requiredSkillRows.length > 0 && (
-                  <section className="border-y border-border">
-                    <div className="border-b border-border bg-muted/40 px-3 py-2">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        Required by Paperclip
-                      </span>
-                    </div>
-                    {requiredSkillRows.map(renderSkillRow)}
-                  </section>
+                {renderSection(
+                  "Available From Company Library",
+                  canManageSkills
+                    ? "Installed for the company but not currently granted to this agent."
+                    : "Installed for the company but not currently granted to this agent.",
+                  availableSkillRows,
+                  { selectionState: "available", editable: canManageSkills && skillSnapshot?.mode !== "unsupported" },
                 )}
 
-                {unmanagedSkillRows.length > 0 && (
-                  <section className="border-y border-border">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      className="flex cursor-pointer items-center gap-2 border-b border-border bg-muted/40 px-3 py-2 select-none"
-                      onClick={() => setUnmanagedOpen((v) => !v)}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setUnmanagedOpen((v) => !v); } }}
-                    >
-                      <span className="text-xs font-medium text-muted-foreground">
-                        ({unmanagedSkillRows.length}) User-installed skills, not managed by Paperclip
-                      </span>
-                      {unmanagedOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                    </div>
-                    {unmanagedOpen && unmanagedSkillRows.map(renderSkillRow)}
-                  </section>
+                {renderSection(
+                  "Required By Paperclip",
+                  "Always available to local adapters and cannot be revoked.",
+                  requiredSkillRows,
+                  { selectionState: "required", editable: false },
+                )}
+
+                {renderSection(
+                  "Blocked Unmanaged Skills",
+                  "Detected outside Paperclip policy. Visible for diagnostics only and never granted to this agent.",
+                  unmanagedSkillRows,
+                  {
+                    collapsible: true,
+                    open: unmanagedOpen,
+                    onToggle: () => setUnmanagedOpen((value) => !value),
+                  },
                 )}
               </>
             );
@@ -2809,7 +2911,7 @@ function AgentSkillsTab({
               </div>
               <div className="flex items-center justify-between gap-3 border-b border-border/60 py-2">
                 <span className="text-muted-foreground">Selected skills</span>
-                <span>{skillDraft.length}</span>
+                <span>{grantedSkillRows.length}</span>
               </div>
             </div>
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "@/lib/router";
+import { Link, useNavigate, useSearchParams } from "@/lib/router";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { agentsApi } from "../api/agents";
@@ -340,9 +340,15 @@ export function NewAgent() {
               </p>
             </div>
             {availableSkills.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                No optional company skills installed yet.
-              </p>
+              <div className="space-y-2 text-xs text-muted-foreground">
+                <p>No optional company skills installed yet.</p>
+                <Link
+                  to="/skills"
+                  className="inline-flex items-center gap-1 text-foreground underline-offset-4 no-underline hover:underline"
+                >
+                  Open company skills
+                </Link>
+              </div>
             ) : (
               <div className="space-y-3">
                 {availableSkills.map((skill) => {

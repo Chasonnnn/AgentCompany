@@ -1,20 +1,37 @@
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { companies, companySkills, createDb } from "@paperclipai/db";
 import {
   discoverProjectWorkspaceSkillDirectories,
   findMissingLocalSkillIds,
   normalizeGitHubSkillDirectory,
   parseSkillImportSourceInput,
   readLocalSkillImportFromDirectory,
+  companySkillService,
 } from "../services/company-skills.js";
+import {
+  getEmbeddedPostgresTestSupport,
+  startEmbeddedPostgresTestDatabase,
+} from "./helpers/embedded-postgres.js";
 
 const cleanupDirs = new Set<string>();
+const originalHome = process.env.HOME;
+
+const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
+const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
 afterEach(async () => {
   await Promise.all(Array.from(cleanupDirs, (dir) => fs.rm(dir, { recursive: true, force: true })));
   cleanupDirs.clear();
+  if (originalHome) {
+    process.env.HOME = originalHome;
+  } else {
+    delete process.env.HOME;
+  }
 });
 
 async function makeTempDir(prefix: string) {
@@ -225,5 +242,181 @@ describe("missing local skill reconciliation", () => {
     ]);
 
     expect(missingIds).toEqual(["skill-1"]);
+  });
+});
+
+describeEmbeddedPostgres("global skill catalog installs", () => {
+  let db!: ReturnType<typeof createDb>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-company-skills-");
+    db = createDb(tempDb.connectionString);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(companySkills);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  async function seedCompany() {
+    const companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "AI Workforce",
+      issuePrefix: "AIWA",
+      requireBoardApprovalForNewAgents: false,
+    });
+    return companyId;
+  }
+
+  async function writeGlobalSkill(rootDir: string, slug: string, markdown: string, extraFiles?: Record<string, string>) {
+    const skillDir = path.join(rootDir, slug);
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), markdown, "utf8");
+    for (const [relativePath, content] of Object.entries(extraFiles ?? {})) {
+      const absolutePath = path.join(skillDir, relativePath);
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, content, "utf8");
+    }
+    return skillDir;
+  }
+
+  it("discovers valid skills under codex and claude roots and ignores hidden or invalid entries", async () => {
+    const homeDir = await makeTempDir("paperclip-global-skill-home-");
+    process.env.HOME = homeDir;
+    const companyId = await seedCompany();
+
+    await writeGlobalSkill(
+      path.join(homeDir, ".codex", "skills"),
+      "design-guide",
+      "---\nname: Design Guide\n---\n\n# Design Guide\n",
+    );
+    await writeGlobalSkill(
+      path.join(homeDir, ".claude", "skills"),
+      "find-skills",
+      "---\nname: Find Skills\n---\n\n# Find Skills\n",
+    );
+    await fs.symlink(
+      path.join(homeDir, ".codex", "skills", "design-guide"),
+      path.join(homeDir, ".claude", "skills", "design-guide-link"),
+    );
+    await fs.mkdir(path.join(homeDir, ".codex", "skills", ".system"), { recursive: true });
+    await writeGlobalSkill(
+      path.join(homeDir, ".codex", "skills", ".system"),
+      "hidden-skill",
+      "---\nname: Hidden Skill\n---\n\n# Hidden Skill\n",
+    );
+    await fs.mkdir(path.join(homeDir, ".claude", "skills", "missing-skill"), { recursive: true });
+
+    const catalog = await companySkillService(db).listGlobalCatalog(companyId);
+
+    expect(catalog.map((item) => item.slug)).toEqual(["design-guide", "find-skills"]);
+    expect(catalog.map((item) => item.sourceRoot)).toEqual(["codex", "claude"]);
+  });
+
+  it("installs and reinstalls a global skill as a read-only company snapshot", async () => {
+    const homeDir = await makeTempDir("paperclip-global-install-home-");
+    process.env.HOME = homeDir;
+    const companyId = await seedCompany();
+    const codexRoot = path.join(homeDir, ".codex", "skills");
+
+    await writeGlobalSkill(
+      codexRoot,
+      "design-guide",
+      "---\nname: Design Guide\ndescription: First version\n---\n\n# Design Guide\n",
+      { "references/checklist.md": "# Checklist\n" },
+    );
+
+    const svc = companySkillService(db);
+    const discovered = await svc.listGlobalCatalog(companyId);
+    const catalogKey = discovered[0]?.catalogKey;
+    expect(catalogKey).toBeTruthy();
+
+    const installed = await svc.installGlobalCatalogSkill(companyId, { catalogKey: catalogKey! });
+    expect(installed.sourceType).toBe("catalog");
+    expect(installed.metadata).toMatchObject({
+      sourceKind: "global_catalog",
+      catalogKey,
+      catalogSourceRoot: "codex",
+    });
+
+    const firstId = installed.id;
+    const firstKey = installed.key;
+    expect(await fs.readFile(path.join(installed.sourceLocator!, "references/checklist.md"), "utf8")).toContain("Checklist");
+
+    await writeGlobalSkill(
+      codexRoot,
+      "design-guide",
+      "---\nname: Design Guide\ndescription: Updated version\n---\n\n# Design Guide\n",
+      { "references/checklist.md": "# Updated Checklist\n" },
+    );
+
+    const reinstalled = await svc.installGlobalCatalogSkill(companyId, { catalogKey: catalogKey! });
+    expect(reinstalled.id).toBe(firstId);
+    expect(reinstalled.key).toBe(firstKey);
+    expect(reinstalled.description).toBe("Updated version");
+
+    const persistedRow = await db
+      .select()
+      .from(companySkills)
+      .where(eq(companySkills.id, firstId))
+      .then((rows) => rows[0] ?? null);
+    expect(persistedRow?.sourceType).toBe("catalog");
+    expect(await fs.readFile(path.join(reinstalled.sourceLocator!, "references/checklist.md"), "utf8")).toContain("Updated Checklist");
+  });
+
+  it("returns a conflict when a global skill key collides with a different company skill", async () => {
+    const homeDir = await makeTempDir("paperclip-global-conflict-home-");
+    process.env.HOME = homeDir;
+    const companyId = await seedCompany();
+    const codexRoot = path.join(homeDir, ".codex", "skills");
+
+    await writeGlobalSkill(
+      codexRoot,
+      "find-skills",
+      [
+        "---",
+        "name: Find Skills",
+        "metadata:",
+        "  paperclip:",
+        "    key: acme/find-skills/find-skills",
+        "---",
+        "",
+        "# Find Skills",
+        "",
+      ].join("\n"),
+    );
+
+    await db.insert(companySkills).values({
+      id: randomUUID(),
+      companyId,
+      key: "acme/find-skills/find-skills",
+      slug: "existing-find-skills",
+      name: "Existing Skill",
+      markdown: "# Existing Skill",
+      sourceType: "local_path",
+      sourceLocator: await writeGlobalSkill(
+        path.join(homeDir, "managed-existing"),
+        "existing-find-skills",
+        "---\nname: Existing Skill\n---\n\n# Existing Skill\n",
+      ),
+      metadata: {
+        sourceKind: "managed_local",
+      },
+    });
+
+    const svc = companySkillService(db);
+    const discovered = await svc.listGlobalCatalog(companyId);
+
+    await expect(
+      svc.installGlobalCatalogSkill(companyId, { catalogKey: discovered[0]!.catalogKey }),
+    ).rejects.toMatchObject({
+      status: 409,
+    });
   });
 });

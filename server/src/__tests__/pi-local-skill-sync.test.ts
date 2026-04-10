@@ -11,6 +11,21 @@ async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
+function managedPiSkillsHome(root: string, companyId: string) {
+  return path.join(
+    root,
+    "paperclip-home",
+    "instances",
+    "default",
+    "companies",
+    companyId,
+    "pi-home",
+    ".pi",
+    "agent",
+    "skills",
+  );
+}
+
 describe("pi local skill sync", () => {
   const paperclipKey = "paperclipai/paperclip/paperclip";
   const cleanupDirs = new Set<string>();
@@ -23,6 +38,7 @@ describe("pi local skill sync", () => {
   it("reports configured Paperclip skills and installs them into the Pi skills home", async () => {
     const home = await makeTempDir("paperclip-pi-skill-sync-");
     cleanupDirs.add(home);
+    const managedSkillsHome = managedPiSkillsHome(home, "company-1");
 
     const ctx = {
       agentId: "agent-1",
@@ -31,6 +47,7 @@ describe("pi local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [paperclipKey],
@@ -46,12 +63,13 @@ describe("pi local skill sync", () => {
 
     const after = await syncPiSkills(ctx, [paperclipKey]);
     expect(after.entries.find((entry) => entry.key === paperclipKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".pi", "agent", "skills", "paperclip"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome, "paperclip"))).isSymbolicLink()).toBe(true);
   });
 
   it("keeps required bundled Paperclip skills installed even when the desired set is emptied", async () => {
     const home = await makeTempDir("paperclip-pi-skill-prune-");
     cleanupDirs.add(home);
+    const managedSkillsHome = managedPiSkillsHome(home, "company-1");
 
     const configuredCtx = {
       agentId: "agent-2",
@@ -60,6 +78,7 @@ describe("pi local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [paperclipKey],
@@ -74,6 +93,7 @@ describe("pi local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
         paperclipSkillSync: {
           desiredSkills: [],
@@ -84,6 +104,6 @@ describe("pi local skill sync", () => {
     const after = await syncPiSkills(clearedCtx, []);
     expect(after.desiredSkills).toContain(paperclipKey);
     expect(after.entries.find((entry) => entry.key === paperclipKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".pi", "agent", "skills", "paperclip"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome, "paperclip"))).isSymbolicLink()).toBe(true);
   });
 });

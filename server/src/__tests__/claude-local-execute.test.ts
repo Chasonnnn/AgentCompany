@@ -339,6 +339,8 @@ describe("claude execute", () => {
     const binDir = path.join(root, "bin");
     const commandPath = path.join(binDir, "claude");
     const capturePath = path.join(root, "capture.json");
+    const paperclipHome = path.join(root, "paperclip-home");
+    const managedHome = path.join(paperclipHome, "instances", "default", "companies", "company-1", "claude-home");
     const claudeConfigDir = path.join(root, "claude-config");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(binDir, { recursive: true });
@@ -375,6 +377,7 @@ describe("claude execute", () => {
           cwd: workspace,
           env: {
             PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PAPERCLIP_HOME: paperclipHome,
           },
           promptTemplate: "Follow the paperclip heartbeat.",
         },
@@ -390,8 +393,8 @@ describe("claude execute", () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       expect(loggedCommand).toBe(commandPath);
-      expect(loggedEnv.HOME).toBe(root);
-      expect(loggedEnv.CLAUDE_CONFIG_DIR).toBe(claudeConfigDir);
+      expect(loggedEnv.HOME).toBe(managedHome);
+      expect(loggedEnv.CLAUDE_CONFIG_DIR).toBe(path.join(managedHome, ".claude"));
       expect(loggedEnv.PAPERCLIP_RESOLVED_COMMAND).toBe(commandPath);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;

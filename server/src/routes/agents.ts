@@ -15,7 +15,6 @@ import {
   isUuidLike,
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
-  type AgentSkillSnapshot,
   type InstanceSchedulerHeartbeatAgent,
   upsertAgentInstructionsFileSchema,
   updateAgentInstructionsBundleSchema,
@@ -24,18 +23,14 @@ import {
   wakeAgentSchema,
   updateAgentSchema,
 } from "@paperclipai/shared";
-import {
-  readPaperclipSkillSyncPreference,
-  writePaperclipSkillSyncPreference,
-} from "@paperclipai/adapter-utils/server-utils";
 import { trackAgentCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import {
   agentService,
+  agentSkillService,
   agentInstructionsService,
   accessService,
   approvalService,
-  companySkillService,
   budgetService,
   heartbeatService,
   issueApprovalService,
@@ -49,7 +44,6 @@ import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   detectAdapterModel,
-  findActiveServerAdapter,
   findServerAdapter,
   listAdapterModels,
   requireServerAdapter,
@@ -103,7 +97,7 @@ export function agentRoutes(db: Db) {
   const issueApprovalsSvc = issueApprovalService(db);
   const secretsSvc = secretService(db);
   const instructions = agentInstructionsService();
-  const companySkills = companySkillService(db);
+  const skillSync = agentSkillService(db);
   const workspaceOperations = workspaceOperationService(db);
   const instanceSettings = instanceSettingsService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
@@ -611,78 +605,6 @@ export function agentRoutes(db: Db) {
     return details;
   }
 
-  function buildUnsupportedSkillSnapshot(
-    adapterType: string,
-    desiredSkills: string[] = [],
-  ): AgentSkillSnapshot {
-    return {
-      adapterType,
-      supported: false,
-      mode: "unsupported",
-      desiredSkills,
-      entries: [],
-      warnings: ["This adapter does not implement skill sync yet."],
-    };
-  }
-
-  const ADAPTERS_REQUIRING_MATERIALIZED_RUNTIME_SKILLS = new Set([
-    "cursor",
-    "gemini_local",
-    "opencode_local",
-    "pi_local",
-  ]);
-
-  function shouldMaterializeRuntimeSkillsForAdapter(adapterType: string) {
-    return ADAPTERS_REQUIRING_MATERIALIZED_RUNTIME_SKILLS.has(adapterType);
-  }
-
-  async function buildRuntimeSkillConfig(
-    companyId: string,
-    adapterType: string,
-    config: Record<string, unknown>,
-  ) {
-    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(companyId, {
-      materializeMissing: shouldMaterializeRuntimeSkillsForAdapter(adapterType),
-    });
-    return {
-      ...config,
-      paperclipRuntimeSkills: runtimeSkillEntries,
-    };
-  }
-
-  async function resolveDesiredSkillAssignment(
-    companyId: string,
-    adapterType: string,
-    adapterConfig: Record<string, unknown>,
-    requestedDesiredSkills: string[] | undefined,
-  ) {
-    if (!requestedDesiredSkills) {
-      return {
-        adapterConfig,
-        desiredSkills: null as string[] | null,
-        runtimeSkillEntries: null as Awaited<ReturnType<typeof companySkills.listRuntimeSkillEntries>> | null,
-      };
-    }
-
-    const resolvedRequestedSkills = await companySkills.resolveRequestedSkillKeys(
-      companyId,
-      requestedDesiredSkills,
-    );
-    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(companyId, {
-      materializeMissing: shouldMaterializeRuntimeSkillsForAdapter(adapterType),
-    });
-    const requiredSkills = runtimeSkillEntries
-      .filter((entry) => entry.required)
-      .map((entry) => entry.key);
-    const desiredSkills = Array.from(new Set([...requiredSkills, ...resolvedRequestedSkills]));
-
-    return {
-      adapterConfig: writePaperclipSkillSyncPreference(adapterConfig, desiredSkills),
-      desiredSkills,
-      runtimeSkillEntries,
-    };
-  }
-
   function redactForRestrictedAgentView(agent: Awaited<ReturnType<typeof svc.getById>>) {
     if (!agent) return null;
     return {
@@ -824,36 +746,10 @@ export function agentRoutes(db: Db) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    await assertCanReadConfigurations(req, agent.companyId);
+    await assertCanReadAgent(req, agent);
 
-    const adapter = findActiveServerAdapter(agent.adapterType);
-    if (!adapter?.listSkills) {
-      const preference = readPaperclipSkillSyncPreference(
-        agent.adapterConfig as Record<string, unknown>,
-      );
-      const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId, {
-        materializeMissing: false,
-      });
-      const requiredSkills = runtimeSkillEntries.filter((entry) => entry.required).map((entry) => entry.key);
-      res.json(buildUnsupportedSkillSnapshot(agent.adapterType, Array.from(new Set([...requiredSkills, ...preference.desiredSkills]))));
-      return;
-    }
-
-    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-      agent.companyId,
-      agent.adapterConfig,
-    );
-    const runtimeSkillConfig = await buildRuntimeSkillConfig(
-      agent.companyId,
-      agent.adapterType,
-      runtimeConfig,
-    );
-    const snapshot = await adapter.listSkills({
-      agentId: agent.id,
-      companyId: agent.companyId,
-      adapterType: agent.adapterType,
-      config: runtimeSkillConfig,
-    });
+    const canManageSkills = req.actor.type === "board";
+    const snapshot = await skillSync.listSkills(agent, { canManage: canManageSkills });
     res.json(snapshot);
   });
 
@@ -867,87 +763,11 @@ export function agentRoutes(db: Db) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      await assertCanUpdateAgent(req, agent);
+      assertBoard(req);
+      assertCompanyAccess(req, agent.companyId);
 
-      const requestedSkills = Array.from(
-        new Set(
-          (req.body.desiredSkills as string[])
-            .map((value) => value.trim())
-            .filter(Boolean),
-        ),
-      );
-      const {
-        adapterConfig: nextAdapterConfig,
-        desiredSkills,
-        runtimeSkillEntries,
-      } = await resolveDesiredSkillAssignment(
-        agent.companyId,
-        agent.adapterType,
-        agent.adapterConfig as Record<string, unknown>,
-        requestedSkills,
-      );
-      if (!desiredSkills || !runtimeSkillEntries) {
-        throw unprocessable("Skill sync requires desiredSkills.");
-      }
       const actor = getActorInfo(req);
-      const updated = await svc.update(agent.id, {
-        adapterConfig: nextAdapterConfig,
-      }, {
-        recordRevision: {
-          createdByAgentId: actor.agentId,
-          createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-          source: "skill-sync",
-        },
-      });
-      if (!updated) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
-      }
-
-      const adapter = findActiveServerAdapter(updated.adapterType);
-      const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-        updated.companyId,
-        updated.adapterConfig,
-      );
-      const runtimeSkillConfig = {
-        ...runtimeConfig,
-        paperclipRuntimeSkills: runtimeSkillEntries,
-      };
-      const snapshot = adapter?.syncSkills
-        ? await adapter.syncSkills({
-            agentId: updated.id,
-            companyId: updated.companyId,
-            adapterType: updated.adapterType,
-            config: runtimeSkillConfig,
-          }, desiredSkills)
-        : adapter?.listSkills
-          ? await adapter.listSkills({
-              agentId: updated.id,
-              companyId: updated.companyId,
-              adapterType: updated.adapterType,
-              config: runtimeSkillConfig,
-            })
-          : buildUnsupportedSkillSnapshot(updated.adapterType, desiredSkills);
-
-      await logActivity(db, {
-        companyId: updated.companyId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        action: "agent.skills_synced",
-        entityType: "agent",
-        entityId: updated.id,
-        agentId: actor.agentId,
-        runId: actor.runId,
-        details: {
-          adapterType: updated.adapterType,
-          desiredSkills,
-          mode: snapshot.mode,
-          supported: snapshot.supported,
-          entryCount: snapshot.entries.length,
-          warningCount: snapshot.warnings.length,
-        },
-      });
-
+      const snapshot = await skillSync.syncAgentSkills(agent, req.body.desiredSkills as string[], actor);
       res.json(snapshot);
     },
   );
@@ -1319,7 +1139,7 @@ export function agentRoutes(db: Db) {
       hireInput.adapterType,
       ((hireInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
-    const desiredSkillAssignment = await resolveDesiredSkillAssignment(
+    const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
       companyId,
       hireInput.adapterType,
       requestedAdapterConfig,
@@ -1485,7 +1305,7 @@ export function agentRoutes(db: Db) {
       createInput.adapterType,
       ((createInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
-    const desiredSkillAssignment = await resolveDesiredSkillAssignment(
+    const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
       companyId,
       createInput.adapterType,
       requestedAdapterConfig,

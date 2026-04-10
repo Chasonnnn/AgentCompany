@@ -18,7 +18,9 @@ import {
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensurePathInEnv,
+  prepareManagedAdapterHome,
   resolveCommandForLogs,
+  resolveSharedLocalAdapterHomeDir,
   renderTemplate,
   renderPaperclipWakePrompt,
   stringifyPaperclipWakePayload,
@@ -37,9 +39,9 @@ import { isBedrockModelId } from "./models.js";
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Create a tmpdir with `.claude/skills/` containing symlinks to skills from
- * the repo's `skills/` directory, so `--add-dir` makes Claude Code discover
- * them as proper registered skills.
+ * Create a tmpdir with `.claude/skills/` containing symlinks to granted skills
+ * from the Paperclip runtime catalog. Runs add this directory on top of the
+ * Paperclip-managed Claude config home so unmanaged host skills stay hidden.
  */
 async function buildSkillsDir(config: Record<string, unknown>): Promise<string> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-skills-"));
@@ -251,6 +253,19 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
+
+  const sharedHome = resolveSharedLocalAdapterHomeDir({ ...process.env, ...env });
+  const managedHome = await prepareManagedAdapterHome({
+    env: { ...process.env, ...env },
+    adapterKey: "claude",
+    companyId: agent.companyId,
+    sharedHomeDir: sharedHome,
+    logLabel: "Claude",
+    subtrees: [{ relativePath: ".claude", excludeChildren: ["skills"] }],
+    onLog: async () => {},
+  });
+  env.HOME = managedHome;
+  env.CLAUDE_CONFIG_DIR = path.join(managedHome, ".claude");
 
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
   await ensureCommandResolvable(command, cwd, runtimeEnv);

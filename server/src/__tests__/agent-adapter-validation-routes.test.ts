@@ -22,6 +22,11 @@ const mockCompanySkillService = vi.hoisted(() => ({
   listRuntimeSkillEntries: vi.fn(),
   resolveRequestedSkillKeys: vi.fn(),
 }));
+const mockAgentSkillService = vi.hoisted(() => ({
+  listSkills: vi.fn(),
+  syncAgentSkills: vi.fn(),
+  resolveDesiredSkillAssignment: vi.fn(),
+}));
 
 const mockSecretService = vi.hoisted(() => ({
   normalizeAdapterConfigForPersistence: vi.fn(async (_companyId: string, config: Record<string, unknown>) => config),
@@ -67,6 +72,7 @@ vi.mock("../services/index.js", () => ({
   agentInstructionsService: () => mockAgentInstructionsService,
   accessService: () => mockAccessService,
   approvalService: () => mockApprovalService,
+  agentSkillService: () => mockAgentSkillService,
   companySkillService: () => mockCompanySkillService,
   budgetService: () => mockBudgetService,
   heartbeatService: () => mockHeartbeatService,
@@ -117,6 +123,18 @@ describe("agent routes adapter validation", () => {
     unregisterServerAdapter("external_test");
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
     mockCompanySkillService.resolveRequestedSkillKeys.mockResolvedValue([]);
+    mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
+      async (
+        _companyId: string,
+        _adapterType: string,
+        adapterConfig: Record<string, unknown>,
+        requestedDesiredSkills: string[] | undefined,
+      ) => ({
+        adapterConfig,
+        desiredSkills: requestedDesiredSkills ?? null,
+        runtimeSkillEntries: null,
+      }),
+    );
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(true);
     mockAccessService.ensureMembership.mockResolvedValue(undefined);

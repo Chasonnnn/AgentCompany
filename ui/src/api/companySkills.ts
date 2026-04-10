@@ -1,19 +1,29 @@
 import type {
+  BulkSkillGrantApplyRequest,
+  BulkSkillGrantPreview,
+  BulkSkillGrantRequest,
+  BulkSkillGrantResult,
   CompanySkill,
   CompanySkillCreateRequest,
   CompanySkillDetail,
   CompanySkillFileDetail,
+  CompanySkillInstallGlobalRequest,
   CompanySkillImportResult,
   CompanySkillListItem,
   CompanySkillProjectScanRequest,
   CompanySkillProjectScanResult,
   CompanySkillUpdateStatus,
+  GlobalSkillCatalogItem,
 } from "@paperclipai/shared";
 import { api } from "./client";
 
 export const companySkillsApi = {
   list: (companyId: string) =>
     api.get<CompanySkillListItem[]>(`/companies/${encodeURIComponent(companyId)}/skills`),
+  globalCatalog: (companyId: string) =>
+    api.get<GlobalSkillCatalogItem[]>(
+      `/companies/${encodeURIComponent(companyId)}/skills/global-catalog`,
+    ),
   detail: (companyId: string, skillId: string) =>
     api.get<CompanySkillDetail>(
       `/companies/${encodeURIComponent(companyId)}/skills/${encodeURIComponent(skillId)}`,
@@ -40,6 +50,21 @@ export const companySkillsApi = {
     api.post<CompanySkillImportResult>(
       `/companies/${encodeURIComponent(companyId)}/skills/import`,
       { source },
+    ),
+  installGlobal: (companyId: string, payload: CompanySkillInstallGlobalRequest) =>
+    api.post<CompanySkill>(
+      `/companies/${encodeURIComponent(companyId)}/skills/install-global`,
+      payload,
+    ),
+  bulkGrantPreview: (companyId: string, skillId: string, payload: BulkSkillGrantRequest) =>
+    api.post<BulkSkillGrantPreview>(
+      `/companies/${encodeURIComponent(companyId)}/skills/${encodeURIComponent(skillId)}/bulk-preview`,
+      payload,
+    ),
+  bulkGrantApply: (companyId: string, skillId: string, payload: BulkSkillGrantApplyRequest) =>
+    api.post<BulkSkillGrantResult>(
+      `/companies/${encodeURIComponent(companyId)}/skills/${encodeURIComponent(skillId)}/bulk-apply`,
+      payload,
     ),
   scanProjects: (companyId: string, payload: CompanySkillProjectScanRequest = {}) =>
     api.post<CompanySkillProjectScanResult>(

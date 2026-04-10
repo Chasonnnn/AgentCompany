@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState, type SVGProps } from "react";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AgentDepartmentKey,
+  CompanyAgentNavigation,
+  BulkSkillGrantMode,
+  BulkSkillGrantPreview,
+  BulkSkillGrantRequest,
+  BulkSkillGrantTier,
   CompanySkillCreateRequest,
   CompanySkillDetail,
   CompanySkillFileDetail,
@@ -10,11 +16,16 @@ import type {
   CompanySkillProjectScanResult,
   CompanySkillSourceBadge,
   CompanySkillUpdateStatus,
+  GlobalSkillCatalogItem,
+  GlobalSkillCatalogSourceRoot,
 } from "@paperclipai/shared";
+import { authApi } from "../api/auth";
+import { agentsApi } from "../api/agents";
 import { companySkillsApi } from "../api/companySkills";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
+import { getPaperclipDesktopBridge } from "../lib/desktop";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { MarkdownBody } from "../components/MarkdownBody";
@@ -33,6 +44,7 @@ import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Boxes,
   ChevronDown,
@@ -66,6 +78,32 @@ type SkillTreeNode = {
 const SKILL_TREE_BASE_INDENT = 16;
 const SKILL_TREE_STEP_INDENT = 24;
 const SKILL_TREE_ROW_HEIGHT_CLASS = "min-h-9";
+const BULK_SKILL_GRANT_TIERS: Array<{ value: BulkSkillGrantTier; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "leaders", label: "Leaders" },
+  { value: "workers", label: "Workers" },
+];
+const BULK_SKILL_GRANT_MODES: Array<{
+  value: BulkSkillGrantMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "add",
+    label: "Add",
+    description: "Add this skill to each matched agent without removing other granted skills.",
+  },
+  {
+    value: "remove",
+    label: "Remove",
+    description: "Remove this skill from each matched agent and leave other granted skills alone.",
+  },
+  {
+    value: "replace",
+    label: "Replace",
+    description: "Replace every non-required granted skill on each matched agent with only this skill.",
+  },
+];
 
 function VercelMark(props: SVGProps<SVGSVGElement>) {
   return (
@@ -180,6 +218,387 @@ function formatProjectScanSummary(result: CompanySkillProjectScanResult) {
   if (result.conflicts.length > 0) parts.push(`${result.conflicts.length} conflicts`);
   if (result.skipped.length > 0) parts.push(`${result.skipped.length} skipped`);
   return `${parts.join(", ")} across ${result.scannedWorkspaces} workspace${result.scannedWorkspaces === 1 ? "" : "s"}.`;
+}
+
+function formatGlobalCatalogCount(count: number) {
+  return `${count} discoverable`;
+}
+
+function globalCatalogSourceLabel(sourceRoot: GlobalSkillCatalogSourceRoot) {
+  return sourceRoot === "claude" ? "Claude" : "Codex";
+}
+
+function globalCatalogSourceClassName(sourceRoot: GlobalSkillCatalogSourceRoot) {
+  return sourceRoot === "claude"
+    ? "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200"
+    : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200";
+}
+
+function bulkSkillGrantChangeLabel(change: BulkSkillGrantPreview["agents"][number]["change"]) {
+  if (change === "add") return "Add";
+  if (change === "remove") return "Remove";
+  if (change === "replace") return "Replace";
+  return "No change";
+}
+
+function buildBulkSkillDepartmentOptions(
+  navigation: CompanyAgentNavigation | undefined,
+): Array<{ key: AgentDepartmentKey; label: string }> {
+  const departments = new Map<AgentDepartmentKey, string>();
+  departments.set("executive", "Executive");
+  for (const department of navigation?.departments ?? []) {
+    if (department.key === "shared_service") continue;
+    departments.set(department.key, department.name);
+  }
+  return Array.from(departments.entries()).map(([key, label]) => ({ key, label }));
+}
+
+type BulkGrantPreviewState = {
+  requestKey: string;
+  preview: BulkSkillGrantPreview;
+};
+
+function BulkGrantDialog({
+  open,
+  onOpenChange,
+  skill,
+  canManage,
+  navigation,
+  navigationLoading,
+  targetKind,
+  onTargetKindChange,
+  departmentKey,
+  onDepartmentKeyChange,
+  projectId,
+  onProjectIdChange,
+  tier,
+  onTierChange,
+  mode,
+  onModeChange,
+  replaceConfirmed,
+  onReplaceConfirmedChange,
+  preview,
+  previewPending,
+  applyPending,
+  onPreview,
+  onApply,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  skill: CompanySkillDetail | null | undefined;
+  canManage: boolean;
+  navigation: CompanyAgentNavigation | undefined;
+  navigationLoading: boolean;
+  targetKind: "department" | "project";
+  onTargetKindChange: (value: "department" | "project") => void;
+  departmentKey: AgentDepartmentKey;
+  onDepartmentKeyChange: (value: AgentDepartmentKey) => void;
+  projectId: string;
+  onProjectIdChange: (value: string) => void;
+  tier: BulkSkillGrantTier;
+  onTierChange: (value: BulkSkillGrantTier) => void;
+  mode: BulkSkillGrantMode;
+  onModeChange: (value: BulkSkillGrantMode) => void;
+  replaceConfirmed: boolean;
+  onReplaceConfirmedChange: (value: boolean) => void;
+  preview: BulkSkillGrantPreview | null;
+  previewPending: boolean;
+  applyPending: boolean;
+  onPreview: () => void;
+  onApply: () => void;
+}) {
+  const departmentOptions = useMemo(
+    () => buildBulkSkillDepartmentOptions(navigation),
+    [navigation],
+  );
+  const projectOptions = navigation?.projectPods ?? [];
+  const currentMode = BULK_SKILL_GRANT_MODES.find((entry) => entry.value === mode) ?? BULK_SKILL_GRANT_MODES[0]!;
+  const canPreview =
+    canManage
+    && Boolean(skill)
+    && (targetKind === "department" || projectId.length > 0)
+    && !previewPending
+    && !applyPending;
+  const canApply =
+    canManage
+    && (preview?.changedAgentCount ?? 0) > 0
+    && !previewPending
+    && !applyPending
+    && (mode !== "replace" || replaceConfirmed);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Grant Skill to Group</DialogTitle>
+          <DialogDescription>
+            Apply explicit per-agent skill grants to the current matching agents only. Future hires will not inherit this change automatically.
+          </DialogDescription>
+        </DialogHeader>
+
+        {!skill ? (
+          <div className="rounded-md border border-border px-4 py-4 text-sm text-muted-foreground">
+            Select an installed company skill first.
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="rounded-md border border-border px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Skill</div>
+              <div className="mt-2 text-sm font-medium text-foreground">{skill.name}</div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Library visibility does not grant runtime access. This action writes explicit `desiredSkills` updates to matched agents.
+              </p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Target type</div>
+                  <Tabs
+                    value={targetKind}
+                    onValueChange={(value) => onTargetKindChange(value as "department" | "project")}
+                    className="mt-2"
+                  >
+                    <TabsList variant="line" className="w-full justify-start gap-1">
+                      <TabsTrigger value="department">Department</TabsTrigger>
+                      <TabsTrigger value="project">Project</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+
+                {targetKind === "department" ? (
+                  <label className="block">
+                    <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Department</div>
+                    <select
+                      value={departmentKey}
+                      onChange={(event) => onDepartmentKeyChange(event.target.value as AgentDepartmentKey)}
+                      className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground shadow-none"
+                    >
+                      {departmentOptions.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label className="block">
+                    <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Project pod</div>
+                    <select
+                      value={projectId}
+                      onChange={(event) => onProjectIdChange(event.target.value)}
+                      className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground shadow-none"
+                      disabled={projectOptions.length === 0}
+                    >
+                      {projectOptions.length === 0 ? (
+                        <option value="">No projects available</option>
+                      ) : null}
+                      {projectOptions.map((project) => (
+                        <option key={project.projectId} value={project.projectId}>
+                          {project.projectName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <label className="block">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Tier</div>
+                  <select
+                    value={tier}
+                    onChange={(event) => onTierChange(event.target.value as BulkSkillGrantTier)}
+                    className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground shadow-none"
+                  >
+                    {BULK_SKILL_GRANT_TIERS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Operation</div>
+                  <select
+                    value={mode}
+                    onChange={(event) => onModeChange(event.target.value as BulkSkillGrantMode)}
+                    className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground shadow-none"
+                  >
+                    {BULK_SKILL_GRANT_MODES.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-2 text-sm text-muted-foreground">{currentMode.description}</p>
+                </label>
+              </div>
+            </div>
+
+            {mode === "replace" ? (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+                <div className="font-medium">Replace removes other non-required skills.</div>
+                <p className="mt-1 text-muted-foreground">
+                  Required Paperclip skills stay on. Every other granted skill on the matched agents will be replaced with only {skill.name}.
+                </p>
+                <label className="mt-3 flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 rounded border-border"
+                    checked={replaceConfirmed}
+                    onChange={(event) => onReplaceConfirmedChange(event.target.checked)}
+                  />
+                  <span>I understand this replaces every non-required granted skill on the matched agents.</span>
+                </label>
+              </div>
+            ) : null}
+
+            <div className="rounded-md border border-border">
+              <div className="border-b border-border px-4 py-3">
+                <div className="text-sm font-medium">Preview</div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Preview the exact agent set before applying. The batch will fail if the matching set changes before you apply it.
+                </p>
+              </div>
+
+              {navigationLoading ? (
+                <div className="px-4 py-5 text-sm text-muted-foreground">Loading current agent groups…</div>
+              ) : previewPending ? (
+                <div className="px-4 py-5 text-sm text-muted-foreground">Computing preview…</div>
+              ) : !preview ? (
+                <div className="px-4 py-5 text-sm text-muted-foreground">
+                  Choose a target and click <span className="font-medium text-foreground">Preview changes</span>.
+                </div>
+              ) : (
+                <div className="space-y-4 px-4 py-4">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Matched</div>
+                      <div className="mt-2 text-xl font-semibold">{preview.matchedAgentCount}</div>
+                    </div>
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Changed</div>
+                      <div className="mt-2 text-xl font-semibold">{preview.changedAgentCount}</div>
+                    </div>
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Add</div>
+                      <div className="mt-2 text-xl font-semibold">{preview.addCount}</div>
+                    </div>
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Remove</div>
+                      <div className="mt-2 text-xl font-semibold">{preview.removeCount}</div>
+                    </div>
+                    <div className="rounded-md border border-border px-3 py-3">
+                      <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Unchanged</div>
+                      <div className="mt-2 text-xl font-semibold">{preview.unchangedCount}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
+                    <div className="rounded-md border border-border">
+                      <div className="border-b border-border px-3 py-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                        Matched agents
+                      </div>
+                      {preview.agents.length === 0 ? (
+                        <div className="px-3 py-4 text-sm text-muted-foreground">
+                          No current agents match this group.
+                        </div>
+                      ) : (
+                        preview.agents.map((agent) => (
+                          <div
+                            key={agent.id}
+                            className="flex items-start justify-between gap-3 border-b border-border px-3 py-3 text-sm last:border-b-0"
+                          >
+                            <div className="min-w-0">
+                              <Link
+                                to={`/agents/${agent.urlKey}/skills`}
+                                className="font-medium text-foreground no-underline hover:underline"
+                              >
+                                {agent.name}
+                              </Link>
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {agent.title ?? agent.role}
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-xs text-muted-foreground">
+                              {bulkSkillGrantChangeLabel(agent.change)}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <div className="space-y-3 rounded-md border border-border px-3 py-3">
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Target</div>
+                        <div className="mt-1 text-sm text-foreground">{preview.target.label}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Tier</div>
+                        <div className="mt-1 text-sm text-foreground">
+                          {BULK_SKILL_GRANT_TIERS.find((option) => option.value === preview.tier)?.label ?? preview.tier}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Operation</div>
+                        <div className="mt-1 text-sm text-foreground">
+                          {BULK_SKILL_GRANT_MODES.find((option) => option.value === preview.mode)?.label ?? preview.mode}
+                        </div>
+                      </div>
+                      {preview.skippedAgents.length > 0 ? (
+                        <div>
+                          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Skipped</div>
+                          <div className="mt-2 space-y-2">
+                            {preview.skippedAgents.map((agent) => (
+                              <div key={agent.id} className="rounded-md border border-border px-3 py-2 text-sm">
+                                <div className="font-medium text-foreground">{agent.name}</div>
+                                <div className="mt-1 text-xs text-muted-foreground">{agent.reason}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={previewPending || applyPending}>
+            Close
+          </Button>
+          <Button variant="outline" onClick={onPreview} disabled={!canPreview}>
+            {previewPending ? "Previewing..." : "Preview changes"}
+          </Button>
+          <Button onClick={onApply} disabled={!canApply}>
+            {applyPending
+              ? "Applying..."
+              : preview
+                ? `Apply to ${preview.changedAgentCount} agent${preview.changedAgentCount === 1 ? "" : "s"}`
+                : "Apply"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function formatTrustLevel(trustLevel: GlobalSkillCatalogItem["trustLevel"]) {
+  switch (trustLevel) {
+    case "markdown_only":
+      return "Markdown only";
+    case "assets":
+      return "Includes assets";
+    case "scripts_executables":
+      return "Includes scripts";
+    default:
+      return trustLevel;
+  }
 }
 
 function fileIcon(kind: CompanySkillFileInventoryEntry["kind"]) {
@@ -487,50 +906,283 @@ function SkillList({
   );
 }
 
+function GlobalCatalogList({
+  items,
+  selectedCatalogKey,
+  skillFilter,
+  installPendingCatalogKey,
+  onSelect,
+  onInstall,
+}: {
+  items: GlobalSkillCatalogItem[];
+  selectedCatalogKey: string | null;
+  skillFilter: string;
+  installPendingCatalogKey: string | null;
+  onSelect: (catalogKey: string) => void;
+  onInstall: (catalogKey: string) => void;
+}) {
+  const filteredItems = items.filter((item) => {
+    const haystack = `${item.name} ${item.slug} ${item.description ?? ""} ${item.sourcePath}`.toLowerCase();
+    return haystack.includes(skillFilter.toLowerCase());
+  });
+
+  if (filteredItems.length === 0) {
+    return (
+      <div className="px-4 py-6 text-sm text-muted-foreground">
+        No global skills match this filter.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {filteredItems.map((item) => {
+        const selected = item.catalogKey === selectedCatalogKey;
+        const isInstalling = installPendingCatalogKey === item.catalogKey;
+        const installed = Boolean(item.installedSkillId);
+
+        return (
+          <div key={item.catalogKey} className="border-b border-border">
+            <div
+              className={cn(
+                "group flex items-start justify-between gap-3 px-3 py-3 hover:bg-accent/30",
+                selected && "bg-accent/20 text-foreground",
+              )}
+            >
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left"
+                onClick={() => onSelect(item.catalogKey)}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-[13px] font-medium leading-5">{item.name}</span>
+                  <span
+                    className={cn(
+                      "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em]",
+                      globalCatalogSourceClassName(item.sourceRoot),
+                    )}
+                  >
+                    {globalCatalogSourceLabel(item.sourceRoot)}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {installed ? "Installed" : "Not installed"}
+                  </span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                  {item.description ?? item.sourcePath}
+                </div>
+              </button>
+              <Button
+                variant={installed ? "outline" : "ghost"}
+                size="sm"
+                className="shrink-0"
+                disabled={Boolean(installPendingCatalogKey)}
+                onClick={() => onInstall(item.catalogKey)}
+              >
+                {isInstalling ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : installed ? (
+                  "Reinstall"
+                ) : (
+                  "Install"
+                )}
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GlobalCatalogPane({
+  loading,
+  error,
+  item,
+  installPending,
+  onInstall,
+}: {
+  loading: boolean;
+  error: Error | null;
+  item: GlobalSkillCatalogItem | null;
+  installPending: boolean;
+  onInstall: () => void;
+}) {
+  if (loading) {
+    return <PageSkeleton variant="detail" />;
+  }
+
+  if (error) {
+    return (
+      <div className="px-5 py-6 text-sm text-destructive">
+        {error.message}
+      </div>
+    );
+  }
+
+  if (!item) {
+    return (
+      <EmptyState
+        icon={Boxes}
+        message="Select a global skill to inspect its install status."
+      />
+    );
+  }
+
+  const installed = Boolean(item.installedSkillId);
+
+  return (
+    <div className="min-w-0">
+      <div className="border-b border-border px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-2xl font-semibold">{item.name}</h1>
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em]",
+                  globalCatalogSourceClassName(item.sourceRoot),
+                )}
+              >
+                {globalCatalogSourceLabel(item.sourceRoot)}
+              </span>
+            </div>
+            <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+              {item.description ?? "Install a read-only snapshot into this company before assigning it to agents."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {item.installedSkillId ? (
+              <Link
+                to={`/skills/${item.installedSkillId}`}
+                className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-foreground no-underline transition-colors hover:bg-accent/40"
+              >
+                Open installed copy
+              </Link>
+            ) : null}
+            <Button onClick={onInstall} disabled={installPending}>
+              {installPending ? (
+                <>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Installing...
+                </>
+              ) : installed ? (
+                "Reinstall snapshot"
+              ) : (
+                "Install to company"
+              )}
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 border-t border-border pt-4 text-sm sm:grid-cols-2">
+          <div className="flex items-center justify-between gap-3 border-b border-border/60 py-2">
+            <span className="text-muted-foreground">Install status</span>
+            <span>{installed ? "Installed" : "Not installed"}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-b border-border/60 py-2">
+            <span className="text-muted-foreground">Trust level</span>
+            <span>{formatTrustLevel(item.trustLevel)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-b border-border/60 py-2">
+            <span className="text-muted-foreground">Compatibility</span>
+            <span>{item.compatibility}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-b border-border/60 py-2">
+            <span className="text-muted-foreground">Files</span>
+            <span>{item.fileInventory.length}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 px-5 py-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+        <div className="space-y-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Source folder</div>
+            <div className="mt-2 rounded-md border border-border bg-muted/20 px-3 py-3 font-mono text-xs text-foreground break-all">
+              {item.sourcePath}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">What gets installed</div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Paperclip copies this skill into the company library as a read-only snapshot. Agents can only use the installed company copy, not the home-directory source directly.
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">File inventory</div>
+          <div className="mt-2 rounded-md border border-border">
+            {item.fileInventory.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-muted-foreground">No files detected.</div>
+            ) : (
+              item.fileInventory.map((entry) => (
+                <div
+                  key={entry.path}
+                  className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0"
+                >
+                  <span className="truncate font-mono text-xs">{entry.path}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{entry.kind}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SkillPane({
+  selectionKey,
   loading,
   detail,
   file,
   fileLoading,
   updateStatus,
   updateStatusLoading,
-  viewMode,
-  editMode,
-  draft,
-  setViewMode,
-  setEditMode,
-  setDraft,
   onCheckUpdates,
   checkUpdatesPending,
   onInstallUpdate,
   installUpdatePending,
   onDelete,
   deletePending,
+  onOpenBulkGrant,
+  canManageBulkGrant,
   onSave,
   savePending,
 }: {
+  selectionKey: string;
   loading: boolean;
   detail: CompanySkillDetail | null | undefined;
   file: CompanySkillFileDetail | null | undefined;
   fileLoading: boolean;
   updateStatus: CompanySkillUpdateStatus | null | undefined;
   updateStatusLoading: boolean;
-  viewMode: "preview" | "code";
-  editMode: boolean;
-  draft: string;
-  setViewMode: (mode: "preview" | "code") => void;
-  setEditMode: (value: boolean) => void;
-  setDraft: (value: string) => void;
   onCheckUpdates: () => void;
   checkUpdatesPending: boolean;
   onInstallUpdate: () => void;
   installUpdatePending: boolean;
   onDelete: () => void;
   deletePending: boolean;
-  onSave: () => void;
+  onOpenBulkGrant: () => void;
+  canManageBulkGrant: boolean;
+  onSave: (draft: string) => void;
   savePending: boolean;
 }) {
   const { pushToast } = useToast();
+  const [viewMode, setViewMode] = useState<"preview" | "code">("preview");
+  const [editMode, setEditMode] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    if (!file) {
+      setDraft("");
+      return;
+    }
+    setDraft(file.markdown ? splitFrontmatter(file.content).body : file.content);
+  }, [file, selectionKey]);
 
   if (!detail) {
     if (loading) {
@@ -569,6 +1221,11 @@ function SkillPane({
             )}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {canManageBulkGrant ? (
+              <Button variant="outline" size="sm" onClick={onOpenBulkGrant}>
+                Grant to group
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="sm"
@@ -711,7 +1368,7 @@ function SkillPane({
                 <Button variant="ghost" size="sm" onClick={() => setEditMode(false)} disabled={savePending}>
                   Cancel
                 </Button>
-                <Button size="sm" onClick={onSave} disabled={savePending}>
+                <Button size="sm" onClick={() => onSave(draft)} disabled={savePending}>
                   <Save className="mr-1.5 h-3.5 w-3.5" />
                   {savePending ? "Saving..." : "Save"}
                 </Button>
@@ -760,24 +1417,32 @@ export function CompanySkills() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
+  const [libraryView, setLibraryView] = useState<"installed" | "global">("installed");
   const [skillFilter, setSkillFilter] = useState("");
   const [source, setSource] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [emptySourceHelpOpen, setEmptySourceHelpOpen] = useState(false);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, Set<string>>>({});
-  const [viewMode, setViewMode] = useState<"preview" | "code">("preview");
-  const [editMode, setEditMode] = useState(false);
-  const [draft, setDraft] = useState("");
   const [displayedDetail, setDisplayedDetail] = useState<CompanySkillDetail | null>(null);
   const [displayedFile, setDisplayedFile] = useState<CompanySkillFileDetail | null>(null);
   const [scanStatusMessage, setScanStatusMessage] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTargetSkillId, setDeleteTargetSkillId] = useState<string | null>(null);
   const [deleteTargetDetail, setDeleteTargetDetail] = useState<CompanySkillDetail | null>(null);
+  const [selectedCatalogKey, setSelectedCatalogKey] = useState<string | null>(null);
+  const [bulkGrantOpen, setBulkGrantOpen] = useState(false);
+  const [bulkGrantTargetKind, setBulkGrantTargetKind] = useState<"department" | "project">("department");
+  const [bulkGrantDepartmentKey, setBulkGrantDepartmentKey] = useState<AgentDepartmentKey>("executive");
+  const [bulkGrantProjectId, setBulkGrantProjectId] = useState("");
+  const [bulkGrantTier, setBulkGrantTier] = useState<BulkSkillGrantTier>("all");
+  const [bulkGrantMode, setBulkGrantMode] = useState<BulkSkillGrantMode>("add");
+  const [bulkGrantPreviewState, setBulkGrantPreviewState] = useState<BulkGrantPreviewState | null>(null);
+  const [bulkGrantReplaceConfirmed, setBulkGrantReplaceConfirmed] = useState(false);
   const parsedRoute = useMemo(() => parseSkillRoute(routePath), [routePath]);
   const routeSkillId = parsedRoute.skillId;
   const selectedPath = parsedRoute.filePath;
+  const hasDesktopBridge = Boolean(getPaperclipDesktopBridge());
 
   useEffect(() => {
     setBreadcrumbs([
@@ -792,26 +1457,103 @@ export function CompanySkills() {
     enabled: Boolean(selectedCompanyId),
   });
 
+  const globalCatalogQuery = useQuery({
+    queryKey: queryKeys.companySkills.globalCatalog(selectedCompanyId ?? ""),
+    queryFn: () => companySkillsApi.globalCatalog(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId && libraryView === "global"),
+  });
+
+  const sessionQuery = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    staleTime: 60_000,
+  });
+
+  const bulkGrantNavigationQuery = useQuery({
+    queryKey: queryKeys.agents.navigation(selectedCompanyId ?? "", "department"),
+    queryFn: () => agentsApi.navigation(selectedCompanyId!, "department"),
+    enabled: Boolean(selectedCompanyId && bulkGrantOpen && libraryView === "installed"),
+    staleTime: 60_000,
+  });
+
   const selectedSkillId = useMemo(() => {
     if (!routeSkillId) return skillsQuery.data?.[0]?.id ?? null;
     return routeSkillId;
   }, [routeSkillId, skillsQuery.data]);
 
+  const filteredGlobalCatalog = useMemo(() => {
+    const items = globalCatalogQuery.data ?? [];
+    return items.filter((item) => {
+      const haystack = `${item.name} ${item.slug} ${item.description ?? ""} ${item.sourcePath}`.toLowerCase();
+      return haystack.includes(skillFilter.toLowerCase());
+    });
+  }, [globalCatalogQuery.data, skillFilter]);
+
+  const selectedCatalogItem = useMemo(() => {
+    if (filteredGlobalCatalog.length === 0) return null;
+    return filteredGlobalCatalog.find((item) => item.catalogKey === selectedCatalogKey) ?? filteredGlobalCatalog[0] ?? null;
+  }, [filteredGlobalCatalog, selectedCatalogKey]);
+
+  const departmentTargetOptions = useMemo(
+    () => buildBulkSkillDepartmentOptions(bulkGrantNavigationQuery.data),
+    [bulkGrantNavigationQuery.data],
+  );
+  const projectTargetOptions = useMemo(
+    () => bulkGrantNavigationQuery.data?.projectPods ?? [],
+    [bulkGrantNavigationQuery.data],
+  );
+  const canManageBulkGrants = Boolean(sessionQuery.data?.session?.userId) || hasDesktopBridge;
+  const bulkGrantRequest = useMemo<BulkSkillGrantRequest | null>(() => {
+    if (!selectedCompanyId || !selectedSkillId) return null;
+    if (bulkGrantTargetKind === "project") {
+      if (!bulkGrantProjectId) return null;
+      return {
+        target: { kind: "project", projectId: bulkGrantProjectId },
+        tier: bulkGrantTier,
+        mode: bulkGrantMode,
+      };
+    }
+    return {
+      target: { kind: "department", departmentKey: bulkGrantDepartmentKey },
+      tier: bulkGrantTier,
+      mode: bulkGrantMode,
+    };
+  }, [
+    bulkGrantDepartmentKey,
+    bulkGrantMode,
+    bulkGrantProjectId,
+    bulkGrantTargetKind,
+    bulkGrantTier,
+    selectedCompanyId,
+    selectedSkillId,
+  ]);
+  const bulkGrantRequestKey = useMemo(() => {
+    if (!bulkGrantOpen || !selectedSkillId || !bulkGrantRequest) return null;
+    return JSON.stringify({
+      skillId: selectedSkillId,
+      request: bulkGrantRequest,
+    });
+  }, [bulkGrantOpen, bulkGrantRequest, selectedSkillId]);
+  const bulkGrantPreview =
+    bulkGrantPreviewState && bulkGrantPreviewState.requestKey === bulkGrantRequestKey
+      ? bulkGrantPreviewState.preview
+      : null;
+
   useEffect(() => {
-    if (routeSkillId || !selectedSkillId) return;
+    if (libraryView !== "installed" || routeSkillId || !selectedSkillId) return;
     navigate(skillRoute(selectedSkillId), { replace: true });
-  }, [navigate, routeSkillId, selectedSkillId]);
+  }, [libraryView, navigate, routeSkillId, selectedSkillId]);
 
   const detailQuery = useQuery({
     queryKey: queryKeys.companySkills.detail(selectedCompanyId ?? "", selectedSkillId ?? ""),
     queryFn: () => companySkillsApi.detail(selectedCompanyId!, selectedSkillId!),
-    enabled: Boolean(selectedCompanyId && selectedSkillId),
+    enabled: Boolean(selectedCompanyId && selectedSkillId && libraryView === "installed"),
   });
 
   const fileQuery = useQuery({
     queryKey: queryKeys.companySkills.file(selectedCompanyId ?? "", selectedSkillId ?? "", selectedPath),
     queryFn: () => companySkillsApi.file(selectedCompanyId!, selectedSkillId!, selectedPath),
-    enabled: Boolean(selectedCompanyId && selectedSkillId && selectedPath),
+    enabled: Boolean(selectedCompanyId && selectedSkillId && selectedPath && libraryView === "installed"),
   });
 
   const updateStatusQuery = useQuery({
@@ -820,14 +1562,53 @@ export function CompanySkills() {
     enabled: Boolean(
       selectedCompanyId
       && selectedSkillId
+      && libraryView === "installed"
       && (detailQuery.data?.sourceType === "github" || displayedDetail?.sourceType === "github"),
     ),
     staleTime: 60_000,
   });
 
   useEffect(() => {
-    setExpandedSkillId(selectedSkillId);
-  }, [selectedSkillId]);
+    if (libraryView === "installed") {
+      setExpandedSkillId(selectedSkillId);
+    }
+  }, [libraryView, selectedSkillId]);
+
+  useEffect(() => {
+    if (libraryView !== "global") return;
+    if (filteredGlobalCatalog.length === 0) {
+      setSelectedCatalogKey(null);
+      return;
+    }
+    if (selectedCatalogKey && filteredGlobalCatalog.some((item) => item.catalogKey === selectedCatalogKey)) {
+      return;
+    }
+    setSelectedCatalogKey(filteredGlobalCatalog[0]!.catalogKey);
+  }, [filteredGlobalCatalog, libraryView, selectedCatalogKey]);
+
+  useEffect(() => {
+    if (!bulkGrantOpen) return;
+    if (departmentTargetOptions.length === 0) return;
+    if (departmentTargetOptions.some((option) => option.key === bulkGrantDepartmentKey)) return;
+    setBulkGrantDepartmentKey(departmentTargetOptions[0]!.key);
+  }, [bulkGrantDepartmentKey, bulkGrantOpen, departmentTargetOptions]);
+
+  useEffect(() => {
+    if (!bulkGrantOpen || bulkGrantTargetKind !== "project") return;
+    if (projectTargetOptions.length === 0) {
+      if (bulkGrantProjectId !== "") setBulkGrantProjectId("");
+      return;
+    }
+    if (projectTargetOptions.some((project) => project.projectId === bulkGrantProjectId)) return;
+    setBulkGrantProjectId(projectTargetOptions[0]!.projectId);
+  }, [bulkGrantOpen, bulkGrantProjectId, bulkGrantTargetKind, projectTargetOptions]);
+
+  useEffect(() => {
+    if (bulkGrantMode === "replace") return;
+    if (bulkGrantReplaceConfirmed) {
+      setBulkGrantReplaceConfirmed(false);
+    }
+  }, [bulkGrantMode, bulkGrantReplaceConfirmed]);
 
   useEffect(() => {
     if (!selectedSkillId || selectedPath === "SKILL.md") return;
@@ -847,10 +1628,6 @@ export function CompanySkills() {
   }, [selectedPath, selectedSkillId]);
 
   useEffect(() => {
-    setEditMode(false);
-  }, [selectedSkillId, selectedPath]);
-
-  useEffect(() => {
     if (detailQuery.data) {
       setDisplayedDetail(detailQuery.data);
     }
@@ -859,7 +1636,6 @@ export function CompanySkills() {
   useEffect(() => {
     if (fileQuery.data) {
       setDisplayedFile(fileQuery.data);
-      setDraft(fileQuery.data.markdown ? splitFrontmatter(fileQuery.data.content).body : fileQuery.data.content);
     }
   }, [fileQuery.data]);
 
@@ -871,6 +1647,7 @@ export function CompanySkills() {
 
   const activeDetail = detailQuery.data ?? displayedDetail;
   const activeFile = fileQuery.data ?? displayedFile;
+  const skillPaneSelectionKey = `${selectedSkillId ?? "none"}:${selectedPath}:${libraryView}`;
 
   function openDeleteDialog() {
     setDeleteTargetSkillId(selectedSkillId);
@@ -906,6 +1683,83 @@ export function CompanySkills() {
         tone: "error",
         title: "Skill import failed",
         body: error instanceof Error ? error.message : "Failed to import skill source.",
+      });
+    },
+  });
+
+  const installGlobalSkill = useMutation({
+    mutationFn: (catalogKey: string) => companySkillsApi.installGlobal(selectedCompanyId!, { catalogKey }),
+    onSuccess: async (skill) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.globalCatalog(selectedCompanyId!) }),
+      ]);
+      pushToast({
+        tone: "success",
+        title: "Skill installed",
+        body: `${skill.name} is now available in the company library.`,
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        tone: "error",
+        title: "Global skill install failed",
+        body: error instanceof Error ? error.message : "Failed to install global skill.",
+      });
+    },
+  });
+
+  const previewBulkGrant = useMutation({
+    mutationFn: ({ payload }: { payload: BulkSkillGrantRequest; requestKey: string }) =>
+      companySkillsApi.bulkGrantPreview(selectedCompanyId!, selectedSkillId!, payload),
+    onSuccess: (preview, variables) => {
+      setBulkGrantPreviewState({
+        requestKey: variables.requestKey,
+        preview,
+      });
+    },
+    onError: (error) => {
+      setBulkGrantPreviewState(null);
+      pushToast({
+        tone: "error",
+        title: "Bulk grant preview failed",
+        body: error instanceof Error ? error.message : "Failed to preview bulk skill changes.",
+      });
+    },
+  });
+
+  const applyBulkGrant = useMutation({
+    mutationFn: (payload: BulkSkillGrantRequest & { selectionFingerprint: string }) =>
+      companySkillsApi.bulkGrantApply(selectedCompanyId!, selectedSkillId!, payload),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, selectedSkillId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId!, "department") }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId!, "project") }),
+      ]);
+      for (const agentId of result.appliedAgentIds) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.agents.skills(agentId) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentId) });
+      }
+      setBulkGrantOpen(false);
+      setBulkGrantPreviewState(null);
+      setBulkGrantReplaceConfirmed(false);
+      pushToast({
+        tone: "success",
+        title: "Bulk skill grant applied",
+        body:
+          result.changedAgentCount === 0
+            ? "No matching agent grants needed to change."
+            : `${result.changedAgentCount} agent${result.changedAgentCount === 1 ? "" : "s"} updated for ${result.skillName}.`,
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        tone: "error",
+        title: "Bulk skill grant failed",
+        body: error instanceof Error ? error.message : "Failed to apply bulk skill grant.",
       });
     },
   });
@@ -971,11 +1825,11 @@ export function CompanySkills() {
   });
 
   const saveFile = useMutation({
-    mutationFn: () => companySkillsApi.updateFile(
+    mutationFn: (nextDraft: string) => companySkillsApi.updateFile(
       selectedCompanyId!,
       selectedSkillId!,
       selectedPath,
-      activeFile?.markdown ? mergeFrontmatter(activeFile.content, draft) : draft,
+      activeFile?.markdown ? mergeFrontmatter(activeFile.content, nextDraft) : nextDraft,
     ),
     onSuccess: async (result) => {
       await Promise.all([
@@ -983,8 +1837,6 @@ export function CompanySkills() {
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, selectedSkillId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.file(selectedCompanyId!, selectedSkillId!, selectedPath) }),
       ]);
-      setDraft(result.markdown ? splitFrontmatter(result.content).body : result.content);
-      setEditMode(false);
       pushToast({
         tone: "success",
         title: "Skill saved",
@@ -1076,8 +1928,59 @@ export function CompanySkills() {
     importSkill.mutate(trimmedSource);
   }
 
+  function openBulkGrantDialog() {
+    setBulkGrantPreviewState(null);
+    setBulkGrantOpen(true);
+  }
+
+  function closeBulkGrantDialog(open: boolean) {
+    setBulkGrantOpen(open);
+    if (!open) {
+      setBulkGrantPreviewState(null);
+      setBulkGrantReplaceConfirmed(false);
+    }
+  }
+
   return (
     <>
+      <BulkGrantDialog
+        open={bulkGrantOpen}
+        onOpenChange={closeBulkGrantDialog}
+        skill={activeDetail}
+        canManage={canManageBulkGrants}
+        navigation={bulkGrantNavigationQuery.data}
+        navigationLoading={bulkGrantNavigationQuery.isLoading}
+        targetKind={bulkGrantTargetKind}
+        onTargetKindChange={setBulkGrantTargetKind}
+        departmentKey={bulkGrantDepartmentKey}
+        onDepartmentKeyChange={setBulkGrantDepartmentKey}
+        projectId={bulkGrantProjectId}
+        onProjectIdChange={setBulkGrantProjectId}
+        tier={bulkGrantTier}
+        onTierChange={setBulkGrantTier}
+        mode={bulkGrantMode}
+        onModeChange={setBulkGrantMode}
+        replaceConfirmed={bulkGrantReplaceConfirmed}
+        onReplaceConfirmedChange={setBulkGrantReplaceConfirmed}
+        preview={bulkGrantPreview}
+        previewPending={previewBulkGrant.isPending}
+        applyPending={applyBulkGrant.isPending}
+        onPreview={() => {
+          if (!bulkGrantRequest || !bulkGrantRequestKey) return;
+          previewBulkGrant.mutate({
+            payload: bulkGrantRequest,
+            requestKey: bulkGrantRequestKey,
+          });
+        }}
+        onApply={() => {
+          if (!bulkGrantRequest || !bulkGrantPreview) return;
+          applyBulkGrant.mutate({
+            ...bulkGrantRequest,
+            selectionFingerprint: bulkGrantPreview.selectionFingerprint,
+          });
+        }}
+      />
+
       <Dialog open={deleteOpen} onOpenChange={closeDeleteDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1175,59 +2078,92 @@ export function CompanySkills() {
               <div>
                 <h1 className="text-base font-semibold">Skills</h1>
                 <p className="text-xs text-muted-foreground">
-                  {skillsQuery.data?.length ?? 0} available
+                  {libraryView === "installed"
+                    ? `${skillsQuery.data?.length ?? 0} available`
+                    : formatGlobalCatalogCount(globalCatalogQuery.data?.length ?? 0)}
                 </p>
               </div>
               <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => scanProjects.mutate()}
-                  disabled={scanProjects.isPending}
-                  title="Scan project workspaces for skills"
-                >
-                  <RefreshCw className={cn("h-4 w-4", scanProjects.isPending && "animate-spin")} />
-                </Button>
-                <Button variant="ghost" size="icon-sm" onClick={() => setCreateOpen((value) => !value)}>
-                  <Plus className="h-4 w-4" />
-                </Button>
+                {libraryView === "installed" ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => scanProjects.mutate()}
+                      disabled={scanProjects.isPending}
+                      title="Scan project workspaces for skills"
+                    >
+                      <RefreshCw className={cn("h-4 w-4", scanProjects.isPending && "animate-spin")} />
+                    </Button>
+                    <Button variant="ghost" size="icon-sm" onClick={() => setCreateOpen((value) => !value)}>
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => void globalCatalogQuery.refetch()}
+                    disabled={globalCatalogQuery.isFetching}
+                    title="Refresh global catalog"
+                  >
+                    <RefreshCw className={cn("h-4 w-4", globalCatalogQuery.isFetching && "animate-spin")} />
+                  </Button>
+                )}
               </div>
             </div>
 
+            <Tabs
+              value={libraryView}
+              onValueChange={(value) => setLibraryView(value as "installed" | "global")}
+              className="mt-3"
+            >
+              <TabsList variant="line" className="w-full justify-start gap-1">
+                <TabsTrigger value="installed">Installed</TabsTrigger>
+                <TabsTrigger value="global">Global Catalog</TabsTrigger>
+              </TabsList>
+            </Tabs>
+
             <div className="mt-3 flex items-center gap-2 border-b border-border pb-2">
               <Search className="h-4 w-4 text-muted-foreground" />
-              <input
+              <Input
                 value={skillFilter}
                 onChange={(event) => setSkillFilter(event.target.value)}
-                placeholder="Filter skills"
-                className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                placeholder={libraryView === "installed" ? "Filter skills" : "Filter global skills"}
+                className="h-8 border-0 px-0 text-sm shadow-none focus-visible:ring-0"
               />
             </div>
 
-            <div className="mt-3 flex items-center gap-2 border-b border-border pb-2">
-              <input
-                value={source}
-                onChange={(event) => setSource(event.target.value)}
-                placeholder="Paste path, GitHub URL, or skills.sh command"
-                className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-              />
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleAddSkillSource}
-                disabled={importSkill.isPending}
-              >
-                {importSkill.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : "Add"}
-              </Button>
-            </div>
-            {scanStatusMessage && (
+            {libraryView === "installed" ? (
+              <div className="mt-3 flex items-center gap-2 border-b border-border pb-2">
+                <Input
+                  value={source}
+                  onChange={(event) => setSource(event.target.value)}
+                  placeholder="Paste path, GitHub URL, or skills.sh command"
+                  className="h-8 border-0 px-0 text-sm shadow-none focus-visible:ring-0"
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleAddSkillSource}
+                  disabled={importSkill.isPending}
+                >
+                  {importSkill.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : "Add"}
+                </Button>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Install a read-only snapshot into this company before assigning a skill to agents.
+              </p>
+            )}
+            {libraryView === "installed" && scanStatusMessage && (
               <p className="mt-3 text-xs text-muted-foreground">
                 {scanStatusMessage}
               </p>
             )}
           </div>
 
-          {createOpen && (
+          {libraryView === "installed" && createOpen && (
             <NewSkillForm
               onCreate={(payload) => createSkill.mutate(payload)}
               isPending={createSkill.isPending}
@@ -1235,60 +2171,86 @@ export function CompanySkills() {
             />
           )}
 
-          {skillsQuery.isLoading ? (
-            <PageSkeleton variant="list" />
-          ) : skillsQuery.error ? (
-            <div className="px-4 py-6 text-sm text-destructive">{skillsQuery.error.message}</div>
+          {libraryView === "installed" ? (
+            skillsQuery.isLoading ? (
+              <PageSkeleton variant="list" />
+            ) : skillsQuery.error ? (
+              <div className="px-4 py-6 text-sm text-destructive">{skillsQuery.error.message}</div>
+            ) : (
+              <SkillList
+                skills={skillsQuery.data ?? []}
+                selectedSkillId={selectedSkillId}
+                skillFilter={skillFilter}
+                expandedSkillId={expandedSkillId}
+                expandedDirs={expandedDirs}
+                selectedPaths={selectedSkillId ? { [selectedSkillId]: selectedPath } : {}}
+                onToggleSkill={(currentSkillId) =>
+                  setExpandedSkillId((current) => current === currentSkillId ? null : currentSkillId)
+                }
+                onToggleDir={(currentSkillId, path) => {
+                  setExpandedDirs((current) => {
+                    const next = new Set(current[currentSkillId] ?? []);
+                    if (next.has(path)) next.delete(path);
+                    else next.add(path);
+                    return { ...current, [currentSkillId]: next };
+                  });
+                }}
+                onSelectSkill={(currentSkillId) => setExpandedSkillId(currentSkillId)}
+                onSelectPath={() => {}}
+              />
+            )
           ) : (
-            <SkillList
-              skills={skillsQuery.data ?? []}
-              selectedSkillId={selectedSkillId}
+            <GlobalCatalogList
+              items={globalCatalogQuery.data ?? []}
+              selectedCatalogKey={selectedCatalogItem?.catalogKey ?? null}
               skillFilter={skillFilter}
-              expandedSkillId={expandedSkillId}
-              expandedDirs={expandedDirs}
-              selectedPaths={selectedSkillId ? { [selectedSkillId]: selectedPath } : {}}
-              onToggleSkill={(currentSkillId) =>
-                setExpandedSkillId((current) => current === currentSkillId ? null : currentSkillId)
-              }
-              onToggleDir={(currentSkillId, path) => {
-                setExpandedDirs((current) => {
-                  const next = new Set(current[currentSkillId] ?? []);
-                  if (next.has(path)) next.delete(path);
-                  else next.add(path);
-                  return { ...current, [currentSkillId]: next };
-                });
-              }}
-              onSelectSkill={(currentSkillId) => setExpandedSkillId(currentSkillId)}
-              onSelectPath={() => {}}
+              installPendingCatalogKey={installGlobalSkill.isPending ? installGlobalSkill.variables ?? null : null}
+              onSelect={setSelectedCatalogKey}
+              onInstall={(catalogKey) => installGlobalSkill.mutate(catalogKey)}
             />
           )}
         </aside>
 
         <div className="min-w-0 pl-6">
-          <SkillPane
-            loading={skillsQuery.isLoading || detailQuery.isLoading}
-            detail={activeDetail}
-            file={activeFile}
-            fileLoading={fileQuery.isLoading && !activeFile}
-            updateStatus={updateStatusQuery.data}
-            updateStatusLoading={updateStatusQuery.isLoading}
-            viewMode={viewMode}
-            editMode={editMode}
-            draft={draft}
-            setViewMode={setViewMode}
-            setEditMode={setEditMode}
-            setDraft={setDraft}
-            onCheckUpdates={() => {
-              void updateStatusQuery.refetch();
-            }}
-            checkUpdatesPending={updateStatusQuery.isFetching}
-            onInstallUpdate={() => installUpdate.mutate()}
-            installUpdatePending={installUpdate.isPending}
-            onDelete={openDeleteDialog}
-            deletePending={deleteSkill.isPending}
-            onSave={() => saveFile.mutate()}
-            savePending={saveFile.isPending}
-          />
+          {libraryView === "installed" ? (
+            <SkillPane
+              key={skillPaneSelectionKey}
+              selectionKey={skillPaneSelectionKey}
+              loading={skillsQuery.isLoading || detailQuery.isLoading}
+              detail={activeDetail}
+              file={activeFile}
+              fileLoading={fileQuery.isLoading && !activeFile}
+              updateStatus={updateStatusQuery.data}
+              updateStatusLoading={updateStatusQuery.isLoading}
+              onCheckUpdates={() => {
+                void updateStatusQuery.refetch();
+              }}
+              checkUpdatesPending={updateStatusQuery.isFetching}
+              onInstallUpdate={() => installUpdate.mutate()}
+              installUpdatePending={installUpdate.isPending}
+              onDelete={openDeleteDialog}
+              deletePending={deleteSkill.isPending}
+              onOpenBulkGrant={openBulkGrantDialog}
+              canManageBulkGrant={canManageBulkGrants}
+              onSave={(nextDraft) => saveFile.mutate(nextDraft)}
+              savePending={saveFile.isPending}
+            />
+          ) : (
+            <GlobalCatalogPane
+              loading={globalCatalogQuery.isLoading}
+              error={globalCatalogQuery.error instanceof Error ? globalCatalogQuery.error : null}
+              item={selectedCatalogItem}
+              installPending={
+                installGlobalSkill.isPending
+                && installGlobalSkill.variables === selectedCatalogItem?.catalogKey
+              }
+              onInstall={() => {
+                if (selectedCatalogItem) {
+                  installGlobalSkill.mutate(selectedCatalogItem.catalogKey);
+                }
+              }}
+            />
+          )}
         </div>
       </div>
     </>

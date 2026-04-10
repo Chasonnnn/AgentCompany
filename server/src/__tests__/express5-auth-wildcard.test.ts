@@ -17,11 +17,13 @@ import { describe, expect, it, vi } from "vitest";
 describe("Express 5 /api/auth wildcard route", () => {
   function buildApp() {
     const app = express();
+    let hits = 0;
     const handler = vi.fn((_req: express.Request, res: express.Response) => {
+      hits += 1;
       res.status(200).json({ ok: true });
     });
     app.all("/api/auth/{*authPath}", handler);
-    return { app, handler };
+    return { app, handler, getHits: () => hits };
   }
 
   it("matches a shallow auth sub-path (sign-in/email)", async () => {
@@ -48,9 +50,11 @@ describe("Express 5 /api/auth wildcard route", () => {
   });
 
   it("invokes the handler for every matched sub-path", async () => {
-    const { app, handler } = buildApp();
-    await request(app).post("/api/auth/sign-out");
-    await request(app).get("/api/auth/session");
-    expect(handler).toHaveBeenCalledTimes(2);
+    const { app, getHits } = buildApp();
+    const signOut = await request(app).post("/api/auth/sign-out");
+    const session = await request(app).get("/api/auth/session");
+    expect(signOut.status).toBe(200);
+    expect(session.status).toBe(200);
+    expect(getHits()).toBe(2);
   });
 });

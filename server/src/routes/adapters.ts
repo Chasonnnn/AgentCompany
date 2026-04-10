@@ -165,6 +165,8 @@ function registerWithSessionManagement(adapter: ServerAdapterModule): void {
 
 export function adapterRoutes() {
   const router = Router();
+  const configSchemaCache = new Map<string, { schema: AdapterConfigSchema; fetchedAt: number }>();
+  const CONFIG_SCHEMA_TTL_MS = 30_000;
 
   /**
    * GET /api/adapters
@@ -383,6 +385,7 @@ export function adapterRoutes() {
     }
 
     const changed = setOverridePaused(adapterType, paused);
+    configSchemaCache.delete(adapterType);
 
     logger.info({ type: adapterType, paused, changed }, "Adapter override toggle");
 
@@ -587,9 +590,6 @@ export function adapterRoutes() {
   // Serve a declarative config schema for an adapter's UI form fields.
   // The adapter's getConfigSchema() resolves all options (static and dynamic)
   // so the UI receives a fully hydrated schema in a single fetch.
-  const configSchemaCache = new Map<string, { schema: AdapterConfigSchema; fetchedAt: number }>();
-  const CONFIG_SCHEMA_TTL_MS = 30_000;
-
   router.get("/adapters/:type/config-schema", async (req, res) => {
     assertBoard(req);
     const { type } = req.params;

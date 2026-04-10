@@ -91,6 +91,15 @@ interface UpdateAgentOptions {
   recordRevision?: RevisionMetadata;
 }
 
+interface BatchAdapterConfigChange {
+  id: string;
+  adapterConfig: Record<string, unknown>;
+}
+
+interface BatchUpdateAdapterConfigsOptions {
+  recordRevision?: RevisionMetadata;
+}
+
 interface AgentShortnameRow {
   id: string;
   name: string;
@@ -141,7 +150,7 @@ interface AgentHierarchyState {
   departmentName: string | null;
 }
 
-interface NormalizedAgentRow
+export interface NormalizedAgentRow
   extends Omit<
     typeof agents.$inferSelect,
     "role" | "orgLevel" | "operatingClass" | "capabilityProfileKey" | "departmentKey" | "departmentName" | "permissions"
@@ -1123,6 +1132,91 @@ export function agentService(db: Db) {
     return normalizedUpdated;
   }
 
+  async function batchUpdateAdapterConfigs(
+    changes: BatchAdapterConfigChange[],
+    options?: BatchUpdateAdapterConfigsOptions,
+  ) {
+    if (changes.length === 0) return [];
+
+    const ids = Array.from(new Set(changes.map((change) => change.id)));
+    const rows = await db
+      .select()
+      .from(agents)
+      .where(inArray(agents.id, ids));
+    const existingById = new Map(rows.map((row) => {
+      const normalized = normalizeAgentRow(row);
+      return [normalized.id, normalized] as const;
+    }));
+
+    for (const id of ids) {
+      if (!existingById.has(id)) {
+        throw notFound("Agent not found");
+      }
+    }
+
+    return db.transaction(async (tx) => {
+      const updatedAgents: typeof rows = [];
+
+      for (const change of changes) {
+        const existing = existingById.get(change.id);
+        if (!existing) {
+          throw notFound("Agent not found");
+        }
+
+        const beforeConfig = options?.recordRevision ? buildConfigSnapshot(existing) : null;
+        const updated = await tx
+          .update(agents)
+          .set({
+            adapterConfig: change.adapterConfig,
+            updatedAt: new Date(),
+          })
+          .where(eq(agents.id, change.id))
+          .returning()
+          .then((result) => result[0] ?? null);
+        if (!updated) {
+          throw notFound("Agent not found");
+        }
+
+        const normalized = normalizeAgentRow(updated);
+        const templateLinked = await ensureTemplateRevisionLink(tx, normalized, options?.recordRevision);
+        const finalizedRow = {
+          ...updated,
+          templateId: templateLinked.templateId,
+          templateRevisionId: templateLinked.templateRevisionId,
+        };
+        updatedAgents.push(finalizedRow);
+
+        if (beforeConfig && options?.recordRevision) {
+          const afterConfig = buildConfigSnapshot(normalizeAgentRow(finalizedRow));
+          const changedKeys = diffConfigSnapshot(beforeConfig, afterConfig);
+          if (changedKeys.length > 0) {
+            await tx.insert(agentConfigRevisions).values({
+              companyId: existing.companyId,
+              agentId: existing.id,
+              createdByAgentId: options.recordRevision.createdByAgentId ?? null,
+              createdByUserId: options.recordRevision.createdByUserId ?? null,
+              source: options.recordRevision.source ?? "patch",
+              rolledBackFromRevisionId: options.recordRevision.rolledBackFromRevisionId ?? null,
+              changedKeys,
+              beforeConfig: beforeConfig as unknown as Record<string, unknown>,
+              afterConfig: afterConfig as unknown as Record<string, unknown>,
+            });
+          }
+        }
+      }
+
+      const updatedById = new Map(
+        updatedAgents.map((row) => {
+          const normalized = normalizeAgentRow(row);
+          return [normalized.id, normalized] as const;
+        }),
+      );
+      return changes
+        .map((change) => updatedById.get(change.id))
+        .filter((agent): agent is Exclude<typeof agent, undefined> => Boolean(agent));
+    });
+  }
+
   return {
     list: async (companyId: string, options?: { includeTerminated?: boolean }) => {
       const conditions = [eq(agents.companyId, companyId)];
@@ -1184,6 +1278,7 @@ export function agentService(db: Db) {
     },
 
     update: updateAgent,
+    batchUpdateAdapterConfigs,
 
     pause: async (id: string, reason: "manual" | "budget" | "system" = "manual") => {
       const existing = await getById(id);

@@ -18,6 +18,10 @@ async function createSkillDir(root: string, name: string) {
   return skillDir;
 }
 
+function managedAdapterHome(root: string, companyId: string, adapterKey: string) {
+  return path.join(root, "paperclip-home", "instances", "default", "companies", companyId, `${adapterKey}-home`);
+}
+
 describe("claude local skill sync", () => {
   const paperclipKey = "paperclipai/paperclip/paperclip";
   const createAgentKey = "paperclipai/paperclip/paperclip-create-agent";
@@ -61,11 +65,18 @@ describe("claude local skill sync", () => {
   });
 
   it("normalizes legacy flat Paperclip skill refs to canonical keys", async () => {
+    const home = await makeTempDir("paperclip-claude-normalize-");
+    cleanupDirs.add(home);
+
     const snapshot = await listClaudeSkills({
       agentId: "agent-3",
       companyId: "company-1",
       adapterType: "claude_local",
       config: {
+        env: {
+          HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
+        },
         paperclipSkillSync: {
           desiredSkills: ["paperclip"],
         },
@@ -79,10 +90,11 @@ describe("claude local skill sync", () => {
     expect(snapshot.entries.find((entry) => entry.key === "paperclip")).toBeUndefined();
   });
 
-  it("shows host-level user-installed Claude skills as read-only external entries", async () => {
+  it("shows host-level user-installed Claude skills as blocked unmanaged diagnostics", async () => {
     const home = await makeTempDir("paperclip-claude-user-skills-");
     cleanupDirs.add(home);
     await createSkillDir(path.join(home, ".claude", "skills"), "crack-python");
+    const managedHome = managedAdapterHome(home, "company-1", "claude");
 
     const snapshot = await listClaudeSkills({
       agentId: "agent-4",
@@ -91,20 +103,24 @@ describe("claude local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
         },
       },
     });
 
+    expect(snapshot.warnings).toContain(
+      `Claude runs use a Paperclip-managed home at ${path.join(managedHome, ".claude", "skills")}; shared host skills are blocked unless explicitly granted through Paperclip.`,
+    );
     expect(snapshot.entries).toContainEqual(expect.objectContaining({
       key: "crack-python",
       runtimeName: "crack-python",
-      state: "external",
+      state: "blocked",
       managed: false,
       origin: "user_installed",
-      originLabel: "User-installed",
+      originLabel: "Blocked unmanaged skill",
       locationLabel: "~/.claude/skills",
       readOnly: true,
-      detail: "Installed outside Paperclip management in the Claude skills home.",
+      detail: "Detected in the shared Claude skills home, but blocked from this agent.",
     }));
   });
 });

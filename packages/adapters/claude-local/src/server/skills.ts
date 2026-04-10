@@ -1,4 +1,3 @@
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -9,32 +8,52 @@ import type {
 import {
   readPaperclipRuntimeSkillEntries,
   readInstalledSkillTargets,
+  resolveManagedLocalAdapterHomeDir,
+  resolveSharedLocalAdapterHomeDir,
   resolvePaperclipDesiredSkillNames,
 } from "@paperclipai/adapter-utils/server-utils";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function resolveClaudeSkillsHome(config: Record<string, unknown>) {
+function resolveClaudeManagedHome(config: Record<string, unknown>, companyId?: string) {
   const env =
     typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
       ? (config.env as Record<string, unknown>)
       : {};
-  const configuredHome = asString(env.HOME);
-  const home = configuredHome ? path.resolve(configuredHome) : os.homedir();
-  return path.join(home, ".claude", "skills");
+  const runtimeEnv = {
+    ...process.env,
+    ...Object.fromEntries(
+      Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+  };
+  return resolveManagedLocalAdapterHomeDir(runtimeEnv, "claude", companyId);
 }
 
-async function buildClaudeSkillSnapshot(config: Record<string, unknown>): Promise<AdapterSkillSnapshot> {
+function resolveClaudeSharedSkillsHome(config: Record<string, unknown>) {
+  const env =
+    typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
+      ? (config.env as Record<string, unknown>)
+      : {};
+  const runtimeEnv = {
+    ...process.env,
+    ...Object.fromEntries(
+      Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+  };
+  return path.join(resolveSharedLocalAdapterHomeDir(runtimeEnv), ".claude", "skills");
+}
+
+async function buildClaudeSkillSnapshot(
+  config: Record<string, unknown>,
+  companyId?: string,
+): Promise<AdapterSkillSnapshot> {
   const availableEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const availableByKey = new Map(availableEntries.map((entry) => [entry.key, entry]));
   const desiredSkills = resolvePaperclipDesiredSkillNames(config, availableEntries);
   const desiredSet = new Set(desiredSkills);
-  const skillsHome = resolveClaudeSkillsHome(config);
-  const installed = await readInstalledSkillTargets(skillsHome);
+  const sharedSkillsHome = resolveClaudeSharedSkillsHome(config);
+  const installed = await readInstalledSkillTargets(sharedSkillsHome);
+  const managedSkillsHome = path.join(resolveClaudeManagedHome(config, companyId), ".claude", "skills");
   const entries: AdapterSkillEntry[] = availableEntries.map((entry) => ({
     key: entry.key,
     runtimeName: entry.runtimeName,
@@ -79,14 +98,14 @@ async function buildClaudeSkillSnapshot(config: Record<string, unknown>): Promis
       runtimeName: name,
       desired: false,
       managed: false,
-      state: "external",
+      state: "blocked",
       origin: "user_installed",
-      originLabel: "User-installed",
+      originLabel: "Blocked unmanaged skill",
       locationLabel: "~/.claude/skills",
       readOnly: true,
       sourcePath: null,
-      targetPath: installedEntry.targetPath ?? path.join(skillsHome, name),
-      detail: "Installed outside Paperclip management in the Claude skills home.",
+      targetPath: installedEntry.targetPath ?? path.join(sharedSkillsHome, name),
+      detail: "Detected in the shared Claude skills home, but blocked from this agent.",
     });
   }
 
@@ -97,20 +116,25 @@ async function buildClaudeSkillSnapshot(config: Record<string, unknown>): Promis
     supported: true,
     mode: "ephemeral",
     desiredSkills,
+    warnings: installed.size > 0
+      ? [
+          ...warnings,
+          `Claude runs use a Paperclip-managed home at ${managedSkillsHome}; shared host skills are blocked unless explicitly granted through Paperclip.`,
+        ]
+      : warnings,
     entries,
-    warnings,
   };
 }
 
 export async function listClaudeSkills(ctx: AdapterSkillContext): Promise<AdapterSkillSnapshot> {
-  return buildClaudeSkillSnapshot(ctx.config);
+  return buildClaudeSkillSnapshot(ctx.config, ctx.companyId);
 }
 
 export async function syncClaudeSkills(
   ctx: AdapterSkillContext,
   _desiredSkills: string[],
 ): Promise<AdapterSkillSnapshot> {
-  return buildClaudeSkillSnapshot(ctx.config);
+  return buildClaudeSkillSnapshot(ctx.config, ctx.companyId);
 }
 
 export function resolveClaudeDesiredSkillNames(

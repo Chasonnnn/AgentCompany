@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
@@ -14,9 +13,11 @@ import {
   ensureCommandResolvable,
   ensurePaperclipSkillSymlink,
   ensurePathInEnv,
+  prepareManagedAdapterHome,
   readPaperclipRuntimeSkillEntries,
   resolveCommandForLogs,
   resolvePaperclipDesiredSkillNames,
+  resolveSharedLocalAdapterHomeDir,
   removeMaintainerOnlySkillSymlinks,
   renderTemplate,
   renderPaperclipWakePrompt,
@@ -93,7 +94,7 @@ function renderPaperclipEnvNote(env: Record<string, string>): string {
 }
 
 function cursorSkillsHome(): string {
-  return path.join(os.homedir(), ".cursor", "skills");
+  return path.join(resolveSharedLocalAdapterHomeDir(), ".cursor", "skills");
 }
 
 type EnsureCursorSkillsInjectedOptions = {
@@ -187,11 +188,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-  const cursorSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredCursorSkillNames = resolvePaperclipDesiredSkillNames(config, cursorSkillEntries);
-  await ensureCursorSkillsInjected(onLog, {
-    skillsEntries: cursorSkillEntries.filter((entry) => desiredCursorSkillNames.includes(entry.key)),
-  });
 
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
@@ -270,6 +266,27 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
+
+  const sharedHome = resolveSharedLocalAdapterHomeDir({ ...process.env, ...env });
+  const managedHome = await prepareManagedAdapterHome({
+    env: { ...process.env, ...env },
+    adapterKey: "cursor",
+    companyId: agent.companyId,
+    sharedHomeDir: sharedHome,
+    logLabel: "Cursor",
+    subtrees: [{ relativePath: ".cursor", excludeChildren: ["skills"] }],
+    onLog,
+  });
+  env.HOME = managedHome;
+  env.CURSOR_HOME = path.join(managedHome, ".cursor");
+
+  const cursorSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+  const desiredCursorSkillNames = resolvePaperclipDesiredSkillNames(config, cursorSkillEntries);
+  await ensureCursorSkillsInjected(onLog, {
+    skillsEntries: cursorSkillEntries.filter((entry) => desiredCursorSkillNames.includes(entry.key)),
+    skillsHome: path.join(env.CURSOR_HOME, "skills"),
+  });
+
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -281,7 +298,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const resolvedCommand = await resolveCommandForLogs(command, cwd, runtimeEnv);
   const loggedEnv = buildInvocationEnvForLogs(env, {
     runtimeEnv,
-    includeRuntimeKeys: ["HOME"],
+    includeRuntimeKeys: ["HOME", "CURSOR_HOME"],
     resolvedCommand,
   });
 

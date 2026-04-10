@@ -6,7 +6,8 @@ export type AgentSkillState =
   | "installed"
   | "missing"
   | "stale"
-  | "external";
+  | "external"
+  | "blocked";
 
 export type AgentSkillOrigin =
   | "company_managed"
@@ -35,6 +36,7 @@ export interface AgentSkillSnapshot {
   adapterType: string;
   supported: boolean;
   mode: AgentSkillSyncMode;
+  canManage?: boolean;
   desiredSkills: string[];
   entries: AgentSkillEntry[];
   warnings: string[];

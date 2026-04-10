@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
@@ -16,9 +15,11 @@ import {
   ensurePaperclipSkillSymlink,
   joinPromptSections,
   ensurePathInEnv,
+  prepareManagedAdapterHome,
   readPaperclipRuntimeSkillEntries,
   resolveCommandForLogs,
   resolvePaperclipDesiredSkillNames,
+  resolveSharedLocalAdapterHomeDir,
   removeMaintainerOnlySkillSymlinks,
   parseObject,
   renderTemplate,
@@ -77,25 +78,21 @@ function renderApiAccessNote(env: Record<string, string>): string {
   ].join("\n");
 }
 
-function geminiSkillsHome(): string {
-  return path.join(os.homedir(), ".gemini", "skills");
-}
-
 /**
  * Inject Paperclip skills directly into `~/.gemini/skills/` via symlinks.
- * This avoids needing GEMINI_CLI_HOME overrides, so the CLI naturally finds
- * both its auth credentials and the injected skills in the real home directory.
+ * The caller controls the actual skills home so runs can stay isolated from
+ * any shared host-level Gemini skill installations.
  */
 async function ensureGeminiSkillsInjected(
   onLog: AdapterExecutionContext["onLog"],
   skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
+  skillsHome: string,
   desiredSkillNames?: string[],
 ): Promise<void> {
   const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
   if (selectedEntries.length === 0) return;
 
-  const skillsHome = geminiSkillsHome();
   try {
     await fs.mkdir(skillsHome, { recursive: true });
   } catch (err) {
@@ -163,9 +160,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-  const geminiSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredGeminiSkillNames = resolvePaperclipDesiredSkillNames(config, geminiSkillEntries);
-  await ensureGeminiSkillsInjected(onLog, geminiSkillEntries, desiredGeminiSkillNames);
 
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
@@ -217,6 +211,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
+
+  const sharedHome = resolveSharedLocalAdapterHomeDir({ ...process.env, ...env });
+  const managedHome = await prepareManagedAdapterHome({
+    env: { ...process.env, ...env },
+    adapterKey: "gemini",
+    companyId: agent.companyId,
+    sharedHomeDir: sharedHome,
+    logLabel: "Gemini",
+    subtrees: [{ relativePath: ".gemini", excludeChildren: ["skills"] }],
+    onLog,
+  });
+  env.HOME = managedHome;
+
+  const geminiSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+  const desiredGeminiSkillNames = resolvePaperclipDesiredSkillNames(config, geminiSkillEntries);
+  await ensureGeminiSkillsInjected(
+    onLog,
+    geminiSkillEntries,
+    path.join(managedHome, ".gemini", "skills"),
+    desiredGeminiSkillNames,
+  );
+
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",

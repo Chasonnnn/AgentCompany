@@ -4,6 +4,7 @@ export const companySkillSourceTypeSchema = z.enum(["local_path", "github", "url
 export const companySkillTrustLevelSchema = z.enum(["markdown_only", "assets", "scripts_executables"]);
 export const companySkillCompatibilitySchema = z.enum(["compatible", "unknown", "invalid"]);
 export const companySkillSourceBadgeSchema = z.enum(["paperclip", "github", "local", "url", "catalog", "skills_sh"]);
+export const globalSkillCatalogSourceRootSchema = z.enum(["codex", "claude"]);
 
 export const companySkillFileInventoryEntrySchema = z.object({
   path: z.string().min(1),
@@ -35,6 +36,21 @@ export const companySkillListItemSchema = companySkillSchema.extend({
   editableReason: z.string().nullable(),
   sourceLabel: z.string().nullable(),
   sourceBadge: companySkillSourceBadgeSchema,
+  sourcePath: z.string().nullable(),
+});
+
+export const globalSkillCatalogItemSchema = z.object({
+  catalogKey: z.string().min(1),
+  slug: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().nullable(),
+  sourceRoot: globalSkillCatalogSourceRootSchema,
+  sourcePath: z.string().min(1),
+  trustLevel: companySkillTrustLevelSchema,
+  compatibility: companySkillCompatibilitySchema,
+  fileInventory: z.array(companySkillFileInventoryEntrySchema).default([]),
+  installedSkillId: z.string().uuid().nullable(),
+  installedSkillKey: z.string().nullable(),
 });
 
 export const companySkillUsageAgentSchema = z.object({
@@ -53,6 +69,7 @@ export const companySkillDetailSchema = companySkillSchema.extend({
   editableReason: z.string().nullable(),
   sourceLabel: z.string().nullable(),
   sourceBadge: companySkillSourceBadgeSchema,
+  sourcePath: z.string().nullable(),
 });
 
 export const companySkillUpdateStatusSchema = z.object({
@@ -66,6 +83,97 @@ export const companySkillUpdateStatusSchema = z.object({
 
 export const companySkillImportSchema = z.object({
   source: z.string().min(1),
+});
+
+export const companySkillInstallGlobalSchema = z.object({
+  catalogKey: z.string().min(1),
+});
+
+export const bulkSkillGrantTierSchema = z.enum(["all", "leaders", "workers"]);
+export const bulkSkillGrantModeSchema = z.enum(["add", "remove", "replace"]);
+export const bulkSkillGrantTargetSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("department"),
+    departmentKey: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("project"),
+    projectId: z.string().uuid(),
+  }),
+]);
+
+export const bulkSkillGrantTargetSummarySchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("department"),
+    departmentKey: z.string().min(1),
+    label: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("project"),
+    projectId: z.string().uuid(),
+    label: z.string().min(1),
+  }),
+]);
+
+export const bulkSkillGrantRequestSchema = z.object({
+  target: bulkSkillGrantTargetSchema,
+  tier: bulkSkillGrantTierSchema,
+  mode: bulkSkillGrantModeSchema,
+});
+
+export const bulkSkillGrantApplyRequestSchema = bulkSkillGrantRequestSchema.extend({
+  selectionFingerprint: z.string().min(1),
+});
+
+export const bulkSkillGrantSkippedAgentSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  reason: z.string().min(1),
+});
+
+export const bulkSkillGrantPreviewAgentSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  urlKey: z.string().min(1),
+  role: z.string().min(1),
+  title: z.string().nullable(),
+  currentDesiredSkills: z.array(z.string().min(1)),
+  nextDesiredSkills: z.array(z.string().min(1)),
+  change: z.enum(["unchanged", "add", "remove", "replace"]),
+});
+
+export const bulkSkillGrantPreviewSchema = z.object({
+  skillId: z.string().uuid(),
+  skillKey: z.string().min(1),
+  skillName: z.string().min(1),
+  target: bulkSkillGrantTargetSummarySchema,
+  tier: bulkSkillGrantTierSchema,
+  mode: bulkSkillGrantModeSchema,
+  matchedAgentCount: z.number().int().nonnegative(),
+  changedAgentCount: z.number().int().nonnegative(),
+  addCount: z.number().int().nonnegative(),
+  removeCount: z.number().int().nonnegative(),
+  unchangedCount: z.number().int().nonnegative(),
+  agents: z.array(bulkSkillGrantPreviewAgentSchema),
+  skippedAgents: z.array(bulkSkillGrantSkippedAgentSchema),
+  selectionFingerprint: z.string().min(1),
+});
+
+export const bulkSkillGrantResultSchema = z.object({
+  skillId: z.string().uuid(),
+  skillKey: z.string().min(1),
+  skillName: z.string().min(1),
+  target: bulkSkillGrantTargetSummarySchema,
+  tier: bulkSkillGrantTierSchema,
+  mode: bulkSkillGrantModeSchema,
+  matchedAgentCount: z.number().int().nonnegative(),
+  changedAgentCount: z.number().int().nonnegative(),
+  addCount: z.number().int().nonnegative(),
+  removeCount: z.number().int().nonnegative(),
+  unchangedCount: z.number().int().nonnegative(),
+  appliedAgentIds: z.array(z.string().uuid()),
+  rollbackPerformed: z.boolean(),
+  rollbackErrors: z.array(z.string()),
 });
 
 export const companySkillProjectScanRequestSchema = z.object({
@@ -130,6 +238,9 @@ export const companySkillFileUpdateSchema = z.object({
 });
 
 export type CompanySkillImport = z.infer<typeof companySkillImportSchema>;
+export type CompanySkillInstallGlobal = z.infer<typeof companySkillInstallGlobalSchema>;
+export type BulkSkillGrantRequest = z.infer<typeof bulkSkillGrantRequestSchema>;
+export type BulkSkillGrantApplyRequest = z.infer<typeof bulkSkillGrantApplyRequestSchema>;
 export type CompanySkillProjectScan = z.infer<typeof companySkillProjectScanRequestSchema>;
 export type CompanySkillCreate = z.infer<typeof companySkillCreateSchema>;
 export type CompanySkillFileUpdate = z.infer<typeof companySkillFileUpdateSchema>;

@@ -156,7 +156,8 @@ export type AdapterSkillState =
   | "installed"
   | "missing"
   | "stale"
-  | "external";
+  | "external"
+  | "blocked";
 
 export type AdapterSkillOrigin =
   | "company_managed"
@@ -185,6 +186,7 @@ export interface AdapterSkillSnapshot {
   adapterType: string;
   supported: boolean;
   mode: AdapterSkillSyncMode;
+  canManage?: boolean;
   desiredSkills: string[];
   entries: AdapterSkillEntry[];
   warnings: string[];
