@@ -7,7 +7,14 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  canChooseDesktopDirectory,
+  canRevealDesktopPath,
+  getPaperclipDesktopBridge,
+  isRevealableDesktopPath,
+} from "@/lib/desktop";
 
 type Platform = "mac" | "windows" | "linux";
 
@@ -100,7 +107,7 @@ export function PathInstructionsModal({
         {/* Steps */}
         <ol className="space-y-2 text-sm">
           {current.steps.map((step, i) => (
-            <li key={i} className="flex gap-2">
+            <li key={`${platform}-${step}`} className="flex gap-2">
               <span className="text-muted-foreground font-mono text-xs mt-0.5 shrink-0">
                 {i + 1}.
               </span>
@@ -120,23 +127,71 @@ export function PathInstructionsModal({
 }
 
 /**
- * Small "Choose" button that opens the PathInstructionsModal.
- * Drop-in replacement for the old showDirectoryPicker buttons.
+ * Shared path picker entrypoint.
+ * On desktop builds this uses the native folder picker bridge. Browser builds
+ * keep the manual path instructions fallback.
  */
-export function ChoosePathButton({ className }: { className?: string }) {
+export function ChoosePathButton({
+  className,
+  currentPath,
+  onChoose,
+  chooseLabel = "Choose",
+  revealLabel = "Reveal in Finder",
+}: {
+  className?: string;
+  currentPath?: string | null;
+  onChoose?: (nextPath: string) => void;
+  chooseLabel?: string;
+  revealLabel?: string;
+}) {
   const [open, setOpen] = useState(false);
+  const desktopBridge = getPaperclipDesktopBridge();
+  const canChoose = canChooseDesktopDirectory();
+  const canReveal = canRevealDesktopPath() && isRevealableDesktopPath(currentPath);
+
+  async function handleChoose() {
+    if (canChoose && onChoose) {
+      const chosen = await desktopBridge?.chooseDirectory?.();
+      if (chosen) onChoose(chosen);
+      return;
+    }
+    setOpen(true);
+  }
+
+  async function handleReveal() {
+    const normalized = currentPath?.trim();
+    if (!normalized || !canReveal) return;
+    await desktopBridge?.revealPath?.(normalized);
+  }
+
   return (
     <>
-      <button
-        type="button"
-        className={cn(
-          "inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent/50 transition-colors shrink-0",
-          className,
-        )}
-        onClick={() => setOpen(true)}
-      >
-        Choose
-      </button>
+      <div className="flex items-center gap-2 shrink-0">
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          className={cn("text-muted-foreground", className)}
+          onClick={() => {
+            void handleChoose();
+          }}
+        >
+          {chooseLabel}
+        </Button>
+        {canReveal ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="text-muted-foreground"
+            onClick={() => {
+              void handleReveal();
+            }}
+          >
+            {revealLabel}
+          </Button>
+        ) : null}
+      </div>
       <PathInstructionsModal open={open} onOpenChange={setOpen} />
     </>
   );

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, type MenuItemConstructorOptions, ipcMain, shell } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import {
@@ -29,6 +29,7 @@ import {
   saveWindowState,
   type SavedWindowState,
 } from "./runtime/window-state.js";
+import { createApplicationMenuTemplate, readChosenDirectory } from "./runtime/application-menu.js";
 import { renderSplashHtml, renderStartupErrorHtml, toDataUrl } from "./window-html.js";
 
 let mainWindow: BrowserWindow | null = null;
@@ -204,46 +205,14 @@ function rebuildApplicationMenu() {
     enabled: false,
     label: "Check for Updates…",
   };
-
-  const updateMenuItem = {
-    id: "paperclip-check-for-updates",
-    label: updateMenuState.label,
-    enabled: updateMenuState.enabled,
-    click: () => {
+  const template = createApplicationMenuTemplate({
+    appName: app.name,
+    platform: process.platform,
+    updateMenuState,
+    onCheckForUpdates: () => {
       void desktopUpdater?.performMenuAction();
     },
-  };
-
-  const template: MenuItemConstructorOptions[] = process.platform === "darwin"
-    ? [
-        {
-          label: app.name,
-          submenu: [
-            { role: "about" },
-            { type: "separator" },
-            updateMenuItem,
-            { type: "separator" },
-            { role: "services" },
-            { type: "separator" },
-            { role: "hide" },
-            { role: "hideOthers" },
-            { role: "unhide" },
-            { type: "separator" },
-            { role: "quit" },
-          ],
-        },
-        { role: "windowMenu" },
-      ]
-    : [
-        {
-          label: "Paperclip",
-          submenu: [
-            updateMenuItem,
-            { type: "separator" },
-            { role: "quit" },
-          ],
-        },
-      ];
+  });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -284,6 +253,23 @@ async function openLogs() {
 
 async function openDataFolder() {
   await shell.openPath(getPaperclipHomeForActions());
+}
+
+async function chooseDirectory(): Promise<string | null> {
+  const options: OpenDialogOptions = {
+    properties: ["openDirectory", "createDirectory"],
+  };
+  const ownerWindow = mainWindow ?? splashWindow;
+  const result = ownerWindow
+    ? await dialog.showOpenDialog(ownerWindow, options)
+    : await dialog.showOpenDialog(options);
+  return readChosenDirectory(result);
+}
+
+async function revealPath(targetPath: string) {
+  const normalized = targetPath.trim();
+  if (!normalized) return;
+  shell.showItemInFolder(path.resolve(normalized));
 }
 
 async function bootPackagedRuntime() {
@@ -393,6 +379,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("paperclip-desktop:reload-app", async () => {
     app.relaunch();
     app.quit();
+  });
+  ipcMain.handle("paperclip-desktop:choose-directory", async () => {
+    return chooseDirectory();
+  });
+  ipcMain.handle("paperclip-desktop:reveal-path", async (_event, targetPath: string) => {
+    await revealPath(targetPath);
   });
 
   await bootDesktopShell();

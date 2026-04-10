@@ -452,7 +452,12 @@ export function ProjectWorkspaceDetail() {
                   />
                 </Field>
                 <div className="flex items-end">
-                  <ChoosePathButton />
+                  <ChoosePathButton
+                    currentPath={form.cwd}
+                    onChoose={(nextPath) => {
+                      setForm((current) => current ? { ...current, cwd: nextPath } : current);
+                    }}
+                  />
                 </div>
               </div>
 

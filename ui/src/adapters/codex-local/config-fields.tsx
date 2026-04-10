@@ -27,6 +27,13 @@ export function CodexLocalConfigFields({
 }: AdapterConfigFieldsProps) {
   const bypassEnabled =
     config.dangerouslyBypassApprovalsAndSandbox === true || config.dangerouslyBypassSandbox === true;
+  const instructionsFilePath = isCreate
+    ? values!.instructionsFilePath ?? ""
+    : eff(
+        "adapterConfig",
+        "instructionsFilePath",
+        String(config.instructionsFilePath ?? ""),
+      );
 
   return (
     <>
@@ -34,15 +41,7 @@ export function CodexLocalConfigFields({
         <Field label="Agent instructions file" hint={instructionsFileHint}>
           <div className="flex items-center gap-2">
             <DraftInput
-              value={
-                isCreate
-                  ? values!.instructionsFilePath ?? ""
-                  : eff(
-                      "adapterConfig",
-                      "instructionsFilePath",
-                      String(config.instructionsFilePath ?? ""),
-                    )
-              }
+              value={instructionsFilePath}
               onCommit={(v) =>
                 isCreate
                   ? set!({ instructionsFilePath: v })
@@ -52,7 +51,14 @@ export function CodexLocalConfigFields({
               className={inputClass}
               placeholder="/absolute/path/to/AGENTS.md"
             />
-            <ChoosePathButton />
+            <ChoosePathButton
+              currentPath={instructionsFilePath}
+              onChoose={(nextPath) =>
+                isCreate
+                  ? set!({ instructionsFilePath: nextPath })
+                  : mark("adapterConfig", "instructionsFilePath", nextPath || undefined)
+              }
+            />
           </div>
         </Field>
       )}

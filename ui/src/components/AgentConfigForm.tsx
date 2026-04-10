@@ -322,6 +322,13 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   
   const showLegacyWorkingDirectoryField =
     isLocal && shouldShowLegacyWorkingDirectoryField({ isCreate, adapterConfig: config });
+  const legacyWorkingDirectory = showLegacyWorkingDirectoryField
+    ? (
+        isCreate
+          ? props.values.cwd
+          : eff("adapterConfig", "cwd", String(config.cwd ?? ""))
+      )
+    : "";
   const uiAdapter = useMemo(() => getUIAdapter(adapterType), [adapterType]);
 
   // Fetch adapter models for the effective adapter type
@@ -653,11 +660,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               <div className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5">
                 <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 <DraftInput
-                  value={
-                    isCreate
-                      ? val!.cwd
-                      : eff("adapterConfig", "cwd", String(config.cwd ?? ""))
-                  }
+                  value={legacyWorkingDirectory}
                   onCommit={(v) =>
                     isCreate
                       ? set!({ cwd: v })
@@ -667,7 +670,14 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   className="w-full bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40"
                   placeholder="/path/to/project"
                 />
-                <ChoosePathButton />
+                <ChoosePathButton
+                  currentPath={legacyWorkingDirectory}
+                  onChoose={(nextPath) =>
+                    isCreate
+                      ? set!({ cwd: nextPath })
+                      : mark("adapterConfig", "cwd", nextPath || undefined)
+                  }
+                />
               </div>
             </Field>
           )}
