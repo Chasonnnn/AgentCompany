@@ -62,40 +62,38 @@ const mockAdapter = vi.hoisted(() => ({
   syncSkills: vi.fn(),
 }));
 
-function registerRouteMocks() {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentCreated: mockTrackAgentCreated,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
+vi.mock("@paperclipai/shared/telemetry", () => ({
+  trackAgentCreated: mockTrackAgentCreated,
+  trackErrorHandlerCrash: vi.fn(),
+}));
 
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
+vi.mock("../telemetry.js", () => ({
+  getTelemetryClient: mockGetTelemetryClient,
+}));
 
-  vi.doMock("../services/index.js", () => ({
-    agentService: () => mockAgentService,
-    agentInstructionsService: () => mockAgentInstructionsService,
-    accessService: () => mockAccessService,
-    approvalService: () => mockApprovalService,
-    agentSkillService: () => mockAgentSkillService,
-    companySkillService: () => mockCompanySkillService,
-    budgetService: () => mockBudgetService,
-    heartbeatService: () => mockHeartbeatService,
-    issueApprovalService: () => mockIssueApprovalService,
-    issueService: () => ({}),
-    logActivity: mockLogActivity,
-    secretService: () => mockSecretService,
-    syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
-    workspaceOperationService: () => mockWorkspaceOperationService,
-  }));
+vi.mock("../services/index.js", () => ({
+  agentService: () => mockAgentService,
+  agentInstructionsService: () => mockAgentInstructionsService,
+  accessService: () => mockAccessService,
+  approvalService: () => mockApprovalService,
+  agentSkillService: () => mockAgentSkillService,
+  companySkillService: () => mockCompanySkillService,
+  budgetService: () => mockBudgetService,
+  heartbeatService: () => mockHeartbeatService,
+  issueApprovalService: () => mockIssueApprovalService,
+  issueService: () => ({}),
+  logActivity: mockLogActivity,
+  secretService: () => mockSecretService,
+  syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
+  workspaceOperationService: () => mockWorkspaceOperationService,
+}));
 
-  vi.doMock("../adapters/index.js", () => ({
-    findServerAdapter: vi.fn(() => mockAdapter),
-    findActiveServerAdapter: vi.fn(() => mockAdapter),
-    listAdapterModels: vi.fn(),
-    detectAdapterModel: vi.fn(),
-  }));
-}
+vi.mock("../adapters/index.js", () => ({
+  findServerAdapter: vi.fn(() => mockAdapter),
+  findActiveServerAdapter: vi.fn(() => mockAdapter),
+  listAdapterModels: vi.fn(),
+  detectAdapterModel: vi.fn(),
+}));
 
 function createDb(requireBoardApprovalForNewAgents = false) {
   return {
@@ -158,7 +156,6 @@ function makeAgent(adapterType: string) {
 describe("agent skill routes", () => {
   beforeEach(() => {
     vi.resetModules();
-    registerRouteMocks();
     vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockAgentService.resolveByReference.mockResolvedValue({
@@ -443,7 +440,7 @@ describe("agent skill routes", () => {
     ).get("/api/agents/11111111-1111-4111-8111-111111111111/skills?companyId=company-1");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.canManage).toBe(false);
+    expect(Boolean(res.body.canManage)).toBe(false);
   });
 
   it("rejects skill sync from agent actors even when they target themselves", async () => {

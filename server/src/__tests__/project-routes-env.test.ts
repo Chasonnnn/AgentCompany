@@ -97,7 +97,8 @@ function buildProject(overrides: Record<string, unknown> = {}) {
 
 describe("project env routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetModules();
+    vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockProjectService.createWorkspace.mockResolvedValue(null);

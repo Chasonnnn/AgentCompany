@@ -1,11 +1,7 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ServerAdapterModule } from "../adapters/index.js";
-import { registerServerAdapter, unregisterServerAdapter } from "../adapters/index.js";
-import { setOverridePaused } from "../adapters/registry.js";
-import { adapterRoutes } from "../routes/adapters.js";
-import { errorHandler } from "../middleware/index.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ServerAdapterModule } from "../adapters/types.js";
 
 const overridingConfigSchemaAdapter: ServerAdapterModule = {
   type: "claude_local",
@@ -28,6 +24,12 @@ const overridingConfigSchemaAdapter: ServerAdapterModule = {
   }),
 };
 
+let registerServerAdapter: typeof import("../adapters/registry.js").registerServerAdapter;
+let unregisterServerAdapter: typeof import("../adapters/registry.js").unregisterServerAdapter;
+let setOverridePaused: typeof import("../adapters/registry.js").setOverridePaused;
+let adapterRoutes: typeof import("../routes/adapters.js").adapterRoutes;
+let errorHandler: typeof import("../middleware/index.js").errorHandler;
+
 function createApp() {
   const app = express();
   app.use(express.json());
@@ -47,7 +49,13 @@ function createApp() {
 }
 
 describe("adapter routes", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
+
+    ({ registerServerAdapter, unregisterServerAdapter, setOverridePaused } = await import("../adapters/registry.js"));
+    ({ adapterRoutes } = await import("../routes/adapters.js"));
+    ({ errorHandler } = await import("../middleware/index.js"));
+
     setOverridePaused("claude_local", false);
     registerServerAdapter(overridingConfigSchemaAdapter);
   });
