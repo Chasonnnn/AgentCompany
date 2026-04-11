@@ -286,11 +286,16 @@ describeEmbeddedPostgres("global skill catalog installs", () => {
     return skillDir;
   }
 
-  it("discovers valid skills under codex and claude roots and ignores hidden or invalid entries", async () => {
+  it("discovers valid skills under agents, codex, and claude roots and ignores hidden or invalid entries", async () => {
     const homeDir = await makeTempDir("paperclip-global-skill-home-");
     process.env.HOME = homeDir;
     const companyId = await seedCompany();
 
+    await writeGlobalSkill(
+      path.join(homeDir, ".agents", "skills"),
+      "release",
+      "---\nname: Release\n---\n\n# Release\n",
+    );
     await writeGlobalSkill(
       path.join(homeDir, ".codex", "skills"),
       "design-guide",
@@ -315,8 +320,8 @@ describeEmbeddedPostgres("global skill catalog installs", () => {
 
     const catalog = await companySkillService(db).listGlobalCatalog(companyId);
 
-    expect(catalog.map((item) => item.slug)).toEqual(["design-guide", "find-skills"]);
-    expect(catalog.map((item) => item.sourceRoot)).toEqual(["codex", "claude"]);
+    expect(catalog.map((item) => item.slug)).toEqual(["design-guide", "find-skills", "release"]);
+    expect(catalog.map((item) => item.sourceRoot)).toEqual(["codex", "claude", "agents"]);
   });
 
   it("installs and reinstalls a global skill as a read-only company snapshot", async () => {
@@ -368,6 +373,76 @@ describeEmbeddedPostgres("global skill catalog installs", () => {
       .then((rows) => rows[0] ?? null);
     expect(persistedRow?.sourceType).toBe("catalog");
     expect(await fs.readFile(path.join(reinstalled.sourceLocator!, "references/checklist.md"), "utf8")).toContain("Updated Checklist");
+  });
+
+  it("installs all discoverable global skills and reports already-installed and skipped entries", async () => {
+    const homeDir = await makeTempDir("paperclip-global-install-all-home-");
+    process.env.HOME = homeDir;
+    const companyId = await seedCompany();
+    const codexRoot = path.join(homeDir, ".codex", "skills");
+
+    await writeGlobalSkill(
+      codexRoot,
+      "design-guide",
+      "---\nname: Design Guide\n---\n\n# Design Guide\n",
+    );
+    await writeGlobalSkill(
+      codexRoot,
+      "find-skills",
+      [
+        "---",
+        "name: Find Skills",
+        "metadata:",
+        "  paperclip:",
+        "    key: acme/find-skills/find-skills",
+        "---",
+        "",
+        "# Find Skills",
+        "",
+      ].join("\n"),
+    );
+    await writeGlobalSkill(
+      path.join(homeDir, ".agents", "skills"),
+      "release",
+      "---\nname: Release\n---\n\n# Release\n",
+    );
+
+    const svc = companySkillService(db);
+    const discovered = await svc.listGlobalCatalog(companyId);
+    const designGuideCatalogKey = discovered.find((item) => item.slug === "design-guide")?.catalogKey;
+    expect(designGuideCatalogKey).toBeTruthy();
+
+    await svc.installGlobalCatalogSkill(companyId, { catalogKey: designGuideCatalogKey! });
+
+    await db.insert(companySkills).values({
+      id: randomUUID(),
+      companyId,
+      key: "acme/find-skills/find-skills",
+      slug: "existing-find-skills",
+      name: "Existing Skill",
+      markdown: "# Existing Skill",
+      sourceType: "local_path",
+      sourceLocator: await writeGlobalSkill(
+        path.join(homeDir, "managed-existing"),
+        "existing-find-skills",
+        "---\nname: Existing Skill\n---\n\n# Existing Skill\n",
+      ),
+      metadata: {
+        sourceKind: "managed_local",
+      },
+    });
+
+    const result = await svc.installAllGlobalCatalogSkills(companyId);
+
+    expect(result.discoverableCount).toBe(3);
+    expect(result.installedCount).toBe(1);
+    expect(result.alreadyInstalledCount).toBe(1);
+    expect(result.installed.map((skill) => skill.slug)).toEqual(["release"]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatchObject({
+      name: "Find Skills",
+      conflictingSkillKey: "acme/find-skills/find-skills",
+    });
   });
 
   it("returns a conflict when a global skill key collides with a different company skill", async () => {

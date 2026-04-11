@@ -16,6 +16,7 @@ import type {
   CompanySkillFileDetail,
   CompanySkillFileInventoryEntry,
   CompanySkillImportResult,
+  CompanySkillInstallGlobalAllResult,
   CompanySkillInstallGlobalRequest,
   CompanySkillListItem,
   CompanySkillProjectScanConflict,
@@ -165,9 +166,16 @@ const GLOBAL_SKILL_CATALOG_ROOTS: Array<{
   sourceRoot: GlobalSkillCatalogSourceRoot;
   relativeRoot: string;
 }> = [
+  { sourceRoot: "agents", relativeRoot: ".agents/skills" },
   { sourceRoot: "codex", relativeRoot: ".codex/skills" },
   { sourceRoot: "claude", relativeRoot: ".claude/skills" },
 ];
+
+function globalCatalogSourceRootLabel(sourceRoot: GlobalSkillCatalogSourceRoot | string | null) {
+  if (sourceRoot === "claude") return "Claude";
+  if (sourceRoot === "agents") return "Agents";
+  return "Codex";
+}
 
 function asString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -1477,7 +1485,7 @@ function deriveSkillSourceInfo(skill: CompanySkill): {
   if (skill.sourceType === "catalog" && metadata.sourceKind === "global_catalog") {
     const sourceRoot = asString(metadata.catalogSourceRoot);
     const sourcePath = asString(metadata.catalogSourcePath);
-    const sourceRootLabel = sourceRoot === "claude" ? "Claude" : "Codex";
+    const sourceRootLabel = globalCatalogSourceRootLabel(sourceRoot);
     return {
       editable: false,
       editableReason: "Global catalog skills are read-only. Reinstall them from the global catalog to refresh the snapshot.",
@@ -1779,6 +1787,51 @@ export function companySkillService(db: Db) {
     }
 
     return installedSkill;
+  }
+
+  async function installAllGlobalCatalogSkills(companyId: string): Promise<CompanySkillInstallGlobalAllResult> {
+    const catalog = await listGlobalCatalog(companyId);
+    const installed: CompanySkill[] = [];
+    const skipped: CompanySkillInstallGlobalAllResult["skipped"] = [];
+    let alreadyInstalledCount = 0;
+
+    for (const item of catalog) {
+      if (item.installedSkillId) {
+        alreadyInstalledCount += 1;
+        continue;
+      }
+
+      try {
+        installed.push(await installGlobalCatalogSkill(companyId, { catalogKey: item.catalogKey }));
+      } catch (error) {
+        const details = typeof error === "object" && error && "details" in error
+          ? (error as { details?: unknown }).details
+          : undefined;
+        const conflictingSkillId = typeof details === "object" && details && "conflictingSkillId" in details
+          ? asString((details as { conflictingSkillId?: unknown }).conflictingSkillId)
+          : null;
+        const conflictingSkillKey = typeof details === "object" && details && "conflictingSkillKey" in details
+          ? asString((details as { conflictingSkillKey?: unknown }).conflictingSkillKey)
+          : null;
+
+        skipped.push({
+          catalogKey: item.catalogKey,
+          name: item.name,
+          sourceRoot: item.sourceRoot,
+          reason: error instanceof Error ? error.message : "Failed to install global skill.",
+          conflictingSkillId,
+          conflictingSkillKey,
+        });
+      }
+    }
+
+    return {
+      discoverableCount: catalog.length,
+      installedCount: installed.length,
+      alreadyInstalledCount,
+      skipped,
+      installed,
+    };
   }
 
   async function usage(companyId: string, key: string): Promise<CompanySkillUsageAgent[]> {
@@ -2598,6 +2651,7 @@ export function companySkillService(db: Db) {
     deleteSkill,
     listGlobalCatalog,
     installGlobalCatalogSkill,
+    installAllGlobalCatalogSkills,
     importFromSource,
     scanProjectWorkspaces,
     importPackageFiles,

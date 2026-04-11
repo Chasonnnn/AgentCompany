@@ -14,6 +14,7 @@ const mockAccessService = vi.hoisted(() => ({
 const mockCompanySkillService = vi.hoisted(() => ({
   listGlobalCatalog: vi.fn(),
   installGlobalCatalogSkill: vi.fn(),
+  installAllGlobalCatalogSkills: vi.fn(),
   importFromSource: vi.fn(),
   deleteSkill: vi.fn(),
 }));
@@ -94,6 +95,13 @@ describe("company skill mutation permissions", () => {
       },
       createdAt: new Date(),
       updatedAt: new Date(),
+    });
+    mockCompanySkillService.installAllGlobalCatalogSkills.mockResolvedValue({
+      discoverableCount: 2,
+      installedCount: 1,
+      alreadyInstalledCount: 1,
+      skipped: [],
+      installed: [],
     });
     mockCompanySkillService.deleteSkill.mockResolvedValue({
       id: "skill-1",
@@ -219,6 +227,21 @@ describe("company skill mutation permissions", () => {
     expect(mockCompanySkillService.installGlobalCatalogSkill).toHaveBeenCalledWith("company-1", {
       catalogKey: "global/codex/abc123/find-skills",
     });
+  });
+
+  it("installs all discoverable global catalog skills for authorized board actors", async () => {
+    const res = await request(await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/companies/company-1/skills/install-global-all")
+      .send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockCompanySkillService.installAllGlobalCatalogSkills).toHaveBeenCalledWith("company-1");
   });
 
   it("previews a bulk skill grant for board actors", async () => {

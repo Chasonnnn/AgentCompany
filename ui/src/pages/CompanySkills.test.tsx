@@ -11,6 +11,7 @@ const mockCompanySkillsApi = vi.hoisted(() => ({
   list: vi.fn(),
   globalCatalog: vi.fn(),
   installGlobal: vi.fn(),
+  installAllGlobal: vi.fn(),
   bulkGrantPreview: vi.fn(),
   bulkGrantApply: vi.fn(),
   detail: vi.fn(),
@@ -195,6 +196,13 @@ describe("CompanySkills", () => {
       createdAt: new Date("2026-04-10T12:00:00.000Z"),
       updatedAt: new Date("2026-04-10T12:00:00.000Z"),
     });
+    mockCompanySkillsApi.installAllGlobal.mockResolvedValue({
+      discoverableCount: 1,
+      installedCount: 1,
+      alreadyInstalledCount: 0,
+      skipped: [],
+      installed: [],
+    });
     mockCompanySkillsApi.bulkGrantPreview.mockResolvedValue({
       skillId: "skill-1",
       skillKey: "local/abc123/design-guide",
@@ -323,6 +331,43 @@ describe("CompanySkills", () => {
     expect(mockCompanySkillsApi.installGlobal).toHaveBeenCalledWith("company-1", {
       catalogKey: "global/codex/abc123/design-guide",
     });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("installs every discoverable global skill from the global catalog header", async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <CompanySkills />
+        </QueryClientProvider>,
+      );
+    });
+
+    await flush();
+
+    const globalTab = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Global Catalog");
+    expect(globalTab).toBeDefined();
+
+    await act(async () => {
+      globalTab?.click();
+    });
+    await flush();
+
+    const installAllButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Install all"));
+    expect(installAllButton).toBeDefined();
+
+    await act(async () => {
+      installAllButton?.click();
+    });
+    await flush();
+
+    expect(mockCompanySkillsApi.installAllGlobal).toHaveBeenCalledWith("company-1");
 
     await act(async () => {
       root.unmount();

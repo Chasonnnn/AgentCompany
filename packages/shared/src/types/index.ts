@@ -1,5 +1,10 @@
 export type { Company } from "./company.js";
 export type {
+  PortfolioCluster,
+  PortfolioClusterCreateRequest,
+  PortfolioClusterUpdateRequest,
+} from "./portfolio-cluster.js";
+export type {
   FeedbackVote,
   FeedbackDataSharingPreference,
   FeedbackTargetType,
@@ -27,6 +32,8 @@ export type {
   CompanySkillUpdateStatus,
   CompanySkillImportRequest,
   CompanySkillInstallGlobalRequest,
+  CompanySkillInstallGlobalAllSkipped,
+  CompanySkillInstallGlobalAllResult,
   BulkSkillGrantTier,
   BulkSkillGrantMode,
   BulkSkillGrantTarget,
@@ -83,12 +90,20 @@ export type {
   AdapterEnvironmentCheck,
   AdapterEnvironmentTestResult,
   AgentNavigationDepartmentNode,
+  AgentNavigationClusterNode,
   AgentNavigationProjectNode,
   AgentNavigationTeamNode,
   OperatingHierarchyAgentSummary,
   OperatingHierarchyDepartmentSummary,
+  OperatingHierarchyPortfolioClusterSummary,
   OperatingHierarchyProjectSummary,
 } from "./agent.js";
+export type {
+  SharedServiceEngagement,
+  SharedServiceEngagementAssignment,
+  SharedServiceEngagementCreateRequest,
+  SharedServiceEngagementUpdateRequest,
+} from "./shared-service-engagement.js";
 export type { AssetImage } from "./asset.js";
 export type { Project, ProjectCodebase, ProjectCodebaseOrigin, ProjectGoalRef, ProjectWorkspace } from "./project.js";
 export type {

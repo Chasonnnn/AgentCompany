@@ -225,10 +225,15 @@ function formatGlobalCatalogCount(count: number) {
 }
 
 function globalCatalogSourceLabel(sourceRoot: GlobalSkillCatalogSourceRoot) {
-  return sourceRoot === "claude" ? "Claude" : "Codex";
+  if (sourceRoot === "claude") return "Claude";
+  if (sourceRoot === "agents") return "Agents";
+  return "Codex";
 }
 
 function globalCatalogSourceClassName(sourceRoot: GlobalSkillCatalogSourceRoot) {
+  if (sourceRoot === "agents") {
+    return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+  }
   return sourceRoot === "claude"
     ? "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200"
     : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200";
@@ -911,6 +916,7 @@ function GlobalCatalogList({
   selectedCatalogKey,
   skillFilter,
   installPendingCatalogKey,
+  installDisabled,
   onSelect,
   onInstall,
 }: {
@@ -918,6 +924,7 @@ function GlobalCatalogList({
   selectedCatalogKey: string | null;
   skillFilter: string;
   installPendingCatalogKey: string | null;
+  installDisabled: boolean;
   onSelect: (catalogKey: string) => void;
   onInstall: (catalogKey: string) => void;
 }) {
@@ -976,7 +983,7 @@ function GlobalCatalogList({
                 variant={installed ? "outline" : "ghost"}
                 size="sm"
                 className="shrink-0"
-                disabled={Boolean(installPendingCatalogKey)}
+                disabled={installDisabled}
                 onClick={() => onInstall(item.catalogKey)}
               >
                 {isInstalling ? (
@@ -1000,12 +1007,14 @@ function GlobalCatalogPane({
   error,
   item,
   installPending,
+  installDisabled,
   onInstall,
 }: {
   loading: boolean;
   error: Error | null;
   item: GlobalSkillCatalogItem | null;
   installPending: boolean;
+  installDisabled: boolean;
   onInstall: () => void;
 }) {
   if (loading) {
@@ -1060,7 +1069,7 @@ function GlobalCatalogPane({
                 Open installed copy
               </Link>
             ) : null}
-            <Button onClick={onInstall} disabled={installPending}>
+            <Button onClick={onInstall} disabled={installDisabled}>
               {installPending ? (
                 <>
                   <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -1493,6 +1502,10 @@ export function CompanySkills() {
     if (filteredGlobalCatalog.length === 0) return null;
     return filteredGlobalCatalog.find((item) => item.catalogKey === selectedCatalogKey) ?? filteredGlobalCatalog[0] ?? null;
   }, [filteredGlobalCatalog, selectedCatalogKey]);
+  const hasUninstalledGlobalSkills = useMemo(
+    () => (globalCatalogQuery.data ?? []).some((item) => !item.installedSkillId),
+    [globalCatalogQuery.data],
+  );
 
   const departmentTargetOptions = useMemo(
     () => buildBulkSkillDepartmentOptions(bulkGrantNavigationQuery.data),
@@ -1708,6 +1721,43 @@ export function CompanySkills() {
       });
     },
   });
+
+  const installAllGlobalSkills = useMutation({
+    mutationFn: () => companySkillsApi.installAllGlobal(selectedCompanyId!),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.globalCatalog(selectedCompanyId!) }),
+      ]);
+      const summaryParts = [
+        `${result.installedCount} installed`,
+        `${result.alreadyInstalledCount} already installed`,
+      ];
+      if (result.skipped.length > 0) {
+        summaryParts.push(`${result.skipped.length} skipped`);
+      }
+      pushToast({
+        tone: "success",
+        title: "Global skills installed",
+        body: `${summaryParts.join(", ")}.`,
+      });
+      if (result.skipped[0]) {
+        pushToast({
+          tone: "warn",
+          title: "Some global skills were skipped",
+          body: result.skipped[0].reason,
+        });
+      }
+    },
+    onError: (error) => {
+      pushToast({
+        tone: "error",
+        title: "Install all failed",
+        body: error instanceof Error ? error.message : "Failed to install global skills.",
+      });
+    },
+  });
+  const globalSkillInstallBusy = installGlobalSkill.isPending || installAllGlobalSkills.isPending;
 
   const previewBulkGrant = useMutation({
     mutationFn: ({ payload }: { payload: BulkSkillGrantRequest; requestKey: string }) =>
@@ -2100,15 +2150,33 @@ export function CompanySkills() {
                     </Button>
                   </>
                 ) : (
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => void globalCatalogQuery.refetch()}
-                    disabled={globalCatalogQuery.isFetching}
-                    title="Refresh global catalog"
-                  >
-                    <RefreshCw className={cn("h-4 w-4", globalCatalogQuery.isFetching && "animate-spin")} />
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => installAllGlobalSkills.mutate()}
+                      disabled={!hasUninstalledGlobalSkills || globalSkillInstallBusy}
+                      title="Install every discoverable global skill into this company"
+                    >
+                      {installAllGlobalSkills.isPending ? (
+                        <>
+                          <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          Installing...
+                        </>
+                      ) : (
+                        "Install all"
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => void globalCatalogQuery.refetch()}
+                      disabled={globalCatalogQuery.isFetching || globalSkillInstallBusy}
+                      title="Refresh global catalog"
+                    >
+                      <RefreshCw className={cn("h-4 w-4", globalCatalogQuery.isFetching && "animate-spin")} />
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
@@ -2205,6 +2273,7 @@ export function CompanySkills() {
               selectedCatalogKey={selectedCatalogItem?.catalogKey ?? null}
               skillFilter={skillFilter}
               installPendingCatalogKey={installGlobalSkill.isPending ? installGlobalSkill.variables ?? null : null}
+              installDisabled={globalSkillInstallBusy}
               onSelect={setSelectedCatalogKey}
               onInstall={(catalogKey) => installGlobalSkill.mutate(catalogKey)}
             />
@@ -2244,6 +2313,7 @@ export function CompanySkills() {
                 installGlobalSkill.isPending
                 && installGlobalSkill.variables === selectedCatalogItem?.catalogKey
               }
+              installDisabled={globalSkillInstallBusy}
               onInstall={() => {
                 if (selectedCatalogItem) {
                   installGlobalSkill.mutate(selectedCatalogItem.catalogKey);

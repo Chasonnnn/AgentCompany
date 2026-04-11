@@ -4,6 +4,7 @@ import type {
   BulkSkillGrantRequest,
   BulkSkillGrantResult,
   CompanySkill,
+  CompanySkillInstallGlobalAllResult,
   CompanySkillCreateRequest,
   CompanySkillDetail,
   CompanySkillFileDetail,
@@ -55,6 +56,11 @@ export const companySkillsApi = {
     api.post<CompanySkill>(
       `/companies/${encodeURIComponent(companyId)}/skills/install-global`,
       payload,
+    ),
+  installAllGlobal: (companyId: string) =>
+    api.post<CompanySkillInstallGlobalAllResult>(
+      `/companies/${encodeURIComponent(companyId)}/skills/install-global-all`,
+      {},
     ),
   bulkGrantPreview: (companyId: string, skillId: string, payload: BulkSkillGrantRequest) =>
     api.post<BulkSkillGrantPreview>(

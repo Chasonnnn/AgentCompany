@@ -4,7 +4,7 @@ export const companySkillSourceTypeSchema = z.enum(["local_path", "github", "url
 export const companySkillTrustLevelSchema = z.enum(["markdown_only", "assets", "scripts_executables"]);
 export const companySkillCompatibilitySchema = z.enum(["compatible", "unknown", "invalid"]);
 export const companySkillSourceBadgeSchema = z.enum(["paperclip", "github", "local", "url", "catalog", "skills_sh"]);
-export const globalSkillCatalogSourceRootSchema = z.enum(["codex", "claude"]);
+export const globalSkillCatalogSourceRootSchema = z.enum(["codex", "claude", "agents"]);
 
 export const companySkillFileInventoryEntrySchema = z.object({
   path: z.string().min(1),
@@ -87,6 +87,23 @@ export const companySkillImportSchema = z.object({
 
 export const companySkillInstallGlobalSchema = z.object({
   catalogKey: z.string().min(1),
+});
+
+export const companySkillInstallGlobalAllSkippedSchema = z.object({
+  catalogKey: z.string().min(1),
+  name: z.string().min(1),
+  sourceRoot: globalSkillCatalogSourceRootSchema,
+  reason: z.string().min(1),
+  conflictingSkillId: z.string().uuid().nullable(),
+  conflictingSkillKey: z.string().nullable(),
+});
+
+export const companySkillInstallGlobalAllResultSchema = z.object({
+  discoverableCount: z.number().int().nonnegative(),
+  installedCount: z.number().int().nonnegative(),
+  alreadyInstalledCount: z.number().int().nonnegative(),
+  skipped: z.array(companySkillInstallGlobalAllSkippedSchema),
+  installed: z.array(companySkillSchema),
 });
 
 export const bulkSkillGrantTierSchema = z.enum(["all", "leaders", "workers"]);
@@ -239,6 +256,7 @@ export const companySkillFileUpdateSchema = z.object({
 
 export type CompanySkillImport = z.infer<typeof companySkillImportSchema>;
 export type CompanySkillInstallGlobal = z.infer<typeof companySkillInstallGlobalSchema>;
+export type CompanySkillInstallGlobalAllResult = z.infer<typeof companySkillInstallGlobalAllResultSchema>;
 export type BulkSkillGrantRequest = z.infer<typeof bulkSkillGrantRequestSchema>;
 export type BulkSkillGrantApplyRequest = z.infer<typeof bulkSkillGrantApplyRequestSchema>;
 export type CompanySkillProjectScan = z.infer<typeof companySkillProjectScanRequestSchema>;

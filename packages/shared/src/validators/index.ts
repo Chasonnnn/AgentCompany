@@ -35,6 +35,14 @@ export {
   type UpdateCompanyBranding,
 } from "./company.js";
 export {
+  portfolioClusterStatusSchema,
+  portfolioClusterSchema,
+  createPortfolioClusterSchema,
+  updatePortfolioClusterSchema,
+  type CreatePortfolioCluster,
+  type UpdatePortfolioCluster,
+} from "./portfolio-cluster.js";
+export {
   feedbackDataSharingPreferenceSchema,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
@@ -57,6 +65,8 @@ export {
   companySkillUpdateStatusSchema,
   companySkillImportSchema,
   companySkillInstallGlobalSchema,
+  companySkillInstallGlobalAllSkippedSchema,
+  companySkillInstallGlobalAllResultSchema,
   bulkSkillGrantTierSchema,
   bulkSkillGrantModeSchema,
   bulkSkillGrantTargetSchema,
@@ -76,6 +86,7 @@ export {
   companySkillFileUpdateSchema,
   type CompanySkillImport,
   type CompanySkillInstallGlobal,
+  type CompanySkillInstallGlobalAllResult,
   type CompanySkillProjectScan,
   type CompanySkillCreate,
   type CompanySkillFileUpdate,
@@ -126,9 +137,11 @@ export {
   agentSecondaryRelationshipSchema,
   operatingHierarchyAgentSummarySchema,
   operatingHierarchyProjectSummarySchema,
+  operatingHierarchyPortfolioClusterSummarySchema,
   operatingHierarchyDepartmentSummarySchema,
   companyOperatingHierarchySchema,
   agentNavigationTeamNodeSchema,
+  agentNavigationClusterNodeSchema,
   agentNavigationProjectNodeSchema,
   agentNavigationDepartmentNodeSchema,
   companyAgentNavigationSchema,
@@ -163,6 +176,15 @@ export {
   type TestAdapterEnvironment,
   type UpdateAgentPermissions,
 } from "./agent.js";
+export {
+  sharedServiceEngagementStatusSchema,
+  sharedServiceEngagementAssignmentSchema,
+  sharedServiceEngagementSchema,
+  createSharedServiceEngagementSchema,
+  updateSharedServiceEngagementSchema,
+  type CreateSharedServiceEngagement,
+  type UpdateSharedServiceEngagement,
+} from "./shared-service-engagement.js";
 
 export {
   conferenceRoomStatusSchema,

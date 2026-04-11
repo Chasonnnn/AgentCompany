@@ -8,7 +8,7 @@ export type CompanySkillCompatibility = "compatible" | "unknown" | "invalid";
 
 export type CompanySkillSourceBadge = "paperclip" | "github" | "local" | "url" | "catalog" | "skills_sh";
 
-export type GlobalSkillCatalogSourceRoot = "codex" | "claude";
+export type GlobalSkillCatalogSourceRoot = "codex" | "claude" | "agents";
 export type BulkSkillGrantTier = "all" | "leaders" | "workers";
 export type BulkSkillGrantMode = "add" | "remove" | "replace";
 
@@ -107,6 +107,23 @@ export interface CompanySkillImportRequest {
 
 export interface CompanySkillInstallGlobalRequest {
   catalogKey: string;
+}
+
+export interface CompanySkillInstallGlobalAllSkipped {
+  catalogKey: string;
+  name: string;
+  sourceRoot: GlobalSkillCatalogSourceRoot;
+  reason: string;
+  conflictingSkillId: string | null;
+  conflictingSkillKey: string | null;
+}
+
+export interface CompanySkillInstallGlobalAllResult {
+  discoverableCount: number;
+  installedCount: number;
+  alreadyInstalledCount: number;
+  skipped: CompanySkillInstallGlobalAllSkipped[];
+  installed: CompanySkill[];
 }
 
 export type BulkSkillGrantTarget =

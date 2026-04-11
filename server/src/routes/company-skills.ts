@@ -277,6 +277,37 @@ export function companySkillRoutes(db: Db) {
   );
 
   router.post(
+    "/companies/:companyId/skills/install-global-all",
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      await assertCanMutateCompanySkills(req, companyId);
+      const result = await svc.installAllGlobalCatalogSkills(companyId);
+
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "company.skills_global_installed_all",
+        entityType: "company",
+        entityId: companyId,
+        details: {
+          discoverableCount: result.discoverableCount,
+          installedCount: result.installedCount,
+          alreadyInstalledCount: result.alreadyInstalledCount,
+          skippedCount: result.skipped.length,
+          installedSkillIds: result.installed.map((skill) => skill.id),
+          skippedCatalogKeys: result.skipped.map((item) => item.catalogKey),
+        },
+      });
+
+      res.status(201).json(result);
+    },
+  );
+
+  router.post(
     "/companies/:companyId/skills/import",
     validate(companySkillImportSchema),
     async (req, res) => {
