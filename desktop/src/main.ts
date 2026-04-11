@@ -19,6 +19,7 @@ import {
   resolveDesktopLogPath,
   type DesktopLogger,
 } from "./runtime/desktop-log.js";
+import { attachRendererDiagnostics } from "./runtime/renderer-diagnostics.js";
 import {
   createDesktopUpdater,
   type DesktopUpdaterHandle,
@@ -133,6 +134,13 @@ async function createSplashWindow() {
   splashWindow.setResizable(false);
   splashWindow.setMinimizable(false);
   splashWindow.setMaximizable(false);
+  if (desktopLogger) {
+    attachRendererDiagnostics({
+      label: "splash",
+      window: splashWindow,
+      log: desktopLogger,
+    });
+  }
   await splashWindow.loadURL(toDataUrl(renderSplashHtml()));
   splashWindow.on("closed", () => {
     splashWindow = null;
@@ -186,6 +194,13 @@ async function createMainWindow(baseUrl: string) {
   }
   registerWindowStatePersistence(mainWindow);
   wireExternalNavigation(mainWindow, baseUrl);
+  if (desktopLogger) {
+    attachRendererDiagnostics({
+      label: "main",
+      window: mainWindow,
+      log: desktopLogger,
+    });
+  }
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
