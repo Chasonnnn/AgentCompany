@@ -29,9 +29,11 @@ import {
   companySkills,
 } from "@paperclipai/db";
 import { notFound, unprocessable } from "../errors.js";
+import { portfolioClusterService } from "./portfolio-clusters.js";
 
 export function companyService(db: Db) {
   const ISSUE_PREFIX_FALLBACK = "CMP";
+  const portfolioClustersSvc = portfolioClusterService(db);
 
   const companySelection = {
     id: companies.id,
@@ -170,6 +172,7 @@ export function companyService(db: Db) {
 
     create: async (data: typeof companies.$inferInsert) => {
       const created = await createCompanyWithUniquePrefix(data);
+      await portfolioClustersSvc.ensureDefaultClusterForCompany(created.id);
       const row = await getCompanyQuery(db)
         .where(eq(companies.id, created.id))
         .then((rows) => rows[0] ?? null);

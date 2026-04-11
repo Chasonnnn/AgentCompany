@@ -98,6 +98,7 @@ export type AgentProjectScopeMode = (typeof AGENT_PROJECT_SCOPE_MODES)[number];
 
 export const AGENT_PROJECT_ROLES = [
   "director",
+  "functional_lead",
   "product_manager",
   "engineering_manager",
   "worker",
@@ -242,6 +243,12 @@ export const PROJECT_STATUSES = [
   "cancelled",
 ] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+
+export const PORTFOLIO_CLUSTER_STATUSES = ["active", "archived"] as const;
+export type PortfolioClusterStatus = (typeof PORTFOLIO_CLUSTER_STATUSES)[number];
+
+export const SHARED_SERVICE_ENGAGEMENT_STATUSES = ["requested", "approved", "closed"] as const;
+export type SharedServiceEngagementStatus = (typeof SHARED_SERVICE_ENGAGEMENT_STATUSES)[number];
 
 export const ROUTINE_STATUSES = ["active", "paused", "archived"] as const;
 export type RoutineStatus = (typeof ROUTINE_STATUSES)[number];

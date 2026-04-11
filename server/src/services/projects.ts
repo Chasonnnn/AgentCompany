@@ -18,6 +18,7 @@ import { listCurrentRuntimeServicesForProjectWorkspaces } from "./workspace-runt
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import { mergeProjectWorkspaceRuntimeConfig, readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
 import { resolveManagedProjectWorkspaceDir } from "../home-paths.js";
+import { portfolioClusterService } from "./portfolio-clusters.js";
 
 type ProjectRow = typeof projects.$inferSelect;
 type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
@@ -398,6 +399,7 @@ async function ensureSinglePrimaryWorkspace(
 }
 
 export function projectService(db: Db) {
+  const portfolioClusters = portfolioClusterService(db);
   return {
     list: async (companyId: string): Promise<ProjectWithGoals[]> => {
       const rows = await db.select().from(projects).where(eq(projects.companyId, companyId));
@@ -451,6 +453,10 @@ export function projectService(db: Db) {
         .from(projects)
         .where(eq(projects.companyId, companyId));
       projectData.name = resolveProjectNameForUniqueShortname(projectData.name, existingProjects);
+      projectData.portfolioClusterId = await portfolioClusters.resolveClusterIdForProject(
+        companyId,
+        projectData.portfolioClusterId ?? null,
+      );
 
       // Also write goalId to the legacy column (first goal or null)
       const legacyGoalId = ids && ids.length > 0 ? ids[0] : projectData.goalId ?? null;
@@ -463,6 +469,9 @@ export function projectService(db: Db) {
 
       if (ids && ids.length > 0) {
         await syncGoalLinks(db, row.id, companyId, ids);
+      }
+      if (row.portfolioClusterId) {
+        await portfolioClusters.reconcilePortfolioDirectorScopes(row.portfolioClusterId);
       }
 
       const [withGoals] = await attachGoals(db, [row]);
@@ -477,7 +486,12 @@ export function projectService(db: Db) {
       const { goalIds: inputGoalIds, ...projectData } = data;
       const ids = resolveGoalIds({ goalIds: inputGoalIds, goalId: projectData.goalId });
       const existingProject = await db
-        .select({ id: projects.id, companyId: projects.companyId, name: projects.name })
+        .select({
+          id: projects.id,
+          companyId: projects.companyId,
+          name: projects.name,
+          portfolioClusterId: projects.portfolioClusterId,
+        })
         .from(projects)
         .where(eq(projects.id, id))
         .then((rows) => rows[0] ?? null);
@@ -502,6 +516,12 @@ export function projectService(db: Db) {
         ...projectData,
         updatedAt: new Date(),
       };
+      if (projectData.portfolioClusterId !== undefined) {
+        updates.portfolioClusterId = await portfolioClusters.resolveClusterIdForProject(
+          existingProject.companyId,
+          projectData.portfolioClusterId ?? null,
+        );
+      }
       if (ids !== undefined) {
         updates.goalId = ids.length > 0 ? ids[0] : null;
       }
@@ -516,6 +536,12 @@ export function projectService(db: Db) {
 
       if (ids !== undefined) {
         await syncGoalLinks(db, id, row.companyId, ids);
+      }
+      if (existingProject.portfolioClusterId && existingProject.portfolioClusterId !== row.portfolioClusterId) {
+        await portfolioClusters.reconcilePortfolioDirectorScopes(existingProject.portfolioClusterId);
+      }
+      if (row.portfolioClusterId) {
+        await portfolioClusters.reconcilePortfolioDirectorScopes(row.portfolioClusterId);
       }
 
       const [withGoals] = await attachGoals(db, [row]);

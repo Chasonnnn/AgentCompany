@@ -4,6 +4,7 @@ export { authUsers, authSessions, authAccounts, authVerifications } from "./auth
 export { instanceSettings } from "./instance_settings.js";
 export { instanceUserRoles } from "./instance_user_roles.js";
 export { agents } from "./agents.js";
+export { portfolioClusters } from "./portfolio_clusters.js";
 export { agentTemplates } from "./agent_templates.js";
 export { agentTemplateRevisions } from "./agent_template_revisions.js";
 export { agentProjectScopes } from "./agent_project_scopes.js";
@@ -58,6 +59,8 @@ export { conferenceRoomParticipants } from "./conference_room_participants.js";
 export { conferenceRoomComments } from "./conference_room_comments.js";
 export { conferenceRoomIssueLinks } from "./conference_room_issue_links.js";
 export { conferenceRoomApprovals } from "./conference_room_approvals.js";
+export { sharedServiceEngagements } from "./shared_service_engagements.js";
+export { sharedServiceEngagementAssignments } from "./shared_service_engagement_assignments.js";
 export { activityLog } from "./activity_log.js";
 export { companySecrets } from "./company_secrets.js";
 export { companySecretVersions } from "./company_secret_versions.js";

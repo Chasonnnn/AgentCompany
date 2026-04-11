@@ -166,6 +166,8 @@ export interface AgentProjectScope {
   scopeMode: AgentProjectScopeMode;
   projectRole: AgentProjectRole;
   isPrimary: boolean;
+  teamFunctionKey?: string | null;
+  teamFunctionLabel?: string | null;
   workstreamKey: string | null;
   workstreamLabel: string | null;
   grantedByPrincipalType: ActorPrincipalKind | null;
@@ -203,6 +205,16 @@ export interface OperatingHierarchyProjectSummary {
   consultants: OperatingHierarchyAgentSummary[];
 }
 
+export interface OperatingHierarchyPortfolioClusterSummary {
+  clusterId: string;
+  name: string;
+  slug: string;
+  summary: string | null;
+  executiveSponsor: OperatingHierarchyAgentSummary | null;
+  portfolioDirector: OperatingHierarchyAgentSummary | null;
+  projects: OperatingHierarchyProjectSummary[];
+}
+
 export interface OperatingHierarchyDepartmentSummary {
   key: AgentDepartmentKey;
   name: string;
@@ -212,6 +224,7 @@ export interface OperatingHierarchyDepartmentSummary {
 
 export interface CompanyOperatingHierarchy {
   executiveOffice: OperatingHierarchyAgentSummary[];
+  portfolioClusters?: OperatingHierarchyPortfolioClusterSummary[];
   projectPods: OperatingHierarchyProjectSummary[];
   sharedServices: OperatingHierarchyDepartmentSummary[];
   unassigned: OperatingHierarchyAgentSummary[];
@@ -233,10 +246,21 @@ export interface AgentNavigationProjectNode {
   workers: OperatingHierarchyAgentSummary[];
 }
 
+export interface AgentNavigationClusterNode {
+  clusterId: string;
+  name: string;
+  slug: string;
+  summary: string | null;
+  executiveSponsor: OperatingHierarchyAgentSummary | null;
+  portfolioDirector: OperatingHierarchyAgentSummary | null;
+  projects: AgentNavigationProjectNode[];
+}
+
 export interface AgentNavigationDepartmentNode {
   key: AgentDepartmentKey | "shared_service";
   name: string;
   leaders: OperatingHierarchyAgentSummary[];
+  clusters?: AgentNavigationClusterNode[];
   projects: AgentNavigationProjectNode[];
 }
 
@@ -244,6 +268,7 @@ export interface CompanyAgentNavigation {
   layout: AgentNavigationLayout;
   executives: OperatingHierarchyAgentSummary[];
   departments: AgentNavigationDepartmentNode[];
+  portfolioClusters?: AgentNavigationClusterNode[];
   projectPods: AgentNavigationProjectNode[];
   sharedServices: AgentNavigationDepartmentNode[];
   unassigned: OperatingHierarchyAgentSummary[];

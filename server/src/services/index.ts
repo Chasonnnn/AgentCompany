@@ -1,4 +1,5 @@
 export { companyService } from "./companies.js";
+export { portfolioClusterService } from "./portfolio-clusters.js";
 export { feedbackService } from "./feedback.js";
 export { companySkillService } from "./company-skills.js";
 export { agentSkillService } from "./agent-skills.js";
@@ -10,6 +11,7 @@ export { projectService } from "./projects.js";
 export { issueService, type IssueFilters } from "./issues.js";
 export { issueApprovalService } from "./issue-approvals.js";
 export { conferenceRoomService } from "./conference-rooms.js";
+export { sharedServiceEngagementService } from "./shared-service-engagements.js";
 export {
   conferenceApprovalService,
   conferenceContextService,

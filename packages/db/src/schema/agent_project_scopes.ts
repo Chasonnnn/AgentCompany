@@ -14,6 +14,8 @@ export const agentProjectScopes = pgTable(
     scopeMode: text("scope_mode").$type<AgentProjectScopeMode>().notNull(),
     projectRole: text("project_role").$type<AgentProjectRole>().notNull(),
     isPrimary: boolean("is_primary").notNull().default(false),
+    teamFunctionKey: text("team_function_key"),
+    teamFunctionLabel: text("team_function_label"),
     workstreamKey: text("workstream_key"),
     workstreamLabel: text("workstream_label"),
     grantedByPrincipalType: text("granted_by_principal_type").$type<ActorPrincipalKind>(),

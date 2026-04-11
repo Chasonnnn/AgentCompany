@@ -6,6 +6,7 @@ import {
   AGENT_ROLE_LABELS,
   type Agent,
   type AgentHierarchyMemberSummary,
+  type AgentNavigationClusterNode,
   type AgentNavigationDepartmentNode,
   type AgentNavigationLayout,
   type AgentNavigationProjectNode,
@@ -85,17 +86,40 @@ function filterProject(
   return { ...project, leaders, teams, workers };
 }
 
+function filterCluster(
+  cluster: AgentNavigationClusterNode,
+  tab: FilterTab,
+  showTerminated: boolean,
+): AgentNavigationClusterNode | null {
+  const executiveSponsor =
+    cluster.executiveSponsor && matchesFilter(cluster.executiveSponsor.status, tab, showTerminated)
+      ? cluster.executiveSponsor
+      : null;
+  const portfolioDirector =
+    cluster.portfolioDirector && matchesFilter(cluster.portfolioDirector.status, tab, showTerminated)
+      ? cluster.portfolioDirector
+      : null;
+  const projects = cluster.projects
+    .map((project) => filterProject(project, tab, showTerminated))
+    .filter((project): project is AgentNavigationProjectNode => Boolean(project));
+  if (!executiveSponsor && !portfolioDirector && projects.length === 0) return null;
+  return { ...cluster, executiveSponsor, portfolioDirector, projects };
+}
+
 function filterDepartment(
   department: AgentNavigationDepartmentNode,
   tab: FilterTab,
   showTerminated: boolean,
 ): AgentNavigationDepartmentNode | null {
   const leaders = filterMembers(department.leaders, tab, showTerminated);
+  const clusters = (department.clusters ?? [])
+    .map((cluster) => filterCluster(cluster, tab, showTerminated))
+    .filter((cluster): cluster is AgentNavigationClusterNode => Boolean(cluster));
   const projects = department.projects
     .map((project) => filterProject(project, tab, showTerminated))
     .filter((project): project is AgentNavigationProjectNode => Boolean(project));
-  if (leaders.length === 0 && projects.length === 0) return null;
-  return { ...department, leaders, projects };
+  if (leaders.length === 0 && clusters.length === 0 && projects.length === 0) return null;
+  return { ...department, leaders, clusters, projects };
 }
 
 function filterNavigation(
@@ -109,6 +133,9 @@ function filterNavigation(
     departments: navigation.departments
       .map((department) => filterDepartment(department, tab, showTerminated))
       .filter((department): department is AgentNavigationDepartmentNode => Boolean(department)),
+    portfolioClusters: (navigation.portfolioClusters ?? [])
+      .map((cluster) => filterCluster(cluster, tab, showTerminated))
+      .filter((cluster): cluster is AgentNavigationClusterNode => Boolean(cluster)),
     projectPods: navigation.projectPods
       .map((project) => filterProject(project, tab, showTerminated))
       .filter((project): project is AgentNavigationProjectNode => Boolean(project)),
@@ -124,6 +151,18 @@ function navigationCount(navigation: CompanyAgentNavigation) {
   for (const agent of navigation.executives) ids.add(agent.id);
   for (const department of navigation.departments) {
     for (const leader of department.leaders) ids.add(leader.id);
+    for (const cluster of department.clusters ?? []) {
+      if (cluster.executiveSponsor) ids.add(cluster.executiveSponsor.id);
+      if (cluster.portfolioDirector) ids.add(cluster.portfolioDirector.id);
+      for (const project of cluster.projects) {
+        for (const leader of project.leaders) ids.add(leader.id);
+        for (const team of project.teams) {
+          for (const leader of team.leaders) ids.add(leader.id);
+          for (const worker of team.workers) ids.add(worker.id);
+        }
+        for (const worker of project.workers) ids.add(worker.id);
+      }
+    }
     for (const project of department.projects) {
       for (const leader of project.leaders) ids.add(leader.id);
       for (const team of project.teams) {
@@ -135,7 +174,31 @@ function navigationCount(navigation: CompanyAgentNavigation) {
   }
   for (const department of navigation.sharedServices) {
     for (const leader of department.leaders) ids.add(leader.id);
+    for (const cluster of department.clusters ?? []) {
+      if (cluster.executiveSponsor) ids.add(cluster.executiveSponsor.id);
+      if (cluster.portfolioDirector) ids.add(cluster.portfolioDirector.id);
+      for (const project of cluster.projects) {
+        for (const leader of project.leaders) ids.add(leader.id);
+        for (const team of project.teams) {
+          for (const leader of team.leaders) ids.add(leader.id);
+          for (const worker of team.workers) ids.add(worker.id);
+        }
+        for (const worker of project.workers) ids.add(worker.id);
+      }
+    }
     for (const project of department.projects) {
+      for (const leader of project.leaders) ids.add(leader.id);
+      for (const team of project.teams) {
+        for (const leader of team.leaders) ids.add(leader.id);
+        for (const worker of team.workers) ids.add(worker.id);
+      }
+      for (const worker of project.workers) ids.add(worker.id);
+    }
+  }
+  for (const cluster of navigation.portfolioClusters ?? []) {
+    if (cluster.executiveSponsor) ids.add(cluster.executiveSponsor.id);
+    if (cluster.portfolioDirector) ids.add(cluster.portfolioDirector.id);
+    for (const project of cluster.projects) {
       for (const leader of project.leaders) ids.add(leader.id);
       for (const team of project.teams) {
         for (const leader of team.leaders) ids.add(leader.id);
@@ -320,6 +383,46 @@ function ProjectBlock({
   );
 }
 
+function ClusterBlock({
+  cluster,
+  agentMap,
+  liveRunByAgent,
+}: {
+  cluster: AgentNavigationClusterNode;
+  agentMap: Map<string, Agent>;
+  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+}) {
+  return (
+    <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+          Portfolio Cluster
+        </div>
+        <div className="text-lg font-semibold">{cluster.name}</div>
+        {cluster.summary ? (
+          <p className="mt-1 text-sm text-muted-foreground">{cluster.summary}</p>
+        ) : null}
+      </div>
+      {cluster.portfolioDirector ? (
+        <MemberBlock
+          label="Portfolio Director"
+          members={[cluster.portfolioDirector]}
+          agentMap={agentMap}
+          liveRunByAgent={liveRunByAgent}
+        />
+      ) : null}
+      {cluster.projects.map((project) => (
+        <ProjectBlock
+          key={`${cluster.clusterId}:${project.projectId}`}
+          project={project}
+          agentMap={agentMap}
+          liveRunByAgent={liveRunByAgent}
+        />
+      ))}
+    </section>
+  );
+}
+
 function DepartmentBlock({
   department,
   agentMap,
@@ -335,14 +438,23 @@ function DepartmentBlock({
         {department.name}
       </div>
       <MemberBlock label="Leads" members={department.leaders} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
-      {department.projects.map((project) => (
-        <ProjectBlock
-          key={`${department.key}:${project.projectId}`}
-          project={project}
-          agentMap={agentMap}
-          liveRunByAgent={liveRunByAgent}
-        />
-      ))}
+      {(department.clusters?.length ?? 0) > 0
+        ? (department.clusters ?? []).map((cluster) => (
+            <ClusterBlock
+              key={`${department.key}:${cluster.clusterId}`}
+              cluster={cluster}
+              agentMap={agentMap}
+              liveRunByAgent={liveRunByAgent}
+            />
+          ))
+        : department.projects.map((project) => (
+            <ProjectBlock
+              key={`${department.key}:${project.projectId}`}
+              project={project}
+              agentMap={agentMap}
+              liveRunByAgent={liveRunByAgent}
+            />
+          ))}
     </section>
   );
 }
@@ -656,14 +768,23 @@ export function Agents() {
                   liveRunByAgent={liveRunByAgent}
                 />
               ))
-            : filteredNavigation.projectPods.map((project) => (
-                <ProjectBlock
-                  key={project.projectId}
-                  project={project}
-                  agentMap={agentMap}
-                  liveRunByAgent={liveRunByAgent}
-                />
-              ))}
+            : (filteredNavigation.portfolioClusters?.length ?? 0) > 0
+              ? (filteredNavigation.portfolioClusters ?? []).map((cluster) => (
+                  <ClusterBlock
+                    key={cluster.clusterId}
+                    cluster={cluster}
+                    agentMap={agentMap}
+                    liveRunByAgent={liveRunByAgent}
+                  />
+                ))
+              : filteredNavigation.projectPods.map((project) => (
+                  <ProjectBlock
+                    key={project.projectId}
+                    project={project}
+                    agentMap={agentMap}
+                    liveRunByAgent={liveRunByAgent}
+                  />
+                ))}
 
           {filteredNavigation.sharedServices.length > 0 ? (
             <section className="space-y-4">

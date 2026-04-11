@@ -144,6 +144,25 @@ describe("project env routes", () => {
     );
   });
 
+  it("passes portfolioClusterId through project creation", async () => {
+    const portfolioClusterId = "11111111-1111-4111-8111-111111111111";
+    mockProjectService.create.mockResolvedValue(buildProject({ portfolioClusterId }));
+
+    const app = await createApp();
+    const res = await request(app)
+      .post("/api/companies/company-1/projects")
+      .send({
+        name: "Project",
+        portfolioClusterId,
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockProjectService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({ portfolioClusterId }),
+    );
+  });
+
   it("normalizes env bindings on update and avoids logging raw values", async () => {
     const normalizedEnv = {
       PLAIN_KEY: { type: "plain", value: "top-secret" },
@@ -172,6 +191,25 @@ describe("project env routes", () => {
           envKeys: ["PLAIN_KEY"],
         },
       }),
+    );
+  });
+
+  it("passes portfolioClusterId through project updates", async () => {
+    const portfolioClusterId = "22222222-2222-4222-8222-222222222222";
+    mockProjectService.getById.mockResolvedValue(buildProject());
+    mockProjectService.update.mockResolvedValue(buildProject({ portfolioClusterId }));
+
+    const app = await createApp();
+    const res = await request(app)
+      .patch("/api/projects/project-1")
+      .send({
+        portfolioClusterId,
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockProjectService.update).toHaveBeenCalledWith(
+      "project-1",
+      expect.objectContaining({ portfolioClusterId }),
     );
   });
 });

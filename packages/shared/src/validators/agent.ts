@@ -18,6 +18,7 @@ import { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "../adapt
 import type {
   AgentHierarchyMemberSummary,
   AgentNavigationDepartmentNode,
+  AgentNavigationClusterNode,
   AgentNavigationProjectNode,
   AgentNavigationTeamNode,
   AgentProjectScope,
@@ -33,6 +34,7 @@ import type {
   CompanyOperatingHierarchy,
   OperatingHierarchyAgentSummary,
   OperatingHierarchyDepartmentSummary,
+  OperatingHierarchyPortfolioClusterSummary,
   OperatingHierarchyProjectSummary,
 } from "../types/agent.js";
 import { envConfigSchema } from "./secret.js";
@@ -156,6 +158,8 @@ export const agentProjectScopeSchema = z.object({
   scopeMode: agentProjectScopeModeSchema,
   projectRole: agentProjectRoleSchema,
   isPrimary: z.boolean(),
+  teamFunctionKey: z.string().nullable().optional(),
+  teamFunctionLabel: z.string().nullable().optional(),
   workstreamKey: z.string().nullable(),
   workstreamLabel: z.string().nullable(),
   grantedByPrincipalType: actorPrincipalKindSchema.nullable(),
@@ -193,6 +197,16 @@ export const operatingHierarchyProjectSummarySchema = z.object({
   consultants: z.array(operatingHierarchyAgentSummarySchema),
 }).strict() satisfies z.ZodType<OperatingHierarchyProjectSummary>;
 
+export const operatingHierarchyPortfolioClusterSummarySchema = z.object({
+  clusterId: z.string().uuid(),
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  summary: z.string().nullable(),
+  executiveSponsor: operatingHierarchyAgentSummarySchema.nullable(),
+  portfolioDirector: operatingHierarchyAgentSummarySchema.nullable(),
+  projects: z.array(operatingHierarchyProjectSummarySchema),
+}).strict() satisfies z.ZodType<OperatingHierarchyPortfolioClusterSummary>;
+
 export const operatingHierarchyDepartmentSummarySchema = z.object({
   key: agentDepartmentKeySchema,
   name: z.string().min(1),
@@ -202,6 +216,7 @@ export const operatingHierarchyDepartmentSummarySchema = z.object({
 
 export const companyOperatingHierarchySchema = z.object({
   executiveOffice: z.array(operatingHierarchyAgentSummarySchema),
+  portfolioClusters: z.array(operatingHierarchyPortfolioClusterSummarySchema).optional().default([]),
   projectPods: z.array(operatingHierarchyProjectSummarySchema),
   sharedServices: z.array(operatingHierarchyDepartmentSummarySchema),
   unassigned: z.array(operatingHierarchyAgentSummarySchema),
@@ -223,10 +238,21 @@ export const agentNavigationProjectNodeSchema = z.object({
   workers: z.array(operatingHierarchyAgentSummarySchema),
 }).strict() satisfies z.ZodType<AgentNavigationProjectNode>;
 
+export const agentNavigationClusterNodeSchema = z.object({
+  clusterId: z.string().uuid(),
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  summary: z.string().nullable(),
+  executiveSponsor: operatingHierarchyAgentSummarySchema.nullable(),
+  portfolioDirector: operatingHierarchyAgentSummarySchema.nullable(),
+  projects: z.array(agentNavigationProjectNodeSchema),
+}).strict() satisfies z.ZodType<AgentNavigationClusterNode>;
+
 export const agentNavigationDepartmentNodeSchema = z.object({
   key: z.union([agentDepartmentKeySchema, z.literal("shared_service")]),
   name: z.string().min(1),
   leaders: z.array(operatingHierarchyAgentSummarySchema),
+  clusters: z.array(agentNavigationClusterNodeSchema).optional().default([]),
   projects: z.array(agentNavigationProjectNodeSchema),
 }).strict() satisfies z.ZodType<AgentNavigationDepartmentNode>;
 
@@ -234,6 +260,7 @@ export const companyAgentNavigationSchema = z.object({
   layout: agentNavigationLayoutSchema,
   executives: z.array(operatingHierarchyAgentSummarySchema),
   departments: z.array(agentNavigationDepartmentNodeSchema),
+  portfolioClusters: z.array(agentNavigationClusterNodeSchema).optional().default([]),
   projectPods: z.array(agentNavigationProjectNodeSchema),
   sharedServices: z.array(agentNavigationDepartmentNodeSchema),
   unassigned: z.array(operatingHierarchyAgentSummarySchema),

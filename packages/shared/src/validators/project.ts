@@ -100,6 +100,7 @@ const projectFields = {
   name: z.string().min(1),
   description: z.string().optional().nullable(),
   status: z.enum(PROJECT_STATUSES).optional().default("backlog"),
+  portfolioClusterId: z.string().uuid().optional().nullable(),
   leadAgentId: z.string().uuid().optional().nullable(),
   targetDate: z.string().optional().nullable(),
   color: z.string().optional().nullable(),

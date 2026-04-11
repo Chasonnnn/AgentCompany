@@ -19,6 +19,7 @@ import {
   issueExecutionDecisions,
   issues,
   issueComments,
+  portfolioClusters,
   projects,
 } from "@paperclipai/db";
 import {
@@ -183,6 +184,7 @@ interface HierarchyExecutiveGroup {
 interface ActiveScopeRow {
   scope: typeof agentProjectScopes.$inferSelect;
   projectId: string;
+  portfolioClusterId: string | null;
   projectName: string;
   projectColor: string | null;
 }
@@ -212,11 +214,32 @@ interface NavigationProjectGroup {
   workers: NormalizedAgentRow[];
 }
 
+interface NavigationClusterGroup {
+  clusterId: string;
+  name: string;
+  slug: string;
+  summary: string | null;
+  executiveSponsor: NormalizedAgentRow | null;
+  portfolioDirector: NormalizedAgentRow | null;
+  projects: Map<string, NavigationProjectGroup>;
+}
+
 interface NavigationDepartmentGroup {
   key: AgentDepartmentKey | "shared_service";
   name: string;
   leaders: NormalizedAgentRow[];
+  clusters: Map<string, NavigationClusterGroup>;
   projects: Map<string, NavigationProjectGroup>;
+}
+
+interface OperatingClusterGroup {
+  clusterId: string;
+  name: string;
+  slug: string;
+  summary: string | null;
+  executiveSponsor: NormalizedAgentRow | null;
+  portfolioDirector: NormalizedAgentRow | null;
+  projects: Map<string, ProjectPodGroup>;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -619,18 +642,14 @@ export function agentService(db: Db) {
     }
 
     if (state.orgLevel === "director") {
-      if (manager.orgLevel !== "executive") {
-        throw unprocessable("Directors must report to an executive");
+      if (manager.orgLevel !== "executive" && manager.orgLevel !== "director") {
+        throw unprocessable("Directors must report to an executive or another director");
       }
       return;
     }
 
     if (state.orgLevel === "staff" && manager.orgLevel !== "executive" && manager.orgLevel !== "director") {
       throw unprocessable("Staff must report to a director or executive");
-    }
-
-    if (manager.orgLevel !== "executive" && state.departmentKey !== manager.departmentKey) {
-      throw unprocessable("Agents must share the same department as their manager unless the manager is an executive");
     }
   }
 
@@ -823,6 +842,7 @@ export function agentService(db: Db) {
       .select({
         scope: agentProjectScopes,
         projectId: projects.id,
+        portfolioClusterId: projects.portfolioClusterId,
         projectName: projects.name,
         projectColor: projects.color,
       })
@@ -844,6 +864,7 @@ export function agentService(db: Db) {
     return rows.map((row) => ({
       scope: row.scope,
       projectId: row.projectId,
+      portfolioClusterId: row.portfolioClusterId ?? null,
       projectName: row.projectName,
       projectColor: row.projectColor,
     }));
@@ -901,53 +922,6 @@ export function agentService(db: Db) {
     return groups;
   }
 
-  function buildDepartmentProjectNode(
-    scopeRow: ActiveScopeRow,
-    agent: NormalizedAgentRow,
-    group: NavigationDepartmentGroup,
-  ) {
-    const projectGroup = group.projects.get(scopeRow.projectId) ?? {
-      projectId: scopeRow.projectId,
-      projectName: scopeRow.projectName,
-      color: scopeRow.projectColor,
-      leaders: [],
-      teams: new Map<string, NavigationTeamGroup>(),
-      workers: [],
-    };
-
-    const trimmedWorkstreamLabel = scopeRow.scope.workstreamLabel?.trim() || null;
-    const teamKey = scopeRow.scope.workstreamKey?.trim() || trimmedWorkstreamLabel;
-
-    if (scopeRow.scope.scopeMode === "execution" || scopeRow.scope.scopeMode === "consulting") {
-      if (teamKey && trimmedWorkstreamLabel) {
-        const team = projectGroup.teams.get(teamKey) ?? {
-          key: teamKey,
-          label: trimmedWorkstreamLabel,
-          leaders: [],
-          workers: [],
-        };
-        team.workers.push(agent);
-        projectGroup.teams.set(teamKey, team);
-      } else {
-        projectGroup.workers.push(agent);
-      }
-    } else if (teamKey && trimmedWorkstreamLabel) {
-      const team = projectGroup.teams.get(teamKey) ?? {
-        key: teamKey,
-        label: trimmedWorkstreamLabel,
-        leaders: [],
-        workers: [],
-      };
-      team.leaders.push(agent);
-      projectGroup.teams.set(teamKey, team);
-      projectGroup.leaders.push(agent);
-    } else {
-      projectGroup.leaders.push(agent);
-    }
-
-    group.projects.set(scopeRow.projectId, projectGroup);
-  }
-
   function serializeNavigationProject(group: NavigationProjectGroup) {
     return {
       projectId: group.projectId,
@@ -966,12 +940,159 @@ export function agentService(db: Db) {
     };
   }
 
+  function serializeProjectPodNavigation(group: ProjectPodGroup) {
+    return {
+      projectId: group.projectId,
+      projectName: group.projectName,
+      color: group.color,
+      leaders: sortOperatingAgents(dedupeById(group.leadership)).map(toOperatingSummary),
+      teams: [],
+      workers: sortOperatingAgents(dedupeById([...group.workers, ...group.consultants])).map(toOperatingSummary),
+    };
+  }
+
+  function serializeNavigationCluster(group: NavigationClusterGroup) {
+    return {
+      clusterId: group.clusterId,
+      name: group.name,
+      slug: group.slug,
+      summary: group.summary,
+      executiveSponsor: group.executiveSponsor ? toOperatingSummary(group.executiveSponsor) : null,
+      portfolioDirector: group.portfolioDirector ? toOperatingSummary(group.portfolioDirector) : null,
+      projects: Array.from(group.projects.values())
+        .sort((left, right) => left.projectName.localeCompare(right.projectName))
+        .map(serializeNavigationProject),
+    };
+  }
+
+  function scopeFunctionMeta(scopeRow: ActiveScopeRow, agent: NormalizedAgentRow) {
+    const explicitKey = scopeRow.scope.teamFunctionKey?.trim() || null;
+    const explicitLabel = scopeRow.scope.teamFunctionLabel?.trim() || null;
+    if (explicitKey || explicitLabel) {
+      return {
+        key: explicitKey ?? normalizeAgentUrlKey(explicitLabel ?? "function") ?? "function",
+        label: explicitLabel ?? explicitKey ?? "Function",
+      };
+    }
+
+    if (scopeRow.scope.projectRole === "director") return null;
+
+    return {
+      key:
+        agent.departmentKey === "custom"
+          ? normalizeAgentUrlKey(agent.departmentName ?? "custom") ?? "custom"
+          : agent.departmentKey,
+      label: departmentDisplayName(agent.departmentKey, agent.departmentName),
+    };
+  }
+
+  function getOrCreateProjectGroup(
+    projectMap: Map<string, NavigationProjectGroup>,
+    scopeRow: ActiveScopeRow,
+  ) {
+    const existing = projectMap.get(scopeRow.projectId);
+    if (existing) return existing;
+    const created: NavigationProjectGroup = {
+      projectId: scopeRow.projectId,
+      projectName: scopeRow.projectName,
+      color: scopeRow.projectColor,
+      leaders: [],
+      teams: new Map<string, NavigationTeamGroup>(),
+      workers: [],
+    };
+    projectMap.set(scopeRow.projectId, created);
+    return created;
+  }
+
+  function addScopeToProjectNavigation(
+    scopeRow: ActiveScopeRow,
+    agent: NormalizedAgentRow,
+    projectGroup: NavigationProjectGroup,
+  ) {
+    const functionMeta = scopeFunctionMeta(scopeRow, agent);
+
+    if (scopeRow.scope.scopeMode === "execution" || scopeRow.scope.scopeMode === "consulting") {
+      if (functionMeta) {
+        const team = projectGroup.teams.get(functionMeta.key) ?? {
+          key: functionMeta.key,
+          label: functionMeta.label,
+          leaders: [],
+          workers: [],
+        };
+        team.workers.push(agent);
+        projectGroup.teams.set(functionMeta.key, team);
+      } else {
+        projectGroup.workers.push(agent);
+      }
+      return;
+    }
+
+    if (scopeRow.scope.projectRole === "director" || !functionMeta) {
+      projectGroup.leaders.push(agent);
+      return;
+    }
+
+    const team = projectGroup.teams.get(functionMeta.key) ?? {
+      key: functionMeta.key,
+      label: functionMeta.label,
+      leaders: [],
+      workers: [],
+    };
+    team.leaders.push(agent);
+    projectGroup.teams.set(functionMeta.key, team);
+  }
+
+  function buildOperatingClusterGroups(
+    clusterRows: Array<typeof portfolioClusters.$inferSelect>,
+    scopeRows: ActiveScopeRow[],
+    agentsById: Map<string, NormalizedAgentRow>,
+    projectPods: Map<string, ProjectPodGroup>,
+  ) {
+    const projectClusterIds = new Map<string, string>();
+    for (const scopeRow of scopeRows) {
+      if (scopeRow.portfolioClusterId) {
+        projectClusterIds.set(scopeRow.projectId, scopeRow.portfolioClusterId);
+      }
+    }
+
+    const clusterGroups = new Map<string, OperatingClusterGroup>();
+    for (const clusterRow of clusterRows) {
+      clusterGroups.set(clusterRow.id, {
+        clusterId: clusterRow.id,
+        name: clusterRow.name,
+        slug: clusterRow.slug,
+        summary: clusterRow.summary ?? null,
+        executiveSponsor: clusterRow.executiveSponsorAgentId
+          ? (agentsById.get(clusterRow.executiveSponsorAgentId) ?? null)
+          : null,
+        portfolioDirector: clusterRow.portfolioDirectorAgentId
+          ? (agentsById.get(clusterRow.portfolioDirectorAgentId) ?? null)
+          : null,
+        projects: new Map<string, ProjectPodGroup>(),
+      });
+    }
+
+    for (const group of projectPods.values()) {
+      const clusterId = projectClusterIds.get(group.projectId);
+      if (!clusterId) continue;
+      const clusterGroup = clusterGroups.get(clusterId);
+      if (!clusterGroup) continue;
+      clusterGroup.projects.set(group.projectId, group);
+    }
+
+    return Array.from(clusterGroups.values())
+      .filter((group) => group.projects.size > 0 || group.portfolioDirector || group.executiveSponsor)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
   function buildNavigationByDepartment(
+    clusterRows: Array<typeof portfolioClusters.$inferSelect>,
     scopeRows: ActiveScopeRow[],
     agentsById: Map<string, NormalizedAgentRow>,
   ) {
     const departments = new Map<string, NavigationDepartmentGroup>();
     const sharedServices = new Map<string, NavigationDepartmentGroup>();
+    const clusterById = new Map(clusterRows.map((cluster) => [cluster.id, cluster] as const));
 
     for (const agent of agentsById.values()) {
       if (agent.operatingClass !== "shared_service_lead") continue;
@@ -981,6 +1102,7 @@ export function agentService(db: Db) {
         key: agent.departmentKey,
         name: departmentName,
         leaders: [],
+        clusters: new Map<string, NavigationClusterGroup>(),
         projects: new Map<string, NavigationProjectGroup>(),
       };
       group.leaders.push(agent);
@@ -998,18 +1120,39 @@ export function agentService(db: Db) {
         key: agent.departmentKey,
         name: departmentName,
         leaders: [],
+        clusters: new Map<string, NavigationClusterGroup>(),
         projects: new Map<string, NavigationProjectGroup>(),
       };
 
-      if (
-        scopeRow.scope.scopeMode === "leadership_summary" ||
-        scopeRow.scope.scopeMode === "leadership_raw" ||
-        agent.operatingClass === "project_leadership"
-      ) {
+      const functionMeta = scopeFunctionMeta(scopeRow, agent);
+      if (scopeRow.scope.scopeMode !== "execution" && scopeRow.scope.scopeMode !== "consulting" && functionMeta) {
         group.leaders.push(agent);
       }
 
-      buildDepartmentProjectNode(scopeRow, agent, group);
+      const clusterRow = scopeRow.portfolioClusterId ? clusterById.get(scopeRow.portfolioClusterId) ?? null : null;
+      const clusterGroup = clusterRow
+        ? group.clusters.get(clusterRow.id) ?? {
+          clusterId: clusterRow.id,
+          name: clusterRow.name,
+          slug: clusterRow.slug,
+          summary: clusterRow.summary ?? null,
+          executiveSponsor: clusterRow.executiveSponsorAgentId
+            ? (agentsById.get(clusterRow.executiveSponsorAgentId) ?? null)
+            : null,
+          portfolioDirector: clusterRow.portfolioDirectorAgentId
+            ? (agentsById.get(clusterRow.portfolioDirectorAgentId) ?? null)
+            : null,
+          projects: new Map<string, NavigationProjectGroup>(),
+        }
+        : null;
+
+      const departmentProject = getOrCreateProjectGroup(group.projects, scopeRow);
+      addScopeToProjectNavigation(scopeRow, agent, departmentProject);
+      if (clusterGroup) {
+        const clusterProject = getOrCreateProjectGroup(clusterGroup.projects, scopeRow);
+        addScopeToProjectNavigation(scopeRow, agent, clusterProject);
+        group.clusters.set(clusterRow!.id, clusterGroup);
+      }
       targetMap.set(departmentKeyValue, group);
     }
 
@@ -1022,6 +1165,9 @@ export function agentService(db: Db) {
           key: group.key,
           name: group.name,
           leaders: sortOperatingAgents(dedupeById(group.leaders)).map(toOperatingSummary),
+          clusters: Array.from(group.clusters.values())
+            .sort((left, right) => left.name.localeCompare(right.name))
+            .map(serializeNavigationCluster),
           projects: Array.from(group.projects.values())
             .sort((left, right) => left.projectName.localeCompare(right.projectName))
             .map(serializeNavigationProject),
@@ -1034,6 +1180,9 @@ export function agentService(db: Db) {
           key: group.key,
           name: group.name,
           leaders: sortOperatingAgents(dedupeById(group.leaders)).map(toOperatingSummary),
+          clusters: Array.from(group.clusters.values())
+            .sort((left, right) => left.name.localeCompare(right.name))
+            .map(serializeNavigationCluster),
           projects: Array.from(group.projects.values())
             .sort((left, right) => left.projectName.localeCompare(right.projectName))
             .map(serializeNavigationProject),
@@ -1638,17 +1787,22 @@ export function agentService(db: Db) {
     },
 
     operatingHierarchyForCompany: async (companyId: string) => {
-      const [rows, scopeRows] = await Promise.all([
+      const [rows, scopeRows, clusterRows] = await Promise.all([
         db
           .select()
           .from(agents)
           .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated"))),
         listActiveScopesForCompany(companyId),
+        db
+          .select()
+          .from(portfolioClusters)
+          .where(eq(portfolioClusters.companyId, companyId)),
       ]);
 
       const normalizedRows: NormalizedAgentRow[] = rows.map(normalizeAgentRow);
       const byId = new Map(normalizedRows.map((row) => [row.id, row]));
       const projectPods = buildProjectPodGroups(scopeRows, byId);
+      const portfolioClusterGroups = buildOperatingClusterGroups(clusterRows, scopeRows, byId, projectPods);
       const sharedServicesByDepartment = new Map<string, NavigationDepartmentGroup>();
       const scopedAgentIds = new Set(scopeRows.map((row) => row.scope.agentId));
       const unassigned: NormalizedAgentRow[] = [];
@@ -1661,6 +1815,7 @@ export function agentService(db: Db) {
             key: row.departmentKey,
             name: departmentName,
             leaders: [],
+            clusters: new Map<string, NavigationClusterGroup>(),
             projects: new Map<string, NavigationProjectGroup>(),
           };
           group.leaders.push(row);
@@ -1677,6 +1832,24 @@ export function agentService(db: Db) {
         executiveOffice: sortOperatingAgents(
           normalizedRows.filter((row) => row.operatingClass === "executive"),
         ).map(toOperatingSummary),
+        portfolioClusters: portfolioClusterGroups.map((group) => ({
+          clusterId: group.clusterId,
+          name: group.name,
+          slug: group.slug,
+          summary: group.summary,
+          executiveSponsor: group.executiveSponsor ? toOperatingSummary(group.executiveSponsor) : null,
+          portfolioDirector: group.portfolioDirector ? toOperatingSummary(group.portfolioDirector) : null,
+          projects: Array.from(group.projects.values())
+            .sort((left, right) => left.projectName.localeCompare(right.projectName))
+            .map((project) => ({
+              projectId: project.projectId,
+              projectName: project.projectName,
+              color: project.color,
+              leadership: sortOperatingAgents(dedupeById(project.leadership)).map(toOperatingSummary),
+              workers: sortOperatingAgents(dedupeById(project.workers)).map(toOperatingSummary),
+              consultants: sortOperatingAgents(dedupeById(project.consultants)).map(toOperatingSummary),
+            })),
+        })),
         projectPods: Array.from(projectPods.values())
           .sort((left, right) => left.projectName.localeCompare(right.projectName))
           .map((group) => ({
@@ -1702,17 +1875,22 @@ export function agentService(db: Db) {
     },
 
     navigationForCompany: async (companyId: string, layout: AgentNavigationLayout = "department") => {
-      const [rows, scopeRows] = await Promise.all([
+      const [rows, scopeRows, clusterRows] = await Promise.all([
         db
           .select()
           .from(agents)
           .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated"))),
         listActiveScopesForCompany(companyId),
+        db
+          .select()
+          .from(portfolioClusters)
+          .where(eq(portfolioClusters.companyId, companyId)),
       ]);
       const normalizedRows: NormalizedAgentRow[] = rows.map(normalizeAgentRow);
       const byId = new Map(normalizedRows.map((row) => [row.id, row]));
       const projectPods = buildProjectPodGroups(scopeRows, byId);
-      const departmentNavigation = buildNavigationByDepartment(scopeRows, byId);
+      const departmentNavigation = buildNavigationByDepartment(clusterRows, scopeRows, byId);
+      const portfolioClusterGroups = buildOperatingClusterGroups(clusterRows, scopeRows, byId, projectPods);
       const scopedAgentIds = new Set(scopeRows.map((row) => row.scope.agentId));
 
       return {
@@ -1721,16 +1899,20 @@ export function agentService(db: Db) {
           normalizedRows.filter((row) => row.operatingClass === "executive"),
         ).map(toOperatingSummary),
         departments: departmentNavigation.departments,
+        portfolioClusters: portfolioClusterGroups.map((group) => ({
+          clusterId: group.clusterId,
+          name: group.name,
+          slug: group.slug,
+          summary: group.summary,
+          executiveSponsor: group.executiveSponsor ? toOperatingSummary(group.executiveSponsor) : null,
+          portfolioDirector: group.portfolioDirector ? toOperatingSummary(group.portfolioDirector) : null,
+          projects: Array.from(group.projects.values())
+            .sort((left, right) => left.projectName.localeCompare(right.projectName))
+            .map(serializeProjectPodNavigation),
+        })),
         projectPods: Array.from(projectPods.values())
           .sort((left, right) => left.projectName.localeCompare(right.projectName))
-          .map((group) => ({
-            projectId: group.projectId,
-            projectName: group.projectName,
-            color: group.color,
-            leaders: sortOperatingAgents(dedupeById(group.leadership)).map(toOperatingSummary),
-            teams: [],
-            workers: sortOperatingAgents(dedupeById([...group.workers, ...group.consultants])).map(toOperatingSummary),
-          })),
+          .map(serializeProjectPodNavigation),
         sharedServices: departmentNavigation.sharedServices,
         unassigned: sortOperatingAgents(
           normalizedRows.filter(

@@ -5,6 +5,7 @@ import { ChevronRight, FolderTree, Plus } from "lucide-react";
 import type {
   Agent,
   AgentHierarchyMemberSummary,
+  AgentNavigationClusterNode,
   AgentNavigationDepartmentNode,
   AgentNavigationLayout,
   AgentNavigationProjectNode,
@@ -240,6 +241,53 @@ function ProjectSection({
   );
 }
 
+function ClusterSection({
+  cluster,
+  agentMap,
+  liveCountByAgent,
+  activeAgentId,
+  activeTab,
+  depth,
+}: {
+  cluster: AgentNavigationClusterNode;
+  agentMap: Map<string, Agent>;
+  liveCountByAgent: Map<string, number>;
+  activeAgentId: string | null;
+  activeTab: string | null;
+  depth: number;
+}) {
+  if ((cluster.portfolioDirector == null) && cluster.projects.length === 0) {
+    return null;
+  }
+
+  return (
+    <HierarchyFolder label={cluster.name} depth={depth}>
+      {cluster.portfolioDirector ? (
+        <HierarchyFolder label="Portfolio Director" depth={depth + 1}>
+          <MemberList
+            members={[cluster.portfolioDirector]}
+            agentMap={agentMap}
+            liveCountByAgent={liveCountByAgent}
+            activeAgentId={activeAgentId}
+            activeTab={activeTab}
+          />
+        </HierarchyFolder>
+      ) : null}
+      {cluster.projects.map((project) => (
+        <ProjectSection
+          key={`${cluster.clusterId}:${project.projectId}`}
+          project={project}
+          agentMap={agentMap}
+          liveCountByAgent={liveCountByAgent}
+          activeAgentId={activeAgentId}
+          activeTab={activeTab}
+          depth={depth + 1}
+        />
+      ))}
+    </HierarchyFolder>
+  );
+}
+
 function DepartmentSection({
   department,
   agentMap,
@@ -255,7 +303,9 @@ function DepartmentSection({
   activeTab: string | null;
   depth: number;
 }) {
-  if (department.leaders.length === 0 && department.projects.length === 0) return null;
+  const clusters = department.clusters ?? [];
+  const hasClusterTree = clusters.length > 0;
+  if (department.leaders.length === 0 && clusters.length === 0 && department.projects.length === 0) return null;
 
   return (
     <HierarchyFolder label={department.name} depth={depth}>
@@ -270,17 +320,29 @@ function DepartmentSection({
           />
         </HierarchyFolder>
       ) : null}
-      {department.projects.map((project) => (
-        <ProjectSection
-          key={`${department.key}:${project.projectId}`}
-          project={project}
-          agentMap={agentMap}
-          liveCountByAgent={liveCountByAgent}
-          activeAgentId={activeAgentId}
-          activeTab={activeTab}
-          depth={depth + 1}
-        />
-      ))}
+      {hasClusterTree
+        ? clusters.map((cluster) => (
+            <ClusterSection
+              key={`${department.key}:${cluster.clusterId}`}
+              cluster={cluster}
+              agentMap={agentMap}
+              liveCountByAgent={liveCountByAgent}
+              activeAgentId={activeAgentId}
+              activeTab={activeTab}
+              depth={depth + 1}
+            />
+          ))
+        : department.projects.map((project) => (
+            <ProjectSection
+              key={`${department.key}:${project.projectId}`}
+              project={project}
+              agentMap={agentMap}
+              liveCountByAgent={liveCountByAgent}
+              activeAgentId={activeAgentId}
+              activeTab={activeTab}
+              depth={depth + 1}
+            />
+          ))}
     </HierarchyFolder>
   );
 }
@@ -356,6 +418,20 @@ function NavigationContent({
             ))}
           </HierarchyFolder>
         ) : null
+      ) : (navigation.portfolioClusters?.length ?? 0) > 0 ? (
+        <HierarchyFolder label="Portfolio Clusters">
+          {(navigation.portfolioClusters ?? []).map((cluster) => (
+            <ClusterSection
+              key={cluster.clusterId}
+              cluster={cluster}
+              agentMap={agentMap}
+              liveCountByAgent={liveCountByAgent}
+              activeAgentId={activeAgentId}
+              activeTab={activeTab}
+              depth={1}
+            />
+          ))}
+        </HierarchyFolder>
       ) : navigation.projectPods.length > 0 ? (
         <HierarchyFolder label="Project Pods">
           {navigation.projectPods.map((project) => (

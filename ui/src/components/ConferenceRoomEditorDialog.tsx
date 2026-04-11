@@ -64,6 +64,22 @@ export function ConferenceRoomEditorDialog({
   const leaderIds = useMemo(() => collectLeaderIds(hierarchy), [hierarchy]);
   const executiveIds = useMemo(() => collectExecutiveIds(hierarchy), [hierarchy]);
   const bulkGroups = useMemo(() => conferenceRoomLeadershipBulkGroups(hierarchy), [hierarchy]);
+  const clusterLeadershipGroups = useMemo(
+    () =>
+      (hierarchy.portfolioClusters ?? [])
+        .map((cluster) => ({
+          clusterId: cluster.clusterId,
+          name: cluster.name,
+          leaders: Array.from(new Map([
+            ...(cluster.portfolioDirector ? [[cluster.portfolioDirector.id, cluster.portfolioDirector] as const] : []),
+            ...cluster.projects.flatMap((project) =>
+              project.leadership.map((leader) => [leader.id, leader] as const),
+            ),
+          ]).values()),
+        }))
+        .filter((cluster) => cluster.leaders.length > 0),
+    [hierarchy],
+  );
 
   function toggleIssue(issueId: string, checked: boolean) {
     setDraft((current) => ({
@@ -221,22 +237,37 @@ export function ConferenceRoomEditorDialog({
                 </div>
               ) : null}
 
-              {hierarchy.projectPods.map((project) =>
-                project.leadership.length > 0 ? (
-                  <div key={project.projectId} className="space-y-2 rounded-xl border border-border/60 p-3">
-                    <p className="text-sm font-medium">{project.projectName}</p>
-                    {project.leadership.map((leader) => (
-                      <label key={leader.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
-                        <Checkbox
-                          checked={draft.participantAgentIds.includes(leader.id)}
-                          onCheckedChange={(next) => toggleParticipant(leader.id, next === true)}
-                        />
-                        <span className="text-sm">{leader.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                ) : null,
-              )}
+              {clusterLeadershipGroups.length > 0
+                ? clusterLeadershipGroups.map((cluster) => (
+                    <div key={cluster.clusterId} className="space-y-2 rounded-xl border border-border/60 p-3">
+                      <p className="text-sm font-medium">{cluster.name}</p>
+                      {cluster.leaders.map((leader) => (
+                        <label key={leader.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
+                          <Checkbox
+                            checked={draft.participantAgentIds.includes(leader.id)}
+                            onCheckedChange={(next) => toggleParticipant(leader.id, next === true)}
+                          />
+                          <span className="text-sm">{leader.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ))
+                : hierarchy.projectPods.map((project) =>
+                    project.leadership.length > 0 ? (
+                      <div key={project.projectId} className="space-y-2 rounded-xl border border-border/60 p-3">
+                        <p className="text-sm font-medium">{project.projectName}</p>
+                        {project.leadership.map((leader) => (
+                          <label key={leader.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
+                            <Checkbox
+                              checked={draft.participantAgentIds.includes(leader.id)}
+                              onCheckedChange={(next) => toggleParticipant(leader.id, next === true)}
+                            />
+                            <span className="text-sm">{leader.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : null,
+                  )}
             </div>
 
             {hierarchy.sharedServices.length > 0 ? (
