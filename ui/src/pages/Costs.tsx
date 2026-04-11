@@ -45,7 +45,10 @@ function currentWeekRange(): { from: string; to: string } {
 }
 
 function ProviderTabLabel({ provider, rows }: { provider: string; rows: CostByProviderModel[] }) {
-  const totalTokens = rows.reduce((sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.outputTokens, 0);
+  const totalTokens = rows.reduce(
+    (sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.cacheCreationInputTokens + row.outputTokens,
+    0,
+  );
   const totalCost = rows.reduce((sum, row) => sum + row.costCents, 0);
   return (
     <span className="flex items-center gap-1.5">
@@ -57,7 +60,10 @@ function ProviderTabLabel({ provider, rows }: { provider: string; rows: CostByPr
 }
 
 function BillerTabLabel({ biller, rows }: { biller: string; rows: CostByBiller[] }) {
-  const totalTokens = rows.reduce((sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.outputTokens, 0);
+  const totalTokens = rows.reduce(
+    (sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.cacheCreationInputTokens + row.outputTokens,
+    0,
+  );
   const totalCost = rows.reduce((sum, row) => sum + row.costCents, 0);
   return (
     <span className="flex items-center gap-1.5">
@@ -284,7 +290,10 @@ export function Costs() {
       map.set(row.agentId, rows);
     }
     for (const [agentId, rows] of map) {
-      map.set(agentId, rows.slice().sort((a, b) => b.costCents - a.costCents));
+      map.set(
+        agentId,
+        rows.slice().sort((a, b) => b.costCents - a.costCents || b.estimatedApiCostCents - a.estimatedApiCostCents),
+      );
     }
     return map;
   }, [spendData?.byAgentModel]);
@@ -452,7 +461,13 @@ export function Costs() {
   const providerTabItems = useMemo(() => {
     const providerKeys = Array.from(byProvider.keys());
     const allTokens = providerKeys.reduce(
-      (sum, provider) => sum + (byProvider.get(provider)?.reduce((acc, row) => acc + row.inputTokens + row.cachedInputTokens + row.outputTokens, 0) ?? 0),
+      (sum, provider) =>
+        sum + (
+          byProvider.get(provider)?.reduce(
+            (acc, row) => acc + row.inputTokens + row.cachedInputTokens + row.cacheCreationInputTokens + row.outputTokens,
+            0,
+          ) ?? 0
+        ),
       0,
     );
     const allCents = providerKeys.reduce(
@@ -484,7 +499,13 @@ export function Costs() {
   const billerTabItems = useMemo(() => {
     const billerKeys = Array.from(byBiller.keys());
     const allTokens = billerKeys.reduce(
-      (sum, biller) => sum + (byBiller.get(biller)?.reduce((acc, row) => acc + row.inputTokens + row.cachedInputTokens + row.outputTokens, 0) ?? 0),
+      (sum, biller) =>
+        sum + (
+          byBiller.get(biller)?.reduce(
+            (acc, row) => acc + row.inputTokens + row.cachedInputTokens + row.cacheCreationInputTokens + row.outputTokens,
+            0,
+          ) ?? 0
+        ),
       0,
     );
     const allCents = billerKeys.reduce(
@@ -515,7 +536,7 @@ export function Costs() {
 
   const inferenceTokenTotal =
     (spendData?.byAgent ?? []).reduce(
-      (sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.outputTokens,
+      (sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.cacheCreationInputTokens + row.outputTokens,
       0,
     );
 
@@ -579,12 +600,18 @@ export function Costs() {
             </div>
           ) : null}
 
-          <div className="grid gap-3 lg:grid-cols-4">
+          <div className="grid gap-3 lg:grid-cols-5">
             <MetricTile
               label="Inference spend"
               value={formatCents(spendData?.summary.spendCents ?? 0)}
               subtitle={`${formatTokens(inferenceTokenTotal)} tokens across request-scoped events`}
               icon={DollarSign}
+            />
+            <MetricTile
+              label="API-equivalent"
+              value={formatCents(spendData?.summary.estimatedApiCostCents ?? 0)}
+              subtitle="Codex + Claude list-price estimate only; budgets ignore this"
+              icon={Coins}
             />
             <MetricTile
               label="Budget"
@@ -673,6 +700,9 @@ export function Costs() {
                             ? `Budget ${formatCents(spendData.summary.budgetCents)}`
                             : "Unlimited budget"}
                         </div>
+                        <div className="mt-1 text-sm text-muted-foreground">
+                          API-equivalent {formatCents(spendData?.summary.estimatedApiCostCents ?? 0)} · Codex + Claude only · budgets use billed spend
+                        </div>
                       </div>
                       <div className="border border-border px-4 py-3 text-right">
                         <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">usage</div>
@@ -717,7 +747,7 @@ export function Costs() {
                 <Card>
                   <CardHeader className="px-5 pt-5 pb-2">
                     <CardTitle className="text-base">By agent</CardTitle>
-                    <CardDescription>What each agent consumed in the selected period.</CardDescription>
+                    <CardDescription>Actual billed spend first; API-equivalent is informational only.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2 px-5 pb-5 pt-2">
                     {(spendData?.byAgent.length ?? 0) === 0 ? (
@@ -746,8 +776,13 @@ export function Costs() {
                               </div>
                               <div className="text-right text-sm tabular-nums">
                                 <div className="font-medium">{formatCents(row.costCents)}</div>
+                                {row.estimatedApiCostCents > 0 ? (
+                                  <div className="text-xs text-muted-foreground">
+                                    API-equivalent {formatCents(row.estimatedApiCostCents)}
+                                  </div>
+                                ) : null}
                                 <div className="text-xs text-muted-foreground">
-                                  in {formatTokens(row.inputTokens + row.cachedInputTokens)} · out {formatTokens(row.outputTokens)}
+                                  in {formatTokens(row.inputTokens + row.cachedInputTokens + row.cacheCreationInputTokens)} · out {formatTokens(row.outputTokens)}
                                 </div>
                                 {(row.apiRunCount > 0 || row.subscriptionRunCount > 0) ? (
                                   <div className="text-xs text-muted-foreground">
@@ -764,7 +799,9 @@ export function Costs() {
                             {isExpanded && modelRows.length > 0 ? (
                               <div className="mt-3 space-y-2 border-l border-border pl-4">
                                 {modelRows.map((modelRow) => {
-                                  const sharePct = row.costCents > 0 ? Math.round((modelRow.costCents / row.costCents) * 100) : 0;
+                                  const shareDenominator = row.costCents > 0 ? row.costCents : row.estimatedApiCostCents;
+                                  const shareNumerator = row.costCents > 0 ? modelRow.costCents : modelRow.estimatedApiCostCents;
+                                  const sharePct = shareDenominator > 0 ? Math.round((shareNumerator / shareDenominator) * 100) : 0;
                                   return (
                                     <div
                                       key={`${modelRow.provider}:${modelRow.model}:${modelRow.billingType}`}
@@ -785,8 +822,13 @@ export function Costs() {
                                           {formatCents(modelRow.costCents)}
                                           <span className="ml-1 font-normal text-muted-foreground">({sharePct}%)</span>
                                         </div>
+                                        {modelRow.estimatedApiCostCents > 0 ? (
+                                          <div className="text-muted-foreground">
+                                            API-equivalent {formatCents(modelRow.estimatedApiCostCents)}
+                                          </div>
+                                        ) : null}
                                         <div className="text-muted-foreground">
-                                          {formatTokens(modelRow.inputTokens + modelRow.cachedInputTokens + modelRow.outputTokens)} tok
+                                          {formatTokens(modelRow.inputTokens + modelRow.cachedInputTokens + modelRow.cacheCreationInputTokens + modelRow.outputTokens)} tok
                                         </div>
                                       </div>
                                     </div>
@@ -817,7 +859,14 @@ export function Costs() {
                             className="flex items-center justify-between gap-3 border border-border px-3 py-2 text-sm"
                           >
                             <span className="truncate">{row.projectName ?? row.projectId ?? "Unattributed"}</span>
-                            <span className="font-medium tabular-nums">{formatCents(row.costCents)}</span>
+                            <div className="text-right tabular-nums">
+                              <div className="font-medium">{formatCents(row.costCents)}</div>
+                              {row.estimatedApiCostCents > 0 ? (
+                                <div className="text-xs text-muted-foreground">
+                                  API-equivalent {formatCents(row.estimatedApiCostCents)}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                         ))
                       )}

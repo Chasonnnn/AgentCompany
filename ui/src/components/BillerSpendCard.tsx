@@ -20,20 +20,30 @@ export function BillerSpendCard({
   providerRows,
 }: BillerSpendCardProps) {
   const providerBreakdown = useMemo(() => {
-    const map = new Map<string, { provider: string; costCents: number; inputTokens: number; outputTokens: number }>();
+    const map = new Map<string, {
+      provider: string;
+      costCents: number;
+      estimatedApiCostCents: number;
+      inputTokens: number;
+      outputTokens: number;
+    }>();
     for (const entry of providerRows) {
       const current = map.get(entry.provider) ?? {
         provider: entry.provider,
         costCents: 0,
+        estimatedApiCostCents: 0,
         inputTokens: 0,
         outputTokens: 0,
       };
       current.costCents += entry.costCents;
-      current.inputTokens += entry.inputTokens + entry.cachedInputTokens;
+      current.estimatedApiCostCents += entry.estimatedApiCostCents;
+      current.inputTokens += entry.inputTokens + entry.cachedInputTokens + entry.cacheCreationInputTokens;
       current.outputTokens += entry.outputTokens;
       map.set(entry.provider, current);
     }
-    return Array.from(map.values()).sort((a, b) => b.costCents - a.costCents);
+    return Array.from(map.values()).sort(
+      (a, b) => b.costCents - a.costCents || b.estimatedApiCostCents - a.estimatedApiCostCents,
+    );
   }, [providerRows]);
 
   const billingTypeBreakdown = useMemo(() => {
@@ -61,8 +71,8 @@ export function BillerSpendCard({
             <CardTitle className="text-sm font-semibold">
               {providerDisplayName(row.biller)}
             </CardTitle>
-            <CardDescription className="text-xs mt-0.5">
-              <span className="font-mono">{formatTokens(row.inputTokens + row.cachedInputTokens)}</span> in
+          <CardDescription className="text-xs mt-0.5">
+              <span className="font-mono">{formatTokens(row.inputTokens + row.cachedInputTokens + row.cacheCreationInputTokens)}</span> in
               {" · "}
               <span className="font-mono">{formatTokens(row.outputTokens)}</span> out
               {" · "}
@@ -71,9 +81,14 @@ export function BillerSpendCard({
               {row.modelCount} model{row.modelCount === 1 ? "" : "s"}
             </CardDescription>
           </div>
-          <span className="text-xl font-bold tabular-nums shrink-0">
-            {formatCents(row.costCents)}
-          </span>
+          <div className="text-right shrink-0 tabular-nums">
+            <div className="text-xl font-bold">{formatCents(row.costCents)}</div>
+            {row.estimatedApiCostCents > 0 ? (
+              <div className="text-[11px] text-muted-foreground">
+                API-equivalent {formatCents(row.estimatedApiCostCents)}
+              </div>
+            ) : null}
+          </div>
         </div>
       </CardHeader>
 
@@ -129,6 +144,11 @@ export function BillerSpendCard({
                     <span className="text-muted-foreground">{providerDisplayName(entry.provider)}</span>
                     <div className="text-right tabular-nums">
                       <div className="font-medium">{formatCents(entry.costCents)}</div>
+                      {entry.estimatedApiCostCents > 0 ? (
+                        <div className="text-muted-foreground">
+                          API-equivalent {formatCents(entry.estimatedApiCostCents)}
+                        </div>
+                      ) : null}
                       <div className="text-muted-foreground">
                         {formatTokens(entry.inputTokens + entry.outputTokens)} tok
                       </div>
