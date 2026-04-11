@@ -3079,10 +3079,19 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
     setClaudeLoginResult(null);
   }, [run.id]);
 
-  const cancelRun = useMutation({
+  const stopRun = useMutation({
     mutationFn: () => heartbeatsApi.cancel(run.id),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.runDetail(run.id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.companyId, run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(run.companyId) });
+      const context = asRecord(run.contextSnapshot);
+      const issueId = context ? asNonEmptyString(context.issueId) : null;
+      if (issueId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId) });
+      }
     },
   });
   const canResumeLostRun = run.errorCode === "process_lost" && run.status === "failed";
@@ -3225,10 +3234,10 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                   variant="ghost"
                   size="sm"
                   className="text-destructive hover:text-destructive text-xs h-6 px-2"
-                  onClick={() => cancelRun.mutate()}
-                  disabled={cancelRun.isPending}
+                  onClick={() => stopRun.mutate()}
+                  disabled={stopRun.isPending}
                 >
-                  {cancelRun.isPending ? "Cancelling…" : "Cancel"}
+                  {stopRun.isPending ? "Stopping..." : "Stop"}
                 </Button>
               )}
               {canResumeLostRun && (

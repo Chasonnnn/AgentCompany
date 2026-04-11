@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Issue } from "@paperclipai/shared";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../adapters";
@@ -8,7 +8,7 @@ import { issuesApi } from "../api/issues";
 import { uniqueRunsByAgent } from "../lib/dashboard-runs";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, relativeTime } from "../lib/utils";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Square } from "lucide-react";
 import { Identity } from "./Identity";
 import { RunChatSurface } from "./RunChatSurface";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
@@ -24,6 +24,8 @@ interface ActiveAgentsPanelProps {
 }
 
 export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
+  const queryClient = useQueryClient();
+  const [stoppingRunIds, setStoppingRunIds] = useState(new Set<string>());
   const { data: liveRuns } = useQuery({
     queryKey: [...queryKeys.liveRuns(companyId), "dashboard"],
     queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, MIN_DASHBOARD_RUNS),
@@ -50,6 +52,27 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
     maxChunksPerRun: 120,
   });
 
+  const handleStopRun = async (run: LiveRunForIssue) => {
+    setStoppingRunIds((current) => new Set(current).add(run.id));
+    try {
+      await heartbeatsApi.cancel(run.id);
+      queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(companyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(companyId) });
+      if (run.issueId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(run.issueId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(run.issueId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(run.issueId) });
+      }
+    } finally {
+      setStoppingRunIds((current) => {
+        const next = new Set(current);
+        next.delete(run.id);
+        return next;
+      });
+    }
+  };
+
   return (
     <div>
       <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -70,6 +93,10 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
               transcript={transcriptByRun.get(run.id) ?? []}
               hasOutput={hasOutputForRun(run.id)}
               isActive={isRunActive(run)}
+              stopping={stoppingRunIds.has(run.id)}
+              onStopRun={() => {
+                void handleStopRun(run);
+              }}
             />
           ))}
         </div>
@@ -85,6 +112,8 @@ function AgentRunCard({
   transcript,
   hasOutput,
   isActive,
+  stopping,
+  onStopRun,
 }: {
   companyId: string;
   run: LiveRunForIssue;
@@ -92,6 +121,8 @@ function AgentRunCard({
   transcript: TranscriptEntry[];
   hasOutput: boolean;
   isActive: boolean;
+  stopping: boolean;
+  onStopRun: () => void;
 }) {
   return (
     <div className={cn(
@@ -125,6 +156,17 @@ function AgentRunCard({
           >
             <ExternalLink className="h-2.5 w-2.5" />
           </Link>
+          {isActive ? (
+            <button
+              type="button"
+              onClick={onStopRun}
+              disabled={stopping}
+              className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/[0.06] px-2 py-1 text-[10px] font-medium text-red-700 transition-colors hover:bg-red-500/[0.12] dark:text-red-300 disabled:opacity-50"
+            >
+              <Square className="h-2.5 w-2.5" fill="currentColor" />
+              {stopping ? "Stopping..." : "Stop"}
+            </button>
+          ) : null}
         </div>
 
         {run.issueId && (

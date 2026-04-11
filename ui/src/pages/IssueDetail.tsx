@@ -701,13 +701,29 @@ export function IssueDetail() {
   const invalidateIssueDetail = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!) });
-  }, [issueId, queryClient]);
+  }, [issueId, queryClient, selectedCompanyId]);
 
   const invalidateIssueRunState = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId!) });
+    if (selectedCompanyId) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(selectedCompanyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(selectedCompanyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId) });
+    }
   }, [issueId, queryClient]);
+
+  const logIssueRunStop = useCallback((stage: string, details: Record<string, unknown> = {}) => {
+    const route = typeof window === "undefined"
+      ? null
+      : `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    console.warn(`[paperclip][issue-run-stop] ${stage} ${JSON.stringify({
+      issueId: issueId ?? null,
+      route,
+      ...details,
+    })}`);
+  }, [issueId]);
 
   const invalidateIssueCollections = useCallback(() => {
     if (selectedCompanyId) {
@@ -1022,9 +1038,10 @@ export function IssueDetail() {
     },
   });
 
-  const interruptQueuedComment = useMutation({
+  const stopIssueRun = useMutation({
     mutationFn: (runId: string) => heartbeatsApi.cancel(runId),
     onMutate: async (runId) => {
+      logIssueRunStop("request", { runId });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.runs(issueId!) });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.activeRun(issueId!) });
@@ -1055,6 +1072,11 @@ export function IssueDetail() {
         queryKeys.issues.activeRun(issueId!),
         (current: typeof activeRun) => (current?.id === runId ? null : current),
       );
+      logIssueRunStop("optimistic-clear", {
+        runId,
+        hadActiveRun: cachedActiveRun?.id === runId,
+        liveRunCountBefore: liveRunList.length,
+      });
 
       return {
         previousRuns,
@@ -1065,9 +1087,10 @@ export function IssueDetail() {
     onSuccess: () => {
       invalidateIssueDetail();
       invalidateIssueRunState();
+      logIssueRunStop("success");
       pushToast({
-        title: "Interrupt requested",
-        body: "The active run is stopping so queued comments can continue next.",
+        title: "Stop requested",
+        body: "The active run is stopping. Queued follow-up work can continue after the issue lock is released.",
         tone: "success",
       });
     },
@@ -1075,9 +1098,12 @@ export function IssueDetail() {
       queryClient.setQueryData(queryKeys.issues.runs(issueId!), context?.previousRuns);
       queryClient.setQueryData(queryKeys.issues.liveRuns(issueId!), context?.previousLiveRuns);
       queryClient.setQueryData(queryKeys.issues.activeRun(issueId!), context?.previousActiveRun);
+      logIssueRunStop("error", {
+        message: err instanceof Error ? err.message : String(err),
+      });
       pushToast({
-        title: "Interrupt failed",
-        body: err instanceof Error ? err.message : "Unable to interrupt the active run",
+        title: "Stop failed",
+        body: err instanceof Error ? err.message : "Unable to stop the active run",
         tone: "error",
       });
     },
@@ -1218,9 +1244,9 @@ export function IssueDetail() {
 
   const handleInterruptQueued = useCallback(
     async (runId: string) => {
-      await interruptQueuedComment.mutateAsync(runId);
+      await stopIssueRun.mutateAsync(runId);
     },
-    [interruptQueuedComment.mutateAsync],
+    [stopIssueRun.mutateAsync],
   );
 
   const handleCommentImageUpload = useCallback(
@@ -2104,7 +2130,8 @@ export function IssueDetail() {
                 suggestedAssigneeValue={suggestedAssigneeValue}
                 mentions={mentionOptions}
                 onInterruptQueued={handleInterruptQueued}
-                interruptingQueuedRunId={interruptQueuedComment.isPending ? interruptQueuedComment.variables ?? null : null}
+                interruptingQueuedRunId={stopIssueRun.isPending ? stopIssueRun.variables ?? null : null}
+                cancellingRunId={stopIssueRun.isPending ? stopIssueRun.variables ?? null : null}
                 composerDisabledReason={commentComposerDisabledReason}
                 onVote={handleCommentVote}
                 onAdd={handleCommentAdd}
@@ -2112,7 +2139,7 @@ export function IssueDetail() {
                 onAttachImage={handleCommentAttachImage}
                 onCancelRun={runningIssueRun
                   ? async () => {
-                      await interruptQueuedComment.mutateAsync(runningIssueRun.id);
+                      await stopIssueRun.mutateAsync(runningIssueRun.id);
                     }
                   : undefined}
                 onImageClick={handleChatImageClick}

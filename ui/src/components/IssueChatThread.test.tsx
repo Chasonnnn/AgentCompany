@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { IssueChatThread, resolveAssistantMessageFoldedState } from "./IssueChatThread";
+import { IssueChatThread, buildIssueChatRuntimeResetKey, resolveAssistantMessageFoldedState } from "./IssueChatThread";
 
 const { markdownEditorFocusMock } = vi.hoisted(() => ({
   markdownEditorFocusMock: vi.fn(),
@@ -338,6 +338,72 @@ describe("IssueChatThread", () => {
     });
   });
 
+  it("shows a stop control for active runs and clears it when the run disappears", () => {
+    const root = createRoot(container);
+    const onCancelRun = vi.fn().mockResolvedValue(undefined);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={[]}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[{
+              id: "run-1",
+              status: "running",
+              invocationSource: "manual",
+              triggerDetail: null,
+              startedAt: "2026-04-06T12:04:00.000Z",
+              finishedAt: null,
+              createdAt: "2026-04-06T12:04:00.000Z",
+              agentId: "agent-1",
+              agentName: "CTO",
+              adapterType: "codex_local",
+              issueId: "issue-1",
+            }]}
+            onAdd={async () => {}}
+            onCancelRun={onCancelRun}
+            cancellingRunId={null}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const stopButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Stop"));
+    expect(stopButton).toBeTruthy();
+
+    act(() => {
+      stopButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onCancelRun).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={[]}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={async () => {}}
+            onCancelRun={onCancelRun}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).not.toContain("Stop");
+    const editor = container.querySelector('textarea[aria-label="Issue chat editor"]') as HTMLTextAreaElement | null;
+    expect(editor).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("exposes a composer focus handle that forwards to the editor", () => {
     const root = createRoot(container);
     const composerRef = createRef<{ focus: () => void }>();
@@ -405,5 +471,16 @@ describe("IssueChatThread", () => {
       previousMessageId: "message-1",
       previousIsFoldable: true,
     })).toBe(false);
+  });
+
+  it("derives a stable runtime reset key from active runs only", () => {
+    expect(buildIssueChatRuntimeResetKey([
+      { id: "run-1", status: "running" },
+      { id: "run-2", status: "succeeded" },
+    ])).toBe("issue-chat-runtime:run-1:running");
+
+    expect(buildIssueChatRuntimeResetKey([
+      { id: "run-1", status: "cancelled" },
+    ])).toBe("issue-chat-runtime:idle");
   });
 });

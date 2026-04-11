@@ -87,6 +87,12 @@ export function LiveRunWidget({
       await heartbeatsApi.cancel(runId);
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId) });
+      if (companyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(companyId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(companyId) });
+      }
     } finally {
       setCancellingRunIds((prev) => {
         const next = new Set(prev);
