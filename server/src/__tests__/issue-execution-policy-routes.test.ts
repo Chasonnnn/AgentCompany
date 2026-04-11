@@ -194,8 +194,8 @@ describe("issue execution policy routes", () => {
       .patch("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
       .send({ status: "done", comment: "Skipping review." });
 
-    expect(res.status).toBe(403);
-    expect(res.body.error).toContain("active review participant");
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("Only the active reviewer or approver can advance");
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 });
