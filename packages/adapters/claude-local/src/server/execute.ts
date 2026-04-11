@@ -18,9 +18,7 @@ import {
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensurePathInEnv,
-  prepareManagedAdapterHome,
   resolveCommandForLogs,
-  resolveSharedLocalAdapterHomeDir,
   renderTemplate,
   renderPaperclipWakePrompt,
   stringifyPaperclipWakePayload,
@@ -40,8 +38,9 @@ const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Create a tmpdir with `.claude/skills/` containing symlinks to granted skills
- * from the Paperclip runtime catalog. Runs add this directory on top of the
- * Paperclip-managed Claude config home so unmanaged host skills stay hidden.
+ * from the Paperclip runtime catalog. Claude consumes the contained skill root
+ * via `--settings {"skillsPaths":[...]}` so host-global skills stay hidden
+ * without replacing the user's real Claude auth/config home.
  */
 async function buildSkillsDir(config: Record<string, unknown>): Promise<string> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-skills-"));
@@ -254,25 +253,16 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     env.PAPERCLIP_API_KEY = authToken;
   }
 
-  const sharedHome = resolveSharedLocalAdapterHomeDir({ ...process.env, ...env });
-  const managedHome = await prepareManagedAdapterHome({
-    env: { ...process.env, ...env },
-    adapterKey: "claude",
-    companyId: agent.companyId,
-    sharedHomeDir: sharedHome,
-    logLabel: "Claude",
-    subtrees: [{ relativePath: ".claude", excludeChildren: ["skills"] }],
-    onLog: async () => {},
-  });
-  env.HOME = managedHome;
-  env.CLAUDE_CONFIG_DIR = path.join(managedHome, ".claude");
+  // Claude auth breaks when Paperclip points `CLAUDE_CONFIG_DIR` at an isolated
+  // config root. Leave HOME/auth state alone and scope only the runtime skills.
+  env.CLAUDE_CONFIG_DIR = "";
 
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
   await ensureCommandResolvable(command, cwd, runtimeEnv);
   const resolvedCommand = await resolveCommandForLogs(command, cwd, runtimeEnv);
   const loggedEnv = buildInvocationEnvForLogs(env, {
     runtimeEnv,
-    includeRuntimeKeys: ["HOME", "CLAUDE_CONFIG_DIR"],
+    includeRuntimeKeys: ["CLAUDE_CONFIG_DIR"],
     resolvedCommand,
   });
 
@@ -377,6 +367,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
   const skillsDir = await buildSkillsDir(config);
+  const runtimeSkillsPath = path.join(skillsDir, ".claude", "skills");
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
@@ -471,6 +462,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (attemptInstructionsFilePath && !resumeSessionId) {
       args.push("--append-system-prompt-file", attemptInstructionsFilePath);
     }
+    args.push("--settings", JSON.stringify({ skillsPaths: [runtimeSkillsPath] }));
     args.push("--add-dir", skillsDir);
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;

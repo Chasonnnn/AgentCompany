@@ -196,6 +196,7 @@ describe("worktree config repair", () => {
     process.chdir(worktreeRoot);
     process.env.PAPERCLIP_IN_WORKTREE = "true";
     process.env.PAPERCLIP_WORKTREE_NAME = "PAP-880-thumbs-capture-for-evals-feature";
+    process.env.PAPERCLIP_HOME = path.join(tempRoot, "wrong-home");
     process.env.PAPERCLIP_WORKTREES_DIR = isolatedHome;
 
     const result = maybeRepairLegacyWorktreeConfigAndEnvFiles();
@@ -397,6 +398,7 @@ describe("worktree config repair", () => {
     process.env.PAPERCLIP_HOME = isolatedHome;
     process.env.PAPERCLIP_INSTANCE_ID = "pap-878-create-a-mine-tab-in-inbox";
     process.env.PAPERCLIP_CONFIG = configPath;
+    process.env.PORT = "3101";
 
     maybePersistWorktreeRuntimePorts({
       serverPort: 3103,

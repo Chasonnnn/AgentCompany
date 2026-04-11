@@ -18,10 +18,6 @@ async function createSkillDir(root: string, name: string) {
   return skillDir;
 }
 
-function managedAdapterHome(root: string, companyId: string, adapterKey: string) {
-  return path.join(root, "paperclip-home", "instances", "default", "companies", companyId, `${adapterKey}-home`);
-}
-
 describe("claude local skill sync", () => {
   const paperclipKey = "paperclipai/paperclip/paperclip";
   const createAgentKey = "paperclipai/paperclip/paperclip-create-agent";
@@ -94,7 +90,6 @@ describe("claude local skill sync", () => {
     const home = await makeTempDir("paperclip-claude-user-skills-");
     cleanupDirs.add(home);
     await createSkillDir(path.join(home, ".claude", "skills"), "crack-python");
-    const managedHome = managedAdapterHome(home, "company-1", "claude");
 
     const snapshot = await listClaudeSkills({
       agentId: "agent-4",
@@ -109,7 +104,7 @@ describe("claude local skill sync", () => {
     });
 
     expect(snapshot.warnings).toContain(
-      `Claude runs use a Paperclip-managed home at ${path.join(managedHome, ".claude", "skills")}; shared host skills are blocked unless explicitly granted through Paperclip.`,
+      "Claude runs use Paperclip-managed skillsPaths; shared host skills under ~/.claude/skills are blocked unless explicitly granted through Paperclip.",
     );
     expect(snapshot.entries).toContainEqual(expect.objectContaining({
       key: "crack-python",

@@ -333,14 +333,12 @@ describe("claude execute", () => {
     }
   });
 
-  it("logs HOME, CLAUDE_CONFIG_DIR, and the resolved executable path in invocation metadata", async () => {
+  it("logs the resolved executable path and scoped Claude settings in invocation metadata", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-meta-"));
     const workspace = path.join(root, "workspace");
     const binDir = path.join(root, "bin");
     const commandPath = path.join(binDir, "claude");
     const capturePath = path.join(root, "capture.json");
-    const paperclipHome = path.join(root, "paperclip-home");
-    const managedHome = path.join(paperclipHome, "instances", "default", "companies", "company-1", "claude-home");
     const claudeConfigDir = path.join(root, "claude-config");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(binDir, { recursive: true });
@@ -356,6 +354,7 @@ describe("claude execute", () => {
 
     let loggedCommand: string | null = null;
     let loggedEnv: Record<string, string> = {};
+    let loggedArgs: string[] = [];
     try {
       const result = await execute({
         runId: "run-meta",
@@ -377,7 +376,6 @@ describe("claude execute", () => {
           cwd: workspace,
           env: {
             PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
-            PAPERCLIP_HOME: paperclipHome,
           },
           promptTemplate: "Follow the paperclip heartbeat.",
         },
@@ -386,6 +384,7 @@ describe("claude execute", () => {
         onLog: async () => {},
         onMeta: async (meta) => {
           loggedCommand = meta.command;
+          loggedArgs = (meta.commandArgs as string[]) ?? [];
           loggedEnv = meta.env ?? {};
         },
       });
@@ -393,9 +392,19 @@ describe("claude execute", () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       expect(loggedCommand).toBe(commandPath);
-      expect(loggedEnv.HOME).toBe(managedHome);
-      expect(loggedEnv.CLAUDE_CONFIG_DIR).toBe(path.join(managedHome, ".claude"));
+      expect(loggedEnv.CLAUDE_CONFIG_DIR).toBe("");
       expect(loggedEnv.PAPERCLIP_RESOLVED_COMMAND).toBe(commandPath);
+      expect(loggedArgs).toContain("--settings");
+      const settingsFlagIndex = loggedArgs.indexOf("--settings");
+      expect(settingsFlagIndex).toBeGreaterThanOrEqual(0);
+      const settingsValue = JSON.parse(loggedArgs[settingsFlagIndex + 1] ?? "{}") as {
+        skillsPaths?: string[];
+      };
+      expect(settingsValue.skillsPaths).toHaveLength(1);
+      expect(settingsValue.skillsPaths?.[0]).toContain("/.claude/skills");
+
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8"));
+      expect(captured.claudeConfigDir).toBeNull();
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

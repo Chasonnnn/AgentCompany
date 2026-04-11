@@ -8,6 +8,13 @@ function nonEmpty(value: string | null | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function parsePositiveInteger(value: string | null | undefined): number | null {
+  const normalized = nonEmpty(value);
+  if (!normalized) return null;
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function expandHomePrefix(value: string): string {
   if (value === "~") return os.homedir();
   if (value.startsWith("~/")) return path.resolve(os.homedir(), value.slice(2));
@@ -122,8 +129,8 @@ function resolveWorktreeRuntimeContext(
   const worktreeName = nonEmpty(env.PAPERCLIP_WORKTREE_NAME) ?? path.basename(worktreeRoot);
   const instanceId = nonEmpty(env.PAPERCLIP_INSTANCE_ID) ?? sanitizeWorktreeInstanceId(worktreeName);
   const homeDir = resolveHomeAwarePath(
-    nonEmpty(env.PAPERCLIP_HOME) ??
-      nonEmpty(env.PAPERCLIP_WORKTREES_DIR) ??
+    nonEmpty(env.PAPERCLIP_WORKTREES_DIR) ??
+      nonEmpty(env.PAPERCLIP_HOME) ??
       "~/.paperclip-worktrees",
   );
   const instanceRoot = path.resolve(homeDir, "instances", instanceId);
@@ -454,10 +461,11 @@ export function maybePersistWorktreeRuntimePorts(input: {
     return;
   }
 
+  const envServerPort = parsePositiveInteger(process.env.PORT);
   const { config, changed } = applyRuntimePortSelectionToConfig(fileConfig, {
     serverPort: input.serverPort,
     databasePort: input.databasePort,
-    allowServerPortWrite: !nonEmpty(process.env.PORT),
+    allowServerPortWrite: envServerPort === null || envServerPort !== input.serverPort,
     allowDatabasePortWrite: !nonEmpty(process.env.DATABASE_URL),
   });
 
