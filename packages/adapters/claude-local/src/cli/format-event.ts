@@ -110,6 +110,7 @@ export function printClaudeStreamEvent(raw: string, debug: boolean): void {
     const input = Number(usage.input_tokens ?? 0);
     const output = Number(usage.output_tokens ?? 0);
     const cached = Number(usage.cache_read_input_tokens ?? 0);
+    const cacheCreation = Number(usage.cache_creation_input_tokens ?? 0);
     const cost = Number(parsed.total_cost_usd ?? 0);
     const subtype = typeof parsed.subtype === "string" ? parsed.subtype : "";
     const isError = parsed.is_error === true;
@@ -127,7 +128,7 @@ export function printClaudeStreamEvent(raw: string, debug: boolean): void {
     }
     console.log(
       pc.blue(
-        `tokens: in=${Number.isFinite(input) ? input : 0} out=${Number.isFinite(output) ? output : 0} cached=${Number.isFinite(cached) ? cached : 0} cost=$${Number.isFinite(cost) ? cost.toFixed(6) : "0.000000"}`,
+        `tokens: in=${Number.isFinite(input) ? input : 0} out=${Number.isFinite(output) ? output : 0} cached=${Number.isFinite(cached) ? cached : 0} cache_create=${Number.isFinite(cacheCreation) ? cacheCreation : 0} cost=$${Number.isFinite(cost) ? cost.toFixed(6) : "0.000000"}`,
       ),
     );
     return;

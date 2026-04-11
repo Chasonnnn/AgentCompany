@@ -121,6 +121,7 @@ export function parseClaudeStdoutLine(line: string, ts: string): TranscriptEntry
     const inputTokens = asNumber(usage.input_tokens);
     const outputTokens = asNumber(usage.output_tokens);
     const cachedTokens = asNumber(usage.cache_read_input_tokens);
+    const cacheCreationTokens = asNumber(usage.cache_creation_input_tokens);
     const costUsd = asNumber(parsed.total_cost_usd);
     const subtype = typeof parsed.subtype === "string" ? parsed.subtype : "";
     const isError = parsed.is_error === true;
@@ -132,7 +133,7 @@ export function parseClaudeStdoutLine(line: string, ts: string): TranscriptEntry
       text,
       inputTokens,
       outputTokens,
-      cachedTokens,
+      cachedTokens: cachedTokens + cacheCreationTokens,
       costUsd,
       subtype,
       isError,

@@ -15,8 +15,10 @@ export interface CostEvent {
   model: string;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheCreationInputTokens: number;
   outputTokens: number;
   costCents: number;
+  estimatedApiCostCents: number | null;
   occurredAt: Date;
   createdAt: Date;
 }
@@ -24,6 +26,7 @@ export interface CostEvent {
 export interface CostSummary {
   companyId: string;
   spendCents: number;
+  estimatedApiCostCents: number;
   budgetCents: number;
   utilizationPercent: number;
 }
@@ -35,10 +38,13 @@ export interface CostByAgent {
   costCents: number;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheCreationInputTokens: number;
   outputTokens: number;
+  estimatedApiCostCents: number;
   apiRunCount: number;
   subscriptionRunCount: number;
   subscriptionCachedInputTokens: number;
+  subscriptionCacheCreationInputTokens: number;
   subscriptionInputTokens: number;
   subscriptionOutputTokens: number;
 }
@@ -51,10 +57,13 @@ export interface CostByProviderModel {
   costCents: number;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheCreationInputTokens: number;
   outputTokens: number;
+  estimatedApiCostCents: number;
   apiRunCount: number;
   subscriptionRunCount: number;
   subscriptionCachedInputTokens: number;
+  subscriptionCacheCreationInputTokens: number;
   subscriptionInputTokens: number;
   subscriptionOutputTokens: number;
 }
@@ -64,10 +73,13 @@ export interface CostByBiller {
   costCents: number;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheCreationInputTokens: number;
   outputTokens: number;
+  estimatedApiCostCents: number;
   apiRunCount: number;
   subscriptionRunCount: number;
   subscriptionCachedInputTokens: number;
+  subscriptionCacheCreationInputTokens: number;
   subscriptionInputTokens: number;
   subscriptionOutputTokens: number;
   providerCount: number;
@@ -85,7 +97,9 @@ export interface CostByAgentModel {
   costCents: number;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheCreationInputTokens: number;
   outputTokens: number;
+  estimatedApiCostCents: number;
 }
 
 /** spend per provider for a fixed rolling time window */
@@ -99,7 +113,9 @@ export interface CostWindowSpendRow {
   costCents: number;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheCreationInputTokens: number;
   outputTokens: number;
+  estimatedApiCostCents: number;
 }
 
 /** cost attributed to a project via heartbeat run → activity log → issue → project chain */
@@ -109,5 +125,7 @@ export interface CostByProject {
   costCents: number;
   inputTokens: number;
   cachedInputTokens: number;
+  cacheCreationInputTokens: number;
   outputTokens: number;
+  estimatedApiCostCents: number;
 }

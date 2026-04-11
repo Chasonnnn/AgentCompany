@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isClaudeMaxTurnsResult } from "@paperclipai/adapter-claude-local/server";
+import { isClaudeMaxTurnsResult, parseClaudeStreamJson } from "@paperclipai/adapter-claude-local/server";
 import { parseClaudeStdoutLine } from "@paperclipai/adapter-claude-local/ui";
 import { printClaudeStreamEvent } from "@paperclipai/adapter-claude-local/cli";
 
@@ -104,6 +104,38 @@ describe("claude_local ui stdout parser", () => {
   });
 });
 
+describe("claude_local server parser", () => {
+  it("captures cache creation tokens from result usage", () => {
+    const parsed = parseClaudeStreamJson([
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        model: "claude-sonnet-4-6",
+        session_id: "claude-session-1",
+      }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "Done",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 2,
+          cache_creation_input_tokens: 7,
+        },
+        total_cost_usd: 0.00042,
+      }),
+    ].join("\n"));
+
+    expect(parsed.usage).toEqual({
+      inputTokens: 10,
+      cachedInputTokens: 2,
+      cacheCreationInputTokens: 7,
+      outputTokens: 5,
+    });
+  });
+});
+
 function stripAnsi(value: string) {
   return value.replace(/\x1b\[[0-9;]*m/g, "");
 }
@@ -156,7 +188,12 @@ describe("claude_local cli formatter", () => {
           type: "result",
           subtype: "success",
           result: "Done",
-          usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 2 },
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 2,
+            cache_creation_input_tokens: 7,
+          },
           total_cost_usd: 0.00042,
         }),
         false,
@@ -177,7 +214,7 @@ describe("claude_local cli formatter", () => {
           "AGENTS.md\nREADME.md",
           "result:",
           "Done",
-          "tokens: in=10 out=5 cached=2 cost=$0.000420",
+          "tokens: in=10 out=5 cached=2 cache_create=7 cost=$0.000420",
         ]),
       );
     } finally {

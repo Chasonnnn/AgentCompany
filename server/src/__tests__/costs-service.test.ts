@@ -215,6 +215,58 @@ describe("cost routes", () => {
     expect(mockFinanceService.list).toHaveBeenCalledWith("company-1", undefined, 25);
   });
 
+  it("accepts cacheCreationInputTokens on cost events and strips client-supplied estimates", async () => {
+    mockCostService.createEvent.mockResolvedValue({
+      id: "cost-event-1",
+      companyId: "company-1",
+      agentId: "11111111-1111-4111-8111-111111111111",
+      issueId: null,
+      projectId: null,
+      goalId: null,
+      heartbeatRunId: null,
+      billingCode: null,
+      provider: "anthropic",
+      biller: "anthropic",
+      billingType: "subscription_included",
+      model: "claude-sonnet-4-6",
+      inputTokens: 100,
+      cachedInputTokens: 10,
+      cacheCreationInputTokens: 25,
+      outputTokens: 5,
+      costCents: 0,
+      estimatedApiCostCents: 123,
+      occurredAt: new Date("2026-04-10T12:00:00.000Z"),
+      createdAt: new Date("2026-04-10T12:00:00.000Z"),
+    });
+
+    const app = await createApp();
+    const res = await request(app)
+      .post("/api/companies/company-1/cost-events")
+      .send({
+        agentId: "11111111-1111-4111-8111-111111111111",
+        provider: "anthropic",
+        biller: "anthropic",
+        billingType: "subscription_included",
+        model: "claude-sonnet-4-6",
+        inputTokens: 100,
+        cachedInputTokens: 10,
+        cacheCreationInputTokens: 25,
+        outputTokens: 5,
+        costCents: 0,
+        estimatedApiCostCents: 9_999,
+        occurredAt: "2026-04-10T12:00:00.000Z",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockCostService.createEvent).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        cacheCreationInputTokens: 25,
+      }),
+    );
+    expect(mockCostService.createEvent.mock.calls[0]?.[1]).not.toHaveProperty("estimatedApiCostCents");
+  });
+
   it("rejects company budget updates for board users outside the company", async () => {
     const app = await createAppWithActor({
       type: "board",
