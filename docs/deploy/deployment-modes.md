@@ -13,6 +13,7 @@ The default mode. Optimized for single-operator local use.
 - **Authentication**: no login required
 - **Use case**: local development, solo experimentation
 - **Board identity**: auto-created local board user
+- **Agent auth bootstrap**: first local start auto-creates `PAPERCLIP_AGENT_JWT_SECRET` if it is missing
 
 ```sh
 # Set during onboard

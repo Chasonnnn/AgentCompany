@@ -32,6 +32,7 @@ This keeps one authenticated auth stack while still separating low-friction priv
 - loopback-only host binding
 - no human login flow
 - optimized for fastest local startup
+- if `PAPERCLIP_AGENT_JWT_SECRET` is missing, server startup creates and persists one in the instance `.env`
 
 ## `authenticated + private`
 
