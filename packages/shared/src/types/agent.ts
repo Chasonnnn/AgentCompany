@@ -126,11 +126,12 @@ export interface AgentTemplateSnapshot {
   departmentKey: AgentDepartmentKey;
   departmentName: string | null;
   capabilities: string | null;
-  adapterType: AgentAdapterType;
+  adapterType: AgentAdapterType | null;
   adapterConfig: Record<string, unknown>;
   runtimeConfig: Record<string, unknown>;
   budgetMonthlyCents: number;
   metadata: Record<string, unknown> | null;
+  instructionsBody: string;
 }
 
 export interface AgentTemplate {
@@ -156,6 +157,24 @@ export interface AgentTemplateRevision {
   createdByAgentId: string | null;
   createdByUserId: string | null;
   createdAt: Date;
+}
+
+export interface AgentTemplateImportPackRequest {
+  rootPath?: string | null;
+  files: Record<string, string>;
+}
+
+export interface AgentTemplateImportPackItem {
+  path: string;
+  template: AgentTemplate;
+  revision: AgentTemplateRevision;
+  created: boolean;
+  revisionCreated: boolean;
+}
+
+export interface AgentTemplateImportPackResult {
+  items: AgentTemplateImportPackItem[];
+  warnings: string[];
 }
 
 export interface AgentProjectScope {

@@ -17,6 +17,9 @@ import {
 import { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "../adapter-type.js";
 import type {
   AgentHierarchyMemberSummary,
+  AgentTemplateImportPackItem,
+  AgentTemplateImportPackRequest,
+  AgentTemplateImportPackResult,
   AgentNavigationDepartmentNode,
   AgentNavigationClusterNode,
   AgentNavigationProjectNode,
@@ -118,12 +121,13 @@ export const agentTemplateSnapshotSchema = z.object({
   departmentKey: agentDepartmentKeySchema,
   departmentName: z.string().nullable(),
   capabilities: z.string().nullable(),
-  adapterType: optionalAgentAdapterTypeSchema.unwrap(),
+  adapterType: agentAdapterTypeSchema.nullable(),
   adapterConfig: adapterConfigSchema,
   runtimeConfig: z.record(z.unknown()),
   budgetMonthlyCents: z.number().int().nonnegative(),
   metadata: z.record(z.unknown()).nullable(),
-}).strict() satisfies z.ZodType<AgentTemplateSnapshot>;
+  instructionsBody: z.string(),
+}).strict();
 
 export const agentTemplateSchema = z.object({
   id: z.string().uuid(),
@@ -148,7 +152,25 @@ export const agentTemplateRevisionSchema = z.object({
   createdByAgentId: z.string().uuid().nullable(),
   createdByUserId: z.string().nullable(),
   createdAt: z.coerce.date(),
-}).strict() satisfies z.ZodType<AgentTemplateRevision>;
+}).strict();
+
+export const agentTemplateImportPackRequestSchema = z.object({
+  rootPath: z.string().trim().min(1).nullable().optional(),
+  files: z.record(z.string()),
+}).strict() satisfies z.ZodType<AgentTemplateImportPackRequest>;
+
+export const agentTemplateImportPackItemSchema = z.object({
+  path: z.string().min(1),
+  template: agentTemplateSchema,
+  revision: agentTemplateRevisionSchema,
+  created: z.boolean(),
+  revisionCreated: z.boolean(),
+}).strict();
+
+export const agentTemplateImportPackResultSchema = z.object({
+  items: z.array(agentTemplateImportPackItemSchema),
+  warnings: z.array(z.string()),
+}).strict();
 
 export const agentProjectScopeSchema = z.object({
   id: z.string().uuid(),
@@ -292,8 +314,8 @@ export const companyAgentHierarchySchema = z.object({
 }).strict() satisfies z.ZodType<CompanyAgentHierarchy>;
 
 const createAgentSchemaBase = z.object({
-  name: z.string().min(1),
-  role: z.enum(AGENT_ROLES).optional().default("general"),
+  name: z.string().min(1).optional(),
+  role: z.enum(AGENT_ROLES).optional(),
   title: z.string().optional().nullable(),
   icon: z.enum(AGENT_ICON_NAMES).optional().nullable(),
   reportsTo: z.string().uuid().optional().nullable(),
@@ -305,12 +327,14 @@ const createAgentSchemaBase = z.object({
   departmentName: z.string().trim().min(1).optional().nullable(),
   capabilities: z.string().optional().nullable(),
   desiredSkills: z.array(z.string().min(1)).optional(),
-  adapterType: agentAdapterTypeSchema,
-  adapterConfig: adapterConfigSchema.optional().default({}),
-  runtimeConfig: z.record(z.unknown()).optional().default({}),
-  budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
+  adapterType: optionalAgentAdapterTypeSchema,
+  adapterConfig: adapterConfigSchema.optional(),
+  runtimeConfig: z.record(z.unknown()).optional(),
+  budgetMonthlyCents: z.number().int().nonnegative().optional(),
   permissions: agentPermissionsSchema.optional(),
   metadata: z.record(z.unknown()).optional().nullable(),
+  templateId: z.string().uuid().optional().nullable(),
+  templateRevisionId: z.string().uuid().optional().nullable(),
 });
 
 const validateAgentDepartment = (value: Record<string, unknown>, ctx: z.RefinementCtx) => {

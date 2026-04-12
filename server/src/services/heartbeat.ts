@@ -45,6 +45,7 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
+import { documentService } from "./documents.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import {
@@ -1138,6 +1139,8 @@ function resolveNextSessionState(input: {
 }
 
 export function heartbeatService(db: Db) {
+  const documentsSvc = documentService(db);
+
   const instanceSettings = instanceSettingsService(db);
   const getCurrentUserRedactionOptions = async () => ({
     enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
@@ -3013,6 +3016,31 @@ export function heartbeatService(db: Db) {
     }
     if (executionWorkspace.projectId && !readNonEmptyString(context.projectId)) {
       context.projectId = executionWorkspace.projectId;
+    }
+    const effectiveProjectId = readNonEmptyString(context.projectId);
+    if (effectiveProjectId) {
+      const projectContextDocument = await documentsSvc.getProjectDocumentByKey(effectiveProjectId, "context");
+      if (projectContextDocument) {
+        const projectRef = await db
+          .select({ name: projects.name })
+          .from(projects)
+          .where(eq(projects.id, effectiveProjectId))
+          .then((rows) => rows[0] ?? null);
+        context.paperclipProjectContext = {
+          projectId: effectiveProjectId,
+          projectName: projectRef?.name ?? null,
+          key: projectContextDocument.key,
+          title: projectContextDocument.title,
+          body: projectContextDocument.body,
+          latestRevisionId: projectContextDocument.latestRevisionId,
+          latestRevisionNumber: projectContextDocument.latestRevisionNumber,
+          updatedAt: projectContextDocument.updatedAt.toISOString(),
+        };
+      } else {
+        delete context.paperclipProjectContext;
+      }
+    } else {
+      delete context.paperclipProjectContext;
     }
     const runtimeSessionFallback = taskKey || resetTaskSession ? null : runtime.sessionId;
     let previousSessionDisplayId = truncateDisplayId(

@@ -47,6 +47,9 @@ const mockAgentInstructionsService = vi.hoisted(() => ({
 const mockBudgetService = vi.hoisted(() => ({
   upsertPolicy: vi.fn(),
 }));
+const mockAgentTemplateService = vi.hoisted(() => ({
+  resolveRevisionForInstantiation: vi.fn(),
+}));
 
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelActiveForAgent: vi.fn(),
@@ -69,6 +72,7 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
+  agentTemplateService: () => mockAgentTemplateService,
   agentInstructionsService: () => mockAgentInstructionsService,
   accessService: () => mockAccessService,
   approvalService: () => mockApprovalService,
@@ -120,6 +124,7 @@ function createApp() {
 describe("agent routes adapter validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     unregisterServerAdapter("external_test");
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
     mockCompanySkillService.resolveRequestedSkillKeys.mockResolvedValue([]);

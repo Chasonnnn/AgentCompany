@@ -1,16 +1,21 @@
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
+import { agentProjectScopes } from "@paperclipai/db";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import {
   createProjectSchema,
   createProjectWorkspaceSchema,
   isUuidLike,
+  projectDocumentKeySchema,
+  restoreProjectDocumentRevisionSchema,
+  upsertProjectDocumentSchema,
   updateProjectSchema,
   updateProjectWorkspaceSchema,
 } from "@paperclipai/shared";
 import { trackProjectCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { projectService, logActivity, secretService, workspaceOperationService } from "../services/index.js";
-import { conflict } from "../errors.js";
+import { documentService, projectService, logActivity, secretService, workspaceOperationService } from "../services/index.js";
+import { conflict, forbidden, unprocessable } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { startRuntimeServicesForWorkspaceControl, stopRuntimeServicesForProjectWorkspace } from "../services/workspace-runtime.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -18,6 +23,7 @@ import { getTelemetryClient } from "../telemetry.js";
 export function projectRoutes(db: Db) {
   const router = Router();
   const svc = projectService(db);
+  const documentsSvc = documentService(db);
   const secretsSvc = secretService(db);
   const workspaceOperations = workspaceOperationService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
@@ -49,6 +55,53 @@ export function projectRoutes(db: Db) {
     return resolved.project?.id ?? rawId;
   }
 
+  async function hasActiveProjectScope(agentId: string, projectId: string, allowedRoles?: string[]) {
+    const now = new Date();
+    const conditions = [
+      eq(agentProjectScopes.agentId, agentId),
+      eq(agentProjectScopes.projectId, projectId),
+      or(isNull(agentProjectScopes.activeTo), gt(agentProjectScopes.activeTo, now)),
+    ];
+    if (allowedRoles?.length) {
+      conditions.push(or(...allowedRoles.map((role) => eq(agentProjectScopes.projectRole, role as any))));
+    }
+    const row = await db
+      .select({ id: agentProjectScopes.id })
+      .from(agentProjectScopes)
+      .where(and(...conditions))
+      .then((rows) => rows[0] ?? null);
+    return !!row;
+  }
+
+  async function assertCanReadProjectContext(req: Request, project: { id: string; companyId: string }) {
+    assertCompanyAccess(req, project.companyId);
+    if (req.actor.type === "board") return;
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+    const allowed = await hasActiveProjectScope(req.actor.agentId, project.id);
+    if (!allowed) throw forbidden("Project scope required");
+  }
+
+  async function assertCanWriteProjectContext(req: Request, project: { id: string; companyId: string }) {
+    assertCompanyAccess(req, project.companyId);
+    if (req.actor.type === "board") return;
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+    const allowed = await hasActiveProjectScope(req.actor.agentId, project.id, [
+      "director",
+      "product_manager",
+      "engineering_manager",
+      "functional_lead",
+    ]);
+    if (!allowed) throw forbidden("Project leadership scope required");
+  }
+
+  function assertProjectContextKey(rawKey: string) {
+    const key = projectDocumentKeySchema.parse(rawKey);
+    if (key !== "context") {
+      throw unprocessable("Only the reserved project context document is supported");
+    }
+    return key;
+  }
+
   router.param("id", async (req, _res, next, rawId) => {
     try {
       req.params.id = await normalizeProjectReference(req, rawId);
@@ -74,6 +127,151 @@ export function projectRoutes(db: Db) {
     }
     assertCompanyAccess(req, project.companyId);
     res.json(project);
+  });
+
+  router.get("/projects/:id/documents", async (req, res) => {
+    const id = req.params.id as string;
+    const project = await svc.getById(id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    await assertCanReadProjectContext(req, project);
+    const documents = await documentsSvc.listProjectDocuments(id);
+    res.json(documents.filter((document) => document.key === "context"));
+  });
+
+  router.get("/projects/:id/documents/:key", async (req, res) => {
+    const id = req.params.id as string;
+    const key = assertProjectContextKey(req.params.key as string);
+    const project = await svc.getById(id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    await assertCanReadProjectContext(req, project);
+    const document = await documentsSvc.getProjectDocumentByKey(id, key);
+    if (!document) {
+      res.status(404).json({ error: "Project document not found" });
+      return;
+    }
+    res.json(document);
+  });
+
+  router.put("/projects/:id/documents/:key", validate(upsertProjectDocumentSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const key = assertProjectContextKey(req.params.key as string);
+    const project = await svc.getById(id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    await assertCanWriteProjectContext(req, project);
+    const actor = getActorInfo(req);
+    const result = await documentsSvc.upsertProjectDocument({
+      projectId: id,
+      key,
+      ...req.body,
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      createdByRunId: actor.runId,
+    });
+    await logActivity(db, {
+      companyId: project.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: result.created ? "project.document_created" : "project.document_updated",
+      entityType: "project",
+      entityId: id,
+      details: {
+        key,
+        revisionNumber: result.document.latestRevisionNumber,
+      },
+    });
+    res.status(result.created ? 201 : 200).json(result.document);
+  });
+
+  router.get("/projects/:id/documents/:key/revisions", async (req, res) => {
+    const id = req.params.id as string;
+    const key = assertProjectContextKey(req.params.key as string);
+    const project = await svc.getById(id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    await assertCanReadProjectContext(req, project);
+    res.json(await documentsSvc.listProjectDocumentRevisions(id, key));
+  });
+
+  router.post(
+    "/projects/:id/documents/:key/revisions/:revisionId/restore",
+    validate(restoreProjectDocumentRevisionSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const key = assertProjectContextKey(req.params.key as string);
+      const revisionId = req.params.revisionId as string;
+      const project = await svc.getById(id);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      await assertCanWriteProjectContext(req, project);
+      const actor = getActorInfo(req);
+      const result = await documentsSvc.restoreProjectDocumentRevision({
+        projectId: id,
+        key,
+        revisionId,
+        createdByAgentId: actor.agentId,
+        createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      await logActivity(db, {
+        companyId: project.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "project.document_restored",
+        entityType: "project",
+        entityId: id,
+        details: {
+          key,
+          revisionId,
+          restoredFromRevisionNumber: result.restoredFromRevisionNumber,
+        },
+      });
+      res.json(result.document);
+    },
+  );
+
+  router.delete("/projects/:id/documents/:key", async (req, res) => {
+    const id = req.params.id as string;
+    const key = assertProjectContextKey(req.params.key as string);
+    const project = await svc.getById(id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    await assertCanWriteProjectContext(req, project);
+    const deleted = await documentsSvc.deleteProjectDocument(id, key);
+    if (!deleted) {
+      res.status(404).json({ error: "Project document not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: project.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "project.document_deleted",
+      entityType: "project",
+      entityId: id,
+      details: { key },
+    });
+    res.json(deleted);
   });
 
   router.post("/companies/:companyId/projects", validate(createProjectSchema), async (req, res) => {

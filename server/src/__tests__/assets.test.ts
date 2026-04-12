@@ -243,7 +243,7 @@ describe("POST /api/companies/:companyId/logo", () => {
 
     const res = await request(app)
       .post("/api/companies/company-1/logo")
-      .attach("file", Buffer.from("not actually svg"), "logo.svg");
+      .attach("file", Buffer.from("<notsvg></notsvg>"), "logo.svg");
 
     expect(res.status).toBe(422);
     expect(res.body.error).toBe("SVG could not be sanitized");

@@ -47,6 +47,12 @@ const mockAgentSkillService = vi.hoisted(() => ({
   syncAgentSkills: vi.fn(),
   resolveDesiredSkillAssignment: vi.fn(),
 }));
+const mockAgentTemplateService = vi.hoisted(() => ({
+  resolveRevisionForInstantiation: vi.fn(),
+  listTemplates: vi.fn(),
+  listRevisions: vi.fn(),
+  importPack: vi.fn(),
+}));
 
 const mockSecretService = vi.hoisted(() => ({
   resolveAdapterConfigForRuntime: vi.fn(),
@@ -96,6 +102,7 @@ async function createApp(
   }));
   vi.doMock("../services/index.js", () => ({
     agentService: () => mockAgentService,
+    agentTemplateService: () => mockAgentTemplateService,
     agentInstructionsService: () => mockAgentInstructionsService,
     accessService: () => mockAccessService,
     approvalService: () => mockApprovalService,
@@ -154,6 +161,7 @@ describe("agent skill routes", () => {
     vi.resetModules();
     vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
+    mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockAgentService.resolveByReference.mockResolvedValue({
       ambiguous: false,
       agent: makeAgent("claude_local"),
@@ -504,7 +512,10 @@ describe("agent skill routes", () => {
         id: "11111111-1111-4111-8111-111111111111",
         adapterType: "claude_local",
       }),
-      { "AGENTS.md": "You are QA." },
+      expect.objectContaining({
+        "AGENTS.md": "You are QA.",
+        "MEMORY.md": expect.stringContaining("# MEMORY.md"),
+      }),
       { entryFile: "AGENTS.md", replaceExisting: false },
     );
     expect(mockAgentService.update).toHaveBeenCalledWith(
@@ -543,6 +554,7 @@ describe("agent skill routes", () => {
       }),
       expect.objectContaining({
         "AGENTS.md": expect.stringContaining("You are the CEO."),
+        "MEMORY.md": expect.stringContaining("# MEMORY.md"),
         "HEARTBEAT.md": expect.stringContaining("CEO Heartbeat Checklist"),
         "SOUL.md": expect.stringContaining("CEO Persona"),
         "TOOLS.md": expect.stringContaining("# Tools"),
@@ -570,6 +582,7 @@ describe("agent skill routes", () => {
       }),
       expect.objectContaining({
         "AGENTS.md": expect.stringContaining("Keep the work moving until it's done."),
+        "MEMORY.md": expect.stringContaining("# MEMORY.md"),
       }),
       { entryFile: "AGENTS.md", replaceExisting: false },
     );

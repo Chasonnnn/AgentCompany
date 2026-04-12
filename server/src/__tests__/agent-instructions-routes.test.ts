@@ -33,12 +33,16 @@ const mockAgentSkillService = vi.hoisted(() => ({
   syncAgentSkills: vi.fn(),
   resolveDesiredSkillAssignment: vi.fn(),
 }));
+const mockAgentTemplateService = vi.hoisted(() => ({
+  resolveRevisionForInstantiation: vi.fn(),
+}));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 async function createApp() {
   vi.doMock("../services/index.js", () => ({
     agentService: () => mockAgentService,
+    agentTemplateService: () => mockAgentTemplateService,
     agentInstructionsService: () => mockAgentInstructionsService,
     accessService: () => mockAccessService,
     approvalService: () => ({}),
@@ -102,6 +106,7 @@ describe("agent instructions bundle routes", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
       async (
         _companyId: string,

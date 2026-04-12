@@ -41,6 +41,7 @@ import {
   defaultOperatingClassForLegacyAgent,
   normalizeAgentPermissions,
 } from "./agent-permissions.js";
+import { readAgentTemplateMode, withAgentTemplateMode } from "./agent-template-metadata.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 
 function hashToken(token: string) {
@@ -292,6 +293,18 @@ function buildConfigSnapshot(
   };
 }
 
+async function getTemplateMode(
+  executor: DbExecutor,
+  templateId: string,
+): Promise<"agent_snapshot" | "reusable"> {
+  const template = await executor
+    .select({ metadata: agentTemplates.metadata })
+    .from(agentTemplates)
+    .where(eq(agentTemplates.id, templateId))
+    .then((rows) => rows[0] ?? null);
+  return readAgentTemplateMode(template?.metadata ?? null);
+}
+
 function containsRedactedMarker(value: unknown): boolean {
   if (value === REDACTED_EVENT_VALUE) return true;
   if (Array.isArray(value)) return value.some((item) => containsRedactedMarker(item));
@@ -319,7 +332,7 @@ function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agents.$infe
   if (typeof snapshot.role !== "string" || snapshot.role.length === 0) {
     throw unprocessable("Invalid revision snapshot: role");
   }
-  if (typeof snapshot.adapterType !== "string" || snapshot.adapterType.length === 0) {
+  if (snapshot.adapterType !== null && (typeof snapshot.adapterType !== "string" || snapshot.adapterType.length === 0)) {
     throw unprocessable("Invalid revision snapshot: adapterType");
   }
   if (typeof snapshot.budgetMonthlyCents !== "number" || !Number.isFinite(snapshot.budgetMonthlyCents)) {
@@ -379,7 +392,7 @@ function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agents.$infe
       typeof snapshot.capabilities === "string" || snapshot.capabilities === null
         ? snapshot.capabilities
         : null,
-    adapterType: snapshot.adapterType,
+    adapterType: typeof snapshot.adapterType === "string" ? snapshot.adapterType : undefined,
     adapterConfig: isPlainRecord(snapshot.adapterConfig) ? snapshot.adapterConfig : {},
     runtimeConfig: isPlainRecord(snapshot.runtimeConfig) ? snapshot.runtimeConfig : {},
     budgetMonthlyCents: Math.max(0, Math.floor(snapshot.budgetMonthlyCents)),
@@ -706,7 +719,10 @@ export function agentService(db: Db) {
   }
 
   function buildTemplateSnapshot(row: Pick<typeof agents.$inferSelect, ConfigRevisionField>) {
-    return buildConfigSnapshot(row) as unknown as Record<string, unknown>;
+    return {
+      ...buildConfigSnapshot(row),
+      instructionsBody: "",
+    } as unknown as Record<string, unknown>;
   }
 
   async function ensureTemplateRevisionLink(
@@ -715,6 +731,39 @@ export function agentService(db: Db) {
     options?: RevisionMetadata,
   ) {
     let templateId = agentRow.templateId ?? null;
+    let templateMode: "agent_snapshot" | "reusable" = "agent_snapshot";
+    if (templateId) {
+      templateMode = await getTemplateMode(executor, templateId);
+    }
+
+    if (templateId && templateMode === "reusable") {
+      let revisionId = agentRow.templateRevisionId ?? null;
+      if (!revisionId) {
+        const latestRevision = await executor
+          .select({ id: agentTemplateRevisions.id })
+          .from(agentTemplateRevisions)
+          .where(eq(agentTemplateRevisions.templateId, templateId))
+          .orderBy(desc(agentTemplateRevisions.revisionNumber))
+          .then((rows) => rows[0] ?? null);
+        if (!latestRevision) {
+          throw unprocessable("Reusable template is missing a revision");
+        }
+        revisionId = latestRevision.id;
+      }
+
+      if (templateId !== agentRow.templateId || revisionId !== agentRow.templateRevisionId) {
+        await executor
+          .update(agents)
+          .set({
+            templateId,
+            templateRevisionId: revisionId,
+            updatedAt: new Date(),
+          })
+          .where(eq(agents.id, agentRow.id));
+      }
+      return { templateId, templateRevisionId: revisionId };
+    }
+
     if (!templateId) {
       const createdTemplate = await executor
         .insert(agentTemplates)
@@ -725,7 +774,7 @@ export function agentService(db: Db) {
           operatingClass: agentRow.operatingClass,
           capabilityProfileKey: agentRow.capabilityProfileKey,
           archetypeKey: agentRow.archetypeKey,
-          metadata: agentRow.metadata ?? null,
+          metadata: withAgentTemplateMode(agentRow.metadata ?? null, "agent_snapshot"),
           updatedAt: new Date(),
         })
         .returning()
@@ -743,7 +792,7 @@ export function agentService(db: Db) {
           operatingClass: agentRow.operatingClass,
           capabilityProfileKey: agentRow.capabilityProfileKey,
           archetypeKey: agentRow.archetypeKey,
-          metadata: agentRow.metadata ?? null,
+          metadata: withAgentTemplateMode(agentRow.metadata ?? null, "agent_snapshot"),
           updatedAt: new Date(),
         })
         .where(eq(agentTemplates.id, templateId));

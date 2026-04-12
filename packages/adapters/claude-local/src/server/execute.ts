@@ -21,6 +21,7 @@ import {
   resolveCommandForLogs,
   renderTemplate,
   renderPaperclipWakePrompt,
+  renderPaperclipProjectContext,
   stringifyPaperclipWakePayload,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -430,9 +431,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
+  const projectContextNote = renderPaperclipProjectContext(context);
   const prompt = joinPromptSections([
     renderedBootstrapPrompt,
     wakePrompt,
+    projectContextNote,
     sessionHandoffNote,
     renderedPrompt,
   ]);
@@ -440,6 +443,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     promptChars: prompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     wakePromptChars: wakePrompt.length,
+    projectContextChars: projectContextNote.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };

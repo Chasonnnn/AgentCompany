@@ -6,6 +6,7 @@ import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable 
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
   AGENT_NAVIGATION_LAYOUTS,
+  agentTemplateSnapshotSchema,
   agentSkillSyncSchema,
   agentMineInboxQuerySchema,
   createAgentKeySchema,
@@ -15,6 +16,7 @@ import {
   isUuidLike,
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
+  type AgentRole,
   type InstanceSchedulerHeartbeatAgent,
   upsertAgentInstructionsFileSchema,
   updateAgentInstructionsBundleSchema,
@@ -28,6 +30,7 @@ import { validate } from "../middleware/validate.js";
 import {
   agentService,
   agentSkillService,
+  agentTemplateService,
   agentInstructionsService,
   accessService,
   approvalService,
@@ -91,6 +94,7 @@ export function agentRoutes(db: Db) {
   const router = Router();
   const svc = agentService(db);
   const access = accessService(db);
+  const templateSvc = agentTemplateService(db);
   const approvalsSvc = approvalService(db);
   const budgets = budgetService(db);
   const heartbeat = heartbeatService(db);
@@ -537,7 +541,10 @@ export function agentRoutes(db: Db) {
     role: string;
     adapterType: string;
     adapterConfig: unknown;
-  }>(agent: T): Promise<T> {
+  }>(
+    agent: T,
+    options?: { instructionsBody?: string | null },
+  ): Promise<T> {
     if (!DEFAULT_MANAGED_INSTRUCTIONS_ADAPTER_TYPES.has(agent.adapterType)) {
       return agent;
     }
@@ -556,9 +563,23 @@ export function agentRoutes(db: Db) {
     const promptTemplate = typeof adapterConfig.promptTemplate === "string"
       ? adapterConfig.promptTemplate
       : "";
-    const files = promptTemplate.trim().length === 0
-      ? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role))
-      : { "AGENTS.md": promptTemplate };
+    const templateInstructionsBody = typeof options?.instructionsBody === "string"
+      ? options.instructionsBody.trim()
+      : "";
+    const defaultBundle = await loadDefaultAgentInstructionsBundle(
+      resolveDefaultAgentInstructionsBundleRole(agent.role),
+    );
+    const files = templateInstructionsBody.length > 0
+      ? {
+          ...defaultBundle,
+          "AGENTS.md": options!.instructionsBody!,
+        }
+      : promptTemplate.trim().length === 0
+      ? defaultBundle
+      : {
+          ...defaultBundle,
+          "AGENTS.md": promptTemplate,
+        };
     const materialized = await instructions.materializeManagedBundle(
       agent,
       files,
@@ -569,6 +590,133 @@ export function agentRoutes(db: Db) {
 
     const updated = await svc.update(agent.id, { adapterConfig: nextAdapterConfig });
     return (updated as T | null) ?? { ...agent, adapterConfig: nextAdapterConfig };
+  }
+
+  async function resolveTemplateBackedAgentInput(
+    companyId: string,
+    input: Record<string, unknown>,
+  ): Promise<{
+    mergedInput: Record<string, unknown>;
+    instructionsBody: string | null;
+  }> {
+    const resolved = await templateSvc.resolveRevisionForInstantiation(companyId, {
+      templateId: typeof input.templateId === "string" ? input.templateId : null,
+      templateRevisionId: typeof input.templateRevisionId === "string" ? input.templateRevisionId : null,
+    });
+    if (!resolved) {
+      return { mergedInput: input, instructionsBody: null };
+    }
+
+    const snapshot = agentTemplateSnapshotSchema.parse(resolved.revision.snapshot);
+    const mergedInput: Record<string, unknown> = { ...input };
+    const fields: Array<keyof typeof snapshot> = [
+      "name",
+      "role",
+      "title",
+      "icon",
+      "reportsTo",
+      "orgLevel",
+      "operatingClass",
+      "capabilityProfileKey",
+      "archetypeKey",
+      "departmentKey",
+      "departmentName",
+      "capabilities",
+      "adapterType",
+      "adapterConfig",
+      "runtimeConfig",
+      "budgetMonthlyCents",
+      "metadata",
+    ];
+
+    for (const field of fields) {
+      if (!hasOwn(input, field)) {
+        mergedInput[field] = snapshot[field];
+      }
+    }
+
+    mergedInput.templateId = resolved.template.id;
+    mergedInput.templateRevisionId = resolved.revision.id;
+    return {
+      mergedInput,
+      instructionsBody: snapshot.instructionsBody ?? null,
+    };
+  }
+
+  function buildAgentCreatePayload(
+    input: Record<string, unknown>,
+    extras: {
+      status: "idle" | "pending_approval";
+      spentMonthlyCents: number;
+      lastHeartbeatAt: Date | null;
+    },
+  ): Omit<typeof agentsTable.$inferInsert, "companyId"> {
+    const name = typeof input.name === "string" ? input.name.trim() : "";
+    const adapterType = typeof input.adapterType === "string" ? input.adapterType : "";
+    if (!name) throw unprocessable("Agent name is required");
+    if (!adapterType) throw unprocessable("Adapter type is required");
+
+    return {
+      name,
+      role: (typeof input.role === "string" ? input.role : "general") as AgentRole,
+      title: typeof input.title === "string" ? input.title : null,
+      icon: typeof input.icon === "string" ? input.icon : null,
+      reportsTo: typeof input.reportsTo === "string" ? input.reportsTo : null,
+      orgLevel:
+        input.orgLevel === "executive" || input.orgLevel === "director" || input.orgLevel === "staff"
+          ? input.orgLevel
+          : undefined,
+      operatingClass:
+        input.operatingClass === "executive" ||
+        input.operatingClass === "project_leadership" ||
+        input.operatingClass === "worker" ||
+        input.operatingClass === "shared_service_lead" ||
+        input.operatingClass === "consultant"
+          ? input.operatingClass
+          : undefined,
+      capabilityProfileKey:
+        typeof input.capabilityProfileKey === "string" ? input.capabilityProfileKey : undefined,
+      archetypeKey: typeof input.archetypeKey === "string" ? input.archetypeKey : undefined,
+      departmentKey:
+        input.departmentKey === "custom" ||
+        input.departmentKey === "general" ||
+        input.departmentKey === "executive" ||
+        input.departmentKey === "engineering" ||
+        input.departmentKey === "product" ||
+        input.departmentKey === "design" ||
+        input.departmentKey === "marketing" ||
+        input.departmentKey === "finance" ||
+        input.departmentKey === "operations" ||
+        input.departmentKey === "research"
+          ? input.departmentKey
+          : undefined,
+      departmentName: typeof input.departmentName === "string" ? input.departmentName : null,
+      capabilities: typeof input.capabilities === "string" ? input.capabilities : null,
+      adapterType,
+      adapterConfig:
+        typeof input.adapterConfig === "object" && input.adapterConfig !== null && !Array.isArray(input.adapterConfig)
+          ? (input.adapterConfig as Record<string, unknown>)
+          : {},
+      runtimeConfig:
+        typeof input.runtimeConfig === "object" && input.runtimeConfig !== null && !Array.isArray(input.runtimeConfig)
+          ? (input.runtimeConfig as Record<string, unknown>)
+          : {},
+      budgetMonthlyCents:
+        typeof input.budgetMonthlyCents === "number" ? input.budgetMonthlyCents : 0,
+      permissions:
+        typeof input.permissions === "object" && input.permissions !== null && !Array.isArray(input.permissions)
+          ? (input.permissions as Record<string, unknown>)
+          : undefined,
+      metadata:
+        typeof input.metadata === "object" && input.metadata !== null && !Array.isArray(input.metadata)
+          ? (input.metadata as Record<string, unknown>)
+          : null,
+      templateId: typeof input.templateId === "string" ? input.templateId : null,
+      templateRevisionId: typeof input.templateRevisionId === "string" ? input.templateRevisionId : null,
+      status: extras.status,
+      spentMonthlyCents: extras.spentMonthlyCents,
+      lastHeartbeatAt: extras.lastHeartbeatAt,
+    };
   }
 
   async function assertCanManageInstructionsPath(req: Request, targetAgent: { id: string; companyId: string }) {
@@ -1132,16 +1280,24 @@ export function agentRoutes(db: Db) {
       desiredSkills: requestedDesiredSkills,
       sourceIssueId: _sourceIssueId,
       sourceIssueIds: _sourceIssueIds,
-      ...hireInput
+      ...requestedHireInput
     } = req.body;
-    hireInput.adapterType = assertKnownAdapterType(hireInput.adapterType);
+    const templateResolved = await resolveTemplateBackedAgentInput(companyId, requestedHireInput);
+    const hireInput = { ...templateResolved.mergedInput };
+    if (typeof hireInput.name !== "string" || hireInput.name.trim().length === 0) {
+      throw unprocessable("Agent name is required");
+    }
+    hireInput.role = typeof hireInput.role === "string" ? hireInput.role : "general";
+    hireInput.adapterType = assertKnownAdapterType(
+      typeof hireInput.adapterType === "string" ? hireInput.adapterType : null,
+    );
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
-      hireInput.adapterType,
+      hireInput.adapterType as string,
       ((hireInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
     const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
       companyId,
-      hireInput.adapterType,
+      hireInput.adapterType as string,
       requestedAdapterConfig,
       Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
     );
@@ -1152,13 +1308,29 @@ export function agentRoutes(db: Db) {
     );
     await assertAdapterConfigConstraints(
       companyId,
-      hireInput.adapterType,
+      hireInput.adapterType as string,
       normalizedAdapterConfig,
     );
     const normalizedHireInput = {
       ...hireInput,
       adapterConfig: normalizedAdapterConfig,
-      runtimeConfig: normalizeNewAgentRuntimeConfig(hireInput.runtimeConfig),
+      runtimeConfig: normalizeNewAgentRuntimeConfig((hireInput.runtimeConfig ?? {}) as Record<string, unknown>),
+      budgetMonthlyCents:
+        typeof hireInput.budgetMonthlyCents === "number"
+          ? hireInput.budgetMonthlyCents
+          : 0,
+    } as Record<string, unknown> & {
+      name: string;
+      role: string;
+      title?: string | null;
+      icon?: string | null;
+      reportsTo?: string | null;
+      capabilities?: string | null;
+      metadata?: Record<string, unknown> | null;
+      adapterType: string;
+      adapterConfig: Record<string, unknown>;
+      runtimeConfig: Record<string, unknown>;
+      budgetMonthlyCents: number;
     };
 
     const company = await db
@@ -1173,13 +1345,14 @@ export function agentRoutes(db: Db) {
 
     const requiresApproval = company.requireBoardApprovalForNewAgents;
     const status = requiresApproval ? "pending_approval" : "idle";
-    const createdAgent = await svc.create(companyId, {
-      ...normalizedHireInput,
+    const createdAgent = await svc.create(companyId, buildAgentCreatePayload(normalizedHireInput, {
       status,
       spentMonthlyCents: 0,
       lastHeartbeatAt: null,
+    }));
+    const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent, {
+      instructionsBody: templateResolved.instructionsBody,
     });
-    const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
 
     let approval: Awaited<ReturnType<typeof approvalsSvc.getById>> | null = null;
     const actor = getActorInfo(req);
@@ -1298,16 +1471,24 @@ export function agentRoutes(db: Db) {
 
     const {
       desiredSkills: requestedDesiredSkills,
-      ...createInput
+      ...requestedCreateInput
     } = req.body;
-    createInput.adapterType = assertKnownAdapterType(createInput.adapterType);
+    const templateResolved = await resolveTemplateBackedAgentInput(companyId, requestedCreateInput);
+    const createInput = { ...templateResolved.mergedInput };
+    if (typeof createInput.name !== "string" || createInput.name.trim().length === 0) {
+      throw unprocessable("Agent name is required");
+    }
+    createInput.role = typeof createInput.role === "string" ? createInput.role : "general";
+    createInput.adapterType = assertKnownAdapterType(
+      typeof createInput.adapterType === "string" ? createInput.adapterType : null,
+    );
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
-      createInput.adapterType,
+      createInput.adapterType as string,
       ((createInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
     const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
       companyId,
-      createInput.adapterType,
+      createInput.adapterType as string,
       requestedAdapterConfig,
       Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
     );
@@ -1318,19 +1499,26 @@ export function agentRoutes(db: Db) {
     );
     await assertAdapterConfigConstraints(
       companyId,
-      createInput.adapterType,
+      createInput.adapterType as string,
       normalizedAdapterConfig,
     );
 
-    const createdAgent = await svc.create(companyId, {
+    const createdAgent = await svc.create(companyId, buildAgentCreatePayload({
       ...createInput,
       adapterConfig: normalizedAdapterConfig,
-      runtimeConfig: normalizeNewAgentRuntimeConfig(createInput.runtimeConfig),
+      runtimeConfig: normalizeNewAgentRuntimeConfig((createInput.runtimeConfig ?? {}) as Record<string, unknown>),
+      budgetMonthlyCents:
+        typeof createInput.budgetMonthlyCents === "number"
+          ? createInput.budgetMonthlyCents
+          : 0,
+    }, {
       status: "idle",
       spentMonthlyCents: 0,
       lastHeartbeatAt: null,
+    }));
+    const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent, {
+      instructionsBody: templateResolved.instructionsBody,
     });
-    const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
 
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -1568,6 +1756,60 @@ export function agentRoutes(db: Db) {
     });
 
     res.json(bundle);
+  });
+
+  router.post("/agents/:id/instructions-bundle/repair-defaults", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertBoard(req);
+    assertCompanyAccess(req, existing.companyId);
+
+    const actor = getActorInfo(req);
+    const defaults = await loadDefaultAgentInstructionsBundle(
+      resolveDefaultAgentInstructionsBundleRole(existing.role),
+    );
+    const result = await instructions.repairManagedBundleDefaults(existing, defaults, {
+      entryFile: "AGENTS.md",
+    });
+    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+      existing.companyId,
+      result.adapterConfig,
+      { strictMode: strictSecretsMode },
+    );
+    await svc.update(
+      id,
+      { adapterConfig: normalizedAdapterConfig },
+      {
+        recordRevision: {
+          createdByAgentId: actor.agentId,
+          createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+          source: "instructions_bundle_repair_defaults",
+        },
+      },
+    );
+
+    await logActivity(db, {
+      companyId: existing.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "agent.instructions_bundle_repaired",
+      entityType: "agent",
+      entityId: existing.id,
+      details: {
+        createdFiles: result.createdFiles,
+      },
+    });
+
+    res.json({
+      bundle: result.bundle,
+      createdFiles: result.createdFiles,
+    });
   });
 
   router.get("/agents/:id/instructions-bundle/file", async (req, res) => {

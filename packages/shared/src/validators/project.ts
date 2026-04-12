@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PROJECT_STATUSES } from "../constants.js";
+import { issueDocumentFormatSchema, issueDocumentKeySchema, restoreIssueDocumentRevisionSchema, upsertIssueDocumentSchema } from "./issue.js";
 import { envConfigSchema } from "./secret.js";
 
 const executionWorkspaceStrategySchema = z
@@ -121,3 +122,12 @@ export const updateProjectSchema = z.object(projectFields).partial();
 export type UpdateProject = z.infer<typeof updateProjectSchema>;
 
 export type ProjectExecutionWorkspacePolicy = z.infer<typeof projectExecutionWorkspacePolicySchema>;
+
+export const projectDocumentKeySchema = issueDocumentKeySchema;
+export const upsertProjectDocumentSchema = upsertIssueDocumentSchema;
+export const restoreProjectDocumentRevisionSchema = restoreIssueDocumentRevisionSchema;
+export const projectDocumentFormatSchema = issueDocumentFormatSchema;
+
+export type ProjectDocumentFormat = z.infer<typeof projectDocumentFormatSchema>;
+export type UpsertProjectDocument = z.infer<typeof upsertProjectDocumentSchema>;
+export type RestoreProjectDocumentRevision = z.infer<typeof restoreProjectDocumentRevisionSchema>;

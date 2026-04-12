@@ -338,6 +338,26 @@ export function joinPromptSections(
     .join(separator);
 }
 
+export function renderPaperclipProjectContext(context: Record<string, unknown> | null | undefined) {
+  if (!context || typeof context !== "object" || Array.isArray(context)) return "";
+  const projectContextRaw = context.paperclipProjectContext;
+  if (typeof projectContextRaw !== "object" || projectContextRaw === null || Array.isArray(projectContextRaw)) {
+    return "";
+  }
+  const projectContext = projectContextRaw as Record<string, unknown>;
+  const body =
+    typeof projectContext.body === "string"
+      ? projectContext.body.trim()
+      : "";
+  if (!body.length) return "";
+  const projectName =
+    typeof projectContext.projectName === "string"
+      ? projectContext.projectName.trim()
+      : "";
+  const title = projectName.length ? `${projectName} PROJECT_CONTEXT.md` : "PROJECT_CONTEXT.md";
+  return [`# ${title}`, body].join("\n\n");
+}
+
 type PaperclipWakeIssue = {
   id: string | null;
   identifier: string | null;

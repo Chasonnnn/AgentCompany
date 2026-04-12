@@ -1,4 +1,5 @@
 import type { PauseReason, ProjectStatus } from "../constants.js";
+import type { DocumentFormat } from "./issue.js";
 import type { AgentEnvConfig } from "./secrets.js";
 import type {
   ProjectExecutionWorkspacePolicy,
@@ -12,6 +13,43 @@ export type ProjectWorkspaceVisibility = "default" | "advanced";
 export interface ProjectGoalRef {
   id: string;
   title: string;
+}
+
+export interface ProjectDocumentSummary {
+  id: string;
+  companyId: string;
+  projectId: string;
+  key: string;
+  title: string | null;
+  format: DocumentFormat;
+  latestRevisionId: string | null;
+  latestRevisionNumber: number;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  updatedByAgentId: string | null;
+  updatedByUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ProjectDocument extends ProjectDocumentSummary {
+  body: string;
+}
+
+export interface ProjectDocumentRevision {
+  id: string;
+  companyId: string;
+  documentId: string;
+  projectId: string;
+  key: string;
+  revisionNumber: number;
+  title: string | null;
+  format: DocumentFormat;
+  body: string;
+  changeSummary: string | null;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  createdAt: Date;
 }
 
 export interface ProjectWorkspace {

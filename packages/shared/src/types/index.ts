@@ -68,6 +68,9 @@ export type {
   AgentDetail,
   AgentHierarchyMemberSummary,
   AgentPermissions,
+  AgentTemplateImportPackItem,
+  AgentTemplateImportPackRequest,
+  AgentTemplateImportPackResult,
   AgentProjectScope,
   AgentSecondaryRelationship,
   AgentTemplate,
@@ -105,7 +108,16 @@ export type {
   SharedServiceEngagementUpdateRequest,
 } from "./shared-service-engagement.js";
 export type { AssetImage } from "./asset.js";
-export type { Project, ProjectCodebase, ProjectCodebaseOrigin, ProjectGoalRef, ProjectWorkspace } from "./project.js";
+export type {
+  Project,
+  ProjectCodebase,
+  ProjectCodebaseOrigin,
+  ProjectDocument,
+  ProjectDocumentRevision,
+  ProjectDocumentSummary,
+  ProjectGoalRef,
+  ProjectWorkspace,
+} from "./project.js";
 export type {
   ConferenceContext,
   ConferenceExecutionWorkspaceSummary,

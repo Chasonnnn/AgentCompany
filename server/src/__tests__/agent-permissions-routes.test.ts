@@ -88,6 +88,9 @@ const mockAgentSkillService = vi.hoisted(() => ({
   syncAgentSkills: vi.fn(),
   resolveDesiredSkillAssignment: vi.fn(),
 }));
+const mockAgentTemplateService = vi.hoisted(() => ({
+  resolveRevisionForInstantiation: vi.fn(),
+}));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
@@ -105,6 +108,7 @@ function registerServiceMocks() {
 
   vi.doMock("../services/index.js", () => ({
     agentService: () => mockAgentService,
+    agentTemplateService: () => mockAgentTemplateService,
     agentInstructionsService: () => mockAgentInstructionsService,
     accessService: () => mockAccessService,
     approvalService: () => mockApprovalService,
@@ -159,6 +163,7 @@ describe("agent permission routes", () => {
     registerServiceMocks();
     vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
+    mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockAgentService.getById.mockResolvedValue(baseAgent);
     mockAgentService.getChainOfCommand.mockResolvedValue([]);
     mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });

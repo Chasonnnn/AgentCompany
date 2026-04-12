@@ -25,6 +25,14 @@ const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockSecretService = vi.hoisted(() => ({
   normalizeEnvBindingsForPersistence: vi.fn(),
 }));
+const mockDocumentService = vi.hoisted(() => ({
+  listProjectDocuments: vi.fn(),
+  getProjectDocumentByKey: vi.fn(),
+  listProjectDocumentRevisions: vi.fn(),
+  upsertProjectDocument: vi.fn(),
+  restoreProjectDocumentRevision: vi.fn(),
+  deleteProjectDocument: vi.fn(),
+}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackProjectCreated = vi.hoisted(() => vi.fn());
 const mockTrackGoalCreated = vi.hoisted(() => vi.fn());
@@ -46,6 +54,7 @@ vi.mock("../telemetry.js", () => ({
 }));
 
 vi.mock("../services/index.js", () => ({
+  documentService: () => mockDocumentService,
   goalService: () => mockGoalService,
   logActivity: mockLogActivity,
   projectService: () => mockProjectService,

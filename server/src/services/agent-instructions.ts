@@ -722,6 +722,53 @@ export function agentInstructionsService() {
     return { bundle, adapterConfig };
   }
 
+  async function repairManagedBundleDefaults(
+    agent: AgentLike,
+    files: Record<string, string>,
+    options?: {
+      clearLegacyPromptTemplate?: boolean;
+      entryFile?: string;
+    },
+  ): Promise<{
+    bundle: AgentInstructionsBundle;
+    adapterConfig: Record<string, unknown>;
+    createdFiles: string[];
+  }> {
+    const prepared = await ensureWritableBundle(agent, {
+      clearLegacyPromptTemplate: options?.clearLegacyPromptTemplate,
+    });
+    const rootPath = prepared.state.rootPath!;
+    const entryFile = options?.entryFile ? normalizeRelativeFilePath(options.entryFile) : prepared.state.entryFile;
+    const createdFiles: string[] = [];
+
+    for (const [relativePath, content] of Object.entries(files)) {
+      const normalizedPath = normalizeRelativeFilePath(relativePath);
+      const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
+      const existing = await statIfExists(absolutePath);
+      if (existing?.isFile()) continue;
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, content, "utf8");
+      createdFiles.push(normalizedPath);
+    }
+
+    const entryPath = resolvePathWithinRoot(rootPath, entryFile);
+    const entryExists = await statIfExists(entryPath);
+    if (!entryExists?.isFile()) {
+      await fs.mkdir(path.dirname(entryPath), { recursive: true });
+      await fs.writeFile(entryPath, files[entryFile] ?? "", "utf8");
+      if (!createdFiles.includes(entryFile)) {
+        createdFiles.push(entryFile);
+      }
+    }
+
+    const bundle = await getBundle({ ...agent, adapterConfig: prepared.adapterConfig });
+    return {
+      bundle,
+      adapterConfig: prepared.adapterConfig,
+      createdFiles,
+    };
+  }
+
   return {
     getBundle,
     readFile,
@@ -731,5 +778,6 @@ export function agentInstructionsService() {
     exportFiles,
     ensureManagedBundle: ensureWritableBundle,
     materializeManagedBundle,
+    repairManagedBundleDefaults,
   };
 }
