@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const issueId = "11111111-1111-4111-8111-111111111111";
 const closedWorkspaceId = "33333333-3333-4333-8333-333333333333";
@@ -85,6 +85,9 @@ function registerServiceMocks() {
 }
 
 async function createApp() {
+  vi.unmock("../services/index.js");
+  vi.unmock("../telemetry.js");
+  vi.unmock("@paperclipai/shared/telemetry");
   const [{ issueRoutes }, { errorHandler }] = await Promise.all([
     import("../routes/issues.js"),
     import("../middleware/index.js"),
@@ -136,11 +139,20 @@ function makeClosedWorkspace() {
 
 describe("closed isolated workspace issue routes", () => {
   beforeEach(() => {
+    vi.unmock("../services/index.js");
+    vi.unmock("../telemetry.js");
+    vi.unmock("@paperclipai/shared/telemetry");
     vi.resetModules();
     registerServiceMocks();
     vi.clearAllMocks();
     mockIssueService.getById.mockResolvedValue(makeIssue());
     mockExecutionWorkspaceService.getById.mockResolvedValue(makeClosedWorkspace());
+  });
+
+  afterEach(() => {
+    vi.unmock("../services/index.js");
+    vi.unmock("../telemetry.js");
+    vi.unmock("@paperclipai/shared/telemetry");
   });
 
   it("rejects new issue comments when the linked isolated workspace is closed", async () => {

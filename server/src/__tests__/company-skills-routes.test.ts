@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 function createMocks() {
   return {
@@ -126,16 +126,18 @@ function applyDefaultMocks(mocks: ReturnType<typeof createMocks>) {
 }
 
 async function createApp(actor: Record<string, unknown>) {
+  vi.unmock("../services/index.js");
+  vi.unmock("../telemetry.js");
+  vi.unmock("@paperclipai/shared/telemetry");
   vi.resetModules();
   const mocks = createMocks();
   applyDefaultMocks(mocks);
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackSkillImported: mocks.trackSkillImported,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mocks.getTelemetryClient,
-  }));
+  const [sharedTelemetry, serverTelemetry] = await Promise.all([
+    vi.importActual<typeof import("@paperclipai/shared/telemetry")>("@paperclipai/shared/telemetry"),
+    vi.importActual<typeof import("../telemetry.js")>("../telemetry.js"),
+  ]);
+  vi.spyOn(sharedTelemetry, "trackSkillImported").mockImplementation(mocks.trackSkillImported);
+  vi.spyOn(serverTelemetry, "getTelemetryClient").mockImplementation(mocks.getTelemetryClient);
   vi.doMock("../services/index.js", () => ({
     accessService: () => mocks.accessService,
     agentService: () => mocks.agentService,
@@ -161,7 +163,18 @@ async function createApp(actor: Record<string, unknown>) {
 
 describe("company skill mutation permissions", () => {
   beforeEach(() => {
-    vi.resetAllMocks();
+    vi.unmock("../services/index.js");
+    vi.unmock("../telemetry.js");
+    vi.unmock("@paperclipai/shared/telemetry");
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unmock("../services/index.js");
+    vi.unmock("../telemetry.js");
+    vi.unmock("@paperclipai/shared/telemetry");
+    vi.restoreAllMocks();
   });
 
   it("allows local board operators to mutate company skills", async () => {

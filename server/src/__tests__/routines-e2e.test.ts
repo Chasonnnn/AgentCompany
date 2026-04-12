@@ -26,54 +26,53 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
-import { accessService } from "../services/access.js";
 
-function registerServiceMocks() {
-  vi.doMock("../services/index.js", async () => {
-    const actual = await vi.importActual<typeof import("../services/index.js")>("../services/index.js");
+function resetServiceModuleMocks() {
+  vi.unmock("../services/index.js");
+  vi.unmock("../services/companies.js");
+  vi.unmock("../services/agents.js");
+  vi.unmock("../services/access.js");
+  vi.unmock("../services/projects.js");
+  vi.unmock("../services/issues.js");
+  vi.unmock("../services/routines.js");
+  vi.unmock("../services/company-skills.js");
+  vi.unmock("../services/assets.js");
+  vi.unmock("../services/agent-instructions.js");
+  vi.unmock("../routes/org-chart-svg.js");
+}
 
-    return {
-      ...actual,
-      routineService: (db: any) =>
-        actual.routineService(db, {
-          heartbeat: {
-            wakeup: async (agentId: string, wakeupOpts: any) => {
-              const issueId =
-                (typeof wakeupOpts?.payload?.issueId === "string" && wakeupOpts.payload.issueId) ||
-                (typeof wakeupOpts?.contextSnapshot?.issueId === "string" && wakeupOpts.contextSnapshot.issueId) ||
-                null;
-              if (!issueId) return null;
+async function wakeQueuedRunForIssue(db: ReturnType<typeof createDb>, agentId: string, wakeupOpts: any) {
+  const issueId =
+    (typeof wakeupOpts?.payload?.issueId === "string" && wakeupOpts.payload.issueId) ||
+    (typeof wakeupOpts?.contextSnapshot?.issueId === "string" && wakeupOpts.contextSnapshot.issueId) ||
+    null;
+  if (!issueId) return null;
 
-              const issue = await db
-                .select({ companyId: issues.companyId })
-                .from(issues)
-                .where(eq(issues.id, issueId))
-                .then((rows: Array<{ companyId: string }>) => rows[0] ?? null);
-              if (!issue) return null;
+  const issue = await db
+    .select({ companyId: issues.companyId })
+    .from(issues)
+    .where(eq(issues.id, issueId))
+    .then((rows: Array<{ companyId: string }>) => rows[0] ?? null);
+  if (!issue) return null;
 
-              const queuedRunId = randomUUID();
-              await db.insert(heartbeatRuns).values({
-                id: queuedRunId,
-                companyId: issue.companyId,
-                agentId,
-                invocationSource: wakeupOpts?.source ?? "assignment",
-                triggerDetail: wakeupOpts?.triggerDetail ?? null,
-                status: "queued",
-                contextSnapshot: { ...(wakeupOpts?.contextSnapshot ?? {}), issueId },
-              });
-              await db
-                .update(issues)
-                .set({
-                  executionRunId: queuedRunId,
-                  executionLockedAt: new Date(),
-                })
-                .where(eq(issues.id, issueId));
-              return { id: queuedRunId };
-            },
-          },
-        }),
-    };
+  const queuedRunId = randomUUID();
+  await db.insert(heartbeatRuns).values({
+    id: queuedRunId,
+    companyId: issue.companyId,
+    agentId,
+    invocationSource: wakeupOpts?.source ?? "assignment",
+    triggerDetail: wakeupOpts?.triggerDetail ?? null,
+    status: "queued",
+    contextSnapshot: { ...(wakeupOpts?.contextSnapshot ?? {}), issueId },
   });
+  await db
+    .update(issues)
+    .set({
+      executionRunId: queuedRunId,
+      executionLockedAt: new Date(),
+    })
+    .where(eq(issues.id, issueId));
+  return { id: queuedRunId };
 }
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
@@ -95,9 +94,8 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   }, 20_000);
 
   beforeEach(() => {
+    resetServiceModuleMocks();
     vi.resetModules();
-    vi.unmock("../services/index.js");
-    registerServiceMocks();
   });
 
   afterEach(async () => {
@@ -117,7 +115,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     await db.delete(agents);
     await db.delete(companies);
     await db.delete(instanceSettings);
-    vi.unmock("../services/index.js");
+    resetServiceModuleMocks();
   });
 
   afterAll(async () => {
@@ -125,14 +123,33 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   });
 
   async function createApp(actor: Record<string, unknown>) {
-    const { routineRoutes } = await import("../routes/routines.js");
+    resetServiceModuleMocks();
+    const [
+      { routineRoutes },
+      { accessService },
+      { routineService },
+    ] = await Promise.all([
+      import("../routes/routines.js"),
+      vi.importActual<typeof import("../services/access.js")>("../services/access.js"),
+      vi.importActual<typeof import("../services/routines.js")>("../services/routines.js"),
+    ]);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
       (req as any).actor = actor;
       next();
     });
-    app.use("/api", routineRoutes(db));
+    app.use(
+      "/api",
+      routineRoutes(db, {
+        accessService: accessService(db),
+        routineService: routineService(db, {
+          heartbeat: {
+            wakeup: async (agentId: string, wakeupOpts: any) => wakeQueuedRunForIssue(db, agentId, wakeupOpts),
+          },
+        }),
+      }),
+    );
     app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
       res.status(err?.status ?? 500).json({ error: err?.message ?? "Internal server error" });
     });
@@ -140,6 +157,8 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   }
 
   async function seedFixture() {
+    resetServiceModuleMocks();
+    const { accessService } = await vi.importActual<typeof import("../services/access.js")>("../services/access.js");
     const companyId = randomUUID();
     const agentId = randomUUID();
     const projectId = randomUUID();
