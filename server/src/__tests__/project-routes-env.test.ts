@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockProjectService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -29,22 +29,24 @@ const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: mockGetTelemetryClient,
-}));
+function registerRouteMocks() {
+  vi.doMock("../telemetry.js", () => ({
+    getTelemetryClient: mockGetTelemetryClient,
+  }));
 
-vi.mock("../services/index.js", () => ({
-  documentService: () => mockDocumentService,
-  logActivity: mockLogActivity,
-  projectService: () => mockProjectService,
-  secretService: () => mockSecretService,
-  workspaceOperationService: () => mockWorkspaceOperationService,
-}));
+  vi.doMock("../services/index.js", () => ({
+    documentService: () => mockDocumentService,
+    logActivity: mockLogActivity,
+    projectService: () => mockProjectService,
+    secretService: () => mockSecretService,
+    workspaceOperationService: () => mockWorkspaceOperationService,
+  }));
 
-vi.mock("../services/workspace-runtime.js", () => ({
-  startRuntimeServicesForWorkspaceControl: vi.fn(),
-  stopRuntimeServicesForProjectWorkspace: vi.fn(),
-}));
+  vi.doMock("../services/workspace-runtime.js", () => ({
+    startRuntimeServicesForWorkspaceControl: vi.fn(),
+    stopRuntimeServicesForProjectWorkspace: vi.fn(),
+  }));
+}
 
 async function createApp() {
   const { projectRoutes } = await import("../routes/projects.js");
@@ -107,12 +109,22 @@ function buildProject(overrides: Record<string, unknown> = {}) {
 describe("project env routes", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.unmock("../telemetry.js");
+    vi.unmock("../services/index.js");
+    vi.unmock("../services/workspace-runtime.js");
+    registerRouteMocks();
     vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockProjectService.createWorkspace.mockResolvedValue(null);
     mockProjectService.listWorkspaces.mockResolvedValue([]);
     mockSecretService.normalizeEnvBindingsForPersistence.mockImplementation(async (_companyId, env) => env);
+  });
+
+  afterEach(() => {
+    vi.unmock("../telemetry.js");
+    vi.unmock("../services/index.js");
+    vi.unmock("../services/workspace-runtime.js");
   });
 
   it("normalizes env bindings on create and logs only env keys", async () => {
