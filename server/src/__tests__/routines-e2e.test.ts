@@ -96,6 +96,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
 
   beforeEach(() => {
     vi.resetModules();
+    vi.unmock("../services/index.js");
     registerServiceMocks();
   });
 
@@ -116,6 +117,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     await db.delete(agents);
     await db.delete(companies);
     await db.delete(instanceSettings);
+    vi.unmock("../services/index.js");
   });
 
   afterAll(async () => {

@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -39,7 +39,7 @@ const mockAgentTemplateService = vi.hoisted(() => ({
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
-async function createApp() {
+function registerRouteMocks() {
   vi.doMock("../services/index.js", () => ({
     agentService: () => mockAgentService,
     agentTemplateService: () => mockAgentTemplateService,
@@ -62,7 +62,9 @@ async function createApp() {
     findServerAdapter: vi.fn((_type: string) => ({ type: _type })),
     listAdapterModels: vi.fn(),
   }));
+}
 
+async function createApp() {
   const [{ agentRoutes }, { errorHandler }] = await Promise.all([
     import("../routes/agents.js"),
     import("../middleware/index.js"),
@@ -105,6 +107,9 @@ function makeAgent() {
 describe("agent instructions bundle routes", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.unmock("../services/index.js");
+    vi.unmock("../adapters/index.js");
+    registerRouteMocks();
     vi.clearAllMocks();
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
@@ -178,6 +183,11 @@ describe("agent instructions bundle routes", () => {
         instructionsFilePath: "/tmp/agent-1/AGENTS.md",
       },
     });
+  });
+
+  afterEach(() => {
+    vi.unmock("../services/index.js");
+    vi.unmock("../adapters/index.js");
   });
 
   it("returns bundle metadata", async () => {
