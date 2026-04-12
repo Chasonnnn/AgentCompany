@@ -168,6 +168,7 @@ export function applyOptimisticIssueFieldUpdate(
   assign("priority");
   assign("assigneeAgentId");
   assign("assigneeUserId");
+  assign("parentId");
   assign("projectId");
   assign("projectWorkspaceId");
   assign("executionWorkspaceId");
@@ -192,6 +193,10 @@ export function applyOptimisticIssueFieldUpdate(
 
   if (hasOwn("projectId")) {
     nextIssue.project = issue.project?.id === nextIssue.projectId ? issue.project : null;
+  }
+
+  if (hasOwn("parentId")) {
+    nextIssue.ancestors = undefined;
   }
 
   if (hasOwn("executionWorkspaceId")) {
