@@ -60,8 +60,15 @@ describe("codex execute", () => {
     );
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.mkdir(path.join(sharedCodexHome, "agents"), { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
-    await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
+    await fs.writeFile(
+      path.join(sharedCodexHome, "config.toml"),
+      'model = "codex-mini-latest"\n[agents.worker]\nconfig_file = "agents/worker.toml"\n\n[agents.explorer]\nconfig_file = "agents/explorer.toml"\n',
+      "utf8",
+    );
+    await fs.writeFile(path.join(sharedCodexHome, "agents", "worker.toml"), 'name = "worker"\n', "utf8");
+    await fs.writeFile(path.join(sharedCodexHome, "agents", "explorer.toml"), 'name = "explorer"\n', "utf8");
     await writeFakeCodexCommand(commandPath);
 
     const previousHome = process.env.HOME;
@@ -115,10 +122,20 @@ describe("codex execute", () => {
 
       const managedAuth = path.join(managedCodexHome, "auth.json");
       const managedConfig = path.join(managedCodexHome, "config.toml");
+      const managedAgentsDir = path.join(managedCodexHome, "agents");
       expect((await fs.lstat(managedAuth)).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(managedAuth)).toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
       expect((await fs.lstat(managedConfig)).isFile()).toBe(true);
-      expect(await fs.readFile(managedConfig, "utf8")).toBe('model = "codex-mini-latest"\n');
+      expect(await fs.readFile(managedConfig, "utf8")).toBe(
+        'model = "codex-mini-latest"\n[agents.worker]\nconfig_file = "agents/worker.toml"\n\n[agents.explorer]\nconfig_file = "agents/explorer.toml"\n',
+      );
+      expect((await fs.lstat(managedAgentsDir)).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(path.join(managedAgentsDir, "worker.toml"))).toBe(
+        await fs.realpath(path.join(sharedCodexHome, "agents", "worker.toml")),
+      );
+      expect(await fs.realpath(path.join(managedAgentsDir, "explorer.toml"))).toBe(
+        await fs.realpath(path.join(sharedCodexHome, "agents", "explorer.toml")),
+      );
       await expect(fs.lstat(path.join(sharedCodexHome, "companies", "company-1"))).rejects.toThrow();
       expect(logs).toContainEqual(
         expect.objectContaining({
@@ -744,8 +761,15 @@ describe("codex execute", () => {
     const homeSkill = path.join(isolatedCodexHome, "skills", "paperclip");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.mkdir(path.join(sharedCodexHome, "agents"), { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
-    await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
+    await fs.writeFile(
+      path.join(sharedCodexHome, "config.toml"),
+      'model = "codex-mini-latest"\n[agents.worker]\nconfig_file = "agents/worker.toml"\n\n[agents.explorer]\nconfig_file = "agents/explorer.toml"\n',
+      "utf8",
+    );
+    await fs.writeFile(path.join(sharedCodexHome, "agents", "worker.toml"), 'name = "worker"\n', "utf8");
+    await fs.writeFile(path.join(sharedCodexHome, "agents", "explorer.toml"), 'name = "explorer"\n', "utf8");
     await writeFakeCodexCommand(commandPath);
 
     const previousHome = process.env.HOME;
@@ -810,11 +834,21 @@ describe("codex execute", () => {
 
       const isolatedAuth = path.join(isolatedCodexHome, "auth.json");
       const isolatedConfig = path.join(isolatedCodexHome, "config.toml");
+      const isolatedAgentsDir = path.join(isolatedCodexHome, "agents");
 
       expect((await fs.lstat(isolatedAuth)).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(isolatedAuth)).toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
       expect((await fs.lstat(isolatedConfig)).isFile()).toBe(true);
-      expect(await fs.readFile(isolatedConfig, "utf8")).toBe('model = "codex-mini-latest"\n');
+      expect(await fs.readFile(isolatedConfig, "utf8")).toBe(
+        'model = "codex-mini-latest"\n[agents.worker]\nconfig_file = "agents/worker.toml"\n\n[agents.explorer]\nconfig_file = "agents/explorer.toml"\n',
+      );
+      expect((await fs.lstat(isolatedAgentsDir)).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(path.join(isolatedAgentsDir, "worker.toml"))).toBe(
+        await fs.realpath(path.join(sharedCodexHome, "agents", "worker.toml")),
+      );
+      expect(await fs.realpath(path.join(isolatedAgentsDir, "explorer.toml"))).toBe(
+        await fs.realpath(path.join(sharedCodexHome, "agents", "explorer.toml")),
+      );
       expect((await fs.lstat(homeSkill)).isSymbolicLink()).toBe(true);
       expect(logs).toContainEqual(
         expect.objectContaining({

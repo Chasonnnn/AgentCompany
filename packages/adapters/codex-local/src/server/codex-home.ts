@@ -6,6 +6,7 @@ import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
 const TRUTHY_ENV_RE = /^(1|true|yes|on)$/i;
 const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md"] as const;
 const SYMLINKED_SHARED_FILES = ["auth.json"] as const;
+const SYMLINKED_SHARED_DIRECTORIES = ["agents"] as const;
 const DEFAULT_PAPERCLIP_INSTANCE_ID = "default";
 
 function nonEmpty(value: string | undefined): string | null {
@@ -43,10 +44,16 @@ async function ensureParentDir(target: string): Promise<void> {
 }
 
 async function ensureSymlink(target: string, source: string): Promise<void> {
+  const sourceStat = await fs.lstat(source);
+  const linkType = sourceStat.isDirectory()
+    ? process.platform === "win32"
+      ? "junction"
+      : "dir"
+    : "file";
   const existing = await fs.lstat(target).catch(() => null);
   if (!existing) {
     await ensureParentDir(target);
-    await fs.symlink(source, target);
+    await fs.symlink(source, target, linkType);
     return;
   }
 
@@ -61,7 +68,7 @@ async function ensureSymlink(target: string, source: string): Promise<void> {
   if (resolvedLinkedPath === source) return;
 
   await fs.unlink(target);
-  await fs.symlink(source, target);
+  await fs.symlink(source, target, linkType);
 }
 
 async function ensureCopiedFile(target: string, source: string): Promise<void> {
@@ -93,6 +100,13 @@ export async function prepareManagedCodexHome(
     const source = path.join(sourceHome, name);
     if (!(await pathExists(source))) continue;
     await ensureCopiedFile(path.join(targetHome, name), source);
+  }
+
+  for (const name of SYMLINKED_SHARED_DIRECTORIES) {
+    const source = path.join(sourceHome, name);
+    const sourceStat = await fs.lstat(source).catch(() => null);
+    if (!sourceStat?.isDirectory()) continue;
+    await ensureSymlink(path.join(targetHome, name), source);
   }
 
   await onLog(
