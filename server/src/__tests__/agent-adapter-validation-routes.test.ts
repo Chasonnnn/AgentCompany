@@ -1,10 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { agentRoutes } from "../routes/agents.js";
-import { errorHandler } from "../middleware/index.js";
 import type { ServerAdapterModule } from "../adapters/index.js";
-import { registerServerAdapter, unregisterServerAdapter } from "../adapters/index.js";
 
 const mockAgentService = vi.hoisted(() => ({
   create: vi.fn(),
@@ -70,28 +67,6 @@ const mockInstanceSettingsService = vi.hoisted(() => ({
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
-vi.mock("../services/index.js", () => ({
-  agentService: () => mockAgentService,
-  agentTemplateService: () => mockAgentTemplateService,
-  agentInstructionsService: () => mockAgentInstructionsService,
-  accessService: () => mockAccessService,
-  approvalService: () => mockApprovalService,
-  agentSkillService: () => mockAgentSkillService,
-  companySkillService: () => mockCompanySkillService,
-  budgetService: () => mockBudgetService,
-  heartbeatService: () => mockHeartbeatService,
-  issueApprovalService: () => mockIssueApprovalService,
-  issueService: () => ({}),
-  logActivity: mockLogActivity,
-  secretService: () => mockSecretService,
-  syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
-  workspaceOperationService: () => ({}),
-}));
-
-vi.mock("../services/instance-settings.js", () => ({
-  instanceSettingsService: () => mockInstanceSettingsService,
-}));
-
 const externalAdapter: ServerAdapterModule = {
   type: "external_test",
   execute: async () => ({ exitCode: 0, signal: null, timedOut: false }),
@@ -103,7 +78,32 @@ const externalAdapter: ServerAdapterModule = {
   }),
 };
 
-function createApp() {
+async function createApp() {
+  vi.resetModules();
+  vi.doMock("../services/index.js", () => ({
+    agentService: () => mockAgentService,
+    agentTemplateService: () => mockAgentTemplateService,
+    agentInstructionsService: () => mockAgentInstructionsService,
+    accessService: () => mockAccessService,
+    approvalService: () => mockApprovalService,
+    agentSkillService: () => mockAgentSkillService,
+    companySkillService: () => mockCompanySkillService,
+    budgetService: () => mockBudgetService,
+    heartbeatService: () => mockHeartbeatService,
+    issueApprovalService: () => mockIssueApprovalService,
+    issueService: () => ({}),
+    logActivity: mockLogActivity,
+    secretService: () => mockSecretService,
+    syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
+    workspaceOperationService: () => ({}),
+  }));
+  vi.doMock("../services/instance-settings.js", () => ({
+    instanceSettingsService: () => mockInstanceSettingsService,
+  }));
+  const [{ agentRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/agents.js"),
+    import("../middleware/index.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -125,7 +125,6 @@ describe("agent routes adapter validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
-    unregisterServerAdapter("external_test");
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
     mockCompanySkillService.resolveRequestedSkillKeys.mockResolvedValue([]);
     mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
@@ -172,13 +171,16 @@ describe("agent routes adapter validation", () => {
   });
 
   afterEach(() => {
-    unregisterServerAdapter("external_test");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../services/instance-settings.js");
   });
 
   it("creates agents for dynamically registered external adapter types", async () => {
+    const app = await createApp();
+    const { registerServerAdapter } = await import("../adapters/index.js");
     registerServerAdapter(externalAdapter);
 
-    const res = await request(createApp())
+    const res = await request(app)
       .post("/api/companies/company-1/agents")
       .send({
         name: "External Agent",
@@ -190,7 +192,7 @@ describe("agent routes adapter validation", () => {
   });
 
   it("rejects unknown adapter types even when schema accepts arbitrary strings", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/companies/company-1/agents")
       .send({
         name: "Missing Adapter",
