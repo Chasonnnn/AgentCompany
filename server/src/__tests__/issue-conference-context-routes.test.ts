@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { issueRoutes } from "../routes/issues.js";
-import { errorHandler } from "../middleware/index.js";
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -23,99 +21,79 @@ const mockIssueApprovalService = vi.hoisted(() => ({
 
 const mockResolveConferenceContext = vi.hoisted(() => vi.fn());
 
-vi.mock("../services/index.js", () => ({
-  accessService: () => ({
-    canUser: vi.fn(),
-    hasPermission: vi.fn(),
-  }),
-  agentService: () => ({
-    getById: vi.fn(),
-  }),
-  documentService: () => ({
-    getIssueDocumentPayload: vi.fn(async () => ({})),
-  }),
-  executionWorkspaceService: () => ({
-    getById: vi.fn(),
-  }),
-  feedbackService: () => ({
-    listIssueVotesForUser: vi.fn(async () => []),
-    saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
-  }),
-  goalService: () => ({
-    getById: vi.fn(async () => null),
-    getDefaultCompanyGoal: vi.fn(async () => null),
-  }),
-  heartbeatService: () => ({
-    wakeup: vi.fn(async () => undefined),
-    reportRunActivity: vi.fn(async () => undefined),
-  }),
-  instanceSettingsService: () => ({
-    get: vi.fn(async () => ({
-      id: "instance-settings-1",
-      general: {
-        censorUsernameInLogs: false,
-        feedbackDataSharingPreference: "prompt",
-      },
-    })),
-    listCompanyIds: vi.fn(async () => ["company-1"]),
-  }),
-  issueApprovalService: () => mockIssueApprovalService,
-  issueService: () => mockIssueService,
-  logActivity: vi.fn(async () => undefined),
-  projectService: () => ({
-    getById: vi.fn(async () => null),
-    listByIds: vi.fn(async () => []),
-  }),
-  routineService: () => ({
-    syncRunStatusForIssue: vi.fn(async () => undefined),
-  }),
-  workProductService: () => ({
-    listForIssue: vi.fn(async () => []),
-  }),
-}));
-
-vi.mock("../services/conference-context.js", async () => {
-  const actual = await vi.importActual<typeof import("../services/conference-context.js")>(
-    "../services/conference-context.js",
-  );
-  return {
-    ...actual,
-    conferenceContextService: () => ({
-      resolveForIssueRecord: mockResolveConferenceContext,
-      resolveForIssue: vi.fn(),
+async function createApp(actor: Record<string, unknown>) {
+  vi.doMock("../services/index.js", () => ({
+    accessService: () => ({
+      canUser: vi.fn(),
+      hasPermission: vi.fn(),
     }),
-  };
-});
-
-function createBoardApp() {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      userId: "local-board",
-      companyIds: ["company-1"],
-      source: "local_implicit",
-      isInstanceAdmin: false,
+    agentService: () => ({
+      getById: vi.fn(),
+    }),
+    documentService: () => ({
+      getIssueDocumentPayload: vi.fn(async () => ({})),
+    }),
+    executionWorkspaceService: () => ({
+      getById: vi.fn(),
+    }),
+    feedbackService: () => ({
+      listIssueVotesForUser: vi.fn(async () => []),
+      saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
+    }),
+    goalService: () => ({
+      getById: vi.fn(async () => null),
+      getDefaultCompanyGoal: vi.fn(async () => null),
+    }),
+    heartbeatService: () => ({
+      wakeup: vi.fn(async () => undefined),
+      reportRunActivity: vi.fn(async () => undefined),
+    }),
+    instanceSettingsService: () => ({
+      get: vi.fn(async () => ({
+        id: "instance-settings-1",
+        general: {
+          censorUsernameInLogs: false,
+          feedbackDataSharingPreference: "prompt",
+        },
+      })),
+      listCompanyIds: vi.fn(async () => ["company-1"]),
+    }),
+    issueApprovalService: () => mockIssueApprovalService,
+    issueService: () => mockIssueService,
+    logActivity: vi.fn(async () => undefined),
+    projectService: () => ({
+      getById: vi.fn(async () => null),
+      listByIds: vi.fn(async () => []),
+    }),
+    routineService: () => ({
+      syncRunStatusForIssue: vi.fn(async () => undefined),
+    }),
+    workProductService: () => ({
+      listForIssue: vi.fn(async () => []),
+    }),
+  }));
+  vi.doMock("../services/conference-context.js", async () => {
+    const actual = await vi.importActual<typeof import("../services/conference-context.js")>(
+      "../services/conference-context.js",
+    );
+    return {
+      ...actual,
+      conferenceContextService: () => ({
+        resolveForIssueRecord: mockResolveConferenceContext,
+        resolveForIssue: vi.fn(),
+      }),
     };
-    next();
   });
-  app.use("/api", issueRoutes({} as any, {} as any));
-  app.use(errorHandler);
-  return app;
-}
 
-function createAgentApp() {
+  const [{ issueRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/issues.js"),
+    import("../middleware/index.js"),
+  ]);
+
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "agent",
-      agentId: "agent-1",
-      companyId: "company-1",
-      source: "api_key",
-      isInstanceAdmin: false,
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use("/api", issueRoutes({} as any, {} as any));
@@ -181,6 +159,7 @@ function createApproval() {
 
 describe("issue conference context routes", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.resetAllMocks();
     mockIssueService.getById.mockResolvedValue({
       id: "issue-1",
@@ -227,7 +206,13 @@ describe("issue conference context routes", () => {
   });
 
   it("keeps raw repo paths for board callers on GET /issues/:id/conference-context", async () => {
-    const res = await request(createBoardApp()).get("/api/issues/issue-1/conference-context");
+    const res = await request(await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    })).get("/api/issues/issue-1/conference-context");
 
     expect(res.status).toBe(200);
     expect(res.body.git.rootPath).toBe("/Users/chason/paperclip");
@@ -235,7 +220,13 @@ describe("issue conference context routes", () => {
   });
 
   it("sanitizes raw repo paths for agent callers on GET /issues/:id/conference-context", async () => {
-    const res = await request(createAgentApp()).get("/api/issues/issue-1/conference-context");
+    const res = await request(await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      source: "api_key",
+      isInstanceAdmin: false,
+    })).get("/api/issues/issue-1/conference-context");
 
     expect(res.status).toBe(200);
     expect(res.body.git.rootPath).toBeNull();
@@ -244,7 +235,13 @@ describe("issue conference context routes", () => {
   });
 
   it("sanitizes approval repo paths for agent callers on GET /issues/:id/approvals", async () => {
-    const res = await request(createAgentApp()).get("/api/issues/issue-1/approvals");
+    const res = await request(await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      source: "api_key",
+      isInstanceAdmin: false,
+    })).get("/api/issues/issue-1/approvals");
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);

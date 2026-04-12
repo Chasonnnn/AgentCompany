@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { issueRoutes } from "../routes/issues.js";
 import { normalizeIssueExecutionPolicy } from "../services/issue-execution-policy.ts";
 
 const mockIssueService = vi.hoisted(() => ({
@@ -24,43 +22,7 @@ const mockHeartbeatService = vi.hoisted(() => ({
   cancelRun: vi.fn(async () => null),
 }));
 
-vi.mock("../services/index.js", () => ({
-  accessService: () => ({
-    canUser: vi.fn(async () => false),
-    hasPermission: vi.fn(async () => false),
-  }),
-  agentService: () => ({
-    getById: vi.fn(async () => null),
-  }),
-  documentService: () => ({}),
-  executionWorkspaceService: () => ({}),
-  feedbackService: () => ({
-    listIssueVotesForUser: vi.fn(async () => []),
-    saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
-  }),
-  goalService: () => ({}),
-  heartbeatService: () => mockHeartbeatService,
-  instanceSettingsService: () => ({
-    get: vi.fn(async () => ({
-      id: "instance-settings-1",
-      general: {
-        censorUsernameInLogs: false,
-        feedbackDataSharingPreference: "prompt",
-      },
-    })),
-    listCompanyIds: vi.fn(async () => ["company-1"]),
-  }),
-  issueApprovalService: () => ({}),
-  issueService: () => mockIssueService,
-  logActivity: vi.fn(async () => undefined),
-  projectService: () => ({}),
-  routineService: () => ({
-    syncRunStatusForIssue: vi.fn(async () => undefined),
-  }),
-  workProductService: () => ({}),
-}));
-
-function createApp(
+async function createApp(
   actor: Record<string, unknown> = {
     type: "board",
     userId: "local-board",
@@ -69,6 +31,45 @@ function createApp(
     isInstanceAdmin: false,
   },
 ) {
+  vi.doMock("../services/index.js", () => ({
+    accessService: () => ({
+      canUser: vi.fn(async () => false),
+      hasPermission: vi.fn(async () => false),
+    }),
+    agentService: () => ({
+      getById: vi.fn(async () => null),
+    }),
+    documentService: () => ({}),
+    executionWorkspaceService: () => ({}),
+    feedbackService: () => ({
+      listIssueVotesForUser: vi.fn(async () => []),
+      saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
+    }),
+    goalService: () => ({}),
+    heartbeatService: () => mockHeartbeatService,
+    instanceSettingsService: () => ({
+      get: vi.fn(async () => ({
+        id: "instance-settings-1",
+        general: {
+          censorUsernameInLogs: false,
+          feedbackDataSharingPreference: "prompt",
+        },
+      })),
+      listCompanyIds: vi.fn(async () => ["company-1"]),
+    }),
+    issueApprovalService: () => ({}),
+    issueService: () => mockIssueService,
+    logActivity: vi.fn(async () => undefined),
+    projectService: () => ({}),
+    routineService: () => ({
+      syncRunStatusForIssue: vi.fn(async () => undefined),
+    }),
+    workProductService: () => ({}),
+  }));
+  const [{ errorHandler }, { issueRoutes }] = await Promise.all([
+    import("../middleware/index.js"),
+    import("../routes/issues.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -82,6 +83,7 @@ function createApp(
 
 describe("issue execution policy routes", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
@@ -119,7 +121,7 @@ describe("issue execution policy routes", () => {
       updatedAt: new Date(),
     }));
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
       .send({ executionPolicy: policy });
 
@@ -183,7 +185,7 @@ describe("issue execution policy routes", () => {
     mockIssueService.getById.mockResolvedValue(issue);
 
     const res = await request(
-      createApp({
+      await createApp({
         type: "agent",
         agentId: approverAgentId,
         companyId: "company-1",
