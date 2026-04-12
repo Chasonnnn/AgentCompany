@@ -7,10 +7,18 @@ const mockAgentService = vi.hoisted(() => ({
   terminate: vi.fn(),
 }));
 
+const mockAgentProjectPlacementService = vi.hoisted(() => ({
+  applyPrimaryPlacement: vi.fn(),
+}));
+
 const mockNotifyHireApproved = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/agents.js", () => ({
   agentService: vi.fn(() => mockAgentService),
+}));
+
+vi.mock("../services/agent-project-placements.js", () => ({
+  agentProjectPlacementService: vi.fn(() => mockAgentProjectPlacementService),
 }));
 
 vi.mock("../services/hire-hook.js", () => ({
@@ -61,6 +69,7 @@ describe("approvalService resolution idempotency", () => {
     mockAgentService.activatePendingApproval.mockResolvedValue(undefined);
     mockAgentService.create.mockResolvedValue({ id: "agent-1" });
     mockAgentService.terminate.mockResolvedValue(undefined);
+    mockAgentProjectPlacementService.applyPrimaryPlacement.mockResolvedValue(undefined);
     mockNotifyHireApproved.mockResolvedValue(undefined);
   });
 
@@ -103,5 +112,38 @@ describe("approvalService resolution idempotency", () => {
     expect(result.applied).toBe(true);
     expect(mockAgentService.activatePendingApproval).toHaveBeenCalledWith("agent-1");
     expect(mockNotifyHireApproved).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies pending hire project placement only after approval", async () => {
+    const approved = {
+      ...createApproval("approved"),
+      payload: {
+        agentId: "agent-1",
+        projectPlacement: {
+          projectId: "33333333-3333-4333-8333-333333333333",
+          teamFunctionKey: "engineering",
+          teamFunctionLabel: "Engineering",
+        },
+      },
+    };
+    const dbStub = createDbStub([[createApproval("pending")]], [approved]);
+
+    const svc = approvalService(dbStub.db as any);
+    const result = await svc.approve("approval-1", "board-user", "ship it");
+
+    expect(result.applied).toBe(true);
+    expect(mockAgentProjectPlacementService.applyPrimaryPlacement).toHaveBeenCalledWith({
+      companyId: "company-1",
+      agentId: "agent-1",
+      placement: {
+        projectId: "33333333-3333-4333-8333-333333333333",
+        teamFunctionKey: "engineering",
+        teamFunctionLabel: "Engineering",
+      },
+      actor: {
+        principalType: "human_operator",
+        principalId: "board-user",
+      },
+    });
   });
 });

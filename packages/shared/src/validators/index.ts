@@ -136,6 +136,7 @@ export {
   agentTemplateImportPackRequestSchema,
   agentTemplateImportPackItemSchema,
   agentTemplateImportPackResultSchema,
+  agentProjectPlacementInputSchema,
   agentProjectScopeSchema,
   agentSecondaryRelationshipSchema,
   operatingHierarchyAgentSummarySchema,

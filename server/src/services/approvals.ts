@@ -1,9 +1,10 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { approvalComments, approvals } from "@paperclipai/db";
-import { AGENT_ROLES, type AgentRole } from "@paperclipai/shared";
+import { AGENT_ROLES, agentProjectPlacementInputSchema, type AgentRole } from "@paperclipai/shared";
 import { notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
+import { agentProjectPlacementService } from "./agent-project-placements.js";
 import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
@@ -11,6 +12,7 @@ import { instanceSettingsService } from "./instance-settings.js";
 
 export function approvalService(db: Db) {
   const agentsSvc = agentService(db);
+  const placementSvc = agentProjectPlacementService(db);
   const budgets = budgetService(db);
   const instanceSettings = instanceSettingsService(db);
   const canResolveStatuses = new Set(["pending", "revision_requested"]);
@@ -117,8 +119,21 @@ export function approvalService(db: Db) {
       if (applied && updated.type === "hire_agent") {
         const payload = updated.payload as Record<string, unknown>;
         const payloadAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
+        const parsedPlacement = agentProjectPlacementInputSchema.safeParse(payload.projectPlacement);
+        const projectPlacement = parsedPlacement.success ? parsedPlacement.data : null;
         if (payloadAgentId) {
           await agentsSvc.activatePendingApproval(payloadAgentId);
+          if (projectPlacement) {
+            await placementSvc.applyPrimaryPlacement({
+              companyId: updated.companyId,
+              agentId: payloadAgentId,
+              placement: projectPlacement,
+              actor: {
+                principalType: "human_operator",
+                principalId: decidedByUserId,
+              },
+            });
+          }
           hireApprovedAgentId = payloadAgentId;
         } else {
           const created = await agentsSvc.create(updated.companyId, {
@@ -144,6 +159,17 @@ export function approvalService(db: Db) {
             lastHeartbeatAt: null,
           });
           hireApprovedAgentId = created?.id ?? null;
+          if (hireApprovedAgentId && projectPlacement) {
+            await placementSvc.applyPrimaryPlacement({
+              companyId: updated.companyId,
+              agentId: hireApprovedAgentId,
+              placement: projectPlacement,
+              actor: {
+                principalType: "human_operator",
+                principalId: decidedByUserId,
+              },
+            });
+          }
         }
         if (hireApprovedAgentId) {
           const budgetMonthlyCents =

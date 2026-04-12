@@ -24,6 +24,7 @@ import type {
   AgentNavigationClusterNode,
   AgentNavigationProjectNode,
   AgentNavigationTeamNode,
+  AgentProjectPlacementInput,
   AgentProjectScope,
   AgentSecondaryRelationship,
   AgentTemplate,
@@ -192,6 +193,17 @@ export const agentProjectScopeSchema = z.object({
   updatedAt: z.coerce.date(),
 }).strict() satisfies z.ZodType<AgentProjectScope>;
 
+export const agentProjectPlacementInputSchema = z.object({
+  projectId: z.string().uuid(),
+  teamFunctionKey: z.string().trim().min(1).optional().nullable(),
+  teamFunctionLabel: z.string().trim().min(1).optional().nullable(),
+  workstreamKey: z.string().trim().min(1).optional().nullable(),
+  workstreamLabel: z.string().trim().min(1).optional().nullable(),
+  projectRole: agentProjectRoleSchema.optional().nullable(),
+  scopeMode: agentProjectScopeModeSchema.optional().nullable(),
+  requestedReason: z.string().trim().min(1).optional().nullable(),
+}).strict() satisfies z.ZodType<AgentProjectPlacementInput>;
+
 export const agentSecondaryRelationshipSchema = z.object({
   id: z.string().uuid(),
   companyId: z.string().uuid(),
@@ -335,6 +347,7 @@ const createAgentSchemaBase = z.object({
   metadata: z.record(z.unknown()).optional().nullable(),
   templateId: z.string().uuid().optional().nullable(),
   templateRevisionId: z.string().uuid().optional().nullable(),
+  projectPlacement: agentProjectPlacementInputSchema.optional().nullable(),
 });
 
 const validateAgentDepartment = (value: Record<string, unknown>, ctx: z.RefinementCtx) => {

@@ -42,6 +42,10 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 function registerRouteMocks() {
   vi.doMock("../services/index.js", () => ({
     agentService: () => mockAgentService,
+    agentProjectPlacementService: () => ({
+      previewForInput: vi.fn(),
+      applyPrimaryPlacement: vi.fn(),
+    }),
     agentTemplateService: () => mockAgentTemplateService,
     agentInstructionsService: () => mockAgentInstructionsService,
     accessService: () => mockAccessService,

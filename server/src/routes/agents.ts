@@ -6,6 +6,7 @@ import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable 
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
   AGENT_NAVIGATION_LAYOUTS,
+  agentProjectPlacementInputSchema,
   agentTemplateSnapshotSchema,
   agentSkillSyncSchema,
   agentMineInboxQuerySchema,
@@ -30,6 +31,7 @@ import { validate } from "../middleware/validate.js";
 import {
   agentService,
   agentSkillService,
+  agentProjectPlacementService,
   agentTemplateService,
   agentInstructionsService,
   accessService,
@@ -57,6 +59,7 @@ import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle,
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { runClaudeLogin } from "@paperclipai/adapter-claude-local/server";
 import {
+  defaultCodexLocalFastModeForModel,
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
@@ -94,6 +97,7 @@ export function agentRoutes(db: Db) {
   const router = Router();
   const svc = agentService(db);
   const access = accessService(db);
+  const placementSvc = agentProjectPlacementService(db);
   const templateSvc = agentTemplateService(db);
   const approvalsSvc = approvalService(db);
   const budgets = budgetService(db);
@@ -388,6 +392,19 @@ export function agentRoutes(db: Db) {
     return trimmed.length > 0 ? trimmed : null;
   }
 
+  function readProjectPlacement(value: unknown) {
+    const parsed = agentProjectPlacementInputSchema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+  }
+
+  function placementActorFromRequest(req: Request) {
+    const actor = getActorInfo(req);
+    return {
+      principalType: actor.actorType === "user" ? "human_operator" : "agent_instance",
+      principalId: actor.actorId,
+    } as const;
+  }
+
   function preserveInstructionsBundleConfig(
     existingAdapterConfig: Record<string, unknown>,
     nextAdapterConfig: Record<string, unknown>,
@@ -477,6 +494,11 @@ export function agentRoutes(db: Db) {
     if (adapterType === "codex_local") {
       if (!asNonEmptyString(next.model)) {
         next.model = DEFAULT_CODEX_LOCAL_MODEL;
+      }
+      if (typeof next.fastMode !== "boolean") {
+        next.fastMode = defaultCodexLocalFastModeForModel(
+          asNonEmptyString(next.model) ? String(next.model) : DEFAULT_CODEX_LOCAL_MODEL,
+        );
       }
       const hasBypassFlag =
         typeof next.dangerouslyBypassApprovalsAndSandbox === "boolean" ||
@@ -653,6 +675,7 @@ export function agentRoutes(db: Db) {
   ): Omit<typeof agentsTable.$inferInsert, "companyId"> {
     const name = typeof input.name === "string" ? input.name.trim() : "";
     const adapterType = typeof input.adapterType === "string" ? input.adapterType : "";
+    const projectPlacement = readProjectPlacement(input.projectPlacement);
     if (!name) throw unprocessable("Agent name is required");
     if (!adapterType) throw unprocessable("Adapter type is required");
 
@@ -713,6 +736,8 @@ export function agentRoutes(db: Db) {
           : null,
       templateId: typeof input.templateId === "string" ? input.templateId : null,
       templateRevisionId: typeof input.templateRevisionId === "string" ? input.templateRevisionId : null,
+      requestedForProjectId: projectPlacement?.projectId ?? null,
+      requestedReason: projectPlacement?.requestedReason ?? null,
       status: extras.status,
       spentMonthlyCents: extras.spentMonthlyCents,
       lastHeartbeatAt: extras.lastHeartbeatAt,
@@ -1332,6 +1357,7 @@ export function agentRoutes(db: Db) {
       runtimeConfig: Record<string, unknown>;
       budgetMonthlyCents: number;
     };
+    const requestedProjectPlacement = readProjectPlacement(normalizedHireInput.projectPlacement);
 
     const company = await db
       .select()
@@ -1341,6 +1367,20 @@ export function agentRoutes(db: Db) {
     if (!company) {
       res.status(404).json({ error: "Company not found" });
       return;
+    }
+
+    if (requestedProjectPlacement) {
+      await placementSvc.previewForInput(
+        companyId,
+        {
+          companyId,
+          operatingClass:
+            typeof normalizedHireInput.operatingClass === "string" ? normalizedHireInput.operatingClass : null,
+          archetypeKey:
+            typeof normalizedHireInput.archetypeKey === "string" ? normalizedHireInput.archetypeKey : null,
+        },
+        requestedProjectPlacement,
+      );
     }
 
     const requiresApproval = company.requireBoardApprovalForNewAgents;
@@ -1392,6 +1432,7 @@ export function agentRoutes(db: Db) {
               : agent.budgetMonthlyCents,
           desiredSkills: desiredSkillAssignment.desiredSkills,
           metadata: requestedMetadata,
+          projectPlacement: requestedProjectPlacement,
           agentId: agent.id,
           requestedByAgentId: actor.actorType === "agent" ? actor.actorId : null,
           requestedConfigurationSnapshot: {
@@ -1414,6 +1455,14 @@ export function agentRoutes(db: Db) {
         });
       }
     }
+    if (!requiresApproval && requestedProjectPlacement) {
+      await placementSvc.applyPrimaryPlacement({
+        companyId,
+        agentId: agent.id,
+        placement: requestedProjectPlacement,
+        actor: placementActorFromRequest(req),
+      });
+    }
 
     await logActivity(db, {
       companyId,
@@ -1431,6 +1480,7 @@ export function agentRoutes(db: Db) {
         approvalId: approval?.id ?? null,
         issueIds: sourceIssueIds,
         desiredSkills: desiredSkillAssignment.desiredSkills,
+        projectPlacement: requestedProjectPlacement,
       },
     });
     const telemetryClient = getTelemetryClient();
@@ -1502,6 +1552,20 @@ export function agentRoutes(db: Db) {
       createInput.adapterType as string,
       normalizedAdapterConfig,
     );
+    const requestedProjectPlacement = readProjectPlacement(createInput.projectPlacement);
+    if (requestedProjectPlacement) {
+      await placementSvc.previewForInput(
+        companyId,
+        {
+          companyId,
+          operatingClass:
+            typeof createInput.operatingClass === "string" ? createInput.operatingClass : null,
+          archetypeKey:
+            typeof createInput.archetypeKey === "string" ? createInput.archetypeKey : null,
+        },
+        requestedProjectPlacement,
+      );
+    }
 
     const createdAgent = await svc.create(companyId, buildAgentCreatePayload({
       ...createInput,
@@ -1519,6 +1583,14 @@ export function agentRoutes(db: Db) {
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent, {
       instructionsBody: templateResolved.instructionsBody,
     });
+    if (requestedProjectPlacement) {
+      await placementSvc.applyPrimaryPlacement({
+        companyId,
+        agentId: agent.id,
+        placement: requestedProjectPlacement,
+        actor: placementActorFromRequest(req),
+      });
+    }
 
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -1534,6 +1606,7 @@ export function agentRoutes(db: Db) {
         name: agent.name,
         role: agent.role,
         desiredSkills: desiredSkillAssignment.desiredSkills,
+        projectPlacement: requestedProjectPlacement,
       },
     });
     const telemetryClient = getTelemetryClient();
@@ -1561,6 +1634,45 @@ export function agentRoutes(db: Db) {
     }
 
     res.status(201).json(agent);
+  });
+
+  router.post("/agents/:id/project-placement", validate(agentProjectPlacementInputSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertBoard(req);
+    assertCompanyAccess(req, existing.companyId);
+
+    const placement = await placementSvc.applyPrimaryPlacement({
+      companyId: existing.companyId,
+      agentId: existing.id,
+      placement: req.body,
+      actor: placementActorFromRequest(req),
+    });
+
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: existing.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "agent.project_placement_updated",
+      entityType: "agent",
+      entityId: existing.id,
+      details: {
+        projectPlacement: placement.resolved,
+      },
+    });
+
+    const updatedAgent = await svc.getById(existing.id);
+    res.status(201).json({
+      agent: updatedAgent,
+      scope: placement.scope,
+    });
   });
 
   router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {

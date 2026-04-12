@@ -197,6 +197,17 @@ export interface AgentProjectScope {
   updatedAt: Date;
 }
 
+export interface AgentProjectPlacementInput {
+  projectId: string;
+  teamFunctionKey?: string | null;
+  teamFunctionLabel?: string | null;
+  workstreamKey?: string | null;
+  workstreamLabel?: string | null;
+  projectRole?: AgentProjectRole | null;
+  scopeMode?: AgentProjectScopeMode | null;
+  requestedReason?: string | null;
+}
+
 export interface AgentSecondaryRelationship {
   id: string;
   companyId: string;

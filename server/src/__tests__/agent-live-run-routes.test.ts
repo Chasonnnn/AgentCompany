@@ -23,6 +23,10 @@ const mockAgentTemplateService = vi.hoisted(() => ({
 function registerRouteMocks() {
   vi.doMock("../services/index.js", () => ({
     agentService: () => mockAgentService,
+    agentProjectPlacementService: () => ({
+      previewForInput: vi.fn(),
+      applyPrimaryPlacement: vi.fn(),
+    }),
     agentTemplateService: () => mockAgentTemplateService,
     agentSkillService: () => ({}),
     agentInstructionsService: () => ({}),

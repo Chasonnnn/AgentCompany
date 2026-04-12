@@ -71,6 +71,7 @@ export type {
   AgentTemplateImportPackItem,
   AgentTemplateImportPackRequest,
   AgentTemplateImportPackResult,
+  AgentProjectPlacementInput,
   AgentProjectScope,
   AgentSecondaryRelationship,
   AgentTemplate,

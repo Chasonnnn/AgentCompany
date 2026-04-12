@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import type { Agent } from "@paperclipai/shared";
+import type { Agent, AgentProjectPlacementInput, Project } from "@paperclipai/shared";
 import {
   removeMaintainerOnlySkillSymlinks,
   resolvePaperclipSkillsDir,
@@ -40,6 +40,26 @@ interface AgentHireOptions extends BaseClientOptions {
   reportsTo?: string;
   adapterConfig?: string;
   runtimeConfig?: string;
+  project?: string;
+  projectRole?: string;
+  scopeMode?: string;
+  teamFunctionKey?: string;
+  teamFunctionLabel?: string;
+  workstreamKey?: string;
+  workstreamLabel?: string;
+  placementReason?: string;
+}
+
+interface AgentPlaceOptions extends BaseClientOptions {
+  companyId?: string;
+  project?: string;
+  projectRole?: string;
+  scopeMode?: string;
+  teamFunctionKey?: string;
+  teamFunctionLabel?: string;
+  workstreamKey?: string;
+  workstreamLabel?: string;
+  placementReason?: string;
 }
 
 interface AgentRepairDefaultsOptions extends BaseClientOptions {
@@ -229,6 +249,77 @@ async function resolveAgentByRef(
   return agentRow;
 }
 
+async function resolveProjectByRef(
+  ctx: ReturnType<typeof resolveCommandContext>,
+  companyId: string,
+  projectRef: string,
+): Promise<Project> {
+  const query = new URLSearchParams({ companyId });
+  const projectRow = await ctx.api.get<Project>(
+    `/api/projects/${encodeURIComponent(projectRef)}?${query.toString()}`,
+  );
+  if (!projectRow) {
+    throw new Error(`Project not found: ${projectRef}`);
+  }
+  return projectRow;
+}
+
+function normalizeOptionalFlag(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function buildProjectPlacementPayload(
+  projectId: string,
+  options: {
+    projectRole?: string;
+    scopeMode?: string;
+    teamFunctionKey?: string;
+    teamFunctionLabel?: string;
+    workstreamKey?: string;
+    workstreamLabel?: string;
+    placementReason?: string;
+  },
+): AgentProjectPlacementInput {
+  const payload: AgentProjectPlacementInput = { projectId };
+  const projectRole = normalizeOptionalFlag(options.projectRole);
+  const scopeMode = normalizeOptionalFlag(options.scopeMode);
+  const teamFunctionKey = normalizeOptionalFlag(options.teamFunctionKey);
+  const teamFunctionLabel = normalizeOptionalFlag(options.teamFunctionLabel);
+  const workstreamKey = normalizeOptionalFlag(options.workstreamKey);
+  const workstreamLabel = normalizeOptionalFlag(options.workstreamLabel);
+  const requestedReason = normalizeOptionalFlag(options.placementReason);
+
+  if (projectRole) payload.projectRole = projectRole as AgentProjectPlacementInput["projectRole"];
+  if (scopeMode) payload.scopeMode = scopeMode as AgentProjectPlacementInput["scopeMode"];
+  if (teamFunctionKey) payload.teamFunctionKey = teamFunctionKey;
+  if (teamFunctionLabel) payload.teamFunctionLabel = teamFunctionLabel;
+  if (workstreamKey) payload.workstreamKey = workstreamKey;
+  if (workstreamLabel) payload.workstreamLabel = workstreamLabel;
+  if (requestedReason) payload.requestedReason = requestedReason;
+  return payload;
+}
+
+async function resolveProjectPlacementPayload(
+  ctx: ReturnType<typeof resolveCommandContext>,
+  companyId: string,
+  options: {
+    project?: string;
+    projectRole?: string;
+    scopeMode?: string;
+    teamFunctionKey?: string;
+    teamFunctionLabel?: string;
+    workstreamKey?: string;
+    workstreamLabel?: string;
+    placementReason?: string;
+  },
+): Promise<AgentProjectPlacementInput | undefined> {
+  const projectRef = normalizeOptionalFlag(options.project);
+  if (!projectRef) return undefined;
+  const project = await resolveProjectByRef(ctx, companyId, projectRef);
+  return buildProjectPlacementPayload(project.id, options);
+}
+
 export function registerAgentCommands(program: Command): void {
   const agent = program.command("agent").description("Agent operations");
 
@@ -303,6 +394,14 @@ export function registerAgentCommands(program: Command): void {
       .option("--reports-to <agentRef>", "Manager agent id or ref to resolve into reportsTo")
       .option("--adapter-config <json>", "Adapter config override as a JSON object")
       .option("--runtime-config <json>", "Runtime config override as a JSON object")
+      .option("--project <projectRef>", "Primary project id, shortname, or exact project name")
+      .option("--project-role <role>", "Explicit project role override")
+      .option("--scope-mode <mode>", "Explicit scope mode override")
+      .option("--team-function-key <key>", "Team/function grouping key for the primary scope")
+      .option("--team-function-label <label>", "Team/function grouping label for the primary scope")
+      .option("--workstream-key <key>", "Optional workstream grouping key")
+      .option("--workstream-label <label>", "Optional workstream grouping label")
+      .option("--placement-reason <text>", "Why this agent is being placed on the project")
       .action(async (opts: AgentHireOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });
@@ -326,6 +425,8 @@ export function registerAgentCommands(program: Command): void {
           if (adapterConfig) payload.adapterConfig = adapterConfig;
           const runtimeConfig = parseOptionalObjectJson("--runtime-config", opts.runtimeConfig);
           if (runtimeConfig) payload.runtimeConfig = runtimeConfig;
+          const projectPlacement = await resolveProjectPlacementPayload(ctx, ctx.companyId!, opts);
+          if (projectPlacement) payload.projectPlacement = projectPlacement;
 
           const result = await ctx.api.post<AgentHireResult>(
             `/api/companies/${ctx.companyId}/agent-hires`,
@@ -349,6 +450,59 @@ export function registerAgentCommands(program: Command): void {
               templateId: template.id,
               approvalId: result.approval?.id ?? null,
               approvalStatus: result.approval?.status ?? null,
+              projectId: projectPlacement?.projectId ?? null,
+            }),
+          );
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: false },
+  );
+
+  addCommonClientOptions(
+    agent
+      .command("place")
+      .description("Apply or replace an agent's primary project placement")
+      .argument("<agentRef>", "Agent ID or shortname/url-key")
+      .requiredOption("-C, --company-id <id>", "Company ID")
+      .requiredOption("--project <projectRef>", "Primary project id, shortname, or exact project name")
+      .option("--project-role <role>", "Explicit project role override")
+      .option("--scope-mode <mode>", "Explicit scope mode override")
+      .option("--team-function-key <key>", "Team/function grouping key for the primary scope")
+      .option("--team-function-label <label>", "Team/function grouping label for the primary scope")
+      .option("--workstream-key <key>", "Optional workstream grouping key")
+      .option("--workstream-label <label>", "Optional workstream grouping label")
+      .option("--placement-reason <text>", "Why this agent is being placed on the project")
+      .action(async (agentRef: string, opts: AgentPlaceOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const agentRow = await resolveAgentByRef(ctx, ctx.companyId!, agentRef);
+          const projectPlacement = await resolveProjectPlacementPayload(ctx, ctx.companyId!, opts);
+          if (!projectPlacement) {
+            throw new Error("Project placement requires --project");
+          }
+
+          const result = await ctx.api.post<{
+            agent: Agent | null;
+            scope: Record<string, unknown>;
+          }>(`/api/agents/${agentRow.id}/project-placement`, projectPlacement);
+          if (!result) {
+            throw new Error("Agent placement returned no result.");
+          }
+
+          if (ctx.json) {
+            printOutput(result, { json: true });
+            return;
+          }
+
+          console.log(
+            formatInlineRecord({
+              id: agentRow.id,
+              name: result.agent?.name ?? agentRow.name,
+              projectId: projectPlacement.projectId,
+              projectRole: (result.scope.projectRole as string | undefined) ?? projectPlacement.projectRole ?? null,
+              scopeMode: (result.scope.scopeMode as string | undefined) ?? projectPlacement.scopeMode ?? null,
             }),
           );
         } catch (err) {
