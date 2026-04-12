@@ -41,6 +41,8 @@ import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
 import { ensureLocalTrustedAgentJwtSecret } from "./local-trusted-agent-jwt.js";
+import { resolvePaperclipHomeDir, resolvePaperclipInstanceRoot } from "./home-paths.js";
+import { resolvePaperclipConfigPath } from "./paths.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -686,6 +688,14 @@ export async function startServer(): Promise<StartedServer> {
     server.once("error", onError);
     server.listen(listenPort, config.host, () => {
       server.off("error", onError);
+      logger.info(
+        {
+          paperclipHome: resolvePaperclipHomeDir(),
+          paperclipInstanceRoot: resolvePaperclipInstanceRoot(),
+          paperclipConfigPath: resolvePaperclipConfigPath(),
+        },
+        "Resolved Paperclip instance paths",
+      );
       logger.info(`Server listening on ${config.host}:${listenPort}`);
       if (process.env.PAPERCLIP_OPEN_ON_LISTEN === "true") {
         const openHost = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1" : config.host;

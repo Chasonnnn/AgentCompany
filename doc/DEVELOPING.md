@@ -190,6 +190,12 @@ The server will automatically use embedded PostgreSQL and persist data at:
 
 - `~/.paperclip/instances/default/db`
 
+If `PAPERCLIP_HOME` is unset and no repo-local/worktree config overrides it, local CLI/server tooling now prefers the desktop app instance at:
+
+- `~/Library/Application Support/@paperclipai/desktop/paperclip/instances/default/db`
+
+That keeps browser/CLI work pointed at the desktop app-support instance by default on local machines where the desktop install already exists.
+
 Override home and instance:
 
 ```sh

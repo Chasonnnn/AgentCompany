@@ -1,11 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import {
+  expandHomePrefix,
+  resolveLocalPaperclipHomeDir,
+  resolvePaperclipInstanceId as resolveSharedPaperclipInstanceId,
+  resolvePaperclipInstanceRoot as resolveSharedPaperclipInstanceRoot,
+} from "@paperclipai/shared/local-home";
 
-const DEFAULT_INSTANCE_ID = "default";
 const CONFIG_BASENAME = "config.json";
 const ENV_BASENAME = ".env";
-const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
 
 type PartialConfig = {
   database?: {
@@ -35,37 +38,26 @@ export type ResolvedDatabaseTarget =
       envPath: string;
     };
 
-function expandHomePrefix(value: string): string {
-  if (value === "~") return os.homedir();
-  if (value.startsWith("~/")) return path.resolve(os.homedir(), value.slice(2));
-  return value;
-}
-
 function resolvePaperclipHomeDir(): string {
-  const envHome = process.env.PAPERCLIP_HOME?.trim();
-  if (envHome) return path.resolve(expandHomePrefix(envHome));
-  return path.resolve(os.homedir(), ".paperclip");
+  return resolveLocalPaperclipHomeDir();
 }
 
 function resolvePaperclipInstanceId(): string {
-  const raw = process.env.PAPERCLIP_INSTANCE_ID?.trim() || DEFAULT_INSTANCE_ID;
-  if (!INSTANCE_ID_RE.test(raw)) {
-    throw new Error(`Invalid PAPERCLIP_INSTANCE_ID '${raw}'.`);
-  }
-  return raw;
+  return resolveSharedPaperclipInstanceId(undefined, process.env);
 }
 
 function resolveDefaultConfigPath(): string {
   return path.resolve(
-    resolvePaperclipHomeDir(),
-    "instances",
-    resolvePaperclipInstanceId(),
+    resolveSharedPaperclipInstanceRoot(resolvePaperclipHomeDir(), resolvePaperclipInstanceId()),
     CONFIG_BASENAME,
   );
 }
 
 function resolveDefaultEmbeddedPostgresDir(): string {
-  return path.resolve(resolvePaperclipHomeDir(), "instances", resolvePaperclipInstanceId(), "db");
+  return path.resolve(
+    resolveSharedPaperclipInstanceRoot(resolvePaperclipHomeDir(), resolvePaperclipInstanceId()),
+    "db",
+  );
 }
 
 function resolveHomeAwarePath(value: string): string {
