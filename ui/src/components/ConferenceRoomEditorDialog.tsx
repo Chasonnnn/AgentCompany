@@ -52,14 +52,19 @@ export function ConferenceRoomEditorDialog({
   }) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<ConferenceRoomDraft>(() => createDraft(room));
+  const requiredIssueIdsKey = requiredIssueIds.join("\u0000");
+  const normalizedRequiredIssueIds = useMemo(
+    () => Array.from(new Set(requiredIssueIds)),
+    [requiredIssueIdsKey],
+  );
 
   useEffect(() => {
     if (open) {
       const next = createDraft(room);
-      next.issueIds = Array.from(new Set([...requiredIssueIds, ...next.issueIds]));
+      next.issueIds = Array.from(new Set([...normalizedRequiredIssueIds, ...next.issueIds]));
       setDraft(next);
     }
-  }, [open, room, requiredIssueIds]);
+  }, [open, room, normalizedRequiredIssueIds]);
 
   const leaderIds = useMemo(() => collectLeaderIds(hierarchy), [hierarchy]);
   const executiveIds = useMemo(() => collectExecutiveIds(hierarchy), [hierarchy]);
@@ -86,7 +91,7 @@ export function ConferenceRoomEditorDialog({
       ...current,
       issueIds: checked
         ? Array.from(new Set([...current.issueIds, issueId]))
-        : current.issueIds.filter((value) => value !== issueId || requiredIssueIds.includes(value)),
+        : current.issueIds.filter((value) => value !== issueId || normalizedRequiredIssueIds.includes(value)),
     }));
   }
 
@@ -105,7 +110,7 @@ export function ConferenceRoomEditorDialog({
       title: draft.title.trim(),
       summary: draft.summary.trim(),
       agenda: draft.agenda.trim() ? draft.agenda.trim() : null,
-      issueIds: Array.from(new Set([...requiredIssueIds, ...draft.issueIds])),
+      issueIds: Array.from(new Set([...normalizedRequiredIssueIds, ...draft.issueIds])),
       participantAgentIds: draft.participantAgentIds,
     });
   }
@@ -167,7 +172,7 @@ export function ConferenceRoomEditorDialog({
               ) : (
                 issues.map((issue) => {
                   const checked = draft.issueIds.includes(issue.id);
-                  const required = requiredIssueIds.includes(issue.id);
+                  const required = normalizedRequiredIssueIds.includes(issue.id);
                   return (
                     <label key={issue.id} className="flex items-start gap-3 rounded-lg border border-border/60 px-3 py-2">
                       <Checkbox
