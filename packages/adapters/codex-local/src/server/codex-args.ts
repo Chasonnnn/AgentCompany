@@ -17,7 +17,6 @@ function readExtraArgs(config: unknown): string[] {
   if (fromExtraArgs.length > 0) return fromExtraArgs;
   return asStringArray(asRecord(config).args);
 }
-
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)

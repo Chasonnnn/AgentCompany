@@ -179,6 +179,15 @@ export async function testEnvironment(
         hint: "Use the `codex` CLI command to run the automatic login and installation probe.",
       });
     } else {
+      const configuredExecArgs = buildCodexExecArgs(config);
+      if (configuredExecArgs.fastModeIgnoredReason) {
+        checks.push({
+          code: "codex_fast_mode_unsupported_model",
+          level: "warn",
+          message: configuredExecArgs.fastModeIgnoredReason,
+          hint: "Switch the agent model to GPT-5.4 to enable Codex Fast mode.",
+        });
+      }
       const execArgs = buildCodexExecArgs({ ...config, fastMode: false });
       const args = execArgs.args;
 

@@ -68,6 +68,41 @@ const mockAdapter = vi.hoisted(() => ({
   syncSkills: vi.fn(),
 }));
 
+function registerRouteMocks() {
+  vi.doMock("@paperclipai/shared/telemetry", () => ({
+    trackAgentCreated: mockTrackAgentCreated,
+    trackErrorHandlerCrash: vi.fn(),
+  }));
+
+  vi.doMock("../telemetry.js", () => ({
+    getTelemetryClient: mockGetTelemetryClient,
+  }));
+
+  vi.doMock("../services/index.js", () => ({
+    agentService: () => mockAgentService,
+    agentTemplateService: () => mockAgentTemplateService,
+    agentInstructionsService: () => mockAgentInstructionsService,
+    accessService: () => mockAccessService,
+    approvalService: () => mockApprovalService,
+    agentSkillService: () => mockAgentSkillService,
+    companySkillService: () => mockCompanySkillService,
+    budgetService: () => mockBudgetService,
+    heartbeatService: () => mockHeartbeatService,
+    issueApprovalService: () => mockIssueApprovalService,
+    issueService: () => ({}),
+    logActivity: mockLogActivity,
+    secretService: () => mockSecretService,
+    syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
+    workspaceOperationService: () => mockWorkspaceOperationService,
+  }));
+
+  vi.doMock("../adapters/index.js", () => ({
+    findServerAdapter: vi.fn(() => mockAdapter),
+    findActiveServerAdapter: vi.fn(() => mockAdapter),
+    listAdapterModels: vi.fn(),
+    detectAdapterModel: vi.fn(),
+  }));
+}
 function createDb(requireBoardApprovalForNewAgents = false) {
   return {
     select: vi.fn(() => ({
@@ -93,40 +128,7 @@ async function createApp(
     isInstanceAdmin: false,
   },
 ) {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentCreated: mockTrackAgentCreated,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
-  vi.doMock("../services/index.js", () => ({
-    agentService: () => mockAgentService,
-    agentTemplateService: () => mockAgentTemplateService,
-    agentInstructionsService: () => mockAgentInstructionsService,
-    accessService: () => mockAccessService,
-    approvalService: () => mockApprovalService,
-    agentSkillService: () => mockAgentSkillService,
-    companySkillService: () => mockCompanySkillService,
-    budgetService: () => mockBudgetService,
-    heartbeatService: () => mockHeartbeatService,
-    issueApprovalService: () => mockIssueApprovalService,
-    issueService: () => ({}),
-    logActivity: mockLogActivity,
-    secretService: () => mockSecretService,
-    syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
-    workspaceOperationService: () => mockWorkspaceOperationService,
-  }));
-  vi.doMock("../adapters/index.js", () => ({
-    findServerAdapter: vi.fn(() => mockAdapter),
-    findActiveServerAdapter: vi.fn(() => mockAdapter),
-    listAdapterModels: vi.fn(),
-    detectAdapterModel: vi.fn(),
-  }));
-  const [{ agentRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/agents.js"),
-    import("../middleware/index.js"),
-  ]);
+  const { agentRoutes } = await import("../routes/agents.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -134,7 +136,9 @@ async function createApp(
     next();
   });
   app.use("/api", agentRoutes(db as any));
-  app.use(errorHandler);
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    res.status(err?.status ?? 500).json({ error: err?.message ?? "Internal server error" });
+  });
   return app;
 }
 
@@ -160,6 +164,7 @@ describe("agent skill routes", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.resetAllMocks();
+    registerRouteMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockAgentService.resolveByReference.mockResolvedValue({

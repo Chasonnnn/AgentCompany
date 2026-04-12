@@ -44,7 +44,7 @@ function createApp(actor: any) {
     next();
   });
   return import("../routes/access.js").then(({ accessRoutes }) =>
-    import("../middleware/index.js").then(({ errorHandler }) => {
+    Promise.resolve().then(() => {
       app.use(
         "/api",
         accessRoutes({} as any, {
@@ -54,17 +54,19 @@ function createApp(actor: any) {
           allowedHostnames: [],
         }),
       );
-      app.use(errorHandler);
+      app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+        res.status(err?.status ?? 500).json({ error: err?.message ?? "Internal server error" });
+      });
       return app;
-    })
+    }),
   );
 }
 
 describe("cli auth routes", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.resetAllMocks();
     registerServiceMocks();
-    vi.clearAllMocks();
   });
 
   it("creates a CLI auth challenge with approval metadata", async () => {
