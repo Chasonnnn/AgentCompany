@@ -39,47 +39,45 @@ const mockDb = vi.hoisted(() => ({
   transaction: vi.fn(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)),
 }));
 
-function registerServiceMocks() {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentTaskCompleted: vi.fn(),
-    trackErrorHandlerCrash: vi.fn(),
-  }));
+vi.mock("@paperclipai/shared/telemetry", () => ({
+  trackAgentTaskCompleted: vi.fn(),
+  trackErrorHandlerCrash: vi.fn(),
+}));
 
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: vi.fn(() => ({ track: vi.fn() })),
-  }));
+vi.mock("../telemetry.js", () => ({
+  getTelemetryClient: vi.fn(() => ({ track: vi.fn() })),
+}));
 
-  vi.doMock("../services/index.js", () => ({
-    accessService: () => mockAccessService,
-    agentService: () => mockAgentService,
-    documentService: () => ({}),
-    executionWorkspaceService: () => ({}),
-    feedbackService: () => ({
-      listIssueVotesForUser: vi.fn(async () => []),
-      saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
-    }),
-    goalService: () => ({}),
-    heartbeatService: () => mockHeartbeatService,
-    instanceSettingsService: () => ({
-      get: vi.fn(async () => ({
-        id: "instance-settings-1",
-        general: {
-          censorUsernameInLogs: false,
-          feedbackDataSharingPreference: "prompt",
-        },
-      })),
-      listCompanyIds: vi.fn(async () => ["company-1"]),
-    }),
-    issueApprovalService: () => ({}),
-    issueService: () => mockIssueService,
-    logActivity: mockLogActivity,
-    projectService: () => ({}),
-    routineService: () => ({
-      syncRunStatusForIssue: vi.fn(async () => undefined),
-    }),
-    workProductService: () => ({}),
-  }));
-}
+vi.mock("../services/index.js", () => ({
+  accessService: () => mockAccessService,
+  agentService: () => mockAgentService,
+  documentService: () => ({}),
+  executionWorkspaceService: () => ({}),
+  feedbackService: () => ({
+    listIssueVotesForUser: vi.fn(async () => []),
+    saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
+  }),
+  goalService: () => ({}),
+  heartbeatService: () => mockHeartbeatService,
+  instanceSettingsService: () => ({
+    get: vi.fn(async () => ({
+      id: "instance-settings-1",
+      general: {
+        censorUsernameInLogs: false,
+        feedbackDataSharingPreference: "prompt",
+      },
+    })),
+    listCompanyIds: vi.fn(async () => ["company-1"]),
+  }),
+  issueApprovalService: () => ({}),
+  issueService: () => mockIssueService,
+  logActivity: mockLogActivity,
+  projectService: () => ({}),
+  routineService: () => ({
+    syncRunStatusForIssue: vi.fn(async () => undefined),
+  }),
+  workProductService: () => ({}),
+}));
 
 function createApp() {
   const app = express();
@@ -134,7 +132,6 @@ function makeIssue(status: "todo" | "done") {
 describe("issue comment reopen routes", () => {
   beforeEach(() => {
     vi.resetModules();
-    registerServiceMocks();
     mockIssueService.getById.mockReset();
     mockIssueService.assertCheckoutOwner.mockReset();
     mockIssueService.update.mockReset();

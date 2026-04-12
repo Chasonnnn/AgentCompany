@@ -16,41 +16,39 @@ const mockAgentService = vi.hoisted(() => ({
 const mockTrackAgentTaskCompleted = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
-function registerRouteMocks() {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentTaskCompleted: mockTrackAgentTaskCompleted,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
+vi.mock("@paperclipai/shared/telemetry", () => ({
+  trackAgentTaskCompleted: mockTrackAgentTaskCompleted,
+  trackErrorHandlerCrash: vi.fn(),
+}));
 
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
+vi.mock("../telemetry.js", () => ({
+  getTelemetryClient: mockGetTelemetryClient,
+}));
 
-  vi.doMock("../services/index.js", () => ({
-    accessService: () => ({
-      canUser: vi.fn(),
-      hasPermission: vi.fn(),
-    }),
-    agentService: () => mockAgentService,
-    documentService: () => ({}),
-    executionWorkspaceService: () => ({}),
-    feedbackService: () => ({}),
-    goalService: () => ({}),
-    heartbeatService: () => ({
-      wakeup: vi.fn(async () => undefined),
-      reportRunActivity: vi.fn(async () => undefined),
-    }),
-    instanceSettingsService: () => ({}),
-    issueApprovalService: () => ({}),
-    issueService: () => mockIssueService,
-    logActivity: vi.fn(async () => undefined),
-    projectService: () => ({}),
-    routineService: () => ({
-      syncRunStatusForIssue: vi.fn(async () => undefined),
-    }),
-    workProductService: () => ({}),
-  }));
-}
+vi.mock("../services/index.js", () => ({
+  accessService: () => ({
+    canUser: vi.fn(),
+    hasPermission: vi.fn(),
+  }),
+  agentService: () => mockAgentService,
+  documentService: () => ({}),
+  executionWorkspaceService: () => ({}),
+  feedbackService: () => ({}),
+  goalService: () => ({}),
+  heartbeatService: () => ({
+    wakeup: vi.fn(async () => undefined),
+    reportRunActivity: vi.fn(async () => undefined),
+  }),
+  instanceSettingsService: () => ({}),
+  issueApprovalService: () => ({}),
+  issueService: () => mockIssueService,
+  logActivity: vi.fn(async () => undefined),
+  projectService: () => ({}),
+  routineService: () => ({
+    syncRunStatusForIssue: vi.fn(async () => undefined),
+  }),
+  workProductService: () => ({}),
+}));
 
 function makeIssue(status: "todo" | "done") {
   return {
@@ -84,7 +82,6 @@ async function createApp(actor: Record<string, unknown>) {
 describe("issue telemetry routes", () => {
   beforeEach(() => {
     vi.resetModules();
-    registerRouteMocks();
     vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockIssueService.getById.mockResolvedValue(makeIssue("todo"));

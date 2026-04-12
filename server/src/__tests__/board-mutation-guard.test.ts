@@ -25,6 +25,32 @@ function createApp(
   return app;
 }
 
+function createHeaderReader(headers: Record<string, string | undefined>) {
+  return (name: string) => headers[name.toLowerCase()];
+}
+
+function invokeBoardMutationGuard(input: {
+  method?: string;
+  actor: Record<string, unknown>;
+  headers?: Record<string, string | undefined>;
+}) {
+  const middleware = boardMutationGuard();
+  const req = {
+    method: input.method ?? "POST",
+    actor: input.actor,
+    header: createHeaderReader(input.headers ?? {}),
+  } as any;
+  const res = {
+    status: vi.fn().mockReturnThis(),
+    json: vi.fn(),
+  } as any;
+  const next = vi.fn();
+
+  middleware(req, res, next);
+
+  return { res, next };
+}
+
 describe("boardMutationGuard", () => {
   it("allows safe methods for board actor", async () => {
     const app = createApp("board");
@@ -33,19 +59,9 @@ describe("boardMutationGuard", () => {
   });
 
   it("blocks board mutations without trusted origin", () => {
-    const middleware = boardMutationGuard();
-    const req = {
-      method: "POST",
+    const { res, next } = invokeBoardMutationGuard({
       actor: { type: "board", userId: "board", source: "session" },
-      header: () => undefined,
-    } as any;
-    const res = {
-      status: vi.fn().mockReturnThis(),
-      json: vi.fn(),
-    } as any;
-    const next = vi.fn();
-
-    middleware(req, res, next);
+    });
 
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(403);
@@ -96,30 +112,22 @@ describe("boardMutationGuard", () => {
   });
 
   it("blocks board mutations when x-forwarded-host does not match origin", async () => {
-    const app = createApp("board");
-    const res = await request(app)
-      .post("/mutate")
-      .set("Host", "127.0.0.1")
-      .set("X-Forwarded-Host", "10.90.10.20:3443")
-      .set("Origin", "https://evil.example.com")
-      .send({ ok: true });
-    expect(res.status).toBe(403);
+    const { res, next } = invokeBoardMutationGuard({
+      actor: { type: "board", userId: "board", source: "session" },
+      headers: {
+        host: "127.0.0.1",
+        "x-forwarded-host": "10.90.10.20:3443",
+        origin: "https://evil.example.com",
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 
   it("does not block authenticated agent mutations", async () => {
-    const middleware = boardMutationGuard();
-    const req = {
-      method: "POST",
+    const { res, next } = invokeBoardMutationGuard({
       actor: { type: "agent", agentId: "agent-1" },
-      header: () => undefined,
-    } as any;
-    const res = {
-      status: vi.fn().mockReturnThis(),
-      json: vi.fn(),
-    } as any;
-    const next = vi.fn();
-
-    middleware(req, res, next);
+    });
 
     expect(next).toHaveBeenCalledOnce();
     expect(res.status).not.toHaveBeenCalled();

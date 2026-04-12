@@ -10,15 +10,13 @@ const { createAssetMock, getAssetByIdMock, logActivityMock } = vi.hoisted(() => 
   logActivityMock: vi.fn(),
 }));
 
-function registerServiceMocks() {
-  vi.doMock("../services/index.js", () => ({
-    assetService: vi.fn(() => ({
-      create: createAssetMock,
-      getById: getAssetByIdMock,
-    })),
-    logActivity: logActivityMock,
-  }));
-}
+vi.mock("../services/index.js", () => ({
+  assetService: vi.fn(() => ({
+    create: createAssetMock,
+    getById: getAssetByIdMock,
+  })),
+  logActivity: logActivityMock,
+}));
 
 function createAsset() {
   const now = new Date("2026-01-01T00:00:00.000Z");
@@ -83,7 +81,6 @@ async function createApp(storage: ReturnType<typeof createStorageService>) {
 describe("POST /api/companies/:companyId/assets/images", () => {
   beforeEach(() => {
     vi.resetModules();
-    registerServiceMocks();
     createAssetMock.mockReset();
     getAssetByIdMock.mockReset();
     logActivityMock.mockReset();
@@ -141,7 +138,6 @@ describe("POST /api/companies/:companyId/assets/images", () => {
 describe("POST /api/companies/:companyId/logo", () => {
   beforeEach(() => {
     vi.resetModules();
-    registerServiceMocks();
     createAssetMock.mockReset();
     getAssetByIdMock.mockReset();
     logActivityMock.mockReset();
