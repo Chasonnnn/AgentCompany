@@ -14,16 +14,19 @@ import {
   DEFAULT_INBOX_ISSUE_COLUMNS,
   buildInboxDismissedAtByKey,
   computeInboxBadgeData,
+  getArchivedInboxSearchIssues,
   getAvailableInboxIssueColumns,
   getApprovalsForTab,
   getInboxWorkItems,
   getInboxKeyboardSelectionIndex,
+  getInboxSearchFallbackIssues,
   getRecentTouchedIssues,
   getUnreadTouchedIssues,
   isInboxEntityDismissed,
   isMineInboxTab,
   loadInboxIssueColumns,
   loadLastInboxTab,
+  matchesInboxIssueSearch,
   normalizeInboxIssueColumns,
   RECENT_ISSUES_LIMIT,
   resolveInboxNestingEnabled,
@@ -543,6 +546,96 @@ describe("inbox helpers", () => {
 
     expect(recentIssues).toHaveLength(RECENT_ISSUES_LIMIT);
     expect(getUnreadTouchedIssues(recentIssues).map((issue) => issue.id)).toEqual(["1", "2", "3"]);
+  });
+
+  it("matches workspace names when inbox issue search includes workspace labels", () => {
+    const issue = makeIssue("workspace", false);
+    issue.projectId = "project-1";
+    issue.projectWorkspaceId = "project-workspace-1";
+    issue.executionWorkspaceId = "execution-workspace-1";
+
+    expect(matchesInboxIssueSearch(
+      issue,
+      "feature",
+      {
+        isolatedWorkspacesEnabled: true,
+        executionWorkspaceById: new Map([
+          ["execution-workspace-1", { name: "Feature Branch", mode: "isolated_workspace" as const, projectWorkspaceId: "project-workspace-1" }],
+        ]),
+        projectWorkspaceById: new Map([
+          ["project-workspace-1", { name: "Primary workspace" }],
+        ]),
+        defaultProjectWorkspaceIdByProjectId: new Map([["project-1", "project-workspace-2"]]),
+      },
+    )).toBe(true);
+  });
+
+  it("returns archived search matches that are not already visible in the inbox", () => {
+    const visibleIssue = makeIssue("visible", false);
+    visibleIssue.title = "Alpha visible task";
+
+    const archivedMatch = makeIssue("archived-match", false);
+    archivedMatch.title = "Alpha archived task";
+
+    const archivedMiss = makeIssue("archived-miss", false);
+    archivedMiss.title = "Different task";
+
+    expect(
+      getArchivedInboxSearchIssues({
+        visibleIssues: [visibleIssue],
+        searchableIssues: [visibleIssue, archivedMatch, archivedMiss],
+        query: "alpha",
+      }).map((issue) => issue.id),
+    ).toEqual(["archived-match"]);
+  });
+
+  it("sorts archived search matches by most recent activity", () => {
+    const older = makeIssue("older", false);
+    older.title = "Alpha older";
+    older.lastActivityAt = new Date("2026-03-11T02:00:00.000Z");
+
+    const newer = makeIssue("newer", false);
+    newer.title = "Alpha newer";
+    newer.lastActivityAt = new Date("2026-03-11T03:00:00.000Z");
+
+    expect(
+      getArchivedInboxSearchIssues({
+        visibleIssues: [],
+        searchableIssues: [older, newer],
+        query: "alpha",
+      }).map((issue) => issue.id),
+    ).toEqual(["newer", "older"]);
+  });
+
+  it("uses remote issue results only when local inbox search has no matches", () => {
+    const remoteMatch = makeIssue("remote-match", false);
+
+    expect(
+      getInboxSearchFallbackIssues({
+        query: "pull/3303",
+        filteredWorkItems: [],
+        archivedSearchIssues: [],
+        remoteIssues: [remoteMatch],
+      }).map((issue) => issue.id),
+    ).toEqual(["remote-match"]);
+
+    expect(
+      getInboxSearchFallbackIssues({
+        query: "pull/3303",
+        filteredWorkItems: [{ kind: "issue", timestamp: 1, issue: makeIssue("local", false) }],
+        archivedSearchIssues: [],
+        remoteIssues: [remoteMatch],
+      }),
+    ).toEqual([]);
+
+    expect(
+      getInboxSearchFallbackIssues({
+        query: "pull/3303",
+        filteredWorkItems: [],
+        archivedSearchIssues: [makeIssue("archived", false)],
+        remoteIssues: [remoteMatch],
+      }),
+    ).toEqual([]);
   });
 
   it("defaults the remembered inbox tab to mine and persists all", () => {

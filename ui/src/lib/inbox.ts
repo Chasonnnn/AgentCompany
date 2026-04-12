@@ -288,6 +288,96 @@ export function getUnreadTouchedIssues(issues: Issue[]): Issue[] {
   return issues.filter((issue) => issue.isUnreadForMe);
 }
 
+export function matchesInboxIssueSearch(
+  issue: Pick<Issue, "title" | "identifier" | "description" | "executionWorkspaceId" | "projectId" | "projectWorkspaceId">,
+  query: string,
+  {
+    isolatedWorkspacesEnabled = false,
+    executionWorkspaceById,
+    projectWorkspaceById,
+    defaultProjectWorkspaceIdByProjectId,
+  }: {
+    isolatedWorkspacesEnabled?: boolean;
+    executionWorkspaceById?: ReadonlyMap<string, {
+      name: string;
+      mode: "shared_workspace" | "isolated_workspace" | "operator_branch" | "adapter_managed" | "cloud_sandbox";
+      projectWorkspaceId: string | null;
+    }>;
+    projectWorkspaceById?: ReadonlyMap<string, { name: string }>;
+    defaultProjectWorkspaceIdByProjectId?: ReadonlyMap<string, string>;
+  } = {},
+): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  if (issue.title.toLowerCase().includes(normalizedQuery)) return true;
+  if (issue.identifier?.toLowerCase().includes(normalizedQuery)) return true;
+  if (issue.description?.toLowerCase().includes(normalizedQuery)) return true;
+  if (!isolatedWorkspacesEnabled) return false;
+
+  const workspaceName = resolveIssueWorkspaceName(issue, {
+    executionWorkspaceById,
+    projectWorkspaceById,
+    defaultProjectWorkspaceIdByProjectId,
+  });
+  return workspaceName?.toLowerCase().includes(normalizedQuery) ?? false;
+}
+
+export function getArchivedInboxSearchIssues({
+  visibleIssues,
+  searchableIssues,
+  query,
+  isolatedWorkspacesEnabled = false,
+  executionWorkspaceById,
+  projectWorkspaceById,
+  defaultProjectWorkspaceIdByProjectId,
+}: {
+  visibleIssues: Issue[];
+  searchableIssues: Issue[];
+  query: string;
+  isolatedWorkspacesEnabled?: boolean;
+  executionWorkspaceById?: ReadonlyMap<string, {
+    name: string;
+    mode: "shared_workspace" | "isolated_workspace" | "operator_branch" | "adapter_managed" | "cloud_sandbox";
+    projectWorkspaceId: string | null;
+  }>;
+  projectWorkspaceById?: ReadonlyMap<string, { name: string }>;
+  defaultProjectWorkspaceIdByProjectId?: ReadonlyMap<string, string>;
+}): Issue[] {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return [];
+
+  const visibleIssueIds = new Set(visibleIssues.map((issue) => issue.id));
+  return searchableIssues
+    .filter((issue) => !visibleIssueIds.has(issue.id))
+    .filter((issue) =>
+      matchesInboxIssueSearch(issue, normalizedQuery, {
+        isolatedWorkspacesEnabled,
+        executionWorkspaceById,
+        projectWorkspaceById,
+        defaultProjectWorkspaceIdByProjectId,
+      }),
+    )
+    .sort(sortIssuesByMostRecentActivity);
+}
+
+export function getInboxSearchFallbackIssues({
+  query,
+  filteredWorkItems,
+  archivedSearchIssues,
+  remoteIssues,
+}: {
+  query: string;
+  filteredWorkItems: InboxWorkItem[];
+  archivedSearchIssues: Issue[];
+  remoteIssues: Issue[];
+}): Issue[] {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return [];
+  if (filteredWorkItems.length > 0) return [];
+  if (archivedSearchIssues.length > 0) return [];
+  return remoteIssues;
+}
+
 export function getApprovalsForTab(
   approvals: Approval[],
   tab: InboxTab,
