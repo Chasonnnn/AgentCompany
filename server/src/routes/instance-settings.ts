@@ -3,8 +3,13 @@ import type { Db } from "@paperclipai/db";
 import { patchInstanceExperimentalSettingsSchema, patchInstanceGeneralSettingsSchema } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
-import { instanceSettingsService, logActivity } from "../services/index.js";
+import { instanceSettingsService, logActivity as baseLogActivity } from "../services/index.js";
 import { getActorInfo } from "./authz.js";
+
+type InstanceSettingsRouteDeps = {
+  instanceSettingsService: ReturnType<typeof instanceSettingsService>;
+  logActivity: typeof baseLogActivity;
+};
 
 function assertCanManageInstanceSettings(req: Request) {
   if (req.actor.type !== "board") {
@@ -16,9 +21,10 @@ function assertCanManageInstanceSettings(req: Request) {
   throw forbidden("Instance admin access required");
 }
 
-export function instanceSettingsRoutes(db: Db) {
+export function instanceSettingsRoutes(db: Db, deps?: Partial<InstanceSettingsRouteDeps>) {
   const router = Router();
-  const svc = instanceSettingsService(db);
+  const svc = deps?.instanceSettingsService ?? instanceSettingsService(db);
+  const logActivity = deps?.logActivity ?? baseLogActivity;
 
   router.get("/instance/settings/general", async (req, res) => {
     // General settings (e.g. keyboardShortcuts) are readable by any

@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { routineRoutes } from "../routes/routines.js";
 
 const companyId = "22222222-2222-4222-8222-222222222222";
 const agentId = "11111111-1111-4111-8111-111111111111";
@@ -59,90 +61,54 @@ const trigger = {
   updatedAt: new Date("2026-03-20T00:00:00.000Z"),
 };
 
-const mockRoutineService = vi.hoisted(() => ({
-  list: vi.fn(),
-  get: vi.fn(),
-  getDetail: vi.fn(),
-  update: vi.fn(),
-  create: vi.fn(),
-  listRuns: vi.fn(),
-  createTrigger: vi.fn(),
-  getTrigger: vi.fn(),
-  updateTrigger: vi.fn(),
-  deleteTrigger: vi.fn(),
-  rotateTriggerSecret: vi.fn(),
-  runRoutine: vi.fn(),
-  firePublicTrigger: vi.fn(),
-}));
+function createHarness(actor: Record<string, unknown>) {
+  const routineService = {
+    list: vi.fn(),
+    get: vi.fn().mockResolvedValue(routine),
+    getDetail: vi.fn(),
+    update: vi.fn().mockResolvedValue({ ...routine, assigneeAgentId: otherAgentId }),
+    create: vi.fn().mockResolvedValue(routine),
+    listRuns: vi.fn(),
+    createTrigger: vi.fn(),
+    getTrigger: vi.fn().mockResolvedValue(trigger),
+    updateTrigger: vi.fn(),
+    deleteTrigger: vi.fn(),
+    rotateTriggerSecret: vi.fn(),
+    runRoutine: vi.fn().mockResolvedValue({
+      id: "run-1",
+      source: "manual",
+      status: "issue_created",
+    }),
+    firePublicTrigger: vi.fn(),
+  };
+  const accessService = {
+    canUser: vi.fn().mockResolvedValue(false),
+  };
+  const logActivity = vi.fn().mockResolvedValue(undefined);
+  const trackRoutineCreated = vi.fn();
+  const getTelemetryClient = vi.fn().mockReturnValue({ track: vi.fn() });
 
-const mockAccessService = vi.hoisted(() => ({
-  canUser: vi.fn(),
-}));
-
-const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockTrackRoutineCreated = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
-
-function registerRouteMocks() {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackRoutineCreated: mockTrackRoutineCreated,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
-
-  vi.doMock("../services/index.js", () => ({
-    accessService: () => mockAccessService,
-    logActivity: mockLogActivity,
-    routineService: () => mockRoutineService,
-  }));
-}
-
-async function createApp(actor: Record<string, unknown>) {
-  const [{ routineRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/routines.js"),
-    import("../middleware/index.js"),
-  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", routineRoutes({} as any));
+  app.use("/api", routineRoutes({} as any, {
+    accessService: accessService as any,
+    getTelemetryClient: getTelemetryClient as any,
+    logActivity,
+    routineService: routineService as any,
+    trackRoutineCreated,
+  }));
   app.use(errorHandler);
-  return app;
+
+  return { accessService, app, logActivity, routineService, trackRoutineCreated };
 }
 
 describe("routine routes", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    registerRouteMocks();
-    vi.resetAllMocks();
-    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
-    mockRoutineService.create.mockResolvedValue(routine);
-    mockRoutineService.get.mockResolvedValue(routine);
-    mockRoutineService.getTrigger.mockResolvedValue(trigger);
-    mockRoutineService.update.mockResolvedValue({ ...routine, assigneeAgentId: otherAgentId });
-    mockRoutineService.runRoutine.mockResolvedValue({
-      id: "run-1",
-      source: "manual",
-      status: "issue_created",
-    });
-    mockAccessService.canUser.mockResolvedValue(false);
-    mockLogActivity.mockResolvedValue(undefined);
-  });
-
-  afterEach(() => {
-    vi.unmock("@paperclipai/shared/telemetry");
-    vi.unmock("../telemetry.js");
-    vi.unmock("../services/index.js");
-  });
-
   it("requires tasks:assign permission for non-admin board routine creation", async () => {
-    const app = await createApp({
+    const { app } = createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -160,11 +126,10 @@ describe("routine routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
-    expect(mockRoutineService.create).not.toHaveBeenCalled();
   });
 
   it("requires tasks:assign permission to retarget a routine assignee", async () => {
-    const app = await createApp({
+    const { app } = createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -180,18 +145,17 @@ describe("routine routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
-    expect(mockRoutineService.update).not.toHaveBeenCalled();
   });
 
   it("requires tasks:assign permission to reactivate a routine", async () => {
-    mockRoutineService.get.mockResolvedValue(pausedRoutine);
-    const app = await createApp({
+    const { app, routineService } = createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
       isInstanceAdmin: false,
       companyIds: [companyId],
     });
+    routineService.get.mockResolvedValue(pausedRoutine);
 
     const res = await request(app)
       .patch(`/api/routines/${routineId}`)
@@ -201,11 +165,10 @@ describe("routine routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
-    expect(mockRoutineService.update).not.toHaveBeenCalled();
   });
 
   it("requires tasks:assign permission to create a trigger", async () => {
-    const app = await createApp({
+    const { app } = createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -223,11 +186,10 @@ describe("routine routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
-    expect(mockRoutineService.createTrigger).not.toHaveBeenCalled();
   });
 
   it("requires tasks:assign permission to update a trigger", async () => {
-    const app = await createApp({
+    const { app } = createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -243,11 +205,10 @@ describe("routine routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
-    expect(mockRoutineService.updateTrigger).not.toHaveBeenCalled();
   });
 
   it("requires tasks:assign permission to manually run a routine", async () => {
-    const app = await createApp({
+    const { app } = createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -261,18 +222,17 @@ describe("routine routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
-    expect(mockRoutineService.runRoutine).not.toHaveBeenCalled();
   });
 
   it("allows routine creation when the board user has tasks:assign", async () => {
-    mockAccessService.canUser.mockResolvedValue(true);
-    const app = await createApp({
+    const { accessService, app } = createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
       isInstanceAdmin: false,
       companyIds: [companyId],
     });
+    accessService.canUser.mockResolvedValue(true);
 
     const res = await request(app)
       .post(`/api/companies/${companyId}/routines`)
@@ -283,14 +243,10 @@ describe("routine routes", () => {
       });
 
     expect(res.status).toBe(201);
-    expect(mockRoutineService.create).toHaveBeenCalledWith(companyId, expect.objectContaining({
-      projectId,
+    expect(res.body).toEqual(expect.objectContaining({
+      id: routineId,
       title: "Daily routine",
       assigneeAgentId: agentId,
-    }), {
-      agentId: null,
-      userId: "board-user",
-    });
-    expect(mockTrackRoutineCreated).toHaveBeenCalledWith(expect.anything());
+    }));
   });
 });

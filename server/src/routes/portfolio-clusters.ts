@@ -3,12 +3,18 @@ import type { Db } from "@paperclipai/db";
 import { createPortfolioClusterSchema, updatePortfolioClusterSchema } from "@paperclipai/shared";
 import { notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
-import { logActivity, portfolioClusterService } from "../services/index.js";
+import { logActivity as baseLogActivity, portfolioClusterService } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function portfolioClusterRoutes(db: Db) {
+type PortfolioClusterRouteDeps = {
+  portfolioClusterService: ReturnType<typeof portfolioClusterService>;
+  logActivity: typeof baseLogActivity;
+};
+
+export function portfolioClusterRoutes(db: Db, deps?: Partial<PortfolioClusterRouteDeps>) {
   const router = Router();
-  const clusters = portfolioClusterService(db);
+  const clusters = deps?.portfolioClusterService ?? portfolioClusterService(db);
+  const logActivity = deps?.logActivity ?? baseLogActivity;
 
   router.get("/companies/:companyId/portfolio-clusters", async (req, res) => {
     const companyId = req.params.companyId as string;

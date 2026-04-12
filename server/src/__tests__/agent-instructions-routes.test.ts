@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { agentRoutes } from "../routes/agents.js";
-import { errorHandler } from "../middleware/index.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -38,29 +36,33 @@ const mockAgentSkillService = vi.hoisted(() => ({
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
-vi.mock("../services/index.js", () => ({
-  agentService: () => mockAgentService,
-  agentInstructionsService: () => mockAgentInstructionsService,
-  accessService: () => mockAccessService,
-  approvalService: () => ({}),
-  agentSkillService: () => mockAgentSkillService,
-  companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
-  budgetService: () => ({}),
-  heartbeatService: () => ({}),
-  issueApprovalService: () => ({}),
-  issueService: () => ({}),
-  logActivity: mockLogActivity,
-  secretService: () => mockSecretService,
-  syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
-  workspaceOperationService: () => ({}),
-}));
+async function createApp() {
+  vi.doMock("../services/index.js", () => ({
+    agentService: () => mockAgentService,
+    agentInstructionsService: () => mockAgentInstructionsService,
+    accessService: () => mockAccessService,
+    approvalService: () => ({}),
+    agentSkillService: () => mockAgentSkillService,
+    companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
+    budgetService: () => ({}),
+    heartbeatService: () => ({}),
+    issueApprovalService: () => ({}),
+    issueService: () => ({}),
+    logActivity: mockLogActivity,
+    secretService: () => mockSecretService,
+    syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
+    workspaceOperationService: () => ({}),
+  }));
 
-vi.mock("../adapters/index.js", () => ({
-  findServerAdapter: vi.fn((_type: string) => ({ type: _type })),
-  listAdapterModels: vi.fn(),
-}));
+  vi.doMock("../adapters/index.js", () => ({
+    findServerAdapter: vi.fn((_type: string) => ({ type: _type })),
+    listAdapterModels: vi.fn(),
+  }));
 
-function createApp() {
+  const [{ agentRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/agents.js"),
+    import("../middleware/index.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -98,6 +100,7 @@ function makeAgent() {
 
 describe("agent instructions bundle routes", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
     mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
       async (
@@ -173,7 +176,7 @@ describe("agent instructions bundle routes", () => {
   });
 
   it("returns bundle metadata", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .get("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle?companyId=company-1");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -187,7 +190,7 @@ describe("agent instructions bundle routes", () => {
   });
 
   it("writes a bundle file and persists compatibility config", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?companyId=company-1")
       .send({
         path: "AGENTS.md",
@@ -229,7 +232,7 @@ describe("agent instructions bundle routes", () => {
       },
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/agents/11111111-1111-4111-8111-111111111111?companyId=company-1")
       .send({
         adapterType: "claude_local",
@@ -268,7 +271,7 @@ describe("agent instructions bundle routes", () => {
       },
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/agents/11111111-1111-4111-8111-111111111111?companyId=company-1")
       .send({
         adapterConfig: {
@@ -304,7 +307,7 @@ describe("agent instructions bundle routes", () => {
       },
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .patch("/api/agents/11111111-1111-4111-8111-111111111111?companyId=company-1")
       .send({
         replaceAdapterConfig: true,

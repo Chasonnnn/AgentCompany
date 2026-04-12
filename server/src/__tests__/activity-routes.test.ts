@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { activityRoutes } from "../routes/activity.js";
 
 const mockActivityService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -19,22 +21,7 @@ const mockIssueService = vi.hoisted(() => ({
   getByIdentifier: vi.fn(),
 }));
 
-function registerRouteMocks() {
-  vi.doMock("../services/activity.js", () => ({
-    activityService: () => mockActivityService,
-  }));
-
-  vi.doMock("../services/index.js", () => ({
-    issueService: () => mockIssueService,
-    heartbeatService: () => mockHeartbeatService,
-  }));
-}
-
-async function createApp() {
-  const [{ errorHandler }, { activityRoutes }] = await Promise.all([
-    import("../middleware/index.js"),
-    import("../routes/activity.js"),
-  ]);
+function createApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -47,15 +34,17 @@ async function createApp() {
     };
     next();
   });
-  app.use("/api", activityRoutes({} as any));
+  app.use("/api", activityRoutes({} as any, {
+    activityService: mockActivityService as any,
+    heartbeatService: mockHeartbeatService as any,
+    issueService: mockIssueService as any,
+  }));
   app.use(errorHandler);
   return app;
 }
 
 describe("activity routes", () => {
   beforeEach(() => {
-    vi.resetModules();
-    registerRouteMocks();
     vi.clearAllMocks();
   });
 
@@ -70,7 +59,7 @@ describe("activity routes", () => {
       },
     ]);
 
-    const app = await createApp();
+    const app = createApp();
     const res = await request(app).get("/api/issues/PAP-475/runs");
 
     expect(res.status).toBe(200);
@@ -81,7 +70,7 @@ describe("activity routes", () => {
   });
 
   it("requires company access before creating activity events", async () => {
-    const app = await createApp();
+    const app = createApp();
     const res = await request(app)
       .post("/api/companies/company-2/activity")
       .send({
@@ -101,7 +90,7 @@ describe("activity routes", () => {
       companyId: "company-2",
     });
 
-    const app = await createApp();
+    const app = createApp();
     const res = await request(app).get("/api/heartbeat-runs/run-2/issues");
 
     expect(res.status).toBe(403);

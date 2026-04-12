@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import { validate } from "../middleware/validate.js";
-import { activityService } from "../services/activity.js";
+import { activityService as baseActivityService } from "../services/activity.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 import { heartbeatService, issueService } from "../services/index.js";
 import { sanitizeRecord } from "../redaction.js";
@@ -17,11 +17,17 @@ const createActivitySchema = z.object({
   details: z.record(z.unknown()).optional().nullable(),
 });
 
-export function activityRoutes(db: Db) {
+type ActivityRouteDeps = {
+  activityService: ReturnType<typeof baseActivityService>;
+  heartbeatService: ReturnType<typeof heartbeatService>;
+  issueService: ReturnType<typeof issueService>;
+};
+
+export function activityRoutes(db: Db, deps?: Partial<ActivityRouteDeps>) {
   const router = Router();
-  const svc = activityService(db);
-  const heartbeat = heartbeatService(db);
-  const issueSvc = issueService(db);
+  const svc = deps?.activityService ?? baseActivityService(db);
+  const heartbeat = deps?.heartbeatService ?? heartbeatService(db);
+  const issueSvc = deps?.issueService ?? issueService(db);
 
   async function resolveIssueByRef(rawId: string) {
     if (/^[A-Z]+-\d+$/i.test(rawId)) {

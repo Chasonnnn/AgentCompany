@@ -8,17 +8,28 @@ import {
   updateRoutineSchema,
   updateRoutineTriggerSchema,
 } from "@paperclipai/shared";
-import { trackRoutineCreated } from "@paperclipai/shared/telemetry";
+import { trackRoutineCreated as baseTrackRoutineCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { accessService, logActivity, routineService } from "../services/index.js";
+import { accessService, logActivity as baseLogActivity, routineService } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { forbidden, unauthorized } from "../errors.js";
-import { getTelemetryClient } from "../telemetry.js";
+import { getTelemetryClient as baseGetTelemetryClient } from "../telemetry.js";
 
-export function routineRoutes(db: Db) {
+type RoutineRouteDeps = {
+  accessService: ReturnType<typeof accessService>;
+  logActivity: typeof baseLogActivity;
+  routineService: ReturnType<typeof routineService>;
+  getTelemetryClient: typeof baseGetTelemetryClient;
+  trackRoutineCreated: typeof baseTrackRoutineCreated;
+};
+
+export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
   const router = Router();
-  const svc = routineService(db);
-  const access = accessService(db);
+  const svc = deps?.routineService ?? routineService(db);
+  const access = deps?.accessService ?? accessService(db);
+  const logActivity = deps?.logActivity ?? baseLogActivity;
+  const getTelemetryClient = deps?.getTelemetryClient ?? baseGetTelemetryClient;
+  const trackRoutineCreated = deps?.trackRoutineCreated ?? baseTrackRoutineCreated;
 
   async function assertBoardCanAssignTasks(req: Request, companyId: string) {
     assertCompanyAccess(req, companyId);

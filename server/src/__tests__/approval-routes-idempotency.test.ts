@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { approvalRoutes } from "../routes/approvals.js";
-import { errorHandler } from "../middleware/index.js";
 
 const mockApprovalService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -35,16 +33,19 @@ const mockSecretService = vi.hoisted(() => ({
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
-vi.mock("../services/index.js", () => ({
-  approvalService: () => mockApprovalService,
-  conferenceApprovalService: () => mockConferenceApprovalService,
-  heartbeatService: () => mockHeartbeatService,
-  issueApprovalService: () => mockIssueApprovalService,
-  logActivity: mockLogActivity,
-  secretService: () => mockSecretService,
-}));
-
-function createApp(actorOverrides: Record<string, unknown> = {}) {
+async function createApp(actorOverrides: Record<string, unknown> = {}) {
+  vi.doMock("../services/index.js", () => ({
+    approvalService: () => mockApprovalService,
+    conferenceApprovalService: () => mockConferenceApprovalService,
+    heartbeatService: () => mockHeartbeatService,
+    issueApprovalService: () => mockIssueApprovalService,
+    logActivity: mockLogActivity,
+    secretService: () => mockSecretService,
+  }));
+  const [{ approvalRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/approvals.js"),
+    import("../middleware/index.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -63,7 +64,19 @@ function createApp(actorOverrides: Record<string, unknown> = {}) {
   return app;
 }
 
-function createAgentApp() {
+async function createAgentApp() {
+  vi.doMock("../services/index.js", () => ({
+    approvalService: () => mockApprovalService,
+    conferenceApprovalService: () => mockConferenceApprovalService,
+    heartbeatService: () => mockHeartbeatService,
+    issueApprovalService: () => mockIssueApprovalService,
+    logActivity: mockLogActivity,
+    secretService: () => mockSecretService,
+  }));
+  const [{ approvalRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/approvals.js"),
+    import("../middleware/index.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -83,6 +96,7 @@ function createAgentApp() {
 
 describe("approval routes idempotent retries", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
@@ -110,7 +124,7 @@ describe("approval routes idempotent retries", () => {
       applied: false,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/approve")
       .send({});
 
@@ -139,7 +153,7 @@ describe("approval routes idempotent retries", () => {
       applied: false,
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-1/reject")
       .send({});
 
@@ -156,7 +170,7 @@ describe("approval routes idempotent retries", () => {
       payload: {},
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-2/approve")
       .send({});
 
@@ -173,7 +187,7 @@ describe("approval routes idempotent retries", () => {
       payload: {},
     });
 
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post("/api/approvals/approval-3/request-revision")
       .send({ decisionNote: "Need changes" });
 
@@ -232,7 +246,7 @@ describe("approval routes idempotent retries", () => {
       updatedAt: new Date("2026-04-06T00:00:00.000Z"),
     });
 
-    const res = await request(createAgentApp())
+    const res = await request(await createAgentApp())
       .post("/api/companies/company-1/approvals")
       .send({
         type: "request_board_approval",

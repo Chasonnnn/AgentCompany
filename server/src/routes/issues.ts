@@ -40,7 +40,7 @@ import {
   issueApprovalService,
   issueService,
   documentService,
-  logActivity,
+  logActivity as baseLogActivity,
   projectService,
   routineService,
   workProductService,
@@ -72,6 +72,24 @@ const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
   interrupt: z.boolean().optional(),
 });
+
+type IssueRouteDeps = {
+  accessService: ReturnType<typeof accessService>;
+  agentService: ReturnType<typeof agentService>;
+  documentService: ReturnType<typeof documentService>;
+  executionWorkspaceService: ReturnType<typeof executionWorkspaceService>;
+  feedbackService: ReturnType<typeof feedbackService>;
+  goalService: ReturnType<typeof goalService>;
+  heartbeatService: ReturnType<typeof heartbeatService>;
+  instanceSettingsService: ReturnType<typeof instanceSettingsService>;
+  issueApprovalService: ReturnType<typeof issueApprovalService>;
+  issueService: ReturnType<typeof issueService>;
+  logActivity: typeof baseLogActivity;
+  projectService: ReturnType<typeof projectService>;
+  routineService: ReturnType<typeof routineService>;
+  workProductService: ReturnType<typeof workProductService>;
+  conferenceContextService: ReturnType<typeof conferenceContextService>;
+};
 
 type ParsedExecutionState = NonNullable<ReturnType<typeof parseIssueExecutionState>>;
 type NormalizedExecutionPolicy = NonNullable<ReturnType<typeof normalizeIssueExecutionPolicy>>;
@@ -287,23 +305,26 @@ export function issueRoutes(
         now?: Date;
       }): Promise<unknown>;
     };
+    services?: Partial<IssueRouteDeps>;
   },
 ) {
   const router = Router();
-  const svc = issueService(db);
-  const access = accessService(db);
-  const heartbeat = heartbeatService(db);
-  const feedback = feedbackService(db);
-  const instanceSettings = instanceSettingsService(db);
-  const agentsSvc = agentService(db);
-  const projectsSvc = projectService(db);
-  const goalsSvc = goalService(db);
-  const issueApprovalsSvc = issueApprovalService(db);
-  const executionWorkspacesSvc = executionWorkspaceService(db);
-  const workProductsSvc = workProductService(db);
-  const documentsSvc = documentService(db);
-  const routinesSvc = routineService(db);
-  const conferenceContext = conferenceContextService(db);
+  const svc = opts?.services?.issueService ?? issueService(db);
+  const access = opts?.services?.accessService ?? accessService(db);
+  const heartbeat = opts?.services?.heartbeatService ?? heartbeatService(db);
+  const feedback = opts?.services?.feedbackService ?? feedbackService(db);
+  const instanceSettings = opts?.services?.instanceSettingsService ?? instanceSettingsService(db);
+  const agentsSvc = opts?.services?.agentService ?? agentService(db);
+  const projectsSvc = opts?.services?.projectService ?? projectService(db);
+  const goalsSvc = opts?.services?.goalService ?? goalService(db);
+  const issueApprovalsSvc = opts?.services?.issueApprovalService ?? issueApprovalService(db);
+  const executionWorkspacesSvc =
+    opts?.services?.executionWorkspaceService ?? executionWorkspaceService(db);
+  const workProductsSvc = opts?.services?.workProductService ?? workProductService(db);
+  const documentsSvc = opts?.services?.documentService ?? documentService(db);
+  const routinesSvc = opts?.services?.routineService ?? routineService(db);
+  const conferenceContext = opts?.services?.conferenceContextService ?? conferenceContextService(db);
+  const logActivity = opts?.services?.logActivity ?? baseLogActivity;
   const feedbackExportService = opts?.feedbackExportService;
   const upload = multer({
     storage: multer.memoryStorage(),
