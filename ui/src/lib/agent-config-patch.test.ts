@@ -14,6 +14,9 @@ function makeAgent(): Agent {
     icon: null,
     status: "active",
     reportsTo: null,
+    orgLevel: "staff",
+    departmentKey: "engineering",
+    departmentName: null,
     capabilities: null,
     adapterType: "claude_local",
     adapterConfig: {

@@ -2352,4 +2352,81 @@ describe("company portability", () => {
     expect(nestedMaterializedFiles?.["AGENTS.md"]).not.toMatch(/^---\n/);
     expect(nestedMaterializedFiles?.["AGENTS.md"]).not.toContain('name: "ClaudeCoder"');
   });
+
+  it("normalizes path traversal attempts in import file keys to stay within package root", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const preview = await portability.previewImport({
+      source: {
+        type: "inline",
+        rootPath: "paperclip-demo",
+        files: {
+          "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Traversal Test"', "---", ""].join("\n"),
+          "agents/../../etc/passwd": "malicious content",
+          "agents/../../../secrets.txt": "secret data",
+          "agents/legit/AGENTS.md": ['---', 'name: "Legit"', "---", "", "Legitimate agent.", ""].join("\n"),
+        },
+      },
+      include: { company: true, agents: true, projects: false, issues: false, skills: false },
+      target: { mode: "new_company", newCompanyName: "Traversal Test" },
+      collisionStrategy: "rename",
+    });
+
+    const agentSlugs = preview.manifest.agents.map((a) => a.slug);
+    expect(agentSlugs).not.toContain("etc/passwd");
+    expect(agentSlugs).not.toContain("passwd");
+    expect(agentSlugs).toContain("legit");
+  });
+
+  it("round-trips export then import preserving all agent and project data", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: true, agents: true, projects: false, issues: false, skills: false },
+    });
+
+    agentSvc.list.mockResolvedValue([]);
+    companySvc.create.mockResolvedValue({ id: "company-imported", name: "Round-trip" });
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
+      id: `agent-${input.name}`,
+      name: input.name,
+    }));
+
+    const result = await portability.importBundle({
+      source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+      include: { company: true, agents: true, projects: false, issues: false, skills: false },
+      target: { mode: "new_company", newCompanyName: "Round-trip" },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(result.agents.length).toBeGreaterThanOrEqual(2);
+    expect(result.agents.map((a) => a.action)).not.toContain("skip");
+    expect(companySvc.create).toHaveBeenCalled();
+  });
+
+  it("uses skip collision strategy without data loss for existing agents", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const preview = await portability.previewImport({
+      source: {
+        type: "inline",
+        rootPath: "paperclip-demo",
+        files: {
+          "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Test"', "---", ""].join("\n"),
+          "agents/claudecoder/AGENTS.md": ['---', 'name: "ClaudeCoder"', "---", "", "New instructions.", ""].join("\n"),
+        },
+      },
+      include: { company: true, agents: true, projects: false, issues: false, skills: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      collisionStrategy: "skip",
+    });
+
+    const claudeCoderPlan = preview.plan.agentPlans.find((a) => a.slug === "claudecoder");
+    expect(claudeCoderPlan).toBeDefined();
+    expect(claudeCoderPlan?.action).toBe("skip");
+    expect(claudeCoderPlan?.existingAgentId).toBe("agent-1");
+    expect(claudeCoderPlan?.reason).toContain("skip");
+  });
 });
