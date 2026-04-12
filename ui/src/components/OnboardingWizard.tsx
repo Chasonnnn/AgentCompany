@@ -35,6 +35,7 @@ import {
 } from "../lib/onboarding-launch";
 import { buildNewAgentRuntimeConfig } from "../lib/new-agent-runtime-config";
 import {
+  defaultCodexLocalFastModeForModel,
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL
 } from "@paperclipai/adapter-codex-local";
@@ -331,7 +332,11 @@ export function OnboardingWizard() {
       dangerouslyBypassSandbox:
         adapterType === "codex_local"
           ? DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX
-          : defaultCreateValues.dangerouslyBypassSandbox
+          : defaultCreateValues.dangerouslyBypassSandbox,
+      fastMode:
+        adapterType === "codex_local"
+          ? defaultCodexLocalFastModeForModel(model || DEFAULT_CODEX_LOCAL_MODEL)
+          : defaultCreateValues.fastMode,
     });
     if (adapterType === "claude_local" && forceUnsetAnthropicApiKey) {
       const env =

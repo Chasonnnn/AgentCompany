@@ -11,6 +11,7 @@ import { agentsApi } from "../api/agents";
 import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
 import {
+  defaultCodexLocalFastModeForModel,
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
@@ -339,6 +340,33 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const [modelOpen, setModelOpen] = useState(false);
   const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
 
+  function applyCodexCreateDefaults(model: string): Partial<CreateConfigValues> {
+    return {
+      model,
+      fastMode: defaultCodexLocalFastModeForModel(model),
+    };
+  }
+
+  function handleModelChange(nextModel: string) {
+    if (adapterType !== "codex_local") {
+      if (isCreate) set!({ model: nextModel });
+      else mark("adapterConfig", "model", nextModel || undefined);
+      return;
+    }
+    if (isCreate) {
+      set!(applyCodexCreateDefaults(nextModel));
+      return;
+    }
+    setOverlay((prev) => ({
+      ...prev,
+      adapterConfig: {
+        ...prev.adapterConfig,
+        model: nextModel || undefined,
+        fastMode: defaultCodexLocalFastModeForModel(nextModel),
+      },
+    }));
+  }
+
   // Create mode helpers
   const val = isCreate ? props.values : null;
   const set = isCreate
@@ -551,6 +579,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     const nextValues: CreateConfigValues = { ...defaults, adapterType: t };
                     if (t === "codex_local") {
                       nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
+                      nextValues.fastMode =
+                        defaultCodexLocalFastModeForModel(DEFAULT_CODEX_LOCAL_MODEL);
                       nextValues.dangerouslyBypassSandbox =
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
@@ -582,6 +612,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         mode: "",
                         ...(t === "codex_local"
                           ? {
+                              fastMode:
+                                defaultCodexLocalFastModeForModel(DEFAULT_CODEX_LOCAL_MODEL),
                               dangerouslyBypassApprovalsAndSandbox:
                                 DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
                             }
@@ -699,11 +731,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               <ModelDropdown
                 models={models}
                 value={currentModelId}
-                onChange={(v) =>
-                  isCreate
-                    ? set!({ model: v })
-                    : mark("adapterConfig", "model", v || undefined)
-                }
+                onChange={handleModelChange}
                 open={modelOpen}
                 onOpenChange={setModelOpen}
                 allowDefault={adapterType !== "opencode_local"}

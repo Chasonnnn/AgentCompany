@@ -11,6 +11,12 @@ export function isCodexLocalFastModeSupported(model: string | null | undefined):
   );
 }
 
+export function defaultCodexLocalFastModeForModel(
+  model: string | null | undefined,
+): boolean {
+  return isCodexLocalFastModeSupported(model);
+}
+
 export const models = [
   { id: "gpt-5.4", label: "gpt-5.4" },
   { id: DEFAULT_CODEX_LOCAL_MODEL, label: DEFAULT_CODEX_LOCAL_MODEL },
@@ -35,7 +41,7 @@ Core fields:
 - modelReasoningEffort (string, optional): reasoning effort override (minimal|low|medium|high|xhigh) passed via -c model_reasoning_effort=...
 - promptTemplate (string, optional): run prompt template
 - search (boolean, optional): run codex with --search
-- fastMode (boolean, optional): enable Codex Fast mode; currently supported on GPT-5.4 only and consumes credits faster
+- fastMode (boolean, optional): enable Codex Fast mode; eligible models default this on when omitted, currently GPT-5.4 only, and it consumes credits faster
 - dangerouslyBypassApprovalsAndSandbox (boolean, optional): run with bypass flag
 - command (string, optional): defaults to "codex"
 - extraArgs (string[], optional): additional CLI args
@@ -54,6 +60,6 @@ Notes:
 - Paperclip injects desired local skills into the effective CODEX_HOME/skills/ directory at execution time so Codex can discover "$paperclip" and related skills without polluting the project working directory. In managed-home mode (the default) this is ~/.paperclip/instances/<id>/companies/<companyId>/codex-home/skills/; when CODEX_HOME is explicitly overridden in adapter config, that override is used instead.
 - Unless explicitly overridden in adapter config, Paperclip runs Codex with a per-company managed CODEX_HOME under the active Paperclip instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
 - Some model/tool combinations reject certain effort levels (for example minimal with web search enabled).
-- Fast mode is currently supported on GPT-5.4 only. When enabled, Paperclip applies \`service_tier="fast"\` and \`features.fast_mode=true\`.
+- Fast mode is currently supported on GPT-5.4 only. Eligible models default this on when config omits \`fastMode\`. When enabled, Paperclip applies \`service_tier="fast"\` and \`features.fast_mode=true\`.
 - When Paperclip realizes a workspace/runtime for a run, it injects PAPERCLIP_WORKSPACE_* and PAPERCLIP_RUNTIME_* env vars for agent-side tooling.
 `;

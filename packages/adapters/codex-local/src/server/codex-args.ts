@@ -1,6 +1,7 @@
 import { asBoolean, asString, asStringArray } from "@paperclipai/adapter-utils/server-utils";
 import {
   CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS,
+  defaultCodexLocalFastModeForModel,
   isCodexLocalFastModeSupported,
 } from "../index.js";
 
@@ -27,6 +28,10 @@ function formatFastModeSupportedModels(): string {
   return CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS.join(", ");
 }
 
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
 export function buildCodexExecArgs(
   config: unknown,
   options: { resumeSessionId?: string | null } = {},
@@ -38,7 +43,9 @@ export function buildCodexExecArgs(
     asString(record.reasoningEffort, ""),
   ).trim();
   const search = asBoolean(record.search, false);
-  const fastModeRequested = asBoolean(record.fastMode, false);
+  const fastModeRequested = hasOwn(record, "fastMode")
+    ? asBoolean(record.fastMode, false)
+    : defaultCodexLocalFastModeForModel(model);
   const fastModeApplied = fastModeRequested && isCodexLocalFastModeSupported(model);
   const bypass = asBoolean(
     record.dangerouslyBypassApprovalsAndSandbox,

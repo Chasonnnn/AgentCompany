@@ -51,4 +51,32 @@ describe("buildCodexLocalConfig", () => {
       dangerouslyBypassApprovalsAndSandbox: true,
     });
   });
+
+  it("defaults fast mode on for eligible models when omitted", () => {
+    const values = makeValues({
+      model: "gpt-5.4",
+    }) as unknown as Record<string, unknown>;
+    delete values.fastMode;
+
+    const config = buildCodexLocalConfig(values as unknown as CreateConfigValues);
+
+    expect(config).toMatchObject({
+      model: "gpt-5.4",
+      fastMode: true,
+    });
+  });
+
+  it("preserves an explicit fast mode disable on eligible models", () => {
+    const config = buildCodexLocalConfig(
+      makeValues({
+        model: "gpt-5.4",
+        fastMode: false,
+      }),
+    );
+
+    expect(config).toMatchObject({
+      model: "gpt-5.4",
+      fastMode: false,
+    });
+  });
 });

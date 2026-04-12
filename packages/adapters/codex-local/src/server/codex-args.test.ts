@@ -2,6 +2,27 @@ import { describe, expect, it } from "vitest";
 import { buildCodexExecArgs } from "./codex-args.js";
 
 describe("buildCodexExecArgs", () => {
+  it("defaults fast mode on for eligible models when omitted", () => {
+    const result = buildCodexExecArgs({
+      model: "gpt-5.4",
+    });
+
+    expect(result.fastModeRequested).toBe(true);
+    expect(result.fastModeApplied).toBe(true);
+    expect(result.fastModeIgnoredReason).toBeNull();
+    expect(result.args).toEqual([
+      "exec",
+      "--json",
+      "--model",
+      "gpt-5.4",
+      "-c",
+      'service_tier="fast"',
+      "-c",
+      "features.fast_mode=true",
+      "-",
+    ]);
+  });
+
   it("enables Codex fast mode overrides for GPT-5.4", () => {
     const result = buildCodexExecArgs({
       model: "gpt-5.4",
@@ -40,6 +61,24 @@ describe("buildCodexExecArgs", () => {
       "--json",
       "--model",
       "gpt-5.3-codex",
+      "-",
+    ]);
+  });
+
+  it("preserves an explicit fast mode disable on eligible models", () => {
+    const result = buildCodexExecArgs({
+      model: "gpt-5.4",
+      fastMode: false,
+    });
+
+    expect(result.fastModeRequested).toBe(false);
+    expect(result.fastModeApplied).toBe(false);
+    expect(result.fastModeIgnoredReason).toBeNull();
+    expect(result.args).toEqual([
+      "exec",
+      "--json",
+      "--model",
+      "gpt-5.4",
       "-",
     ]);
   });
