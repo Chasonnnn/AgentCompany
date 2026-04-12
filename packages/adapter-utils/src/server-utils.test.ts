@@ -35,4 +35,32 @@ describe("runChildProcess", () => {
     expect(onSpawnCompletedAt).toBeGreaterThanOrEqual(startedAt + spawnDelayMs);
     expect(finishedAt - startedAt).toBeGreaterThanOrEqual(spawnDelayMs);
   });
+
+  it("ignores broken-pipe stdin errors when the child closes fd 0 before delayed prompt handoff", async () => {
+    const logErrors: string[] = [];
+
+    const result = await runChildProcess(
+      randomUUID(),
+      "/bin/sh",
+      ["-lc", "exec 0<&-; sleep 0.2"],
+      {
+        cwd: process.cwd(),
+        env: {},
+        stdin: "hello from stdin",
+        timeoutSec: 5,
+        graceSec: 1,
+        onLog: async () => {},
+        onSpawn: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        },
+        onLogError: (_err, _runId, message) => {
+          logErrors.push(message);
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(logErrors).toEqual([]);
+  });
 });
