@@ -14,6 +14,7 @@ import {
   agentWakeupRequests,
   activityLog,
   costEvents,
+  financeEvents,
   heartbeatRunEvents,
   heartbeatRuns,
   issueExecutionDecisions,
@@ -21,6 +22,7 @@ import {
   issueComments,
   portfolioClusters,
   projects,
+  workspaceOperations,
 } from "@paperclipai/db";
 import {
   AGENT_ROLES,
@@ -81,6 +83,7 @@ const CONFIG_REVISION_FIELDS = [
 type ConfigRevisionField = (typeof CONFIG_REVISION_FIELDS)[number];
 type AgentConfigSnapshot = Pick<typeof agents.$inferSelect, ConfigRevisionField>;
 type DbExecutor = Pick<Db, "select" | "insert" | "update">;
+type DbDeleteExecutor = Pick<Db, "delete">;
 
 interface RevisionMetadata {
   createdByAgentId?: string | null;
@@ -291,6 +294,33 @@ function buildConfigSnapshot(
     requestedReason: row.requestedReason,
     metadata,
   };
+}
+
+async function deleteAgentRunLinkedRows(executor: DbDeleteExecutor, agentId: string) {
+  const runIdsForAgent = sql`select ${heartbeatRuns.id} from ${heartbeatRuns} where ${heartbeatRuns.agentId} = ${agentId}`;
+  const costEventIdsForAgent = sql`
+    select ${costEvents.id}
+    from ${costEvents}
+    where ${costEvents.agentId} = ${agentId}
+      or ${costEvents.heartbeatRunId} in (${runIdsForAgent})
+  `;
+
+  await executor.delete(workspaceOperations).where(
+    sql`${workspaceOperations.heartbeatRunId} in (${runIdsForAgent})`,
+  );
+  await executor.delete(financeEvents).where(
+    or(
+      eq(financeEvents.agentId, agentId),
+      sql`${financeEvents.heartbeatRunId} in (${runIdsForAgent})`,
+      sql`${financeEvents.costEventId} in (${costEventIdsForAgent})`,
+    ),
+  );
+  await executor.delete(costEvents).where(
+    or(
+      eq(costEvents.agentId, agentId),
+      sql`${costEvents.heartbeatRunId} in (${runIdsForAgent})`,
+    ),
+  );
 }
 
 async function getTemplateMode(
@@ -1561,6 +1591,7 @@ export function agentService(db: Db) {
         );
         await tx.delete(issueExecutionDecisions).where(eq(issueExecutionDecisions.actorAgentId, id));
         await tx.delete(issueComments).where(eq(issueComments.authorAgentId, id));
+        await deleteAgentRunLinkedRows(tx, id);
         await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.agentId, id));
         await tx.delete(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, id));
         await tx.delete(agentApiKeys).where(eq(agentApiKeys.agentId, id));

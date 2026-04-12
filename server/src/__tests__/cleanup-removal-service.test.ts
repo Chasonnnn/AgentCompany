@@ -6,12 +6,15 @@ import {
   agents,
   companies,
   companySkills,
+  costEvents,
   createDb,
+  financeEvents,
   heartbeatRuns,
   issueComments,
   issueExecutionDecisions,
   issueReadStates,
   issues,
+  workspaceOperations,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -44,6 +47,9 @@ describeEmbeddedPostgres("cleanup removal services", () => {
     await db.delete(issueComments);
     await db.delete(issueExecutionDecisions);
     await db.delete(companySkills);
+    await db.delete(financeEvents);
+    await db.delete(costEvents);
+    await db.delete(workspaceOperations);
     await db.delete(heartbeatRuns);
     await db.delete(issues);
     await db.delete(agents);
@@ -144,6 +150,55 @@ describeEmbeddedPostgres("cleanup removal services", () => {
     await expect(db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId))).resolves.toHaveLength(0);
     await expect(db.select().from(issueComments).where(eq(issueComments.issueId, issueId))).resolves.toHaveLength(0);
     await expect(db.select().from(activityLog).where(eq(activityLog.companyId, companyId))).resolves.toHaveLength(0);
+  });
+
+  it("removes run-linked billing and workspace rows before deleting the agent", async () => {
+    const { agentId, companyId, runId } = await seedFixture();
+    const costEventId = randomUUID();
+
+    await db.insert(costEvents).values({
+      id: costEventId,
+      companyId,
+      agentId,
+      heartbeatRunId: runId,
+      provider: "openai",
+      biller: "openai",
+      billingType: "tokens",
+      model: "gpt-5.4",
+      costCents: 17,
+      occurredAt: new Date(),
+    });
+
+    await db.insert(financeEvents).values({
+      id: randomUUID(),
+      companyId,
+      agentId,
+      heartbeatRunId: runId,
+      costEventId,
+      eventKind: "usage_cost",
+      biller: "openai",
+      amountCents: 17,
+      occurredAt: new Date(),
+    });
+
+    await db.insert(workspaceOperations).values({
+      id: randomUUID(),
+      companyId,
+      heartbeatRunId: runId,
+      phase: "exec",
+      status: "completed",
+    });
+
+    const removed = await agentService(db).remove(agentId);
+
+    expect(removed?.id).toBe(agentId);
+    await expect(db.select().from(agents).where(eq(agents.id, agentId))).resolves.toHaveLength(0);
+    await expect(db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId))).resolves.toHaveLength(0);
+    await expect(db.select().from(costEvents).where(eq(costEvents.companyId, companyId))).resolves.toHaveLength(0);
+    await expect(db.select().from(financeEvents).where(eq(financeEvents.companyId, companyId))).resolves.toHaveLength(0);
+    await expect(
+      db.select().from(workspaceOperations).where(eq(workspaceOperations.companyId, companyId)),
+    ).resolves.toHaveLength(0);
   });
 
   it("removes issue read states and activity rows before deleting the company", async () => {
