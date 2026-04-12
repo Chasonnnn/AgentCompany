@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueRow } from "./IssueRow";
 
 vi.mock("@/lib/router", () => ({
-  Link: ({ children, className, ...props }: React.ComponentProps<"a">) => (
+  Link: ({ children, className, disableIssueQuicklook: _disableIssueQuicklook, ...props }: React.ComponentProps<"a"> & { disableIssueQuicklook?: boolean }) => (
     <a className={className} {...props}>{children}</a>
   ),
 }));
