@@ -1,4 +1,11 @@
-import type { Project, ProjectWorkspace, WorkspaceOperation } from "@paperclipai/shared";
+import type {
+  Project,
+  ProjectDocument,
+  ProjectDocumentRevision,
+  ProjectDocumentSummary,
+  ProjectWorkspace,
+  WorkspaceOperation,
+} from "@paperclipai/shared";
 import { api } from "./client";
 
 function withCompanyScope(path: string, companyId?: string) {
@@ -20,6 +27,21 @@ export const projectsApi = {
     api.patch<Project>(projectPath(id, companyId), data),
   listWorkspaces: (projectId: string, companyId?: string) =>
     api.get<ProjectWorkspace[]>(projectPath(projectId, companyId, "/workspaces")),
+  listDocuments: (projectId: string, companyId?: string) =>
+    api.get<ProjectDocumentSummary[]>(projectPath(projectId, companyId, "/documents")),
+  getDocument: (projectId: string, key: string, companyId?: string) =>
+    api.get<ProjectDocument>(projectPath(projectId, companyId, `/documents/${encodeURIComponent(key)}`)),
+  upsertDocument: (projectId: string, key: string, data: Record<string, unknown>, companyId?: string) =>
+    api.put<ProjectDocument>(projectPath(projectId, companyId, `/documents/${encodeURIComponent(key)}`), data),
+  listDocumentRevisions: (projectId: string, key: string, companyId?: string) =>
+    api.get<ProjectDocumentRevision[]>(
+      projectPath(projectId, companyId, `/documents/${encodeURIComponent(key)}/revisions`),
+    ),
+  restoreDocumentRevision: (projectId: string, key: string, revisionId: string, companyId?: string) =>
+    api.post<ProjectDocument>(
+      projectPath(projectId, companyId, `/documents/${encodeURIComponent(key)}/revisions/${encodeURIComponent(revisionId)}/restore`),
+      {},
+    ),
   createWorkspace: (projectId: string, data: Record<string, unknown>, companyId?: string) =>
     api.post<ProjectWorkspace>(projectPath(projectId, companyId, "/workspaces"), data),
   updateWorkspace: (projectId: string, workspaceId: string, data: Record<string, unknown>, companyId?: string) =>

@@ -10,6 +10,7 @@ import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
 import { assetsApi } from "../api/assets";
+import { ApiError } from "../api/client";
 import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
 import { useToast } from "../context/ToastContext";
@@ -36,7 +37,7 @@ import { IssuesQuicklook } from "../components/IssuesQuicklook";
 
 /* ── Top-level tab types ── */
 
-type ProjectBaseTab = "overview" | "list" | "workspaces" | "configuration" | "budget";
+type ProjectBaseTab = "overview" | "list" | "workspaces" | "context" | "configuration" | "budget";
 type ProjectPluginTab = `plugin:${string}`;
 type ProjectTab = ProjectBaseTab | ProjectPluginTab;
 
@@ -50,6 +51,7 @@ function resolveProjectTab(pathname: string, projectId: string): ProjectTab | nu
   if (projectsIdx === -1 || segments[projectsIdx + 1] !== projectId) return null;
   const tab = segments[projectsIdx + 2];
   if (tab === "overview") return "overview";
+  if (tab === "context") return "context";
   if (tab === "configuration") return "configuration";
   if (tab === "budget") return "budget";
   if (tab === "issues") return "list";
@@ -94,6 +96,104 @@ function OverviewContent({
             <p>{project.targetDate}</p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ProjectContextSection({
+  projectId,
+  companyId,
+}: {
+  projectId: string;
+  companyId: string;
+}) {
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState("");
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.projects.document(projectId, "context"),
+    queryFn: async () => {
+      try {
+        return await projectsApi.getDocument(projectId, "context", companyId);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    retry: false,
+    enabled: Boolean(projectId && companyId),
+  });
+
+  useEffect(() => {
+    setDraft(data?.body ?? "");
+  }, [data?.body, data?.latestRevisionId]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () =>
+      projectsApi.upsertDocument(
+        projectId,
+        "context",
+        {
+          title: "PROJECT_CONTEXT.md",
+          format: "markdown",
+          body: draft,
+          baseRevisionId: data?.latestRevisionId ?? null,
+        },
+        companyId,
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects.document(projectId, "context") }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects.documents(projectId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects.documentRevisions(projectId, "context") }),
+      ]);
+    },
+  });
+
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading project context...</p>;
+  }
+  if (error) {
+    return <p className="text-sm text-destructive">{(error as Error).message}</p>;
+  }
+
+  const unchanged = draft === (data?.body ?? "");
+
+  return (
+    <div className="max-w-4xl space-y-4">
+      <div className="space-y-1">
+        <h3 className="text-sm font-medium tracking-[0.18em] uppercase text-muted-foreground">
+          PROJECT_CONTEXT.md
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          Shared alignment state for this project. Leadership curates it; workers read it at runtime.
+        </p>
+        {data ? (
+          <p className="text-xs text-muted-foreground">
+            Revision {data.latestRevisionNumber}
+            {data.updatedAt ? ` · Updated ${timeAgo(data.updatedAt)}` : ""}
+          </p>
+        ) : null}
+      </div>
+      <textarea
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        className="min-h-[320px] w-full rounded-lg border border-border bg-background px-4 py-3 font-mono text-sm"
+        placeholder="Document the current project goals, constraints, decisions, and coordination notes."
+      />
+      <div className="flex items-center gap-3">
+        <Button
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending || unchanged}
+        >
+          {saveMutation.isPending ? "Saving..." : data ? "Save context" : "Create context"}
+        </Button>
+        {saveMutation.isError ? (
+          <p className="text-sm text-destructive">{(saveMutation.error as Error).message}</p>
+        ) : null}
+        {saveMutation.isSuccess && !saveMutation.isPending ? (
+          <p className="text-sm text-muted-foreground">Saved.</p>
+        ) : null}
       </div>
     </div>
   );
@@ -619,6 +719,10 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/overview`, { replace: true });
       return;
     }
+    if (activeTab === "context") {
+      navigate(`/projects/${canonicalProjectRef}/context`, { replace: true });
+      return;
+    }
     if (activeTab === "configuration") {
       navigate(`/projects/${canonicalProjectRef}/configuration`, { replace: true });
       return;
@@ -754,6 +858,9 @@ export function ProjectDetail() {
     if (cachedTab === "overview") {
       return <Navigate to={`/projects/${canonicalProjectRef}/overview`} replace />;
     }
+    if (cachedTab === "context") {
+      return <Navigate to={`/projects/${canonicalProjectRef}/context`} replace />;
+    }
     if (cachedTab === "configuration") {
       return <Navigate to={`/projects/${canonicalProjectRef}/configuration`} replace />;
     }
@@ -787,6 +894,8 @@ export function ProjectDetail() {
     }
     if (tab === "overview") {
       navigate(`/projects/${canonicalProjectRef}/overview`);
+    } else if (tab === "context") {
+      navigate(`/projects/${canonicalProjectRef}/context`);
     } else if (tab === "workspaces") {
       navigate(`/projects/${canonicalProjectRef}/workspaces`);
     } else if (tab === "budget") {
@@ -860,6 +969,7 @@ export function ProjectDetail() {
             { value: "list", label: "Issues" },
             { value: "overview", label: "Overview" },
             ...(showWorkspacesTab ? [{ value: "workspaces", label: "Workspaces" }] : []),
+            { value: "context", label: "Context" },
             { value: "configuration", label: "Configuration" },
             { value: "budget", label: "Budget" },
             ...pluginTabItems.map((item) => ({
@@ -903,6 +1013,10 @@ export function ProjectDetail() {
         ) : (
           <p className="text-sm text-muted-foreground">Loading workspaces...</p>
         )
+      ) : null}
+
+      {activeTab === "context" && resolvedCompanyId ? (
+        <ProjectContextSection projectId={project.id} companyId={resolvedCompanyId} />
       ) : null}
 
       {activeTab === "configuration" && (

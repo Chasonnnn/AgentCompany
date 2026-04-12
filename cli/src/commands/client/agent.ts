@@ -16,6 +16,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { resolveAgentTemplateRef } from "./agent-template.js";
 
 interface AgentListOptions extends BaseClientOptions {
   companyId?: string;
@@ -25,6 +26,24 @@ interface AgentLocalCliOptions extends BaseClientOptions {
   companyId?: string;
   keyName?: string;
   installSkills?: boolean;
+}
+
+interface AgentHireOptions extends BaseClientOptions {
+  companyId?: string;
+  template?: string;
+  templateRevisionId?: string;
+  name?: string;
+  role?: string;
+  title?: string;
+  adapterType?: string;
+  budgetMonthlyCents?: number;
+  reportsTo?: string;
+  adapterConfig?: string;
+  runtimeConfig?: string;
+}
+
+interface AgentRepairDefaultsOptions extends BaseClientOptions {
+  companyId?: string;
 }
 
 interface CreatedAgentKey {
@@ -41,6 +60,26 @@ interface SkillsInstallSummary {
   removed: string[];
   skipped: string[];
   failed: Array<{ name: string; error: string }>;
+}
+
+interface AgentApprovalRecord {
+  id: string;
+  type: string;
+  status: string;
+}
+
+interface AgentHireResult {
+  agent: Agent;
+  approval: AgentApprovalRecord | null;
+}
+
+interface RepairedInstructionsBundleResult {
+  createdFiles: string[];
+  bundle: {
+    mode: string;
+    rootPath: string | null;
+    entryFile: string;
+  };
 }
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -156,6 +195,40 @@ function buildAgentEnvExports(input: {
   ].join("\n");
 }
 
+function parseOptionalObjectJson(
+  label: string,
+  value: string | undefined,
+): Record<string, unknown> | undefined {
+  if (!value || !value.trim()) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(
+      `${label} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${label} must decode to a JSON object.`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+async function resolveAgentByRef(
+  ctx: ReturnType<typeof resolveCommandContext>,
+  companyId: string,
+  agentRef: string,
+): Promise<Agent> {
+  const query = new URLSearchParams({ companyId });
+  const agentRow = await ctx.api.get<Agent>(
+    `/api/agents/${encodeURIComponent(agentRef)}?${query.toString()}`,
+  );
+  if (!agentRow) {
+    throw new Error(`Agent not found: ${agentRef}`);
+  }
+  return agentRow;
+}
+
 export function registerAgentCommands(program: Command): void {
   const agent = program.command("agent").description("Agent operations");
 
@@ -213,6 +286,76 @@ export function registerAgentCommands(program: Command): void {
           handleCommandError(err);
         }
       }),
+  );
+
+  addCommonClientOptions(
+    agent
+      .command("hire")
+      .description("Create a new agent hire, optionally from a reusable template")
+      .requiredOption("-C, --company-id <id>", "Company ID")
+      .requiredOption("--template <templateRef>", "Template id, exact archetypeKey, or exact template name")
+      .option("--template-revision-id <id>", "Pin a specific template revision")
+      .option("--name <name>", "Override the hired agent name")
+      .option("--role <role>", "Override the hired agent role")
+      .option("--title <title>", "Override the hired agent title")
+      .option("--adapter-type <adapterType>", "Override the adapter type")
+      .option("--budget-monthly-cents <cents>", "Override budget in cents", (value) => Number(value))
+      .option("--reports-to <agentRef>", "Manager agent id or ref to resolve into reportsTo")
+      .option("--adapter-config <json>", "Adapter config override as a JSON object")
+      .option("--runtime-config <json>", "Runtime config override as a JSON object")
+      .action(async (opts: AgentHireOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const template = await resolveAgentTemplateRef(ctx, ctx.companyId!, opts.template!);
+          const reportsToAgent = opts.reportsTo
+            ? await resolveAgentByRef(ctx, ctx.companyId!, opts.reportsTo)
+            : null;
+          const payload: Record<string, unknown> = {
+            templateId: template.id,
+          };
+          if (opts.templateRevisionId?.trim()) payload.templateRevisionId = opts.templateRevisionId.trim();
+          if (opts.name?.trim()) payload.name = opts.name.trim();
+          if (opts.role?.trim()) payload.role = opts.role.trim();
+          if (opts.title?.trim()) payload.title = opts.title.trim();
+          if (opts.adapterType?.trim()) payload.adapterType = opts.adapterType.trim();
+          if (typeof opts.budgetMonthlyCents === "number" && Number.isFinite(opts.budgetMonthlyCents)) {
+            payload.budgetMonthlyCents = Math.trunc(opts.budgetMonthlyCents);
+          }
+          if (reportsToAgent) payload.reportsTo = reportsToAgent.id;
+          const adapterConfig = parseOptionalObjectJson("--adapter-config", opts.adapterConfig);
+          if (adapterConfig) payload.adapterConfig = adapterConfig;
+          const runtimeConfig = parseOptionalObjectJson("--runtime-config", opts.runtimeConfig);
+          if (runtimeConfig) payload.runtimeConfig = runtimeConfig;
+
+          const result = await ctx.api.post<AgentHireResult>(
+            `/api/companies/${ctx.companyId}/agent-hires`,
+            payload,
+          );
+          if (!result) {
+            throw new Error("Agent hire returned no result.");
+          }
+
+          if (ctx.json) {
+            printOutput(result, { json: true });
+            return;
+          }
+
+          console.log(
+            formatInlineRecord({
+              id: result.agent.id,
+              name: result.agent.name,
+              role: result.agent.role,
+              status: result.agent.status,
+              templateId: template.id,
+              approvalId: result.approval?.id ?? null,
+              approvalStatus: result.approval?.status ?? null,
+            }),
+          );
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: false },
   );
 
   addCommonClientOptions(
@@ -306,6 +449,54 @@ export function registerAgentCommands(program: Command): void {
           console.log("");
           console.log("# Run this in your shell before launching codex/claude:");
           console.log(exportsText);
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: false },
+  );
+
+  addCommonClientOptions(
+    agent
+      .command("repair-default-files")
+      .description("Create missing default AGENTS.md and MEMORY.md files for one managed agent bundle")
+      .argument("<agentRef>", "Agent ID or shortname/url-key")
+      .requiredOption("-C, --company-id <id>", "Company ID")
+      .action(async (agentRef: string, opts: AgentRepairDefaultsOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const agentRow = await resolveAgentByRef(ctx, ctx.companyId!, agentRef);
+          const result = await ctx.api.post<RepairedInstructionsBundleResult>(
+            `/api/agents/${agentRow.id}/instructions-bundle/repair-defaults`,
+          );
+          if (!result) {
+            throw new Error("Repair returned no result.");
+          }
+
+          if (ctx.json) {
+            printOutput(
+              {
+                agent: {
+                  id: agentRow.id,
+                  name: agentRow.name,
+                  companyId: agentRow.companyId,
+                },
+                ...result,
+              },
+              { json: true },
+            );
+            return;
+          }
+
+          console.log(
+            formatInlineRecord({
+              id: agentRow.id,
+              name: agentRow.name,
+              createdFiles: result.createdFiles.join(",") || "none",
+              bundleMode: result.bundle.mode,
+              entryFile: result.bundle.entryFile,
+            }),
+          );
         } catch (err) {
           handleCommandError(err);
         }
