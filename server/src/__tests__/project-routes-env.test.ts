@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockProjectService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -17,25 +17,16 @@ const mockProjectService = vi.hoisted(() => ({
 const mockSecretService = vi.hoisted(() => ({
   normalizeEnvBindingsForPersistence: vi.fn(),
 }));
-const mockDocumentService = vi.hoisted(() => ({
-  listProjectDocuments: vi.fn(),
-  getProjectDocumentByKey: vi.fn(),
-  listProjectDocumentRevisions: vi.fn(),
-  upsertProjectDocument: vi.fn(),
-  restoreProjectDocumentRevision: vi.fn(),
-  deleteProjectDocument: vi.fn(),
-}));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
-function registerRouteMocks() {
+function registerModuleMocks() {
   vi.doMock("../telemetry.js", () => ({
     getTelemetryClient: mockGetTelemetryClient,
   }));
 
   vi.doMock("../services/index.js", () => ({
-    documentService: () => mockDocumentService,
     logActivity: mockLogActivity,
     projectService: () => mockProjectService,
     secretService: () => mockSecretService,
@@ -108,23 +99,14 @@ function buildProject(overrides: Record<string, unknown> = {}) {
 
 describe("project env routes", () => {
   beforeEach(() => {
-    vi.doUnmock("../telemetry.js");
-    vi.doUnmock("../services/index.js");
-    vi.doUnmock("../services/workspace-runtime.js");
     vi.resetModules();
-    registerRouteMocks();
-    vi.resetAllMocks();
+    registerModuleMocks();
+    vi.clearAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockProjectService.createWorkspace.mockResolvedValue(null);
     mockProjectService.listWorkspaces.mockResolvedValue([]);
     mockSecretService.normalizeEnvBindingsForPersistence.mockImplementation(async (_companyId, env) => env);
-  });
-
-  afterEach(() => {
-    vi.doUnmock("../telemetry.js");
-    vi.doUnmock("../services/index.js");
-    vi.doUnmock("../services/workspace-runtime.js");
   });
 
   it("normalizes env bindings on create and logs only env keys", async () => {
@@ -166,25 +148,6 @@ describe("project env routes", () => {
     );
   });
 
-  it("passes portfolioClusterId through project creation", async () => {
-    const portfolioClusterId = "11111111-1111-4111-8111-111111111111";
-    mockProjectService.create.mockResolvedValue(buildProject({ portfolioClusterId }));
-
-    const app = await createApp();
-    const res = await request(app)
-      .post("/api/companies/company-1/projects")
-      .send({
-        name: "Project",
-        portfolioClusterId,
-      });
-
-    expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(mockProjectService.create).toHaveBeenCalledWith(
-      "company-1",
-      expect.objectContaining({ portfolioClusterId }),
-    );
-  });
-
   it("normalizes env bindings on update and avoids logging raw values", async () => {
     const normalizedEnv = {
       PLAIN_KEY: { type: "plain", value: "top-secret" },
@@ -201,10 +164,6 @@ describe("project env routes", () => {
       });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockProjectService.update).toHaveBeenCalledWith(
-      "project-1",
-      expect.objectContaining({ env: normalizedEnv }),
-    );
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -213,25 +172,6 @@ describe("project env routes", () => {
           envKeys: ["PLAIN_KEY"],
         },
       }),
-    );
-  });
-
-  it("passes portfolioClusterId through project updates", async () => {
-    const portfolioClusterId = "22222222-2222-4222-8222-222222222222";
-    mockProjectService.getById.mockResolvedValue(buildProject());
-    mockProjectService.update.mockResolvedValue(buildProject({ portfolioClusterId }));
-
-    const app = await createApp();
-    const res = await request(app)
-      .patch("/api/projects/project-1")
-      .send({
-        portfolioClusterId,
-      });
-
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockProjectService.update).toHaveBeenCalledWith(
-      "project-1",
-      expect.objectContaining({ portfolioClusterId }),
     );
   });
 });

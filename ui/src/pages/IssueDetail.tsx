@@ -23,8 +23,11 @@ import {
   createIssueDetailPath,
   readIssueDetailLocationState,
   readIssueDetailBreadcrumb,
+  readIssueDetailHeaderSeed,
   rememberIssueDetailLocationState,
 } from "../lib/issueDetailBreadcrumb";
+import { resolveIssueActiveRun, shouldTrackIssueActiveRun } from "../lib/issueActiveRun";
+import { fetchIssueDetail, getCachedIssueDetail } from "../lib/issueDetailCache";
 import {
   hasBlockingShortcutDialog,
   resolveIssueDetailGoKeyAction,
@@ -49,12 +52,11 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
-import { BoardRoomPanel } from "../components/BoardRoomPanel";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
+import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
-import { PageSkeleton } from "../components/PageSkeleton";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -71,6 +73,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatIssueActivityAction } from "@/lib/activity-format";
+import { resolveIssueChatTranscriptRuns } from "../lib/issueChatTranscriptRuns";
 import {
   Activity as ActivityIcon,
   Check,
@@ -83,7 +86,6 @@ import {
   MoreHorizontal,
   Paperclip,
   Repeat,
-  ShieldCheck,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
@@ -93,7 +95,6 @@ import {
   type ActivityEvent,
   type Agent,
   type FeedbackVote,
-  type FeedbackVoteValue,
   type Issue,
   type IssueAttachment,
   type IssueComment,
@@ -109,10 +110,6 @@ type IssueDetailComment = (IssueComment | OptimisticIssueComment) & {
 };
 
 const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
-const ACTIVE_ISSUE_RUN_POLL_INTERVAL_MS = 3000;
-const IDLE_ISSUE_RUN_POLL_INTERVAL_MS = 30000;
-const ACTIVE_ISSUE_TIMELINE_POLL_INTERVAL_MS = 5000;
-const IDLE_ISSUE_TIMELINE_POLL_INTERVAL_MS = 30000;
 const ISSUE_COMMENT_PAGE_SIZE = 50;
 
 function keepPreviousData<T>(previousData: T | undefined) {
@@ -286,6 +283,87 @@ function IssueChatSkeleton() {
   );
 }
 
+function IssueDetailLoadingState({
+  headerSeed,
+}: {
+  headerSeed: ReturnType<typeof readIssueDetailHeaderSeed>;
+}) {
+  const identifier = headerSeed?.identifier ?? headerSeed?.id.slice(0, 8) ?? null;
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      <div className="space-y-3">
+        <Skeleton className="h-3 w-40" />
+
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+          {headerSeed ? (
+            <>
+              <StatusIcon status={headerSeed.status} />
+              <PriorityIcon priority={headerSeed.priority} />
+              {identifier ? (
+                <span className="text-sm font-mono text-muted-foreground shrink-0">{identifier}</span>
+              ) : null}
+              {headerSeed.originKind === "routine_execution" && headerSeed.originId ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400 shrink-0">
+                  <Repeat className="h-3 w-3" />
+                  Routine
+                </span>
+              ) : null}
+              {headerSeed.projectId ? (
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground rounded px-1 -mx-1 py-0.5 min-w-0">
+                  <Hexagon className="h-3 w-3 shrink-0" />
+                  <span className="truncate">
+                    {headerSeed.projectName ?? headerSeed.projectId.slice(0, 8)}
+                  </span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground opacity-50 px-1 -mx-1 py-0.5">
+                  <Hexagon className="h-3 w-3 shrink-0" />
+                  No project
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <Skeleton className="h-6 w-6" />
+              <Skeleton className="h-6 w-6" />
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="h-4 w-28" />
+            </>
+          )}
+        </div>
+
+        {headerSeed ? (
+          <>
+            <h2 className="text-xl font-bold leading-tight">{headerSeed.title}</h2>
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-full max-w-xl" />
+              <Skeleton className="h-4 w-[72%]" />
+            </div>
+          </>
+        ) : (
+          <>
+            <Skeleton className="h-8 w-[min(100%,22rem)]" />
+            <Skeleton className="h-16 w-full" />
+          </>
+        )}
+      </div>
+
+      <Skeleton className="h-28 w-full rounded-lg border border-border" />
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-20" />
+        </div>
+        <IssueChatSkeleton />
+      </div>
+
+      <IssueSectionSkeleton titleWidth="w-24" rows={3} />
+    </div>
+  );
+}
+
 export function IssueDetail() {
   const { issueId } = useParams<{ issueId: string }>();
   const { selectedCompanyId } = useCompany();
@@ -300,7 +378,6 @@ export function IssueDetail() {
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("chat");
-  const [boardRoomComposerOpen, setBoardRoomComposerOpen] = useState(false);
   const [pendingApprovalAction, setPendingApprovalAction] = useState<{
     approvalId: string;
     action: "approve" | "reject";
@@ -312,14 +389,38 @@ export function IssueDetail() {
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] = useState(0);
+  const [issueChatInitialTranscriptReady, setIssueChatInitialTranscriptReady] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
   const commentComposerRef = useRef<IssueChatComposerHandle | null>(null);
+  const resolvedIssueDetailState = useMemo(
+    () => readIssueDetailLocationState(issueId, location.state, location.search),
+    [issueId, location.state, location.search],
+  );
+  const issueHeaderSeed = useMemo(
+    () => readIssueDetailHeaderSeed(location.state) ?? readIssueDetailHeaderSeed(resolvedIssueDetailState),
+    [location.state, resolvedIssueDetailState],
+  );
+  const cachedIssue = useMemo(
+    () =>
+      issueId
+        ? getCachedIssueDetail(queryClient, issueId, issueHeaderSeed ? {
+            id: issueHeaderSeed.id,
+            identifier: issueHeaderSeed.identifier,
+          } : null)
+        : undefined,
+    [issueHeaderSeed, issueId, queryClient],
+  );
+
+  useEffect(() => {
+    setIssueChatInitialTranscriptReady(false);
+  }, [issueId]);
 
   const { data: issue, isLoading, error } = useQuery({
     queryKey: queryKeys.issues.detail(issueId!),
-    queryFn: () => issuesApi.get(issueId!),
+    queryFn: () => fetchIssueDetail(queryClient, issueId!),
     enabled: !!issueId,
+    initialData: () => cachedIssue,
   });
   const resolvedCompanyId = issue?.companyId ?? selectedCompanyId;
   const commentComposerDisabledReason = useMemo(() => {
@@ -361,6 +462,14 @@ export function IssueDetail() {
     placeholderData: keepPreviousData,
   });
 
+  const { data: linkedRuns, isLoading: linkedRunsLoading } = useQuery({
+    queryKey: queryKeys.issues.runs(issueId!),
+    queryFn: () => activityApi.runsForIssue(issueId!),
+    enabled: !!issueId,
+    refetchInterval: 5000,
+    placeholderData: keepPreviousData,
+  });
+
   const { data: linkedApprovals } = useQuery({
     queryKey: queryKeys.issues.approvals(issueId!),
     queryFn: () => issuesApi.listApprovals(issueId!),
@@ -379,38 +488,21 @@ export function IssueDetail() {
     queryKey: queryKeys.issues.liveRuns(issueId!),
     queryFn: () => heartbeatsApi.liveRunsForIssue(issueId!),
     enabled: !!issueId,
-    refetchInterval: (query) => {
-      const data = query.state.data as Array<unknown> | undefined;
-      return data && data.length > 0
-        ? ACTIVE_ISSUE_RUN_POLL_INTERVAL_MS
-        : IDLE_ISSUE_RUN_POLL_INTERVAL_MS;
-    },
+    refetchInterval: 3000,
     placeholderData: keepPreviousData,
   });
 
-  const { data: activeRun, isLoading: activeRunLoading } = useQuery({
+  const shouldPollActiveRun = shouldTrackIssueActiveRun(issue);
+  const { data: rawActiveRun, isLoading: activeRunLoading } = useQuery({
     queryKey: queryKeys.issues.activeRun(issueId!),
     queryFn: () => heartbeatsApi.activeRunForIssue(issueId!),
-    enabled: !!issueId && (!!issue?.executionRunId || issue?.status === "in_progress"),
-    refetchInterval: (query) =>
-      (liveRuns?.length ?? 0) > 0
-        ? false
-        : query.state.data
-          ? ACTIVE_ISSUE_RUN_POLL_INTERVAL_MS
-          : IDLE_ISSUE_RUN_POLL_INTERVAL_MS,
+    enabled: !!issueId && shouldPollActiveRun,
+    refetchInterval: (liveRuns?.length ?? 0) > 0 ? false : 3000,
     placeholderData: keepPreviousData,
   });
+  const activeRun = resolveIssueActiveRun(issue, rawActiveRun);
 
   const hasLiveRuns = (liveRuns ?? []).length > 0 || !!activeRun;
-  const { data: linkedRuns, isLoading: linkedRunsLoading } = useQuery({
-    queryKey: queryKeys.issues.runs(issueId!),
-    queryFn: () => activityApi.runsForIssue(issueId!),
-    enabled: !!issueId,
-    refetchInterval: hasLiveRuns
-      ? ACTIVE_ISSUE_TIMELINE_POLL_INTERVAL_MS
-      : IDLE_ISSUE_TIMELINE_POLL_INTERVAL_MS,
-    placeholderData: keepPreviousData,
-  });
   const runningIssueRun = useMemo(
     () => (
       activeRun?.status === "running"
@@ -418,10 +510,6 @@ export function IssueDetail() {
         : (liveRuns ?? []).find((run) => run.status === "running") ?? null
     ),
     [activeRun, liveRuns],
-  );
-  const resolvedIssueDetailState = useMemo(
-    () => readIssueDetailLocationState(issueId, location.state, location.search),
-    [issueId, location.state, location.search],
   );
   const sourceBreadcrumb = useMemo(
     () => readIssueDetailBreadcrumb(issueId, location.state, location.search) ?? { label: "Issues", href: "/issues" },
@@ -433,8 +521,14 @@ export function IssueDetail() {
     const liveIds = new Set<string>();
     for (const r of liveRuns ?? []) liveIds.add(r.id);
     if (activeRun) liveIds.add(activeRun.id);
-    if (liveIds.size === 0) return linkedRuns ?? [];
-    return (linkedRuns ?? []).filter((r) => !liveIds.has(r.runId));
+    const historicalRuns = liveIds.size === 0
+      ? (linkedRuns ?? [])
+      : (linkedRuns ?? []).filter((r) => !liveIds.has(r.runId));
+    return historicalRuns.map((run) => ({
+      ...run,
+      adapterType: run.adapterType,
+      hasStoredOutput: (run.logBytes ?? 0) > 0,
+    }));
   }, [linkedRuns, liveRuns, activeRun]);
 
   const { data: rawChildIssues = [], isLoading: childIssuesLoading } = useQuery({
@@ -503,6 +597,23 @@ export function IssueDetail() {
     for (const a of agents ?? []) map.set(a.id, a);
     return map;
   }, [agents]);
+  const transcriptRuns = useMemo(
+    () =>
+      resolveIssueChatTranscriptRuns({
+        linkedRuns: timelineRuns,
+        liveRuns: liveRuns ?? [],
+        activeRun,
+      }),
+    [activeRun, liveRuns, timelineRuns],
+  );
+  const {
+    transcriptByRun: issueChatTranscriptByRun,
+    hasOutputForRun: issueChatHasOutputForRun,
+    isInitialHydrating: issueChatTranscriptHydrating,
+  } = useLiveRunTranscripts({
+    runs: transcriptRuns,
+    companyId: issue?.companyId ?? selectedCompanyId,
+  });
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
     const options: MentionOption[] = [];
@@ -701,29 +812,17 @@ export function IssueDetail() {
   const invalidateIssueDetail = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!) });
-  }, [issueId, queryClient, selectedCompanyId]);
+  }, [issueId, queryClient]);
+  const invalidateIssueThreadLazily = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!), refetchType: "inactive" });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!), refetchType: "inactive" });
+  }, [issueId, queryClient]);
 
   const invalidateIssueRunState = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId!) });
-    if (selectedCompanyId) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(selectedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(selectedCompanyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId) });
-    }
   }, [issueId, queryClient]);
-
-  const logIssueRunStop = useCallback((stage: string, details: Record<string, unknown> = {}) => {
-    const route = typeof window === "undefined"
-      ? null
-      : `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    console.warn(`[paperclip][issue-run-stop] ${stage} ${JSON.stringify({
-      issueId: issueId ?? null,
-      route,
-      ...details,
-    })}`);
-  }, [issueId]);
 
   const invalidateIssueCollections = useCallback(() => {
     if (selectedCompanyId) {
@@ -904,6 +1003,10 @@ export function IssueDetail() {
           current.filter((entry) => entry.clientId !== context.optimisticCommentId),
         );
       }
+      queryClient.setQueryData<Issue | undefined>(
+        queryKeys.issues.detail(issueId!),
+        (current) => current ? { ...current, updatedAt: comment.createdAt } : current,
+      );
       queryClient.setQueryData<InfiniteData<IssueComment[], string | null>>(
         queryKeys.issues.comments(issueId!),
         (current) => current ? {
@@ -931,7 +1034,7 @@ export function IssueDetail() {
       });
     },
     onSettled: (_result, _error, variables) => {
-      invalidateIssueDetail();
+      invalidateIssueThreadLazily();
       if (variables.interrupt) {
         invalidateIssueRunState();
       }
@@ -1030,7 +1133,7 @@ export function IssueDetail() {
       });
     },
     onSettled: (_result, _error, variables) => {
-      invalidateIssueDetail();
+      invalidateIssueThreadLazily();
       if (variables.interrupt) {
         invalidateIssueRunState();
       }
@@ -1038,10 +1141,9 @@ export function IssueDetail() {
     },
   });
 
-  const stopIssueRun = useMutation({
+  const interruptQueuedComment = useMutation({
     mutationFn: (runId: string) => heartbeatsApi.cancel(runId),
     onMutate: async (runId) => {
-      logIssueRunStop("request", { runId });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.runs(issueId!) });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.activeRun(issueId!) });
@@ -1072,11 +1174,6 @@ export function IssueDetail() {
         queryKeys.issues.activeRun(issueId!),
         (current: typeof activeRun) => (current?.id === runId ? null : current),
       );
-      logIssueRunStop("optimistic-clear", {
-        runId,
-        hadActiveRun: cachedActiveRun?.id === runId,
-        liveRunCountBefore: liveRunList.length,
-      });
 
       return {
         previousRuns,
@@ -1087,10 +1184,9 @@ export function IssueDetail() {
     onSuccess: () => {
       invalidateIssueDetail();
       invalidateIssueRunState();
-      logIssueRunStop("success");
       pushToast({
-        title: "Stop requested",
-        body: "The active run is stopping. Queued follow-up work can continue after the issue lock is released.",
+        title: "Interrupt requested",
+        body: "The active run is stopping so queued comments can continue next.",
         tone: "success",
       });
     },
@@ -1098,12 +1194,9 @@ export function IssueDetail() {
       queryClient.setQueryData(queryKeys.issues.runs(issueId!), context?.previousRuns);
       queryClient.setQueryData(queryKeys.issues.liveRuns(issueId!), context?.previousLiveRuns);
       queryClient.setQueryData(queryKeys.issues.activeRun(issueId!), context?.previousActiveRun);
-      logIssueRunStop("error", {
-        message: err instanceof Error ? err.message : String(err),
-      });
       pushToast({
-        title: "Stop failed",
-        body: err instanceof Error ? err.message : "Unable to stop the active run",
+        title: "Interrupt failed",
+        body: err instanceof Error ? err.message : "Unable to interrupt the active run",
         tone: "error",
       });
     },
@@ -1241,53 +1334,6 @@ export function IssueDetail() {
       });
     },
   });
-
-  const handleInterruptQueued = useCallback(
-    async (runId: string) => {
-      await stopIssueRun.mutateAsync(runId);
-    },
-    [stopIssueRun.mutateAsync],
-  );
-
-  const handleCommentImageUpload = useCallback(
-    async (file: File) => {
-      const attachment = await uploadAttachment.mutateAsync(file);
-      return attachment.contentPath;
-    },
-    [uploadAttachment.mutateAsync],
-  );
-
-  const handleCommentAttachImage = useCallback(
-    async (file: File) => {
-      await uploadAttachment.mutateAsync(file);
-    },
-    [uploadAttachment.mutateAsync],
-  );
-
-  const handleCommentAdd = useCallback(
-    async (body: string, reopen?: boolean, reassignment?: CommentReassignment) => {
-      if (reassignment) {
-        await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });
-        return;
-      }
-      await addComment.mutateAsync({ body, reopen });
-    },
-    [addComment.mutateAsync, addCommentAndReassign.mutateAsync],
-  );
-
-  const handleCommentVote = useCallback(
-    async (commentId: string, vote: FeedbackVoteValue, options?: { reason?: string; allowSharing?: boolean }) => {
-      await feedbackVoteMutation.mutateAsync({
-        targetType: "issue_comment",
-        targetId: commentId,
-        vote,
-        reason: options?.reason,
-        allowSharing: options?.allowSharing,
-        sharingPreferenceAtSubmit: feedbackDataSharingPreference,
-      });
-    },
-    [feedbackVoteMutation.mutateAsync, feedbackDataSharingPreference],
-  );
 
   useEffect(() => {
     const titleLabel = issue?.title ?? issueId ?? "Issue";
@@ -1509,18 +1555,26 @@ export function IssueDetail() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const issueChatInitialLoading =
+  const issueChatCoreInitialLoading =
     (commentsLoading && commentPages === undefined)
     || (activityLoading && activity === undefined)
     || (linkedRunsLoading && linkedRuns === undefined)
     || (liveRunsLoading && liveRuns === undefined)
     || (activeRunLoading && activeRun === undefined);
+  useEffect(() => {
+    if (issueChatInitialTranscriptReady) return;
+    if (issueChatCoreInitialLoading || issueChatTranscriptHydrating) return;
+    setIssueChatInitialTranscriptReady(true);
+  }, [issueChatCoreInitialLoading, issueChatInitialTranscriptReady, issueChatTranscriptHydrating]);
+  const issueChatInitialLoading =
+    issueChatCoreInitialLoading
+    || (!issueChatInitialTranscriptReady && issueChatTranscriptHydrating);
   const activityInitialLoading =
     (activityLoading && activity === undefined)
     || (linkedRunsLoading && linkedRuns === undefined);
   const attachmentsInitialLoading = attachmentsLoading && attachments === undefined;
 
-  if (isLoading) return <PageSkeleton variant="detail" />;
+  if (isLoading) return <IssueDetailLoadingState headerSeed={issueHeaderSeed} />;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
   if (!issue) return null;
 
@@ -1584,20 +1638,6 @@ export function IssueDetail() {
         )}
       </Button>
     </>
-  );
-  const boardRoomActionButton = (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={() => {
-        setDetailTab("board-room");
-        setBoardRoomComposerOpen(true);
-      }}
-      className="shadow-none"
-    >
-      <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
-      Open conference room
-    </Button>
   );
 
   return (
@@ -1855,6 +1895,7 @@ export function IssueDetail() {
                   key={child.id}
                   to={createIssueDetailPath(child.identifier ?? child.id)}
                   state={resolvedIssueDetailState ?? location.state}
+                  issuePrefetch={child}
                   onClickCapture={() =>
                     rememberIssueDetailLocationState(
                       child.identifier ?? child.id,
@@ -1907,7 +1948,6 @@ export function IssueDetail() {
         }}
         extraActions={
           <>
-            {boardRoomActionButton}
             {!hasAttachments && attachmentUploadButton}
             {childIssues.length === 0 && (
               <Button variant="outline" size="sm" onClick={openNewSubIssue} className="shadow-none">
@@ -2073,10 +2113,6 @@ export function IssueDetail() {
             <MessageSquare className="h-3.5 w-3.5" />
             Chat
           </TabsTrigger>
-          <TabsTrigger value="board-room" className="gap-1.5">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Conference Room
-          </TabsTrigger>
           <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
             Activity
@@ -2123,37 +2159,53 @@ export function IssueDetail() {
                 issueStatus={issue.status}
                 agentMap={agentMap}
                 currentUserId={currentUserId}
+                enableLiveTranscriptPolling={false}
+                transcriptsByRunId={issueChatTranscriptByRun}
+                hasOutputForRun={issueChatHasOutputForRun}
                 draftKey={`paperclip:issue-comment-draft:${issue.id}`}
                 enableReassign
                 reassignOptions={commentReassignOptions}
                 currentAssigneeValue={actualAssigneeValue}
                 suggestedAssigneeValue={suggestedAssigneeValue}
                 mentions={mentionOptions}
-                onInterruptQueued={handleInterruptQueued}
-                interruptingQueuedRunId={stopIssueRun.isPending ? stopIssueRun.variables ?? null : null}
-                cancellingRunId={stopIssueRun.isPending ? stopIssueRun.variables ?? null : null}
                 composerDisabledReason={commentComposerDisabledReason}
-                onVote={handleCommentVote}
-                onAdd={handleCommentAdd}
-                imageUploadHandler={handleCommentImageUpload}
-                onAttachImage={handleCommentAttachImage}
+                onVote={async (commentId, vote, options) => {
+                  await feedbackVoteMutation.mutateAsync({
+                    targetType: "issue_comment",
+                    targetId: commentId,
+                    vote,
+                    reason: options?.reason,
+                    allowSharing: options?.allowSharing,
+                    sharingPreferenceAtSubmit: feedbackDataSharingPreference,
+                  });
+                }}
+                onAdd={async (body, reopen, reassignment) => {
+                  if (reassignment) {
+                    await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });
+                    return;
+                  }
+                  await addComment.mutateAsync({ body, reopen });
+                }}
+                imageUploadHandler={async (file) => {
+                  const attachment = await uploadAttachment.mutateAsync(file);
+                  return attachment.contentPath;
+                }}
+                onAttachImage={async (file) => {
+                  await uploadAttachment.mutateAsync(file);
+                }}
+                onInterruptQueued={async (runId) => {
+                  await interruptQueuedComment.mutateAsync(runId);
+                }}
+                interruptingQueuedRunId={interruptQueuedComment.isPending ? interruptQueuedComment.variables ?? null : null}
                 onCancelRun={runningIssueRun
                   ? async () => {
-                      await stopIssueRun.mutateAsync(runningIssueRun.id);
+                      await interruptQueuedComment.mutateAsync(runningIssueRun.id);
                     }
                   : undefined}
                 onImageClick={handleChatImageClick}
               />
             </div>
           )}
-        </TabsContent>
-
-        <TabsContent value="board-room">
-          <BoardRoomPanel
-            issue={issue}
-            composerOpen={boardRoomComposerOpen}
-            onComposerOpenChange={setBoardRoomComposerOpen}
-          />
         </TabsContent>
 
         <TabsContent value="activity">

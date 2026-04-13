@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentRoutes } from "../routes/agents.js";
+import { errorHandler } from "../middleware/index.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -16,46 +18,31 @@ const mockIssueService = vi.hoisted(() => ({
   getByIdentifier: vi.fn(),
 }));
 
-const mockAgentTemplateService = vi.hoisted(() => ({
-  resolveRevisionForInstantiation: vi.fn(),
+vi.mock("../services/index.js", () => ({
+  agentService: () => mockAgentService,
+  agentInstructionsService: () => ({}),
+  accessService: () => ({}),
+  approvalService: () => ({}),
+  companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
+  budgetService: () => ({}),
+  heartbeatService: () => mockHeartbeatService,
+  issueApprovalService: () => ({}),
+  issueService: () => mockIssueService,
+  logActivity: vi.fn(),
+  secretService: () => ({}),
+  syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
+  workspaceOperationService: () => ({}),
 }));
 
-function registerRouteMocks() {
-  vi.doMock("../services/index.js", () => ({
-    agentService: () => mockAgentService,
-    agentProjectPlacementService: () => ({
-      previewForInput: vi.fn(),
-      applyPrimaryPlacement: vi.fn(),
-    }),
-    agentTemplateService: () => mockAgentTemplateService,
-    agentSkillService: () => ({}),
-    agentInstructionsService: () => ({}),
-    accessService: () => ({}),
-    approvalService: () => ({}),
-    budgetService: () => ({}),
-    heartbeatService: () => mockHeartbeatService,
-    issueApprovalService: () => ({}),
-    issueService: () => mockIssueService,
-    logActivity: vi.fn(),
-    secretService: () => ({}),
-    syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
-    workspaceOperationService: () => ({}),
-  }));
+vi.mock("../adapters/index.js", () => ({
+  findServerAdapter: vi.fn(),
+  listAdapterModels: vi.fn(),
+  detectAdapterModel: vi.fn(),
+  findActiveServerAdapter: vi.fn(),
+  requireServerAdapter: vi.fn(),
+}));
 
-  vi.doMock("../adapters/index.js", () => ({
-    findServerAdapter: vi.fn(),
-    listAdapterModels: vi.fn(),
-    detectAdapterModel: vi.fn(),
-    findActiveServerAdapter: vi.fn(),
-    requireServerAdapter: vi.fn(),
-  }));
-}
-
-async function createApp() {
-  const [{ agentRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/agents.js"),
-    import("../middleware/index.js"),
-  ]);
+function createApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -75,12 +62,7 @@ async function createApp() {
 
 describe("agent live run routes", () => {
   beforeEach(() => {
-    vi.resetModules();
-    vi.unmock("../services/index.js");
-    vi.unmock("../adapters/index.js");
-    registerRouteMocks();
     vi.clearAllMocks();
-    mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockIssueService.getByIdentifier.mockResolvedValue({
       id: "issue-1",
       companyId: "company-1",
@@ -109,13 +91,8 @@ describe("agent live run routes", () => {
     mockHeartbeatService.getActiveRunIssueSummaryForAgent.mockResolvedValue(null);
   });
 
-  afterEach(() => {
-    vi.unmock("../services/index.js");
-    vi.unmock("../adapters/index.js");
-  });
-
   it("returns a compact active run payload for issue polling", async () => {
-    const res = await request(await createApp()).get("/api/issues/PAP-1295/active-run");
+    const res = await request(createApp()).get("/api/issues/PAP-1295/active-run");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PAP-1295");

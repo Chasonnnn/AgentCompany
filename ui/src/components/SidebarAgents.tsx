@@ -19,6 +19,7 @@ import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { getStoredAgentLayout, setStoredAgentLayout } from "../lib/agent-layout";
+import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
 import { agentRouteRef, agentUrl, cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
@@ -106,6 +107,7 @@ function SidebarAgentLink({
   return (
     <NavLink
       to={activeTab ? `${agentUrl(target)}/${activeTab}` : agentUrl(target)}
+      state={SIDEBAR_SCROLL_RESET_STATE}
       onClick={() => {
         if (isMobile) setSidebarOpen(false);
       }}
