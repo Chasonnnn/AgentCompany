@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageSquareShare, PencilLine, ShieldCheck } from "lucide-react";
-import type { Agent } from "@paperclipai/shared";
+import { getConferenceRoomKindDescriptor, type Agent } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { conferenceRoomsApi } from "../api/conferenceRooms";
 import { issuesApi } from "../api/issues";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { ConferenceRoomEditorDialog } from "../components/ConferenceRoomEditorDialog";
+import { PacketMarkdownBody } from "../components/PacketMarkdownBody";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -156,6 +157,14 @@ export function ConferenceRoomDetail() {
             <h1 className="text-xl font-semibold">{room.title}</h1>
             <p className="mt-1 text-sm text-muted-foreground">{room.summary}</p>
           </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+              {getConferenceRoomKindDescriptor(room.kind)?.label ?? "Legacy room"}
+            </span>
+            <span className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+              {room.status}
+            </span>
+          </div>
           {room.agenda ? (
             <div className="rounded-lg border border-border/60 bg-background/70 px-3.5 py-3 text-sm text-foreground/90">
               {room.agenda}
@@ -261,7 +270,9 @@ export function ConferenceRoomDetail() {
                       {new Date(comment.createdAt).toLocaleString()}
                     </span>
                   </div>
-                  <p className="mt-2 whitespace-pre-wrap text-sm text-foreground/90">{comment.body}</p>
+                  <div className="mt-2">
+                    <PacketMarkdownBody markdown={comment.body} className="text-sm leading-6" />
+                  </div>
                 </div>
               ))
             )}

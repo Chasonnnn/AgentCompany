@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageSquareShare, ShieldCheck } from "lucide-react";
+import { getConferenceRoomKindDescriptor } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { conferenceRoomsApi } from "../api/conferenceRooms";
 import { issuesApi } from "../api/issues";
@@ -154,6 +155,9 @@ export function ConferenceRoom() {
                     <span className="text-base font-semibold">{room.title}</span>
                     <span className="rounded-full border border-border px-2 py-0.5 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
                       {room.status}
+                    </span>
+                    <span className="rounded-full border border-border/60 bg-background/70 px-2 py-0.5 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      {getConferenceRoomKindDescriptor(room.kind)?.label ?? "Legacy room"}
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground">{room.summary}</p>

@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Link, useParams, useNavigate, useLocation, Navigate } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { PROJECT_COLORS, isUuidLike, type BudgetPolicySummary, type ExecutionWorkspace } from "@paperclipai/shared";
+import {
+  PROJECT_COLORS,
+  PROJECT_RESERVED_DOCUMENT_KEYS,
+  getReservedProjectDocumentDescriptor,
+  isUuidLike,
+  type BudgetPolicySummary,
+  type ExecutionWorkspace,
+} from "@paperclipai/shared";
 import { budgetsApi } from "../api/budgets";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -101,7 +108,11 @@ function OverviewContent({
   );
 }
 
-function ProjectContextSection({
+function projectDocumentTitle(key: string) {
+  return `PROJECT_${key.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}.md`;
+}
+
+function ProjectDocumentsSection({
   projectId,
   companyId,
 }: {
@@ -109,12 +120,23 @@ function ProjectContextSection({
   companyId: string;
 }) {
   const queryClient = useQueryClient();
+  const [selectedKey, setSelectedKey] = useState<(typeof PROJECT_RESERVED_DOCUMENT_KEYS)[number]>("context");
   const [draft, setDraft] = useState("");
+  const { data: summaries, isLoading: summariesLoading, error: summariesError } = useQuery({
+    queryKey: queryKeys.projects.documents(projectId),
+    queryFn: async () => projectsApi.listDocuments(projectId, companyId),
+    enabled: Boolean(projectId && companyId),
+  });
+  const selectedDescriptor = getReservedProjectDocumentDescriptor(selectedKey);
+  const selectedSummary = useMemo(
+    () => summaries?.find((document) => document.key === selectedKey) ?? null,
+    [selectedKey, summaries],
+  );
   const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.projects.document(projectId, "context"),
+    queryKey: queryKeys.projects.document(projectId, selectedKey),
     queryFn: async () => {
       try {
-        return await projectsApi.getDocument(projectId, "context", companyId);
+        return await projectsApi.getDocument(projectId, selectedKey, companyId);
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) return null;
         throw err;
@@ -124,17 +146,21 @@ function ProjectContextSection({
     enabled: Boolean(projectId && companyId),
   });
 
+  const extraDocumentCount = (summaries ?? []).filter((document) =>
+    !PROJECT_RESERVED_DOCUMENT_KEYS.includes(document.key as (typeof PROJECT_RESERVED_DOCUMENT_KEYS)[number]),
+  ).length;
+
   useEffect(() => {
     setDraft(data?.body ?? "");
-  }, [data?.body, data?.latestRevisionId]);
+  }, [data?.body, data?.latestRevisionId, selectedKey]);
 
   const saveMutation = useMutation({
     mutationFn: async () =>
       projectsApi.upsertDocument(
         projectId,
-        "context",
+        selectedKey,
         {
-          title: "PROJECT_CONTEXT.md",
+          title: projectDocumentTitle(selectedKey),
           format: "markdown",
           body: draft,
           baseRevisionId: data?.latestRevisionId ?? null,
@@ -143,31 +169,57 @@ function ProjectContextSection({
       ),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.projects.document(projectId, "context") }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects.document(projectId, selectedKey) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.projects.documents(projectId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.projects.documentRevisions(projectId, "context") }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects.documentRevisions(projectId, selectedKey) }),
       ]);
     },
   });
 
-  if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading project context...</p>;
+  if (summariesLoading || isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading project docs...</p>;
   }
-  if (error) {
-    return <p className="text-sm text-destructive">{(error as Error).message}</p>;
+  if (summariesError || error) {
+    return <p className="text-sm text-destructive">{((summariesError ?? error) as Error).message}</p>;
   }
 
   const unchanged = draft === (data?.body ?? "");
 
   return (
     <div className="max-w-4xl space-y-4">
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-2">
+          {PROJECT_RESERVED_DOCUMENT_KEYS.map((key) => {
+            const descriptor = getReservedProjectDocumentDescriptor(key);
+            const exists = summaries?.some((document) => document.key === key);
+            return (
+              <Button
+                key={key}
+                type="button"
+                variant={selectedKey === key ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedKey(key)}
+              >
+                {descriptor?.label ?? key}
+                <span className="ml-2 text-xs opacity-70">{exists ? "saved" : "new"}</span>
+              </Button>
+            );
+          })}
+        </div>
+        {extraDocumentCount > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {extraDocumentCount} non-reserved project doc{extraDocumentCount === 1 ? "" : "s"} exist outside this promoted set.
+          </p>
+        ) : null}
+      </div>
       <div className="space-y-1">
         <h3 className="text-sm font-medium tracking-[0.18em] uppercase text-muted-foreground">
-          PROJECT_CONTEXT.md
+          {projectDocumentTitle(selectedKey)}
         </h3>
         <p className="text-sm text-muted-foreground">
-          Shared alignment state for this project. Leadership curates it; workers read it at runtime.
+          {selectedDescriptor?.description ?? "Leadership-curated project artifact."}
         </p>
+        <p className="text-xs text-muted-foreground">{selectedDescriptor?.owner ?? "Project leadership"} curates this doc.</p>
         {data ? (
           <p className="text-xs text-muted-foreground">
             Revision {data.latestRevisionNumber}
@@ -179,14 +231,14 @@ function ProjectContextSection({
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         className="min-h-[320px] w-full rounded-lg border border-border bg-background px-4 py-3 font-mono text-sm"
-        placeholder="Document the current project goals, constraints, decisions, and coordination notes."
+        placeholder={selectedDescriptor?.description ?? "Document durable project state."}
       />
       <div className="flex items-center gap-3">
         <Button
           onClick={() => saveMutation.mutate()}
           disabled={saveMutation.isPending || unchanged}
         >
-          {saveMutation.isPending ? "Saving..." : data ? "Save context" : "Create context"}
+          {saveMutation.isPending ? "Saving..." : selectedSummary ? `Save ${selectedDescriptor?.label ?? selectedKey}` : `Create ${selectedDescriptor?.label ?? selectedKey}`}
         </Button>
         {saveMutation.isError ? (
           <p className="text-sm text-destructive">{(saveMutation.error as Error).message}</p>
@@ -969,7 +1021,7 @@ export function ProjectDetail() {
             { value: "list", label: "Issues" },
             { value: "overview", label: "Overview" },
             ...(showWorkspacesTab ? [{ value: "workspaces", label: "Workspaces" }] : []),
-            { value: "context", label: "Context" },
+            { value: "context", label: "Docs" },
             { value: "configuration", label: "Configuration" },
             { value: "budget", label: "Budget" },
             ...pluginTabItems.map((item) => ({
@@ -1016,7 +1068,7 @@ export function ProjectDetail() {
       ) : null}
 
       {activeTab === "context" && resolvedCompanyId ? (
-        <ProjectContextSection projectId={project.id} companyId={resolvedCompanyId} />
+        <ProjectDocumentsSection projectId={project.id} companyId={resolvedCompanyId} />
       ) : null}
 
       {activeTab === "configuration" && (

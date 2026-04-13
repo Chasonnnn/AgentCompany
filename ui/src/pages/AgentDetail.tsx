@@ -76,12 +76,15 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { AgentIcon, AgentIconPicker } from "../components/AgentIconPicker";
+import { ConnectionContractSummary } from "../components/ConnectionContractSummary";
 import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
 import {
   isUuidLike,
+  parseConnectionContractMarkdown,
   type Agent,
   type AgentSkillEntry,
   type AgentSkillSnapshot,
+  type ConnectionContract,
   type AgentDetail as AgentDetailRecord,
   type BudgetPolicySummary,
   type HeartbeatRun,
@@ -1888,6 +1891,21 @@ function PromptsTab({
 
   const currentContent = selectedFileExists ? (selectedFileDetail?.content ?? "") : "";
   const displayValue = draft ?? currentContent;
+  const connectionContract = useMemo<ConnectionContract | null>(() => {
+    if (isMarkdown(selectedOrEntryFile)) {
+      const parsed = parseConnectionContractMarkdown(displayValue);
+      if (parsed) return parsed.connectionContract;
+    }
+    if (!selectedOrEntryFile.endsWith("AGENTS.md")) return null;
+    const metadata = typeof agent.metadata === "object" && agent.metadata !== null
+      ? agent.metadata as Record<string, unknown>
+      : null;
+    if (!metadata || metadata.connectionContractKind !== "paperclip/connection-contract.v1") return null;
+    const value = metadata.connectionContract;
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? value as ConnectionContract
+      : null;
+  }, [agent.metadata, displayValue, selectedOrEntryFile]);
   const bundleDirty = Boolean(
     bundleDraft &&
       (
@@ -2335,18 +2353,21 @@ function PromptsTab({
           {selectedFileExists && fileLoading && !selectedFileDetail ? (
             <PromptEditorSkeleton />
           ) : isMarkdown(selectedOrEntryFile) ? (
-            <MarkdownEditor
-              key={selectedOrEntryFile}
-              value={displayValue}
-              onChange={(value) => setDraft(value ?? "")}
-              placeholder="# Agent instructions"
-              contentClassName="min-h-[420px] text-sm font-mono"
-              imageUploadHandler={async (file) => {
-                const namespace = `agents/${agent.id}/instructions/${selectedOrEntryFile.replaceAll("/", "-")}`;
-                const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
-                return asset.contentPath;
-              }}
-            />
+            <div className="space-y-3">
+              {connectionContract ? <ConnectionContractSummary contract={connectionContract} /> : null}
+              <MarkdownEditor
+                key={selectedOrEntryFile}
+                value={displayValue}
+                onChange={(value) => setDraft(value ?? "")}
+                placeholder="# Agent instructions"
+                contentClassName="min-h-[420px] text-sm font-mono"
+                imageUploadHandler={async (file) => {
+                  const namespace = `agents/${agent.id}/instructions/${selectedOrEntryFile.replaceAll("/", "-")}`;
+                  const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
+                  return asset.contentPath;
+                }}
+              />
+            </div>
           ) : (
             <textarea
               value={displayValue}

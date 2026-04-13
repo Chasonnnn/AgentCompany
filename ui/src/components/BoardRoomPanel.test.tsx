@@ -14,7 +14,7 @@ const mockConferenceRoomsApi = vi.hoisted(() => ({
 }));
 
 const mockAgentsApi = vi.hoisted(() => ({
-  hierarchy: vi.fn(),
+  operatingHierarchy: vi.fn(),
 }));
 
 const mockIssuesApi = vi.hoisted(() => ({
@@ -124,6 +124,7 @@ function createRoom(id: string, title: string): ConferenceRoom {
     title,
     summary: "Leadership coordination room",
     agenda: null,
+    kind: "project_leadership",
     status: "open",
     createdByAgentId: null,
     createdByUserId: "user-1",
@@ -164,10 +165,10 @@ describe("BoardRoomPanel", () => {
     });
     mockConferenceRoomsApi.listForIssue.mockReset();
     mockConferenceRoomsApi.createForIssue.mockReset();
-    mockAgentsApi.hierarchy.mockReset();
+    mockAgentsApi.operatingHierarchy.mockReset();
     mockIssuesApi.list.mockReset();
     mockConferenceRoomsApi.createForIssue.mockResolvedValue(createRoom("room-created", "New room"));
-    mockAgentsApi.hierarchy.mockResolvedValue(createHierarchy());
+    mockAgentsApi.operatingHierarchy.mockResolvedValue(createHierarchy());
     mockIssuesApi.list.mockResolvedValue([]);
   });
 

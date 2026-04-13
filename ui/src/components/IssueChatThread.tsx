@@ -63,6 +63,7 @@ import { MarkdownEditor, type MentionOption, type MarkdownEditorRef } from "./Ma
 import { Identity } from "./Identity";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { AgentIcon } from "./AgentIconPicker";
+import { PacketMarkdownBody } from "./PacketMarkdownBody";
 import { restoreSubmittedCommentDraft } from "../lib/comment-submit-draft";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { timeAgo } from "../lib/timeAgo";
@@ -480,14 +481,12 @@ function commentDateLabel(date: Date | string | undefined): string {
 function IssueChatTextPart({ text, recessed }: { text: string; recessed?: boolean }) {
   const { onImageClick } = useContext(IssueChatCtx);
   return (
-    <MarkdownBody
+    <PacketMarkdownBody
       className="text-sm leading-6"
-      style={recessed ? { opacity: 0.55 } : undefined}
-      softBreaks
+      recessed={recessed}
       onImageClick={onImageClick}
-    >
-      {text}
-    </MarkdownBody>
+      markdown={text}
+    />
   );
 }
 

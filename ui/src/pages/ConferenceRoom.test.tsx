@@ -14,7 +14,7 @@ const mockConferenceRoomsApi = vi.hoisted(() => ({
 }));
 
 const mockAgentsApi = vi.hoisted(() => ({
-  hierarchy: vi.fn(),
+  operatingHierarchy: vi.fn(),
 }));
 
 const mockIssuesApi = vi.hoisted(() => ({
@@ -141,7 +141,12 @@ function createIssue(id: string, identifier: string, title: string): Issue {
   };
 }
 
-function createRoom(id: string, status: ConferenceRoomType["status"], title: string): ConferenceRoomType {
+function createRoom(
+  id: string,
+  status: ConferenceRoomType["status"],
+  title: string,
+  kind: ConferenceRoomType["kind"] = "project_leadership",
+): ConferenceRoomType {
   const now = new Date("2026-04-09T12:00:00.000Z");
   return {
     id,
@@ -149,6 +154,7 @@ function createRoom(id: string, status: ConferenceRoomType["status"], title: str
     title,
     summary: `${title} summary`,
     agenda: null,
+    kind,
     status,
     createdByAgentId: null,
     createdByUserId: "user-1",
@@ -192,10 +198,10 @@ describe("ConferenceRoom", () => {
     mockUseLocation.mockReset();
     mockConferenceRoomsApi.list.mockReset();
     mockConferenceRoomsApi.create.mockReset();
-    mockAgentsApi.hierarchy.mockReset();
+    mockAgentsApi.operatingHierarchy.mockReset();
     mockIssuesApi.list.mockReset();
     mockUseLocation.mockReturnValue({ pathname: "/conference-room/open", search: "", hash: "" });
-    mockAgentsApi.hierarchy.mockResolvedValue(createHierarchy());
+    mockAgentsApi.operatingHierarchy.mockResolvedValue(createHierarchy());
     mockIssuesApi.list.mockResolvedValue([
       createIssue("issue-1", "AIWA-1", "Hire your first engineer and create a hiring plan"),
     ]);
@@ -253,6 +259,30 @@ describe("ConferenceRoom", () => {
 
     expect(container.textContent).toContain("Hiring leadership sync");
     expect(container.textContent).toContain("Closed room");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("renders null kind rooms as legacy rooms without breaking the list", async () => {
+    mockConferenceRoomsApi.list.mockResolvedValue([
+      createRoom("room-legacy", "open", "Legacy coordination", null),
+    ]);
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ConferenceRoom />
+        </QueryClientProvider>,
+      );
+    });
+
+    await flush();
+
+    expect(container.textContent).toContain("Legacy coordination");
+    expect(container.textContent).toContain("Legacy room");
 
     await act(async () => {
       root.unmount();

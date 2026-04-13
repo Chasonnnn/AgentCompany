@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CompanyOperatingHierarchy, ConferenceRoom, Issue } from "@paperclipai/shared";
+import {
+  CONFERENCE_ROOM_KINDS,
+  getConferenceRoomKindDescriptor,
+  type CompanyOperatingHierarchy,
+  type ConferenceRoom,
+  type Issue,
+} from "@paperclipai/shared";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,6 +18,7 @@ type ConferenceRoomDraft = {
   title: string;
   summary: string;
   agenda: string;
+  kind: NonNullable<ConferenceRoom["kind"]>;
   issueIds: string[];
   participantAgentIds: string[];
 };
@@ -21,6 +28,7 @@ function createDraft(room?: ConferenceRoom | null): ConferenceRoomDraft {
     title: room?.title ?? "",
     summary: room?.summary ?? "",
     agenda: room?.agenda ?? "",
+    kind: room?.kind ?? "project_leadership",
     issueIds: room?.linkedIssues.map((issue) => issue.issueId) ?? [],
     participantAgentIds: room?.participants.map((participant) => participant.agentId) ?? [],
   };
@@ -47,6 +55,7 @@ export function ConferenceRoomEditorDialog({
     title: string;
     summary: string;
     agenda: string | null;
+    kind: NonNullable<ConferenceRoom["kind"]>;
     issueIds: string[];
     participantAgentIds: string[];
   }) => Promise<void>;
@@ -110,6 +119,7 @@ export function ConferenceRoomEditorDialog({
       title: draft.title.trim(),
       summary: draft.summary.trim(),
       agenda: draft.agenda.trim() ? draft.agenda.trim() : null,
+      kind: draft.kind,
       issueIds: Array.from(new Set([...normalizedRequiredIssueIds, ...draft.issueIds])),
       participantAgentIds: draft.participantAgentIds,
     });
@@ -145,6 +155,28 @@ export function ConferenceRoomEditorDialog({
                 placeholder="What decision or discussion is this room for?"
               />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="conference-room-kind">Room kind</Label>
+            <select
+              id="conference-room-kind"
+              value={draft.kind}
+              onChange={(event) => setDraft((current) => ({
+                ...current,
+                kind: event.target.value as ConferenceRoomDraft["kind"],
+              }))}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              {CONFERENCE_ROOM_KINDS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {getConferenceRoomKindDescriptor(kind)?.label ?? kind}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              {getConferenceRoomKindDescriptor(draft.kind)?.description}
+            </p>
           </div>
 
           <div className="space-y-2">

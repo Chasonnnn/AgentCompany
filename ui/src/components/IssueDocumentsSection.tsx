@@ -8,6 +8,11 @@ import type {
   Issue,
   IssueDocument,
 } from "@paperclipai/shared";
+import {
+  ISSUE_RESERVED_DOCUMENT_KEYS,
+  getReservedIssueDocumentDescriptor,
+  isReservedIssueDocumentKey,
+} from "@paperclipai/shared";
 import { useLocation } from "@/lib/router";
 import { ApiError } from "../api/client";
 import { issuesApi } from "../api/issues";
@@ -75,6 +80,10 @@ function renderBody(body: string, className?: string) {
 
 function isPlanKey(key: string) {
   return key.trim().toLowerCase() === "plan";
+}
+
+function documentBadgeLabel(key: string) {
+  return getReservedIssueDocumentDescriptor(key)?.label ?? key;
 }
 
 function titlesMatchKey(title: string | null | undefined, key: string) {
@@ -274,8 +283,13 @@ export function IssueDocumentsSection({
 
   const sortedDocuments = useMemo(() => {
     return [...(documents ?? [])].sort((a, b) => {
-      if (a.key === "plan" && b.key !== "plan") return -1;
-      if (a.key !== "plan" && b.key === "plan") return 1;
+      const leftReserved = isReservedIssueDocumentKey(a.key);
+      const rightReserved = isReservedIssueDocumentKey(b.key);
+      if (leftReserved && rightReserved) {
+        return ISSUE_RESERVED_DOCUMENT_KEYS.indexOf(a.key as typeof ISSUE_RESERVED_DOCUMENT_KEYS[number]) - ISSUE_RESERVED_DOCUMENT_KEYS.indexOf(b.key as typeof ISSUE_RESERVED_DOCUMENT_KEYS[number]);
+      }
+      if (leftReserved && !rightReserved) return -1;
+      if (!leftReserved && rightReserved) return 1;
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
     });
   }, [documents]);
@@ -828,7 +842,7 @@ export function IssueDocumentsSection({
                       {isFolded ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                     </button>
                     <span className="shrink-0 rounded-full border border-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                      {doc.key}
+                      {documentBadgeLabel(doc.key)}
                     </span>
                     <DropdownMenu
                       open={revisionMenuOpenKey === doc.key}
@@ -891,6 +905,11 @@ export function IssueDocumentsSection({
                       updated {relativeTime(displayedUpdatedAt)}
                     </a>
                   </div>
+                  {getReservedIssueDocumentDescriptor(doc.key) ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {getReservedIssueDocumentDescriptor(doc.key)?.description}
+                    </p>
+                  ) : null}
                   {showTitle && <p className="mt-2 text-sm font-medium">{displayedTitle}</p>}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
