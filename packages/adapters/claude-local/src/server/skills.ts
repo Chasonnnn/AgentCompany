@@ -49,7 +49,7 @@ async function buildClaudeSkillSnapshot(
     sourcePath: entry.source,
     targetPath: null,
     detail: desiredSet.has(entry.key)
-      ? "Will be mounted into the ephemeral Claude skill directory on the next run."
+      ? "Will be materialized into the stable Paperclip-managed Claude prompt bundle on the next run."
       : null,
     required: Boolean(entry.required),
     requiredReason: entry.requiredReason ?? null,

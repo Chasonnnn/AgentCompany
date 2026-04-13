@@ -13,6 +13,34 @@ function readCommentText(value: unknown) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function mergeHeartbeatRunResultJson(
+  resultJson: Record<string, unknown> | null | undefined,
+  summary: string | null | undefined,
+): Record<string, unknown> | null {
+  const normalizedSummary = readCommentText(summary);
+  const baseResult =
+    resultJson && typeof resultJson === "object" && !Array.isArray(resultJson)
+      ? resultJson
+      : null;
+
+  if (!baseResult) {
+    return normalizedSummary ? { summary: normalizedSummary } : null;
+  }
+
+  if (!normalizedSummary) {
+    return baseResult;
+  }
+
+  if (readCommentText(baseResult.summary)) {
+    return baseResult;
+  }
+
+  return {
+    ...baseResult,
+    summary: normalizedSummary,
+  };
+}
+
 export function summarizeHeartbeatRunResultJson(
   resultJson: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | null {
@@ -53,21 +81,4 @@ export function buildHeartbeatRunIssueComment(
     ?? readCommentText(resultJson.message)
     ?? null
   );
-}
-
-export function mergeHeartbeatRunResultJson(
-  resultJson: Record<string, unknown> | null | undefined,
-  summary: string | null | undefined,
-): Record<string, unknown> | null {
-  const trimmedSummary = readCommentText(summary);
-  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) {
-    return trimmedSummary ? { summary: trimmedSummary } : null;
-  }
-  if (!trimmedSummary || readCommentText(resultJson.summary)) {
-    return resultJson;
-  }
-  return {
-    ...resultJson,
-    summary: trimmedSummary,
-  };
 }

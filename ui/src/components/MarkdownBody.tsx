@@ -1,6 +1,6 @@
 import { isValidElement, useEffect, useId, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import Markdown, { type Components } from "react-markdown";
+import Markdown, { type Components, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
@@ -17,6 +17,7 @@ interface MarkdownBodyProps {
   className?: string;
   style?: React.CSSProperties;
   softBreaks?: boolean;
+  linkIssueReferences?: boolean;
   /** Optional resolver for relative image paths (e.g. within export packages) */
   resolveImageSrc?: (src: string) => string | null;
   /** Called when a user clicks an inline image */
@@ -24,28 +25,6 @@ interface MarkdownBodyProps {
 }
 
 let mermaidLoaderPromise: Promise<typeof import("mermaid").default> | null = null;
-
-function loadMermaid() {
-  if (!mermaidLoaderPromise) {
-    mermaidLoaderPromise = import("mermaid").then((module) => module.default);
-  }
-  return mermaidLoaderPromise;
-}
-
-function flattenText(value: ReactNode): string {
-  if (value == null) return "";
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  if (Array.isArray(value)) return value.map((item) => flattenText(item)).join("");
-  return "";
-}
-
-function extractMermaidSource(children: ReactNode): string | null {
-  if (!isValidElement(children)) return null;
-  const childProps = children.props as { className?: unknown; children?: ReactNode };
-  if (typeof childProps.className !== "string") return null;
-  if (!/\blanguage-mermaid\b/i.test(childProps.className)) return null;
-  return flattenText(childProps.children).replace(/\n$/, "");
-}
 
 function MarkdownIssueLink({
   issuePathId,
@@ -68,6 +47,28 @@ function MarkdownIssueLink({
       <span>{children}</span>
     </Link>
   );
+}
+
+function loadMermaid() {
+  if (!mermaidLoaderPromise) {
+    mermaidLoaderPromise = import("mermaid").then((module) => module.default);
+  }
+  return mermaidLoaderPromise;
+}
+
+function flattenText(value: ReactNode): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map((item) => flattenText(item)).join("");
+  return "";
+}
+
+function extractMermaidSource(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const childProps = children.props as { className?: unknown; children?: ReactNode };
+  if (typeof childProps.className !== "string") return null;
+  if (!/\blanguage-mermaid\b/i.test(childProps.className)) return null;
+  return flattenText(childProps.children).replace(/\n$/, "");
 }
 
 function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: boolean }) {
@@ -129,14 +130,19 @@ export function MarkdownBody({
   children,
   className,
   style,
-  softBreaks = false,
+  softBreaks = true,
+  linkIssueReferences = true,
   resolveImageSrc,
   onImageClick,
 }: MarkdownBodyProps) {
   const { theme } = useTheme();
-  const remarkPlugins = softBreaks
-    ? [remarkGfm, remarkLinkIssueReferences, remarkSoftBreaks]
-    : [remarkGfm, remarkLinkIssueReferences];
+  const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [remarkGfm];
+  if (linkIssueReferences) {
+    remarkPlugins.push(remarkLinkIssueReferences);
+  }
+  if (softBreaks) {
+    remarkPlugins.push(remarkSoftBreaks);
+  }
   const components: Components = {
     pre: ({ node: _node, children: preChildren, ...preProps }) => {
       const mermaidSource = extractMermaidSource(preChildren);
@@ -146,7 +152,7 @@ export function MarkdownBody({
       return <pre {...preProps}>{preChildren}</pre>;
     },
     a: ({ href, children: linkChildren }) => {
-      const issueRef = parseIssueReferenceFromHref(href);
+      const issueRef = linkIssueReferences ? parseIssueReferenceFromHref(href) : null;
       if (issueRef) {
         return (
           <MarkdownIssueLink issuePathId={issueRef.issuePathId} href={issueRef.href}>

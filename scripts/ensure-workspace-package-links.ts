@@ -2,9 +2,7 @@
 import fs from "node:fs/promises";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+import { repoRoot } from "./dev-service-profile.ts";
 
 type WorkspaceLinkMismatch = {
   workspaceDir: string;

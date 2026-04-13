@@ -170,6 +170,7 @@ export function applyOptimisticIssueFieldUpdate(
   assign("assigneeUserId");
   assign("parentId");
   assign("projectId");
+  assign("parentId");
   assign("projectWorkspaceId");
   assign("executionWorkspaceId");
   assign("executionWorkspacePreference");

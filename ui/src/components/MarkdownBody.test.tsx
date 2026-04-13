@@ -2,8 +2,7 @@
 
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
-import { vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildAgentMentionHref, buildProjectMentionHref, buildSkillMentionHref } from "@paperclipai/shared";
 import { ThemeProvider } from "../context/ThemeContext";
@@ -22,10 +21,7 @@ vi.mock("../api/issues", () => ({
   issuesApi: mockIssuesApi,
 }));
 
-function renderMarkdown(children: string, options?: {
-  seededIssues?: Array<{ identifier: string; status: string }>;
-  softBreaks?: boolean;
-}) {
+function renderMarkdown(children: string, seededIssues: Array<{ identifier: string; status: string }> = []) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -34,7 +30,7 @@ function renderMarkdown(children: string, options?: {
     },
   });
 
-  for (const issue of options?.seededIssues ?? []) {
+  for (const issue of seededIssues) {
     queryClient.setQueryData(queryKeys.issues.detail(issue.identifier), {
       id: issue.identifier,
       identifier: issue.identifier,
@@ -45,7 +41,7 @@ function renderMarkdown(children: string, options?: {
   return renderToStaticMarkup(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <MarkdownBody softBreaks={options?.softBreaks}>{children}</MarkdownBody>
+        <MarkdownBody>{children}</MarkdownBody>
       </ThemeProvider>
     </QueryClientProvider>,
   );
@@ -53,21 +49,20 @@ function renderMarkdown(children: string, options?: {
 
 describe("MarkdownBody", () => {
   it("renders markdown images without a resolver", () => {
-    const html = renderMarkdown("![](/api/attachments/test/content)");
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ThemeProvider>
+          <MarkdownBody>{"![](/api/attachments/test/content)"}</MarkdownBody>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
 
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
   });
 
   it("resolves relative image paths when a resolver is provided", () => {
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-        },
-      },
-    });
     const html = renderToStaticMarkup(
-      <QueryClientProvider client={queryClient}>
+      <QueryClientProvider client={new QueryClient()}>
         <ThemeProvider>
           <MarkdownBody resolveImageSrc={(src) => `/resolved/${src}`}>
             {"![Org chart](images/org-chart.png)"}
@@ -81,8 +76,14 @@ describe("MarkdownBody", () => {
   });
 
   it("renders agent, project, and skill mentions as chips", () => {
-    const html = renderMarkdown(
-      `[@CodexCoder](${buildAgentMentionHref("agent-123", "code")}) [@Paperclip App](${buildProjectMentionHref("project-456", "#336699")}) [/release-changelog](${buildSkillMentionHref("skill-789", "release-changelog")})`,
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ThemeProvider>
+          <MarkdownBody>
+            {`[@CodexCoder](${buildAgentMentionHref("agent-123", "code")}) [@Paperclip App](${buildProjectMentionHref("project-456", "#336699")}) [/release-changelog](${buildSkillMentionHref("skill-789", "release-changelog")})`}
+          </MarkdownBody>
+        </ThemeProvider>
+      </QueryClientProvider>,
     );
 
     expect(html).toContain('href="/agents/agent-123"');
@@ -95,23 +96,40 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-kind="skill"');
   });
 
-  it("renders soft breaks when explicitly enabled", () => {
-    const html = renderMarkdown("First line\nSecond line", { softBreaks: true });
+  it("uses soft-break styling by default", () => {
+    const html = renderMarkdown("First line\nSecond line");
 
     expect(html).toContain("First line<br/>");
     expect(html).toContain("Second line");
   });
 
-  it("does not render soft breaks by default", () => {
-    const html = renderMarkdown("First line\nSecond line");
+  it("can opt out of soft-break styling", () => {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ThemeProvider>
+          <MarkdownBody softBreaks={false}>
+            {"First line\nSecond line"}
+          </MarkdownBody>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
 
     expect(html).not.toContain("<br/>");
   });
 
+  it("does not inject extra line-break nodes into nested lists", () => {
+    const html = renderMarkdown("1. Parent item\n   - child a\n   - child b\n\n2. Second item");
+
+    expect(html).not.toContain("[&amp;_p]:whitespace-pre-line");
+    expect(html).not.toContain("Parent item<br/>");
+    expect(html).toContain("<ol>");
+    expect(html).toContain("<ul>");
+  });
+
   it("linkifies bare issue identifiers in markdown text", () => {
-    const html = renderMarkdown("Depends on PAP-1271 for the hover state.", {
-      seededIssues: [{ identifier: "PAP-1271", status: "done" }],
-    });
+    const html = renderMarkdown("Depends on PAP-1271 for the hover state.", [
+      { identifier: "PAP-1271", status: "done" },
+    ]);
 
     expect(html).toContain('href="/issues/PAP-1271"');
     expect(html).toContain("text-green-600");
@@ -119,9 +137,9 @@ describe("MarkdownBody", () => {
   });
 
   it("rewrites full issue URLs to internal issue links", () => {
-    const html = renderMarkdown("See http://localhost:3100/PAP/issues/PAP-1179.", {
-      seededIssues: [{ identifier: "PAP-1179", status: "blocked" }],
-    });
+    const html = renderMarkdown("See http://localhost:3100/PAP/issues/PAP-1179.", [
+      { identifier: "PAP-1179", status: "blocked" },
+    ]);
 
     expect(html).toContain('href="/issues/PAP-1179"');
     expect(html).toContain("text-red-600");
@@ -129,12 +147,28 @@ describe("MarkdownBody", () => {
   });
 
   it("linkifies issue identifiers inside inline code spans", () => {
-    const html = renderMarkdown("Reference `PAP-1271` here.", {
-      seededIssues: [{ identifier: "PAP-1271", status: "done" }],
-    });
+    const html = renderMarkdown("Reference `PAP-1271` here.", [
+      { identifier: "PAP-1271", status: "done" },
+    ]);
 
     expect(html).toContain('href="/issues/PAP-1271"');
     expect(html).toContain("<code>PAP-1271</code>");
     expect(html).toContain("text-green-600");
+  });
+
+  it("can opt out of issue reference linkification for offline previews", () => {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ThemeProvider>
+          <MarkdownBody linkIssueReferences={false}>
+            {"Depends on PAP-1271 and [manual link](PAP-1271)."}
+          </MarkdownBody>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(html).not.toContain('href="/issues/PAP-1271"');
+    expect(html).toContain("Depends on PAP-1271");
+    expect(html).toContain('href="PAP-1271"');
   });
 });
