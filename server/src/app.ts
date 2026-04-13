@@ -9,6 +9,7 @@ import { httpLogger, errorHandler } from "./middleware/index.js";
 import { actorMiddleware } from "./middleware/auth.js";
 import { boardMutationGuard } from "./middleware/board-mutation-guard.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "./middleware/private-hostname-guard.js";
+import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { healthRoutes } from "./routes/health.js";
 import { companyRoutes } from "./routes/companies.js";
 import { companySkillRoutes } from "./routes/company-skills.js";
@@ -137,8 +138,11 @@ export async function createApp(
       },
     });
   });
+  // Rate-limit auth endpoints to slow down brute-force and credential-stuffing attacks.
+  // Spec §16: "rate limit auth and key-management endpoints".
+  const authRateLimit = rateLimitMiddleware({ maxRequests: 20, windowMs: 60_000 });
   if (opts.betterAuthHandler) {
-    app.all("/api/auth/{*authPath}", opts.betterAuthHandler);
+    app.all("/api/auth/{*authPath}", authRateLimit, opts.betterAuthHandler);
   }
   app.use(llmRoutes(db));
 
@@ -241,6 +245,11 @@ export async function createApp(
     ),
   );
   api.use(adapterRoutes());
+  // Rate-limit key-management and CLI-auth endpoints (login challenges, API key claims, board-claim).
+  const keyMgmtRateLimit = rateLimitMiddleware({ maxRequests: 10, windowMs: 60_000 });
+  api.use("/cli-auth/challenges", keyMgmtRateLimit);
+  api.use("/board-claim", keyMgmtRateLimit);
+  api.use("/companies/:companyId/openclaw/invite-prompt", keyMgmtRateLimit);
   api.use(
     accessRoutes(db, {
       deploymentMode: opts.deploymentMode,
