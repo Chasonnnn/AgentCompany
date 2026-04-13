@@ -226,6 +226,10 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     env.PAPERCLIP_API_KEY = authToken;
   }
 
+  // Keep the user's real Claude auth/config home in place while scoping runtime
+  // skill loading through explicit settings and the Paperclip-managed prompt bundle.
+  env.CLAUDE_CONFIG_DIR = "";
+
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
   await ensureCommandResolvable(command, cwd, runtimeEnv);
   const resolvedCommand = await resolveCommandForLogs(command, cwd, runtimeEnv);
@@ -234,6 +238,9 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     includeRuntimeKeys: ["HOME", "CLAUDE_CONFIG_DIR"],
     resolvedCommand,
   });
+  if (env.CLAUDE_CONFIG_DIR === "") {
+    loggedEnv.CLAUDE_CONFIG_DIR = "";
+  }
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
@@ -364,6 +371,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     instructionsContents: combinedInstructionsContents,
     onLog,
   });
+  const runtimeSkillsPath = path.join(promptBundle.rootDir, ".claude", "skills");
   const effectiveInstructionsFilePath = promptBundle.instructionsFilePath ?? undefined;
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
@@ -447,6 +455,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (attemptInstructionsFilePath && !resumeSessionId) {
       args.push("--append-system-prompt-file", attemptInstructionsFilePath);
     }
+    args.push("--settings", JSON.stringify({ skillsPaths: [runtimeSkillsPath] }));
     args.push("--add-dir", promptBundle.addDir);
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;

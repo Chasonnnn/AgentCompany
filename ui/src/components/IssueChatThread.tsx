@@ -80,7 +80,7 @@ import { cn, formatDateTime, formatShortDate } from "../lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, Copy, Hammer, Loader2, MoreHorizontal, Paperclip, Search, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, Copy, Hammer, Loader2, MoreHorizontal, Paperclip, Search, Square, ThumbsDown, ThumbsUp } from "lucide-react";
 
 interface IssueChatMessageContext {
   feedbackVoteByTargetId: Map<string, FeedbackVoteValue>;
@@ -199,6 +199,7 @@ interface IssueChatThreadProps {
   ) => Promise<void>;
   onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
   onCancelRun?: () => Promise<void>;
+  cancellingRunId?: string | null;
   imageUploadHandler?: (file: File) => Promise<string>;
   onAttachImage?: (file: File) => Promise<void>;
   draftKey?: string;
@@ -233,6 +234,68 @@ type IssueChatErrorBoundaryProps = {
 type IssueChatErrorBoundaryState = {
   hasError: boolean;
 };
+
+export function buildIssueChatRuntimeResetKey(
+  runs: ReadonlyArray<{ id: string; status: string }>,
+): string {
+  const signature = runs
+    .filter((run) => run.status === "queued" || run.status === "running")
+    .map((run) => `${run.id}:${run.status}`)
+    .join("|");
+  return `issue-chat-runtime:${signature || "idle"}`;
+}
+
+function IssueChatActiveRunStrip({
+  run,
+  stopping,
+  onStop,
+}: {
+  run: LiveRunForIssue;
+  stopping: boolean;
+  onStop: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/[0.04] px-3 py-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-70" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-500" />
+            </span>
+            <Identity name={run.agentName} size="sm" />
+            <span className="inline-flex rounded-full border border-cyan-500/25 bg-cyan-500/[0.08] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300">
+              {run.status === "queued" ? "Queued" : "Running"}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Stop cancels only this run. The agent stays active and queued follow-up work can continue.
+          </p>
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 border-red-500/20 bg-red-500/[0.06] text-red-700 hover:bg-red-500/[0.12] hover:text-red-700 dark:text-red-300"
+          onClick={onStop}
+          disabled={stopping}
+        >
+          <Square className="mr-1.5 h-3 w-3" fill="currentColor" />
+          {stopping ? "Stopping..." : "Stop"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function buildIssueChatErrorBoundaryResetKey(
+  messages: readonly import("@assistant-ui/react").ThreadMessage[],
+): string {
+  return messages
+    .map((message) => `${message.id}:${message.role}:${message.content.length}:${message.status?.type ?? "none"}`)
+    .join("|");
+}
 
 class IssueChatErrorBoundary extends Component<IssueChatErrorBoundaryProps, IssueChatErrorBoundaryState> {
   override state: IssueChatErrorBoundaryState = { hasError: false };
@@ -1781,6 +1844,7 @@ export function IssueChatThread({
   onVote,
   onAdd,
   onCancelRun,
+  cancellingRunId: _cancellingRunId = null,
   imageUploadHandler,
   onAttachImage,
   draftKey,
@@ -1873,7 +1937,15 @@ export function IssueChatThread({
     ],
   );
 
-  const isRunning = displayLiveRuns.some((run) => run.status === "queued" || run.status === "running");
+  const activeLiveRuns = useMemo(
+    () => displayLiveRuns.filter((run) => run.status === "queued" || run.status === "running"),
+    [displayLiveRuns],
+  );
+  const isRunning = activeLiveRuns.length > 0;
+  const runtimeResetKey = useMemo(
+    () => buildIssueChatRuntimeResetKey(activeLiveRuns),
+    [activeLiveRuns],
+  );
   const feedbackVoteByTargetId = useMemo(() => {
     const map = new Map<string, FeedbackVoteValue>();
     for (const feedbackVote of feedbackVotes) {
@@ -1945,12 +2017,12 @@ export function IssueChatThread({
       ? "No run output yet."
       : "This issue conversation is empty. Start with a message below.");
   const errorBoundaryResetKey = useMemo(
-    () => messages.map((message) => `${message.id}:${message.role}:${message.content.length}:${message.status?.type ?? "none"}`).join("|"),
-    [messages],
+    () => `${runtimeResetKey}|${buildIssueChatErrorBoundaryResetKey(messages)}`,
+    [messages, runtimeResetKey],
   );
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
+    <AssistantRuntimeProvider key={runtimeResetKey} runtime={runtime}>
       <IssueChatCtx.Provider value={chatCtx}>
       <div className={cn(variant === "embedded" ? "space-y-3" : "space-y-4")}>
         {resolvedShowJumpToLatest ? (
@@ -1964,6 +2036,19 @@ export function IssueChatThread({
             </button>
           </div>
         ) : null}
+
+        {variant === "full" && onCancelRun
+          ? activeLiveRuns.map((run) => (
+              <IssueChatActiveRunStrip
+                key={run.id}
+                run={run}
+                stopping={_cancellingRunId === run.id}
+                onStop={() => {
+                  void onCancelRun();
+                }}
+              />
+            ))
+          : null}
 
         <IssueChatErrorBoundary
           resetKey={errorBoundaryResetKey}

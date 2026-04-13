@@ -82,20 +82,3 @@ export function buildHeartbeatRunIssueComment(
     ?? null
   );
 }
-
-export function mergeHeartbeatRunResultJson(
-  resultJson: Record<string, unknown> | null | undefined,
-  summary: string | null | undefined,
-): Record<string, unknown> | null {
-  const trimmedSummary = readCommentText(summary);
-  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) {
-    return trimmedSummary ? { summary: trimmedSummary } : null;
-  }
-  if (!trimmedSummary || readCommentText(resultJson.summary)) {
-    return resultJson;
-  }
-  return {
-    ...resultJson,
-    summary: trimmedSummary,
-  };
-}
