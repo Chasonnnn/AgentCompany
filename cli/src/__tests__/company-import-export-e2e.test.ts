@@ -163,15 +163,46 @@ function collectTextFiles(root: string, current: string, files: Record<string, s
 
 async function stopServerProcess(child: ServerProcess | null) {
   if (!child || child.exitCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    child.once("exit", () => resolve());
-    setTimeout(() => {
-      if (child.exitCode === null) {
-        child.kill("SIGKILL");
-      }
-    }, 5_000);
-  });
+  const processGroupId =
+    process.platform !== "win32" && typeof child.pid === "number" && child.pid > 0 ? child.pid : null;
+
+  try {
+    if (processGroupId) {
+      process.kill(-processGroupId, "SIGTERM");
+    } else {
+      child.kill("SIGTERM");
+    }
+  } catch {
+    return;
+  }
+
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const groupStillAlive =
+      processGroupId && process.platform !== "win32"
+        ? (() => {
+          try {
+            process.kill(-processGroupId, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        })()
+        : child.exitCode === null;
+
+    if (!groupStillAlive) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  try {
+    if (processGroupId) {
+      process.kill(-processGroupId, "SIGKILL");
+    } else if (child.exitCode === null) {
+      child.kill("SIGKILL");
+    }
+  } catch {
+    // Ignore shutdown races in test cleanup.
+  }
 }
 
 async function api<T>(baseUrl: string, pathname: string, init?: RequestInit): Promise<T> {
@@ -211,7 +242,7 @@ async function waitForServer(
   while (Date.now() - startedAt < 30_000) {
     if (child.exitCode !== null) {
       throw new Error(
-        `paperclipai run exited before healthcheck succeeded.\nstdout:\n${output.stdout.join("")}\nstderr:\n${output.stderr.join("")}`,
+        `test server exited before healthcheck succeeded.\nstdout:\n${output.stdout.join("")}\nstderr:\n${output.stderr.join("")}`,
       );
     }
 
@@ -250,13 +281,16 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     apiBase = `http://127.0.0.1:${port}`;
 
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const tsxCliPath = path.join(repoRoot, "cli", "node_modules", "tsx", "dist", "cli.mjs");
+    const serverEntryPath = path.join(repoRoot, "server", "src", "index.ts");
     const output = { stdout: [] as string[], stderr: [] as string[] };
     const child = spawn(
-      "pnpm",
-      ["paperclipai", "run", "--config", configPath],
+      process.execPath,
+      [tsxCliPath, serverEntryPath],
       {
         cwd: repoRoot,
         env: createServerEnv(configPath, port, tempDb.connectionString),
+        detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
       },
     );

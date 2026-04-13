@@ -43,6 +43,7 @@ import { initTelemetry, getTelemetryClient } from "./telemetry.js";
 import { ensureLocalTrustedAgentJwtSecret } from "./local-trusted-agent-jwt.js";
 import { resolvePaperclipHomeDir, resolvePaperclipInstanceRoot } from "./home-paths.js";
 import { resolvePaperclipConfigPath } from "./paths.js";
+import { stopRunningAdapterProcesses } from "./shutdown-runtime.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -748,7 +749,19 @@ export async function startServer(): Promise<StartedServer> {
   });
   
   {
+    let shuttingDown = false;
     const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+
+      const stoppedChildren = await stopRunningAdapterProcesses();
+      if (stoppedChildren.signaled > 0) {
+        logger.warn(
+          { signal, ...stoppedChildren },
+          "Stopped active adapter child processes during shutdown",
+        );
+      }
+
       const telemetryClient = getTelemetryClient();
       if (telemetryClient) {
         telemetryClient.stop();
