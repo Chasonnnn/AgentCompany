@@ -25,8 +25,10 @@ const overridingConfigSchemaAdapter: ServerAdapterModule = {
 };
 
 let registerServerAdapter: typeof import("../adapters/registry.js").registerServerAdapter;
+let resetServerAdaptersForTests: typeof import("../adapters/registry.js").resetServerAdaptersForTests;
 let unregisterServerAdapter: typeof import("../adapters/registry.js").unregisterServerAdapter;
 let setOverridePaused: typeof import("../adapters/registry.js").setOverridePaused;
+let waitForExternalAdapters: typeof import("../adapters/registry.js").waitForExternalAdapters;
 let adapterRoutes: typeof import("../routes/adapters.js").adapterRoutes;
 let errorHandler: typeof import("../middleware/index.js").errorHandler;
 
@@ -52,17 +54,25 @@ describe("adapter routes", () => {
   beforeEach(async () => {
     vi.resetModules();
 
-    ({ registerServerAdapter, unregisterServerAdapter, setOverridePaused } = await import("../adapters/registry.js"));
+    ({
+      registerServerAdapter,
+      resetServerAdaptersForTests,
+      unregisterServerAdapter,
+      setOverridePaused,
+      waitForExternalAdapters,
+    } = await import("../adapters/registry.js"));
     ({ adapterRoutes } = await import("../routes/adapters.js"));
     ({ errorHandler } = await import("../middleware/index.js"));
 
+    await waitForExternalAdapters();
+    resetServerAdaptersForTests();
     setOverridePaused("claude_local", false);
     registerServerAdapter(overridingConfigSchemaAdapter);
   });
 
   afterEach(() => {
-    setOverridePaused("claude_local", false);
     unregisterServerAdapter("claude_local");
+    resetServerAdaptersForTests();
   });
 
   it("uses the active adapter when resolving config schema for a paused builtin override", async () => {

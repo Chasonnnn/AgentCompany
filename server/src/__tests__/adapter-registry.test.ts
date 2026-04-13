@@ -6,6 +6,7 @@ import {
   findServerAdapter,
   listAdapterModels,
   registerServerAdapter,
+  resetServerAdaptersForTests,
   requireServerAdapter,
   unregisterServerAdapter,
 } from "../adapters/index.js";
@@ -30,14 +31,12 @@ const externalAdapter: ServerAdapterModule = {
 
 describe("server adapter registry", () => {
   beforeEach(() => {
-    unregisterServerAdapter("external_test");
-    unregisterServerAdapter("claude_local");
-    setOverridePaused("claude_local", false);
+    resetServerAdaptersForTests();
   });
 
   afterEach(() => {
     unregisterServerAdapter("external_test");
-    unregisterServerAdapter("claude_local");
+    resetServerAdaptersForTests();
     setOverridePaused("claude_local", false);
   });
 

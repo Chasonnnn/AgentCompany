@@ -106,9 +106,10 @@ async function createApp() {
   vi.doMock("../services/instance-settings.js", () => ({
     instanceSettingsService: () => mockInstanceSettingsService,
   }));
-  const [{ agentRoutes }, { errorHandler }] = await Promise.all([
+  const [{ agentRoutes }, { errorHandler }, adapterRegistry] = await Promise.all([
     import("../routes/agents.js"),
     import("../middleware/index.js"),
+    import("../adapters/registry.js"),
   ]);
   const app = express();
   app.use(express.json());
@@ -124,7 +125,7 @@ async function createApp() {
   });
   app.use("/api", agentRoutes({} as any));
   app.use(errorHandler);
-  return app;
+  return { app, adapterRegistry };
 }
 
 describe("agent routes adapter validation", () => {
@@ -184,9 +185,10 @@ describe("agent routes adapter validation", () => {
   });
 
   it("creates agents for dynamically registered external adapter types", async () => {
-    const app = await createApp();
-    const { registerServerAdapter } = await import("../adapters/index.js");
-    registerServerAdapter(externalAdapter);
+    const { app, adapterRegistry } = await createApp();
+    await adapterRegistry.waitForExternalAdapters();
+    adapterRegistry.resetServerAdaptersForTests();
+    adapterRegistry.registerServerAdapter(externalAdapter);
 
     const res = await request(app)
       .post("/api/companies/company-1/agents")
@@ -197,10 +199,14 @@ describe("agent routes adapter validation", () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body.adapterType).toBe("external_test");
-  });
+  }, 15_000);
 
   it("rejects unknown adapter types even when schema accepts arbitrary strings", async () => {
-    const res = await request(await createApp())
+    const { app, adapterRegistry } = await createApp();
+    await adapterRegistry.waitForExternalAdapters();
+    adapterRegistry.resetServerAdaptersForTests();
+
+    const res = await request(app)
       .post("/api/companies/company-1/agents")
       .send({
         name: "Missing Adapter",

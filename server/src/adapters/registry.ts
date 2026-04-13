@@ -223,6 +223,13 @@ function registerBuiltInAdapters() {
 
 registerBuiltInAdapters();
 
+export function resetServerAdaptersForTests(): void {
+  adaptersByType.clear();
+  builtinFallbacks.clear();
+  pausedOverrides.clear();
+  registerBuiltInAdapters();
+}
+
 // ---------------------------------------------------------------------------
 // Load external adapter plugins (e.g. droid_local)
 //

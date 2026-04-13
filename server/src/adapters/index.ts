@@ -8,6 +8,8 @@ export {
   registerServerAdapter,
   unregisterServerAdapter,
   requireServerAdapter,
+  waitForExternalAdapters,
+  resetServerAdaptersForTests,
 } from "./registry.js";
 export type {
   ServerAdapterModule,
