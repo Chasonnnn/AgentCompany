@@ -499,4 +499,289 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     expect(importedFromZip.company.action).toBe("created");
     expect(importedFromZip.agents.some((agent) => agent.action === "created")).toBe(true);
   }, 60_000);
+
+  it("round-trips all agent, project, and issue fields faithfully", async () => {
+    expect(serverProcess).not.toBeNull();
+
+    const fidelityExportDir = path.join(tempRoot, "fidelity-export");
+    mkdirSync(fidelityExportDir, { recursive: true });
+
+    // --- Create a richly-populated source company ---
+    const sourceCompany = await api<{
+      id: string;
+      name: string;
+      issuePrefix: string;
+      brandColor: string | null;
+      description: string | null;
+      requireBoardApprovalForNewAgents: boolean;
+    }>(apiBase, "/api/companies", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: `Fidelity Test ${Date.now()}`,
+        description: "Company for round-trip fidelity testing",
+        brandColor: "#ff5500",
+        requireBoardApprovalForNewAgents: true,
+      }),
+    });
+
+    // Create a manager agent first so we can test reportsTo
+    const managerAgent = await api<{ id: string; name: string }>(
+      apiBase,
+      `/api/companies/${sourceCompany.id}/agents`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "CTO",
+          role: "cto",
+          title: "Chief Technology Officer",
+          icon: "brain",
+          capabilities: "Technical leadership and architecture",
+          adapterType: "claude_local",
+          adapterConfig: {
+            model: "claude-opus-4-6",
+          },
+          budgetMonthlyCents: 50000,
+          permissions: { canCreateAgents: true },
+          metadata: { team: "leadership", level: "c-suite" },
+        }),
+      },
+    );
+
+    // Create an engineer agent that reports to the CTO
+    const engineerAgent = await api<{ id: string; name: string }>(
+      apiBase,
+      `/api/companies/${sourceCompany.id}/agents`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "Backend Engineer",
+          role: "engineer",
+          title: "Senior Backend Engineer",
+          icon: "code",
+          capabilities: "Writes backend services and APIs",
+          reportsTo: managerAgent.id,
+          adapterType: "claude_local",
+          adapterConfig: {
+            model: "claude-sonnet-4-6",
+          },
+          runtimeConfig: {
+            heartbeat: { intervalSec: 1800 },
+          },
+          budgetMonthlyCents: 10000,
+          permissions: { canCreateAgents: false },
+          metadata: { team: "backend", specialization: "api-design" },
+        }),
+      },
+    );
+
+    // Create a project with description
+    const sourceProject = await api<{ id: string; name: string; urlKey: string }>(
+      apiBase,
+      `/api/companies/${sourceCompany.id}/projects`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "API Platform",
+          description: "Core API platform project for building the main service layer",
+          status: "in_progress",
+          color: "#00cc88",
+          leadAgentId: managerAgent.id,
+        }),
+      },
+    );
+
+    // Create issues with various field combinations
+    const highPriorityIssue = await api<{
+      id: string;
+      title: string;
+      identifier: string;
+      description: string;
+      status: string;
+      priority: string;
+    }>(apiBase, `/api/companies/${sourceCompany.id}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Implement auth middleware",
+        description: "Build JWT-based authentication middleware with refresh token support.\n\nRequirements:\n- Token validation\n- Refresh flow\n- Rate limiting",
+        status: "todo",
+        priority: "high",
+        projectId: sourceProject.id,
+        assigneeAgentId: engineerAgent.id,
+      }),
+    });
+
+    const lowPriorityIssue = await api<{
+      id: string;
+      title: string;
+      identifier: string;
+    }>(apiBase, `/api/companies/${sourceCompany.id}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Add OpenAPI docs",
+        description: "Generate OpenAPI 3.1 documentation from route definitions",
+        status: "backlog",
+        priority: "low",
+        projectId: sourceProject.id,
+      }),
+    });
+
+    // --- Export the company ---
+    const exportResult = await runCliJson<{
+      ok: boolean;
+      out: string;
+      filesWritten: number;
+    }>(
+      [
+        "company", "export", sourceCompany.id,
+        "--out", fidelityExportDir,
+        "--include", "company,agents,projects,issues",
+      ],
+      { apiBase, configPath },
+    );
+    expect(exportResult.ok).toBe(true);
+
+    // --- Import into a new company ---
+    const importResult = await runCliJson<{
+      company: { id: string; name: string; action: string };
+      agents: Array<{ id: string | null; action: string; name: string; slug: string }>;
+      projects: Array<{ id: string | null; action: string; name: string }>;
+      issues: Array<{ id: string | null; action: string; title: string }>;
+    }>(
+      [
+        "company", "import", fidelityExportDir,
+        "--target", "new",
+        "--new-company-name", `Imported Fidelity ${Date.now()}`,
+        "--include", "company,agents,projects,issues",
+        "--yes",
+      ],
+      { apiBase, configPath },
+    );
+
+    expect(importResult.company.action).toBe("created");
+    const targetCompanyId = importResult.company.id;
+
+    // --- Fetch and verify all imported entities at field level ---
+
+    // Verify company metadata
+    const importedCompany = await api<{
+      id: string;
+      name: string;
+      description: string | null;
+      brandColor: string | null;
+      requireBoardApprovalForNewAgents: boolean;
+    }>(apiBase, `/api/companies/${targetCompanyId}`);
+
+    expect(importedCompany.description).toBe(sourceCompany.description);
+    expect(importedCompany.brandColor).toBe(sourceCompany.brandColor);
+    expect(importedCompany.requireBoardApprovalForNewAgents).toBe(sourceCompany.requireBoardApprovalForNewAgents);
+
+    // Verify agents
+    const importedAgents = await api<Array<{
+      id: string;
+      name: string;
+      role: string;
+      title: string | null;
+      icon: string | null;
+      capabilities: string | null;
+      reportsTo: string | null;
+      adapterType: string;
+      adapterConfig: Record<string, unknown>;
+      runtimeConfig: Record<string, unknown> | null;
+      budgetMonthlyCents: number;
+      permissions: Record<string, unknown> | null;
+      metadata: Record<string, unknown> | null;
+    }>>(apiBase, `/api/companies/${targetCompanyId}/agents`);
+
+    // Find the imported CTO and Engineer by name
+    const importedCto = importedAgents.find((a) => a.name === "CTO");
+    const importedEngineer = importedAgents.find((a) => a.name === "Backend Engineer");
+
+    expect(importedCto).toBeDefined();
+    expect(importedEngineer).toBeDefined();
+
+    // CTO field checks
+    expect(importedCto!.role).toBe("cto");
+    expect(importedCto!.title).toBe("Chief Technology Officer");
+    expect(importedCto!.icon).toBe("brain");
+    expect(importedCto!.capabilities).toBe("Technical leadership and architecture");
+    expect(importedCto!.adapterType).toBe("claude_local");
+    expect(importedCto!.adapterConfig).toHaveProperty("model", "claude-opus-4-6");
+    expect(importedCto!.budgetMonthlyCents).toBe(50000);
+    expect(importedCto!.permissions).toMatchObject({ canCreateAgents: true });
+    expect(importedCto!.metadata).toMatchObject({ team: "leadership", level: "c-suite" });
+
+    // Engineer field checks
+    expect(importedEngineer!.role).toBe("engineer");
+    expect(importedEngineer!.title).toBe("Senior Backend Engineer");
+    expect(importedEngineer!.icon).toBe("code");
+    expect(importedEngineer!.capabilities).toBe("Writes backend services and APIs");
+    expect(importedEngineer!.adapterType).toBe("claude_local");
+    expect(importedEngineer!.adapterConfig).toHaveProperty("model", "claude-sonnet-4-6");
+    expect(importedEngineer!.budgetMonthlyCents).toBe(10000);
+    expect(importedEngineer!.permissions).toMatchObject({ canCreateAgents: false });
+    expect(importedEngineer!.metadata).toMatchObject({ team: "backend", specialization: "api-design" });
+
+    // Engineer should report to the imported CTO
+    expect(importedEngineer!.reportsTo).toBe(importedCto!.id);
+
+    // Timer heartbeat should be disabled on import
+    const heartbeatConfig = (importedEngineer!.runtimeConfig as any)?.heartbeat;
+    if (heartbeatConfig) {
+      expect(heartbeatConfig.enabled).toBe(false);
+    }
+
+    // Verify project fields
+    const importedProjects = await api<Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      status: string;
+      color: string | null;
+      leadAgentId: string | null;
+    }>>(apiBase, `/api/companies/${targetCompanyId}/projects`);
+
+    const importedProject = importedProjects.find((p) => p.name === "API Platform");
+    expect(importedProject).toBeDefined();
+    expect(importedProject!.description).toBe("Core API platform project for building the main service layer");
+    expect(importedProject!.status).toBe("in_progress");
+    expect(importedProject!.color).toBe("#00cc88");
+    // Lead agent should be mapped to the imported CTO
+    expect(importedProject!.leadAgentId).toBe(importedCto!.id);
+
+    // Verify issue fields
+    const importedIssues = await api<Array<{
+      id: string;
+      title: string;
+      identifier: string;
+      description: string | null;
+      status: string;
+      priority: string;
+      projectId: string | null;
+      assigneeAgentId: string | null;
+    }>>(apiBase, `/api/companies/${targetCompanyId}/issues`);
+
+    const importedAuthIssue = importedIssues.find((i) => i.title === "Implement auth middleware");
+    const importedDocsIssue = importedIssues.find((i) => i.title === "Add OpenAPI docs");
+
+    expect(importedAuthIssue).toBeDefined();
+    expect(importedDocsIssue).toBeDefined();
+
+    // High-priority issue field checks
+    expect(importedAuthIssue!.description).toContain("JWT-based authentication middleware");
+    expect(importedAuthIssue!.description).toContain("Rate limiting");
+    expect(importedAuthIssue!.priority).toBe("high");
+    expect(importedAuthIssue!.projectId).toBe(importedProject!.id);
+    expect(importedAuthIssue!.assigneeAgentId).toBe(importedEngineer!.id);
+
+    // Low-priority issue field checks
+    expect(importedDocsIssue!.description).toContain("OpenAPI 3.1");
+    expect(importedDocsIssue!.priority).toBe("low");
+    expect(importedDocsIssue!.projectId).toBe(importedProject!.id);
+  }, 60_000);
 });
