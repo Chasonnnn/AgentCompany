@@ -108,10 +108,10 @@ function buildProject(overrides: Record<string, unknown> = {}) {
 
 describe("project env routes", () => {
   beforeEach(() => {
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../services/workspace-runtime.js");
     vi.resetModules();
-    vi.unmock("../telemetry.js");
-    vi.unmock("../services/index.js");
-    vi.unmock("../services/workspace-runtime.js");
     registerRouteMocks();
     vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
@@ -122,9 +122,9 @@ describe("project env routes", () => {
   });
 
   afterEach(() => {
-    vi.unmock("../telemetry.js");
-    vi.unmock("../services/index.js");
-    vi.unmock("../services/workspace-runtime.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../services/workspace-runtime.js");
   });
 
   it("normalizes env bindings on create and logs only env keys", async () => {

@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockCompanyService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -52,6 +52,7 @@ function registerServiceMocks() {
 }
 
 async function createApp(actor: Record<string, unknown>) {
+  vi.unmock("../services/index.js");
   const { companyRoutes } = await import("../routes/companies.js");
   const { errorHandler } = await import("../middleware/index.js");
   const app = express();
@@ -67,9 +68,14 @@ async function createApp(actor: Record<string, unknown>) {
 
 describe("company portability routes", () => {
   beforeEach(() => {
+    vi.unmock("../services/index.js");
     vi.resetModules();
     registerServiceMocks();
     vi.resetAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unmock("../services/index.js");
   });
 
   it("rejects agents without create authority from company-scoped export preview routes", async () => {

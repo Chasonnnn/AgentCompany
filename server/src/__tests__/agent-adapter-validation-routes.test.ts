@@ -79,6 +79,8 @@ const externalAdapter: ServerAdapterModule = {
 };
 
 async function createApp() {
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../services/instance-settings.js");
   vi.resetModules();
   vi.doMock("../services/index.js", () => ({
     agentService: () => mockAgentService,
@@ -127,6 +129,8 @@ async function createApp() {
 
 describe("agent routes adapter validation", () => {
   beforeEach(() => {
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../services/instance-settings.js");
     vi.clearAllMocks();
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);

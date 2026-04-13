@@ -126,9 +126,9 @@ function applyDefaultMocks(mocks: ReturnType<typeof createMocks>) {
 }
 
 async function createApp(actor: Record<string, unknown>) {
-  vi.unmock("../services/index.js");
-  vi.unmock("../telemetry.js");
-  vi.unmock("@paperclipai/shared/telemetry");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../telemetry.js");
+  vi.doUnmock("@paperclipai/shared/telemetry");
   vi.resetModules();
   const mocks = createMocks();
   applyDefaultMocks(mocks);
@@ -163,17 +163,17 @@ async function createApp(actor: Record<string, unknown>) {
 
 describe("company skill mutation permissions", () => {
   beforeEach(() => {
-    vi.unmock("../services/index.js");
-    vi.unmock("../telemetry.js");
-    vi.unmock("@paperclipai/shared/telemetry");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("@paperclipai/shared/telemetry");
     vi.resetModules();
     vi.restoreAllMocks();
   });
 
   afterEach(() => {
-    vi.unmock("../services/index.js");
-    vi.unmock("../telemetry.js");
-    vi.unmock("@paperclipai/shared/telemetry");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("@paperclipai/shared/telemetry");
     vi.restoreAllMocks();
   });
 
