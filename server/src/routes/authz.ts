@@ -7,6 +7,18 @@ export function assertBoard(req: Request) {
   }
 }
 
+export function assertAgent(req: Request) {
+  if (req.actor.type !== "agent" || !req.actor.agentId) {
+    throw unauthorized("Agent authentication required");
+  }
+}
+
+export function assertAgentOrBoard(req: Request) {
+  if (req.actor.type === "none") {
+    throw unauthorized("Authentication required");
+  }
+}
+
 export function assertInstanceAdmin(req: Request) {
   assertBoard(req);
   if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) {
