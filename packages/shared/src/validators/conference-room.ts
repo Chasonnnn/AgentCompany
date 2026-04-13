@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CONFERENCE_ROOM_STATUSES } from "../constants.js";
+import { conferenceRoomKindSchema } from "./operating-model.js";
 import type {
   ConferenceRoom,
   ConferenceRoomComment,
@@ -32,12 +33,14 @@ export const createConferenceRoomSchema = z.object({
   title: z.string().trim().min(1),
   summary: z.string().trim().min(1),
   agenda: z.string().optional().nullable(),
+  kind: conferenceRoomKindSchema.optional(),
   issueIds: z.array(z.string().uuid()).optional(),
   participantAgentIds: z.array(z.string().uuid()).optional(),
 }).transform((value) => ({
   title: value.title.trim(),
   summary: value.summary.trim(),
   agenda: normalizeOptionalText(value.agenda),
+  kind: value.kind ?? "project_leadership",
   issueIds: normalizeIdList(value.issueIds) ?? [],
   participantAgentIds: normalizeIdList(value.participantAgentIds) ?? [],
 }));
@@ -48,6 +51,7 @@ export const updateConferenceRoomSchema = z.object({
   title: z.string().trim().min(1).optional(),
   summary: z.string().trim().min(1).optional(),
   agenda: z.string().optional().nullable(),
+  kind: conferenceRoomKindSchema.optional().nullable(),
   issueIds: z.array(z.string().uuid()).optional(),
   participantAgentIds: z.array(z.string().uuid()).optional(),
   status: conferenceRoomStatusSchema.optional(),
@@ -55,6 +59,7 @@ export const updateConferenceRoomSchema = z.object({
   ...(value.title !== undefined ? { title: value.title.trim() } : {}),
   ...(value.summary !== undefined ? { summary: value.summary.trim() } : {}),
   ...(value.agenda !== undefined ? { agenda: normalizeOptionalText(value.agenda) } : {}),
+  ...(value.kind !== undefined ? { kind: value.kind ?? null } : {}),
   ...(value.issueIds !== undefined ? { issueIds: normalizeIdList(value.issueIds) ?? [] } : {}),
   ...(value.participantAgentIds !== undefined
     ? { participantAgentIds: normalizeIdList(value.participantAgentIds) ?? [] }
@@ -146,6 +151,7 @@ export const conferenceRoomSchema = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
   agenda: z.string().nullable(),
+  kind: conferenceRoomKindSchema.nullable(),
   status: conferenceRoomStatusSchema,
   createdByAgentId: z.string().uuid().nullable(),
   createdByUserId: z.string().nullable(),

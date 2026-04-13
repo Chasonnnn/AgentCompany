@@ -1,4 +1,4 @@
-import type { ApprovalStatus, ConferenceRoomStatus } from "../constants.js";
+import type { ApprovalStatus, ConferenceRoomKind, ConferenceRoomStatus } from "../constants.js";
 
 export interface ConferenceRoomIssueLinkSummary {
   issueId: string;
@@ -48,6 +48,7 @@ export interface ConferenceRoom {
   title: string;
   summary: string;
   agenda: string | null;
+  kind: ConferenceRoomKind | null;
   status: ConferenceRoomStatus;
   createdByAgentId: string | null;
   createdByUserId: string | null;

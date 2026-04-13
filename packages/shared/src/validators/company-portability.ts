@@ -64,6 +64,8 @@ export const portabilityAgentManifestEntrySchema = z.object({
   runtimeConfig: z.record(z.unknown()),
   permissions: z.record(z.unknown()),
   budgetMonthlyCents: z.number().int().nonnegative(),
+  connectionContractKind: z.string().min(1).nullable().default(null),
+  connectionContract: z.record(z.unknown()).nullable().default(null),
   metadata: z.record(z.unknown()).nullable(),
 });
 

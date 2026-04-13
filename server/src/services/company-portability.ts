@@ -33,7 +33,9 @@ import type {
 import {
   AGENT_ROLES,
   ISSUE_PRIORITIES,
+  ISSUE_RESERVED_DOCUMENT_KEYS,
   ISSUE_STATUSES,
+  PROJECT_RESERVED_DOCUMENT_KEYS,
   PROJECT_STATUSES,
   ROUTINE_CATCH_UP_POLICIES,
   ROUTINE_CONCURRENCY_POLICIES,
@@ -43,6 +45,7 @@ import {
   deriveProjectUrlKey,
   envConfigSchema,
   normalizeAgentUrlKey,
+  parseConnectionContractMarkdown as parseSharedConnectionContractMarkdown,
   type AgentRole,
 } from "@paperclipai/shared";
 import {
@@ -61,6 +64,7 @@ import { renderOrgChartPng, type OrgNode } from "../routes/org-chart-svg.js";
 import { companySkillService } from "./company-skills.js";
 import { companyService } from "./companies.js";
 import { validateCron } from "./cron.js";
+import { documentService } from "./documents.js";
 import { issueService } from "./issues.js";
 import { projectService } from "./projects.js";
 import { routineService } from "./routines.js";
@@ -118,6 +122,42 @@ const DEFAULT_INCLUDE: CompanyPortabilityInclude = {
   skills: false,
 };
 
+const DEFAULT_PORTABLE_OPERATING_SYSTEM_MARKDOWN = [
+  "# OPERATING_SYSTEM.md",
+  "",
+  "Paperclip coordination contract for this company package.",
+  "",
+  "## Authority",
+  "",
+  "- Issues and comments carry execution updates.",
+  "- Documents carry durable working state.",
+  "- Conference rooms carry leadership coordination.",
+  "- Approvals carry governed decisions.",
+  "- Shared-service engagements are the only dotted-line consulting path.",
+  "",
+  "## Packet Rules",
+  "",
+  "- Packet comments are descriptive only.",
+  "- Packet comments never mutate authoritative assignment, approval, or routing state on their own.",
+  "- Unknown or malformed frontmatter falls back to plain markdown.",
+  "",
+  "## Team Layer",
+  "",
+  "- `teams/<slug>/TEAM.md` defines charter, backlog/status conventions, interface ownership, and upward summaries.",
+  "- Team leads summarize upward, keep execution lanes clear, and coordinate interfaces.",
+  "",
+  "## Cadence",
+  "",
+  "- Workers post regular heartbeat summaries on active work.",
+  "- Team leads summarize upward on a fixed rhythm.",
+  "- Project leadership reviews status and risks on a fixed rhythm.",
+  "- Executive staff reviews portfolio state on a fixed rhythm.",
+  "- Incident rooms update on a tighter rhythm until disposition.",
+  "- Consultant engagements close with explicit findings or handoff notes.",
+  "- Milestone boundaries should reset stale context before the next phase.",
+  "",
+].join("\n");
+
 const DEFAULT_COLLISION_STRATEGY: CompanyPortabilityCollisionStrategy = "rename";
 const execFileAsync = promisify(execFile);
 let bundledSkillsCommitPromise: Promise<string | null> | null = null;
@@ -134,6 +174,7 @@ function resolveSkillConflictStrategy(mode: ImportMode, collisionStrategy: Compa
 function classifyPortableFileKind(pathValue: string): CompanyPortabilityExportPreviewResult["fileInventory"][number]["kind"] {
   const normalized = normalizePortablePath(pathValue);
   if (normalized === "COMPANY.md") return "company";
+  if (normalized === "OPERATING_SYSTEM.md") return "company";
   if (normalized === ".paperclip.yaml" || normalized === ".paperclip.yml") return "extension";
   if (normalized === "README.md") return "readme";
   if (normalized.startsWith("agents/")) return "agent";
@@ -644,6 +685,31 @@ function asBoolean(value: unknown): boolean | null {
 
 function asInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+function readConnectionContractMetadata(
+  source: Record<string, unknown> | null | undefined,
+): { kind: string | null; contract: Record<string, unknown> | null } {
+  if (!source) {
+    return { kind: null, contract: null };
+  }
+  const kind = asString(source.connectionContractKind);
+  const contract = isPlainRecord(source.connectionContract)
+    ? { ...(source.connectionContract as Record<string, unknown>) }
+    : null;
+  return { kind, contract };
+}
+
+function buildPortableReservedDocPath(entryPath: string, key: string) {
+  return `${path.posix.dirname(normalizePortablePath(entryPath))}/docs/${key}.md`;
+}
+
+function buildPortableProjectDocumentTitle(key: string) {
+  return `PROJECT_${key.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}.md`;
+}
+
+function buildPortableIssueDocumentTitle(key: string) {
+  return `${key.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}.md`;
 }
 
 function normalizeRoutineTriggerExtension(value: unknown): CompanyPortabilityIssueRoutineTriggerManifestEntry | null {
@@ -2464,6 +2530,8 @@ function buildManifestFromPackageFiles(
     const extensionRuntime = isPlainRecord(extension.runtime) ? extension.runtime : null;
     const extensionPermissions = isPlainRecord(extension.permissions) ? extension.permissions : null;
     const extensionMetadata = isPlainRecord(extension.metadata) ? extension.metadata : null;
+    const contractDoc = parseSharedConnectionContractMarkdown(markdownRaw);
+    const extensionContract = readConnectionContractMetadata(extension);
     const adapterConfig = isPlainRecord(extensionAdapter?.config)
       ? extensionAdapter.config
       : {};
@@ -2488,6 +2556,8 @@ function buildManifestFromPackageFiles(
         typeof extension.budgetMonthlyCents === "number" && Number.isFinite(extension.budgetMonthlyCents)
           ? Math.max(0, Math.floor(extension.budgetMonthlyCents))
           : 0,
+      connectionContractKind: contractDoc?.connectionContractKind ?? extensionContract.kind,
+      connectionContract: (contractDoc?.connectionContract as Record<string, unknown> | undefined) ?? extensionContract.contract,
       metadata: extensionMetadata,
     });
 
@@ -2753,6 +2823,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
   const access = accessService(db);
   const projects = projectService(db);
   const issues = issueService(db);
+  const documents = documentService(db);
   const companySkills = companySkillService(db);
 
   async function resolveSource(source: CompanyPortabilityPreview["source"]): Promise<ResolvedSource> {
@@ -3061,6 +3132,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     });
 
     const companyPath = "COMPANY.md";
+    const operatingSystemPath = "OPERATING_SYSTEM.md";
     files[companyPath] = buildMarkdown(
       {
         name: company.name,
@@ -3070,6 +3142,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       },
       "",
     );
+    files[operatingSystemPath] = DEFAULT_PORTABLE_OPERATING_SYSTEM_MARKDOWN;
 
     if (include.company && company.logoAssetId) {
       if (!storage) {
@@ -3189,14 +3262,22 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         for (const [relativePath, content] of Object.entries(exportedInstructions.files)) {
           const targetPath = `agents/${slug}/${relativePath}`;
           if (relativePath === exportedInstructions.entryFile) {
+            const parsedInstructions = parseFrontmatterMarkdown(content);
+            const existingContract = parseSharedConnectionContractMarkdown(content);
+            const metadataContract = readConnectionContractMetadata(
+              isPlainRecord(agent.metadata) ? (agent.metadata as Record<string, unknown>) : null,
+            );
             files[targetPath] = buildMarkdown(
               stripEmptyValues({
+                ...parsedInstructions.frontmatter,
                 name: agent.name,
                 title: agent.title ?? null,
                 reportsTo: reportsToSlug,
                 skills: desiredSkills.length > 0 ? desiredSkills : undefined,
+                connectionContractKind: existingContract?.connectionContractKind ?? metadataContract.kind,
+                connectionContract: existingContract?.connectionContract ?? metadataContract.contract,
               }) as Record<string, unknown>,
-              content,
+              parsedInstructions.body,
             );
           } else {
             files[targetPath] = content;
@@ -3246,6 +3327,13 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         },
         project.description ?? "",
       );
+      const projectDocumentSummaries = await documents.listProjectDocuments(project.id);
+      for (const key of PROJECT_RESERVED_DOCUMENT_KEYS) {
+        if (!projectDocumentSummaries.some((document) => document.key === key)) continue;
+        const document = await documents.getProjectDocumentByKey(project.id, key);
+        if (!document || !document.body) continue;
+        files[buildPortableReservedDocPath(projectPath, key)] = document.body;
+      }
       const extension = stripEmptyValues({
         leadAgentSlug: project.leadAgentId ? (idToSlug.get(project.leadAgentId) ?? null) : null,
         targetDate: project.targetDate ?? null,
@@ -3296,6 +3384,13 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         },
         issue.description ?? "",
       );
+      const issueDocumentSummaries = await documents.listIssueDocuments(issue.id);
+      for (const key of ISSUE_RESERVED_DOCUMENT_KEYS) {
+        if (!issueDocumentSummaries.some((document) => document.key === key)) continue;
+        const document = await documents.getIssueDocumentByKey(issue.id, key);
+        if (!document || !document.body) continue;
+        files[buildPortableReservedDocPath(taskPath, key)] = document.body;
+      }
       const extension = stripEmptyValues({
         identifier: issue.identifier,
         status: issue.status,
@@ -4072,6 +4167,11 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         delete adapterConfigWithSkills.instructionsBundleMode;
         delete adapterConfigWithSkills.instructionsRootPath;
         delete adapterConfigWithSkills.instructionsEntryFile;
+        const metadata = stripEmptyValues({
+          ...(manifestAgent.metadata ?? {}),
+          connectionContractKind: manifestAgent.connectionContractKind ?? undefined,
+          connectionContract: manifestAgent.connectionContract ?? undefined,
+        }) as Record<string, unknown> | null;
         const patch = {
           name: planAgent.plannedName,
           role: normalizePortableAgentRole(manifestAgent.role),
@@ -4084,7 +4184,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           runtimeConfig: disableImportedTimerHeartbeat(manifestAgent.runtimeConfig),
           budgetMonthlyCents: manifestAgent.budgetMonthlyCents,
           permissions: manifestAgent.permissions,
-          metadata: manifestAgent.metadata,
+          metadata,
         };
 
         if (planAgent.action === "update" && planAgent.existingAgentId) {
@@ -4273,6 +4373,23 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             executionWorkspacePolicy: hydratedProjectExecutionWorkspacePolicy,
           });
         }
+
+        for (const key of PROJECT_RESERVED_DOCUMENT_KEYS) {
+          const documentPath = buildPortableReservedDocPath(manifestProject.path, key);
+          const markdown = readPortableTextFile(plan.source.files, documentPath);
+          if (typeof markdown !== "string") continue;
+          await documents.upsertProjectDocument({
+            projectId,
+            key,
+            title: buildPortableProjectDocumentTitle(key),
+            format: "markdown",
+            body: markdown,
+            baseRevisionId: null,
+            createdByAgentId: null,
+            createdByUserId: actorUserId ?? null,
+            createdByRunId: null,
+          });
+        }
       }
     }
 
@@ -4380,7 +4497,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           }
           continue;
         }
-        await issues.create(targetCompany.id, {
+        const createdIssue = await issues.create(targetCompany.id, {
           projectId,
           projectWorkspaceId,
           title: manifestIssue.title,
@@ -4397,6 +4514,22 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           executionWorkspaceSettings: manifestIssue.executionWorkspaceSettings,
           labelIds: [],
         });
+        for (const key of ISSUE_RESERVED_DOCUMENT_KEYS) {
+          const documentPath = buildPortableReservedDocPath(manifestIssue.path, key);
+          const markdown = readPortableTextFile(plan.source.files, documentPath);
+          if (typeof markdown !== "string") continue;
+          await documents.upsertIssueDocument({
+            issueId: createdIssue.id,
+            key,
+            title: key === "plan" ? null : buildPortableIssueDocumentTitle(key),
+            format: "markdown",
+            body: markdown,
+            baseRevisionId: null,
+            createdByAgentId: null,
+            createdByUserId: actorUserId ?? null,
+            createdByRunId: null,
+          });
+        }
       }
     }
 

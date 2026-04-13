@@ -40,6 +40,15 @@ const issueSvc = {
   create: vi.fn(),
 };
 
+const documentSvc = {
+  listProjectDocuments: vi.fn(),
+  getProjectDocumentByKey: vi.fn(),
+  upsertProjectDocument: vi.fn(),
+  listIssueDocuments: vi.fn(),
+  getIssueDocumentByKey: vi.fn(),
+  upsertIssueDocument: vi.fn(),
+};
+
 const routineSvc = {
   list: vi.fn(),
   getDetail: vi.fn(),
@@ -82,6 +91,10 @@ vi.mock("../services/projects.js", () => ({
 
 vi.mock("../services/issues.js", () => ({
   issueService: () => issueSvc,
+}));
+
+vi.mock("../services/documents.js", () => ({
+  documentService: () => documentSvc,
 }));
 
 vi.mock("../services/routines.js", () => ({
@@ -210,6 +223,18 @@ describe("company portability", () => {
     routineSvc.getDetail.mockImplementation(async (id: string) => {
       const rows = await routineSvc.list();
       return rows.find((row: { id: string }) => row.id === id) ?? null;
+    });
+    documentSvc.listProjectDocuments.mockResolvedValue([]);
+    documentSvc.getProjectDocumentByKey.mockResolvedValue(null);
+    documentSvc.upsertProjectDocument.mockResolvedValue({
+      document: { id: "project-doc-1", latestRevisionNumber: 1 },
+      created: true,
+    });
+    documentSvc.listIssueDocuments.mockResolvedValue([]);
+    documentSvc.getIssueDocumentByKey.mockResolvedValue(null);
+    documentSvc.upsertIssueDocument.mockResolvedValue({
+      document: { id: "issue-doc-1", latestRevisionNumber: 1 },
+      created: true,
     });
     routineSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
       id: "routine-created",
@@ -440,6 +465,114 @@ describe("company portability", () => {
     expect(extension).not.toContain("budgetMonthlyCents: 0");
     expect(exported.warnings).toContain("Agent claudecoder command /Users/dotta/.local/bin/claude was omitted from export because it is system-dependent.");
     expect(exported.warnings).toContain("Agent claudecoder PATH override was omitted from export because it is system-dependent.");
+  });
+
+  it("exports the operating model root, connection contracts, and reserved docs", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    agentSvc.list.mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "ClaudeCoder",
+        status: "idle",
+        role: "engineer",
+        title: "Software Engineer",
+        icon: "code",
+        reportsTo: null,
+        capabilities: "Writes code",
+        adapterType: "claude_local",
+        adapterConfig: {
+          promptTemplate: "You are ClaudeCoder.",
+        },
+        runtimeConfig: { heartbeat: { intervalSec: 3600 } },
+        budgetMonthlyCents: 0,
+        permissions: { canCreateAgents: false },
+        metadata: {
+          connectionContractKind: "paperclip/connection-contract.v1",
+          connectionContract: {
+            upstreamInputs: ["issue assignments"],
+            downstreamOutputs: ["heartbeat packets"],
+            ownedArtifacts: ["tasks/demo/docs/plan.md"],
+            delegationRights: [],
+            reviewRights: [],
+            escalationPath: ["manager"],
+            standingRooms: ["project leadership"],
+            scopeBoundaries: ["company only"],
+            cadence: null,
+          },
+        },
+      },
+    ]);
+    projectSvc.list.mockResolvedValue([
+      {
+        id: "project-1",
+        companyId: "company-1",
+        name: "Launch",
+        urlKey: "launch",
+        description: null,
+        leadAgentId: null,
+        targetDate: null,
+        color: null,
+        status: "planned",
+        executionWorkspacePolicy: null,
+        archivedAt: null,
+        workspaces: [],
+      },
+    ]);
+    issueSvc.list.mockResolvedValue([
+      {
+        id: "issue-1",
+        identifier: "PAP-1",
+        title: "Write rollout plan",
+        description: "Task body",
+        projectId: "project-1",
+        assigneeAgentId: "agent-1",
+        status: "todo",
+        priority: "medium",
+        labelIds: [],
+        billingCode: null,
+        executionWorkspaceSettings: null,
+        assigneeAdapterOverrides: null,
+      },
+    ]);
+    documentSvc.listProjectDocuments.mockResolvedValue([
+      { key: "context" },
+      { key: "risks" },
+    ]);
+    documentSvc.getProjectDocumentByKey.mockImplementation(async (_projectId: string, key: string) => {
+      if (key === "context") return { body: "# Context" };
+      if (key === "risks") return { body: "# Risks" };
+      return null;
+    });
+    documentSvc.listIssueDocuments.mockResolvedValue([{ key: "plan" }]);
+    documentSvc.getIssueDocumentByKey.mockImplementation(async (_issueId: string, key: string) => {
+      if (key === "plan") return { body: "# Plan" };
+      return null;
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: true,
+        issues: true,
+        skills: false,
+      },
+    });
+
+    expect(asTextFile(exported.files["OPERATING_SYSTEM.md"])).toContain("Paperclip coordination contract");
+    expect(exported.manifest.agents[0]).toEqual(expect.objectContaining({
+      connectionContractKind: "paperclip/connection-contract.v1",
+      connectionContract: expect.objectContaining({
+        upstreamInputs: ["issue assignments"],
+      }),
+    }));
+    expect(asTextFile(exported.files["agents/claudecoder/AGENTS.md"])).toContain("connectionContractKind");
+    expect(asTextFile(exported.files["projects/launch/docs/context.md"])).toBe("# Context");
+    expect(asTextFile(exported.files["projects/launch/docs/risks.md"])).toBe("# Risks");
+    const taskPlanPath = Object.keys(exported.files).find((entry) => entry.startsWith("tasks/") && entry.endsWith("/docs/plan.md"));
+    expect(taskPlanPath).toBeTruthy();
+    expect(asTextFile(exported.files[taskPlanPath!])).toBe("# Plan");
   });
 
   it("exports default sidebar order into the Paperclip extension and manifest", async () => {
@@ -2351,6 +2484,112 @@ describe("company portability", () => {
     expect(nestedMaterializedFiles?.["AGENTS.md"]).toContain("You are ClaudeCoder.");
     expect(nestedMaterializedFiles?.["AGENTS.md"]).not.toMatch(/^---\n/);
     expect(nestedMaterializedFiles?.["AGENTS.md"]).not.toContain('name: "ClaudeCoder"');
+  });
+
+  it("imports connection contracts and reserved docs without making frontmatter authoritative", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.create.mockResolvedValue({
+      id: "company-imported",
+      name: "Imported Paperclip",
+    });
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    agentSvc.create.mockResolvedValue({
+      id: "agent-created",
+      name: "ClaudeCoder",
+    });
+    projectSvc.create.mockResolvedValue({
+      id: "project-created",
+      name: "Launch",
+      urlKey: "launch",
+    });
+    issueSvc.create.mockResolvedValue({
+      id: "issue-created",
+      title: "Write rollout plan",
+    });
+
+    const files = {
+      "OPERATING_SYSTEM.md": "# OPERATING_SYSTEM.md\n\nCanonical collaboration contract.\n",
+      "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Imported Paperclip"', "---", ""].join("\n"),
+      "agents/claudecoder/AGENTS.md": [
+        "---",
+        'name: "ClaudeCoder"',
+        'connectionContractKind: "paperclip/connection-contract.v1"',
+        "connectionContract:",
+        "  upstreamInputs:",
+        '    - "issue assignments"',
+        "  downstreamOutputs:",
+        '    - "heartbeat packets"',
+        "  ownedArtifacts:",
+        '    - "tasks/write-rollout-plan/docs/plan.md"',
+        "  delegationRights: []",
+        "  reviewRights: []",
+        "  escalationPath:",
+        '    - "manager"',
+        "  standingRooms:",
+        '    - "project leadership"',
+        "  scopeBoundaries:",
+        '    - "company only"',
+        "  cadence:",
+        '    workerUpdates: "daily"',
+        "---",
+        "",
+        "You write code.",
+        "",
+      ].join("\n"),
+      "projects/launch/PROJECT.md": ['---', 'name: "Launch"', "---", ""].join("\n"),
+      "projects/launch/docs/context.md": "# Context doc",
+      "tasks/write-rollout-plan/TASK.md": [
+        "---",
+        'name: "Write rollout plan"',
+        'project: "launch"',
+        'assignee: "claudecoder"',
+        "---",
+        "",
+        "Do the work.",
+        "",
+      ].join("\n"),
+      "tasks/write-rollout-plan/docs/plan.md": "# Plan doc",
+    };
+
+    await portability.importBundle({
+      source: { type: "inline", rootPath: "paperclip-demo", files },
+      include: { company: true, agents: true, projects: true, issues: true, skills: false },
+      target: { mode: "new_company", newCompanyName: "Imported Paperclip" },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(agentSvc.create).toHaveBeenCalledWith("company-imported", expect.objectContaining({
+      metadata: expect.objectContaining({
+        connectionContractKind: "paperclip/connection-contract.v1",
+        connectionContract: expect.objectContaining({
+          upstreamInputs: ["issue assignments"],
+          downstreamOutputs: ["heartbeat packets"],
+        }),
+      }),
+    }));
+    expect(agentInstructionsSvc.materializeManagedBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "ClaudeCoder" }),
+      expect.objectContaining({
+        "AGENTS.md": expect.stringContaining("You write code."),
+      }),
+      expect.objectContaining({
+        clearLegacyPromptTemplate: true,
+      }),
+    );
+    const materializedFiles = agentInstructionsSvc.materializeManagedBundle.mock.calls.at(-1)?.[1] as Record<string, string>;
+    expect(materializedFiles["AGENTS.md"]).not.toMatch(/^---\n/);
+    expect(documentSvc.upsertProjectDocument).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: "project-created",
+      key: "context",
+      body: "# Context doc",
+    }));
+    expect(documentSvc.upsertIssueDocument).toHaveBeenCalledWith(expect.objectContaining({
+      issueId: "issue-created",
+      key: "plan",
+      body: "# Plan doc",
+    }));
   });
 
   it("normalizes path traversal attempts in import file keys to stay within package root", async () => {

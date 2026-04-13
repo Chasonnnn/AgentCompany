@@ -129,6 +129,8 @@ export interface CompanyPortabilityAgentManifestEntry {
   runtimeConfig: Record<string, unknown>;
   permissions: Record<string, unknown>;
   budgetMonthlyCents: number;
+  connectionContractKind?: string | null;
+  connectionContract?: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
 }
 

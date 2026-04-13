@@ -307,3 +307,19 @@ export type {
   PluginJobRunRecord,
   PluginWebhookDeliveryRecord,
 } from "./plugin.js";
+export type {
+  ConnectionContractCadence,
+  ConnectionContract,
+  ConnectionContractKind,
+  PaperclipPacketKind,
+  AssignmentPacket,
+  HeartbeatPacket,
+  DecisionRequestPacket,
+  ReviewRequestPacket,
+  EscalationPacket,
+  PacketEnvelope,
+  ParsedPacketEnvelope,
+  ParsedConnectionContract,
+  ReservedDocumentDescriptor,
+  ConferenceRoomKindDescriptor,
+} from "./operating-model.js";

@@ -275,6 +275,7 @@ export function conferenceRoomService(db: Db) {
           title: conferenceRooms.title,
           summary: conferenceRooms.summary,
           agenda: conferenceRooms.agenda,
+          kind: conferenceRooms.kind,
           status: conferenceRooms.status,
           createdByAgentId: conferenceRooms.createdByAgentId,
           createdByUserId: conferenceRooms.createdByUserId,
@@ -302,6 +303,7 @@ export function conferenceRoomService(db: Db) {
           title: conferenceRooms.title,
           summary: conferenceRooms.summary,
           agenda: conferenceRooms.agenda,
+          kind: conferenceRooms.kind,
           status: conferenceRooms.status,
           createdByAgentId: conferenceRooms.createdByAgentId,
           createdByUserId: conferenceRooms.createdByUserId,
@@ -328,6 +330,7 @@ export function conferenceRoomService(db: Db) {
             title: input.title,
             summary: input.summary,
             agenda: input.agenda ?? null,
+            kind: input.kind ?? "project_leadership",
             status: "open",
             createdByAgentId: actor.agentId ?? null,
             createdByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -376,6 +379,7 @@ export function conferenceRoomService(db: Db) {
           details: {
             issueIds: issuesForRoom.map((issue) => issue.id),
             participantAgentIds: participants.map((participant) => participant.id),
+            kind: input.kind ?? "project_leadership",
           },
         });
 
@@ -420,6 +424,7 @@ export function conferenceRoomService(db: Db) {
             ...(input.title !== undefined ? { title: input.title } : {}),
             ...(input.summary !== undefined ? { summary: input.summary } : {}),
             ...(input.agenda !== undefined ? { agenda: input.agenda ?? null } : {}),
+            ...(input.kind !== undefined ? { kind: input.kind ?? null } : {}),
             ...(input.status !== undefined ? { status: input.status } : {}),
             updatedAt: now,
           })
@@ -473,6 +478,7 @@ export function conferenceRoomService(db: Db) {
             updatedFields: Object.keys(input),
             issueIds: nextIssueIds ?? undefined,
             participantAgentIds: nextParticipants?.map((participant) => participant.id),
+            kind: input.kind,
           },
         });
 

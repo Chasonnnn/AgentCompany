@@ -277,6 +277,43 @@ describe("issue comment reopen routes", () => {
     );
   });
 
+  it("treats packetized issue comments as descriptive only", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockIssueService.addComment.mockImplementation(async (_id: string, body: string) => ({
+      id: "comment-packet",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      body,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: null,
+      authorUserId: "local-board",
+    }));
+
+    const body = [
+      "---",
+      "kind: paperclip/assignment.v1",
+      'owner: "cto"',
+      'objective: "Ship the operating model rollout"',
+      "---",
+      "",
+      "Delegation context only.",
+    ].join("\n");
+
+    const res = await request(await installActor(createApp()))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      body,
+      expect.any(Object),
+    );
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(res.body.body).toBe(body);
+  });
+
   it("writes decision ids into executionState and inserts the decision inside the transaction", async () => {
     const policy = await normalizePolicy({
       stages: [

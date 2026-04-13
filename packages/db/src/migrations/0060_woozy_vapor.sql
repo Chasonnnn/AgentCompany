@@ -1,0 +1,1 @@
+ALTER TABLE "conference_rooms" ADD COLUMN "kind" text;

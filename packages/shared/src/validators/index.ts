@@ -406,3 +406,24 @@ export {
   type SetPluginState,
   type ListPluginState,
 } from "./plugin.js";
+
+export {
+  connectionContractKindSchema,
+  connectionContractCadenceSchema,
+  connectionContractSchema,
+  assignmentPacketSchema,
+  heartbeatPacketSchema,
+  decisionRequestPacketSchema,
+  reviewRequestPacketSchema,
+  escalationPacketSchema,
+  packetEnvelopeSchema,
+  conferenceRoomKindSchema,
+  projectReservedDocumentKeySchema,
+  issueReservedDocumentKeySchema,
+  parseYamlFrontmatter,
+  parseFrontmatterMarkdown,
+  parsePacketEnvelopeMarkdown,
+  parseConnectionContractMarkdown,
+  type ConnectionContractCadenceInput,
+  type ConnectionContractInput,
+} from "./operating-model.js";

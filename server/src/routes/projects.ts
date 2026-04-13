@@ -15,7 +15,7 @@ import {
 import { trackProjectCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import { documentService, projectService, logActivity, secretService, workspaceOperationService } from "../services/index.js";
-import { conflict, forbidden, unprocessable } from "../errors.js";
+import { conflict, forbidden } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { startRuntimeServicesForWorkspaceControl, stopRuntimeServicesForProjectWorkspace } from "../services/workspace-runtime.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -73,7 +73,7 @@ export function projectRoutes(db: Db) {
     return !!row;
   }
 
-  async function assertCanReadProjectContext(req: Request, project: { id: string; companyId: string }) {
+  async function assertCanReadProjectDocuments(req: Request, project: { id: string; companyId: string }) {
     assertCompanyAccess(req, project.companyId);
     if (req.actor.type === "board") return;
     if (!req.actor.agentId) throw forbidden("Agent authentication required");
@@ -81,7 +81,7 @@ export function projectRoutes(db: Db) {
     if (!allowed) throw forbidden("Project scope required");
   }
 
-  async function assertCanWriteProjectContext(req: Request, project: { id: string; companyId: string }) {
+  async function assertCanWriteProjectDocuments(req: Request, project: { id: string; companyId: string }) {
     assertCompanyAccess(req, project.companyId);
     if (req.actor.type === "board") return;
     if (!req.actor.agentId) throw forbidden("Agent authentication required");
@@ -94,12 +94,8 @@ export function projectRoutes(db: Db) {
     if (!allowed) throw forbidden("Project leadership scope required");
   }
 
-  function assertProjectContextKey(rawKey: string) {
-    const key = projectDocumentKeySchema.parse(rawKey);
-    if (key !== "context") {
-      throw unprocessable("Only the reserved project context document is supported");
-    }
-    return key;
+  function assertProjectDocumentKey(rawKey: string) {
+    return projectDocumentKeySchema.parse(rawKey);
   }
 
   router.param("id", async (req, _res, next, rawId) => {
@@ -136,20 +132,20 @@ export function projectRoutes(db: Db) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    await assertCanReadProjectContext(req, project);
+    await assertCanReadProjectDocuments(req, project);
     const documents = await documentsSvc.listProjectDocuments(id);
-    res.json(documents.filter((document) => document.key === "context"));
+    res.json(documents);
   });
 
   router.get("/projects/:id/documents/:key", async (req, res) => {
     const id = req.params.id as string;
-    const key = assertProjectContextKey(req.params.key as string);
+    const key = assertProjectDocumentKey(req.params.key as string);
     const project = await svc.getById(id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    await assertCanReadProjectContext(req, project);
+    await assertCanReadProjectDocuments(req, project);
     const document = await documentsSvc.getProjectDocumentByKey(id, key);
     if (!document) {
       res.status(404).json({ error: "Project document not found" });
@@ -160,13 +156,13 @@ export function projectRoutes(db: Db) {
 
   router.put("/projects/:id/documents/:key", validate(upsertProjectDocumentSchema), async (req, res) => {
     const id = req.params.id as string;
-    const key = assertProjectContextKey(req.params.key as string);
+    const key = assertProjectDocumentKey(req.params.key as string);
     const project = await svc.getById(id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    await assertCanWriteProjectContext(req, project);
+    await assertCanWriteProjectDocuments(req, project);
     const actor = getActorInfo(req);
     const result = await documentsSvc.upsertProjectDocument({
       projectId: id,
@@ -195,13 +191,13 @@ export function projectRoutes(db: Db) {
 
   router.get("/projects/:id/documents/:key/revisions", async (req, res) => {
     const id = req.params.id as string;
-    const key = assertProjectContextKey(req.params.key as string);
+    const key = assertProjectDocumentKey(req.params.key as string);
     const project = await svc.getById(id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    await assertCanReadProjectContext(req, project);
+    await assertCanReadProjectDocuments(req, project);
     res.json(await documentsSvc.listProjectDocumentRevisions(id, key));
   });
 
@@ -210,14 +206,14 @@ export function projectRoutes(db: Db) {
     validate(restoreProjectDocumentRevisionSchema),
     async (req, res) => {
       const id = req.params.id as string;
-      const key = assertProjectContextKey(req.params.key as string);
+      const key = assertProjectDocumentKey(req.params.key as string);
       const revisionId = req.params.revisionId as string;
       const project = await svc.getById(id);
       if (!project) {
         res.status(404).json({ error: "Project not found" });
         return;
       }
-      await assertCanWriteProjectContext(req, project);
+      await assertCanWriteProjectDocuments(req, project);
       const actor = getActorInfo(req);
       const result = await documentsSvc.restoreProjectDocumentRevision({
         projectId: id,
@@ -247,13 +243,13 @@ export function projectRoutes(db: Db) {
 
   router.delete("/projects/:id/documents/:key", async (req, res) => {
     const id = req.params.id as string;
-    const key = assertProjectContextKey(req.params.key as string);
+    const key = assertProjectDocumentKey(req.params.key as string);
     const project = await svc.getById(id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    await assertCanWriteProjectContext(req, project);
+    await assertCanWriteProjectDocuments(req, project);
     const deleted = await documentsSvc.deleteProjectDocument(id, key);
     if (!deleted) {
       res.status(404).json({ error: "Project document not found" });

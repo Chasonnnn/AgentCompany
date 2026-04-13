@@ -1,5 +1,5 @@
 import { pgTable, uuid, text, timestamp, index } from "drizzle-orm/pg-core";
-import type { ConferenceRoomStatus } from "@paperclipai/shared";
+import type { ConferenceRoomKind, ConferenceRoomStatus } from "@paperclipai/shared";
 import { companies } from "./companies.js";
 import { agents } from "./agents.js";
 
@@ -11,6 +11,7 @@ export const conferenceRooms = pgTable(
     title: text("title").notNull(),
     summary: text("summary").notNull(),
     agenda: text("agenda"),
+    kind: text("kind").$type<ConferenceRoomKind>(),
     status: text("status").$type<ConferenceRoomStatus>().notNull().default("open"),
     createdByAgentId: uuid("created_by_agent_id").references(() => agents.id, { onDelete: "set null" }),
     createdByUserId: text("created_by_user_id"),

@@ -42,6 +42,12 @@ function snapshotsEqual(left: unknown, right: unknown): boolean {
 
 function buildTemplateSnapshotFromFrontmatter(frontmatter: Record<string, unknown>, body: string) {
   const metadata = asObject(frontmatter.metadata);
+  if (frontmatter.connectionContractKind === "paperclip/connection-contract.v1" && typeof frontmatter.connectionContract === "object" && frontmatter.connectionContract !== null && !Array.isArray(frontmatter.connectionContract)) {
+    metadata.connectionContractKind = "paperclip/connection-contract.v1";
+    metadata.connectionContract = {
+      ...(frontmatter.connectionContract as Record<string, unknown>),
+    };
+  }
   const parsed = agentTemplateSnapshotSchema.safeParse({
     name: asString(frontmatter.name),
     role: frontmatter.role,

@@ -53,6 +53,7 @@ function registerServiceMocks() {
 
 async function createApp(actor: Record<string, unknown>) {
   vi.unmock("../services/index.js");
+  registerServiceMocks();
   const { companyRoutes } = await import("../routes/companies.js");
   const { errorHandler } = await import("../middleware/index.js");
   const app = express();

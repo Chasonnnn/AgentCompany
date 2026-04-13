@@ -421,6 +421,13 @@
       "when": 1776007240715,
       "tag": "0059_yummy_union_jack",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1776049328763,
+      "tag": "0060_woozy_vapor",
+      "breakpoints": true
     }
   ]
 }

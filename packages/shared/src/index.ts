@@ -45,6 +45,9 @@ export {
   APPROVAL_TYPES,
   APPROVAL_STATUSES,
   CONFERENCE_ROOM_STATUSES,
+  CONFERENCE_ROOM_KINDS,
+  PROJECT_RESERVED_DOCUMENT_KEYS,
+  ISSUE_RESERVED_DOCUMENT_KEYS,
   SHARED_SERVICE_ENGAGEMENT_STATUSES,
   SECRET_PROVIDERS,
   STORAGE_PROVIDERS,
@@ -129,6 +132,9 @@ export {
   type ApprovalType,
   type ApprovalStatus,
   type ConferenceRoomStatus,
+  type ConferenceRoomKind,
+  type ProjectReservedDocumentKey,
+  type IssueReservedDocumentKey,
   type SharedServiceEngagementStatus,
   type SecretProvider,
   type StorageProvider,
@@ -772,6 +778,26 @@ export {
 
 export { API_PREFIX, API } from "./api.js";
 export {
+  connectionContractKindSchema,
+  connectionContractCadenceSchema,
+  connectionContractSchema,
+  assignmentPacketSchema,
+  heartbeatPacketSchema,
+  decisionRequestPacketSchema,
+  reviewRequestPacketSchema,
+  escalationPacketSchema,
+  packetEnvelopeSchema,
+  conferenceRoomKindSchema,
+  projectReservedDocumentKeySchema,
+  issueReservedDocumentKeySchema,
+  parseYamlFrontmatter,
+  parseFrontmatterMarkdown,
+  parsePacketEnvelopeMarkdown,
+  parseConnectionContractMarkdown,
+  type ConnectionContractCadenceInput,
+  type ConnectionContractInput,
+} from "./validators/operating-model.js";
+export {
   conferenceContextSchema,
   conferenceExecutionWorkspaceModeSchema,
   conferenceExecutionWorkspaceSummarySchema,
@@ -799,6 +825,37 @@ export {
   type ParsedProjectMention,
   type ParsedSkillMention,
 } from "./project-mentions.js";
+
+export {
+  PAPERCLIP_PACKET_KINDS,
+  PROJECT_RESERVED_DOCUMENT_DESCRIPTORS,
+  ISSUE_RESERVED_DOCUMENT_DESCRIPTORS,
+  CONFERENCE_ROOM_KIND_DESCRIPTORS,
+  isPaperclipPacketKind,
+  isReservedProjectDocumentKey,
+  isReservedIssueDocumentKey,
+  getReservedProjectDocumentDescriptor,
+  getReservedIssueDocumentDescriptor,
+  getConferenceRoomKindDescriptor,
+  describePacketEnvelope,
+} from "./operating-model.js";
+
+export type {
+  ConnectionContractCadence,
+  ConnectionContract,
+  ConnectionContractKind,
+  PaperclipPacketKind,
+  AssignmentPacket,
+  HeartbeatPacket,
+  DecisionRequestPacket,
+  ReviewRequestPacket,
+  EscalationPacket,
+  PacketEnvelope,
+  ParsedPacketEnvelope,
+  ParsedConnectionContract,
+  ReservedDocumentDescriptor,
+  ConferenceRoomKindDescriptor,
+} from "./types/operating-model.js";
 
 export {
   BUILTIN_ROUTINE_VARIABLE_NAMES,
