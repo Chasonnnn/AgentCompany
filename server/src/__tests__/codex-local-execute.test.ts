@@ -588,7 +588,6 @@ describe("codex execute", () => {
               status: "in_progress",
               priority: "medium",
             },
-            checkedOutByHarness: true,
             commentIds: [],
             latestCommentId: null,
             comments: [],
@@ -619,7 +618,6 @@ describe("codex execute", () => {
           status: "in_progress",
           priority: "medium",
         },
-        checkedOutByHarness: true,
         commentIds: [],
       });
       expect(capture.prompt).toContain("## Paperclip Wake Payload");
@@ -627,8 +625,6 @@ describe("codex execute", () => {
       expect(capture.prompt).toContain("- issue: PAP-1201 Fix gallery opening for inline images");
       expect(capture.prompt).toContain("- pending comments: 0/0");
       expect(capture.prompt).toContain("- issue status: in_progress");
-      expect(capture.prompt).toContain("- checkout: already claimed by the harness for this run");
-      expect(capture.prompt).toContain("The harness already checked out this issue for the current run.");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

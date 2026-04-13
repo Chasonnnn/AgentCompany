@@ -18,6 +18,7 @@ const mockSecretService = vi.hoisted(() => ({
   normalizeEnvBindingsForPersistence: vi.fn(),
 }));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
+const mockDocumentService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
@@ -27,6 +28,7 @@ function registerModuleMocks() {
   }));
 
   vi.doMock("../services/index.js", () => ({
+    documentService: () => mockDocumentService,
     logActivity: mockLogActivity,
     projectService: () => mockProjectService,
     secretService: () => mockSecretService,
