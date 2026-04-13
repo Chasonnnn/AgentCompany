@@ -115,6 +115,9 @@ export const queryKeys = {
     generalSettings: ["instance", "general-settings"] as const,
     schedulerHeartbeats: ["instance", "scheduler-heartbeats"] as const,
     experimentalSettings: ["instance", "experimental-settings"] as const,
+    evalsSummary: ["instance", "evals", "summary"] as const,
+    evalRuns: ["instance", "evals", "runs"] as const,
+    evalRun: (runId: string) => ["instance", "evals", "runs", runId] as const,
   },
   health: ["health"] as const,
   secrets: {

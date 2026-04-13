@@ -3,8 +3,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PatchInstanceGeneralSettings } from "@paperclipai/shared";
 import { LogOut, SlidersHorizontal } from "lucide-react";
 import { authApi } from "@/api/auth";
+import { evalsApi } from "@/api/evals";
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { ApiError } from "@/api/client";
 import { Button } from "../components/ui/button";
+import { Link } from "@/lib/router";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
@@ -37,6 +40,21 @@ export function InstanceGeneralSettings() {
   const generalQuery = useQuery({
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
+  });
+
+  const evalSummaryQuery = useQuery({
+    queryKey: queryKeys.instance.evalsSummary,
+    queryFn: async () => {
+      try {
+        return await evalsApi.getSummary();
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 403) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    retry: false,
   });
 
   const updateGeneralMutation = useMutation({
@@ -85,6 +103,27 @@ export function InstanceGeneralSettings() {
           {actionError}
         </div>
       )}
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Architecture evals</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Internal-only architecture eval artifacts live outside the main workflow engine. This card reads the rebuildable summary index.
+            </p>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-muted/20 px-3 py-3">
+            <p className="text-sm text-muted-foreground">
+              {evalSummaryQuery.data
+                ? `Runs: ${evalSummaryQuery.data.runCount} • latest run: ${evalSummaryQuery.data.latestRunId ?? "none"}`
+                : "Architecture eval summary is available to instance admins from the dedicated eval page."}
+            </p>
+            <Link to="/instance/settings/evals" className="mt-2 inline-flex text-sm underline underline-offset-4">
+              Open architecture evals
+            </Link>
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
