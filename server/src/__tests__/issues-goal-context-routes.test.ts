@@ -2,7 +2,6 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
-import { issueRoutes } from "../routes/issues.js";
 
 const legacyProjectLinkedIssue = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -36,7 +35,9 @@ const projectGoal = {
   updatedAt: new Date("2026-03-20T00:00:00Z"),
 };
 
-function createHarness() {
+async function createHarness() {
+  vi.resetModules();
+  const { issueRoutes } = await import("../routes/issues.js");
   const issueService = {
     getById: vi.fn().mockResolvedValue(legacyProjectLinkedIssue),
     getAncestors: vi.fn().mockResolvedValue([]),
@@ -165,7 +166,7 @@ function createHarness() {
 
 describe("issue goal context routes", () => {
   it("surfaces the project goal from GET /issues/:id when the issue has no direct goal", async () => {
-    const { app, goalService } = createHarness();
+    const { app, goalService } = await createHarness();
     const res = await request(app).get("/api/issues/11111111-1111-4111-8111-111111111111");
 
     expect(res.status).toBe(200);
@@ -180,7 +181,7 @@ describe("issue goal context routes", () => {
   });
 
   it("surfaces the project goal from GET /issues/:id/heartbeat-context", async () => {
-    const { app, goalService } = createHarness();
+    const { app, goalService } = await createHarness();
     const res = await request(app).get(
       "/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context",
     );
@@ -198,7 +199,7 @@ describe("issue goal context routes", () => {
   });
 
   it("surfaces blocker summaries on GET /issues/:id/heartbeat-context", async () => {
-    const { app, issueService } = createHarness();
+    const { app, issueService } = await createHarness();
     issueService.getRelationSummaries.mockResolvedValue({
       blockedBy: [
         {
