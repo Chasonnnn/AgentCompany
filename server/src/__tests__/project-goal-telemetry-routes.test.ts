@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { projectRoutes } from "../routes/projects.js";
-import { goalRoutes } from "../routes/goals.js";
 import { errorHandler } from "../middleware/index.js";
 
 const mockProjectService = vi.hoisted(() => ({
@@ -67,7 +65,7 @@ vi.mock("../services/workspace-runtime.js", () => ({
   stopRuntimeServicesForProjectWorkspace: vi.fn(),
 }));
 
-function createApp(route: ReturnType<typeof projectRoutes> | ReturnType<typeof goalRoutes>) {
+function createApp(route: express.Router) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -85,8 +83,19 @@ function createApp(route: ReturnType<typeof projectRoutes> | ReturnType<typeof g
   return app;
 }
 
+async function createProjectApp() {
+  const { projectRoutes } = await import("../routes/projects.js");
+  return createApp(projectRoutes({} as any));
+}
+
+async function createGoalApp() {
+  const { goalRoutes } = await import("../routes/goals.js");
+  return createApp(goalRoutes({} as any));
+}
+
 describe("project and goal telemetry routes", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
@@ -110,7 +119,7 @@ describe("project and goal telemetry routes", () => {
   });
 
   it("emits telemetry when a project is created", async () => {
-    const res = await request(createApp(projectRoutes({} as any)))
+    const res = await request(await createProjectApp())
       .post("/api/companies/company-1/projects")
       .send({ name: "Telemetry project" });
 
@@ -119,7 +128,7 @@ describe("project and goal telemetry routes", () => {
   });
 
   it("emits telemetry when a goal is created", async () => {
-    const res = await request(createApp(goalRoutes({} as any)))
+    const res = await request(await createGoalApp())
       .post("/api/companies/company-1/goals")
       .send({ title: "Telemetry goal", level: "team" });
 

@@ -2,40 +2,81 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-function createMocks() {
+const mockAgentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+
+const mockAccessService = vi.hoisted(() => ({
+  canUser: vi.fn(),
+  hasPermission: vi.fn(),
+}));
+
+const mockCompanySkillService = vi.hoisted(() => ({
+  listGlobalCatalog: vi.fn(),
+  installGlobalCatalogSkill: vi.fn(),
+  installAllGlobalCatalogSkills: vi.fn(),
+  importFromSource: vi.fn(),
+  deleteSkill: vi.fn(),
+}));
+
+const mockAgentSkillService = vi.hoisted(() => ({
+  previewBulkSkillGrant: vi.fn(),
+  applyBulkSkillGrant: vi.fn(),
+}));
+
+const mockLogActivity = vi.hoisted(() => vi.fn());
+const mockTrackSkillImported = vi.hoisted(() => vi.fn());
+const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
+const mockAgentHasCreatePermission = vi.hoisted(() =>
+  vi.fn((agent: Record<string, unknown> | null | undefined) => agent?.permissions?.canCreateAgents === true),
+);
+
+function registerRouteMocks() {
+  vi.doMock("../services/index.js", () => ({
+    accessService: () => mockAccessService,
+    agentService: () => mockAgentService,
+    agentSkillService: () => mockAgentSkillService,
+    companySkillService: () => mockCompanySkillService,
+    logActivity: mockLogActivity,
+  }));
+
+  vi.doMock("../services/agent-permissions.js", () => ({
+    agentHasCreatePermission: mockAgentHasCreatePermission,
+  }));
+
+  vi.doMock("@paperclipai/shared/telemetry", () => ({
+    trackSkillImported: mockTrackSkillImported,
+  }));
+
+  vi.doMock("../telemetry.js", () => ({
+    getTelemetryClient: mockGetTelemetryClient,
+  }));
+}
+
+function testMocks() {
   return {
-    agentService: {
-      getById: vi.fn(),
-    },
-    accessService: {
-      canUser: vi.fn(),
-      hasPermission: vi.fn(),
-    },
-    companySkillService: {
-      listGlobalCatalog: vi.fn(),
-      installGlobalCatalogSkill: vi.fn(),
-      installAllGlobalCatalogSkills: vi.fn(),
-      importFromSource: vi.fn(),
-      deleteSkill: vi.fn(),
-    },
-    agentSkillService: {
-      previewBulkSkillGrant: vi.fn(),
-      applyBulkSkillGrant: vi.fn(),
-    },
-    logActivity: vi.fn(),
-    trackSkillImported: vi.fn(),
-    getTelemetryClient: vi.fn(),
+    agentService: mockAgentService,
+    accessService: mockAccessService,
+    companySkillService: mockCompanySkillService,
+    agentSkillService: mockAgentSkillService,
+    logActivity: mockLogActivity,
+    trackSkillImported: mockTrackSkillImported,
+    getTelemetryClient: mockGetTelemetryClient,
+    agentHasCreatePermission: mockAgentHasCreatePermission,
   };
 }
 
-function applyDefaultMocks(mocks: ReturnType<typeof createMocks>) {
-  mocks.getTelemetryClient.mockReturnValue({ track: vi.fn() });
-  mocks.companySkillService.importFromSource.mockResolvedValue({
+function applyDefaultMocks() {
+  mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
+  mockAgentHasCreatePermission.mockImplementation(
+    (agent: Record<string, unknown> | null | undefined) => agent?.permissions?.canCreateAgents === true,
+  );
+  mockCompanySkillService.importFromSource.mockResolvedValue({
     imported: [],
     warnings: [],
   });
-  mocks.companySkillService.listGlobalCatalog.mockResolvedValue([]);
-  mocks.companySkillService.installGlobalCatalogSkill.mockResolvedValue({
+  mockCompanySkillService.listGlobalCatalog.mockResolvedValue([]);
+  mockCompanySkillService.installGlobalCatalogSkill.mockResolvedValue({
     id: "skill-1",
     companyId: "company-1",
     key: "local/abc123/find-skills",
@@ -57,19 +98,19 @@ function applyDefaultMocks(mocks: ReturnType<typeof createMocks>) {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
-  mocks.companySkillService.installAllGlobalCatalogSkills.mockResolvedValue({
+  mockCompanySkillService.installAllGlobalCatalogSkills.mockResolvedValue({
     discoverableCount: 2,
     installedCount: 1,
     alreadyInstalledCount: 1,
     skipped: [],
     installed: [],
   });
-  mocks.companySkillService.deleteSkill.mockResolvedValue({
+  mockCompanySkillService.deleteSkill.mockResolvedValue({
     id: "skill-1",
     slug: "find-skills",
     name: "Find Skills",
   });
-  mocks.agentSkillService.previewBulkSkillGrant.mockResolvedValue({
+  mockAgentSkillService.previewBulkSkillGrant.mockResolvedValue({
     skillId: "skill-1",
     skillKey: "local/abc123/find-skills",
     skillName: "Find Skills",
@@ -100,7 +141,7 @@ function applyDefaultMocks(mocks: ReturnType<typeof createMocks>) {
     skippedAgents: [],
     selectionFingerprint: "fingerprint-1",
   });
-  mocks.agentSkillService.applyBulkSkillGrant.mockResolvedValue({
+  mockAgentSkillService.applyBulkSkillGrant.mockResolvedValue({
     skillId: "skill-1",
     skillKey: "local/abc123/find-skills",
     skillName: "Find Skills",
@@ -120,31 +161,15 @@ function applyDefaultMocks(mocks: ReturnType<typeof createMocks>) {
     rollbackPerformed: false,
     rollbackErrors: [],
   });
-  mocks.logActivity.mockResolvedValue(undefined);
-  mocks.accessService.canUser.mockResolvedValue(true);
-  mocks.accessService.hasPermission.mockResolvedValue(false);
+  mockLogActivity.mockResolvedValue(undefined);
+  mockAccessService.canUser.mockResolvedValue(true);
+  mockAccessService.hasPermission.mockResolvedValue(false);
 }
 
 async function createApp(actor: Record<string, unknown>) {
-  vi.doUnmock("../services/index.js");
-  vi.doUnmock("../telemetry.js");
-  vi.doUnmock("@paperclipai/shared/telemetry");
   vi.resetModules();
-  const mocks = createMocks();
-  applyDefaultMocks(mocks);
-  const [sharedTelemetry, serverTelemetry] = await Promise.all([
-    vi.importActual<typeof import("@paperclipai/shared/telemetry")>("@paperclipai/shared/telemetry"),
-    vi.importActual<typeof import("../telemetry.js")>("../telemetry.js"),
-  ]);
-  vi.spyOn(sharedTelemetry, "trackSkillImported").mockImplementation(mocks.trackSkillImported);
-  vi.spyOn(serverTelemetry, "getTelemetryClient").mockImplementation(mocks.getTelemetryClient);
-  vi.doMock("../services/index.js", () => ({
-    accessService: () => mocks.accessService,
-    agentService: () => mocks.agentService,
-    agentSkillService: () => mocks.agentSkillService,
-    companySkillService: () => mocks.companySkillService,
-    logActivity: mocks.logActivity,
-  }));
+  registerRouteMocks();
+  applyDefaultMocks();
   const [{ companySkillRoutes }, { errorHandler }, errors] = await Promise.all([
     import("../routes/company-skills.js"),
     import("../middleware/index.js"),
@@ -158,23 +183,17 @@ async function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", companySkillRoutes({} as any));
   app.use(errorHandler);
-  return { app, mocks, errors };
+  return { app, mocks: testMocks(), errors };
 }
 
 describe("company skill mutation permissions", () => {
   beforeEach(() => {
-    vi.doUnmock("../services/index.js");
-    vi.doUnmock("../telemetry.js");
-    vi.doUnmock("@paperclipai/shared/telemetry");
-    vi.resetModules();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    applyDefaultMocks();
   });
 
   afterEach(() => {
-    vi.doUnmock("../services/index.js");
-    vi.doUnmock("../telemetry.js");
-    vi.doUnmock("@paperclipai/shared/telemetry");
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it("allows local board operators to mutate company skills", async () => {

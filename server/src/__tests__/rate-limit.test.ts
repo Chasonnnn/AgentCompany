@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { rateLimitMiddleware } from "../middleware/rate-limit.js";
@@ -19,12 +19,8 @@ function sendFromIp(app: express.Express, ip = DEFAULT_TEST_IP) {
 }
 
 describe("rateLimitMiddleware", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
   afterEach(() => {
-    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("allows requests within the limit", async () => {
@@ -62,12 +58,15 @@ describe("rateLimitMiddleware", () => {
   });
 
   it("resets the window after windowMs elapses", async () => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
     const app = createApp(1, 60_000);
     await sendFromIp(app);
     const blocked = await sendFromIp(app);
     expect(blocked.status).toBe(429);
 
-    vi.advanceTimersByTime(61_000);
+    now += 61_000;
 
     const allowed = await sendFromIp(app);
     expect(allowed.status).toBe(200);

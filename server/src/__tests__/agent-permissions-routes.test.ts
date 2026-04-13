@@ -95,6 +95,9 @@ const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
+const mockAgentHasCreatePermission = vi.hoisted(() =>
+  vi.fn((agent: Record<string, unknown> | null | undefined) => agent?.permissions?.canCreateAgents === true),
+);
 
 function registerServiceMocks() {
   vi.doMock("@paperclipai/shared/telemetry", () => ({
@@ -127,6 +130,10 @@ function registerServiceMocks() {
     syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
     workspaceOperationService: () => mockWorkspaceOperationService,
   }));
+
+  vi.doMock("../services/agent-permissions.js", () => ({
+    agentHasCreatePermission: mockAgentHasCreatePermission,
+  }));
 }
 
 function createDbStub() {
@@ -146,6 +153,8 @@ function createDbStub() {
 }
 
 async function createApp(actor: Record<string, unknown>) {
+  vi.resetModules();
+  registerServiceMocks();
   const [{ agentRoutes }, { errorHandler }] = await Promise.all([
     import("../routes/agents.js"),
     import("../middleware/index.js"),
@@ -163,10 +172,11 @@ async function createApp(actor: Record<string, unknown>) {
 
 describe("agent permission routes", () => {
   beforeEach(() => {
-    vi.resetModules();
-    registerServiceMocks();
-    vi.resetAllMocks();
+    vi.clearAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
+    mockAgentHasCreatePermission.mockImplementation(
+      (agent: Record<string, unknown> | null | undefined) => agent?.permissions?.canCreateAgents === true,
+    );
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockAgentService.getById.mockResolvedValue(baseAgent);
     mockAgentService.getChainOfCommand.mockResolvedValue([]);
