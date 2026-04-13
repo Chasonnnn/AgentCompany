@@ -4512,7 +4512,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           billingCode: manifestIssue.billingCode,
           assigneeAdapterOverrides: manifestIssue.assigneeAdapterOverrides,
           executionWorkspaceSettings: manifestIssue.executionWorkspaceSettings,
-          labelIds: [],
+          labelIds: manifestIssue.labelIds ?? [],
         });
         for (const key of ISSUE_RESERVED_DOCUMENT_KEYS) {
           const documentPath = buildPortableReservedDocPath(manifestIssue.path, key);
