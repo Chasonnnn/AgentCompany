@@ -9,7 +9,9 @@ Source inputs: `GOAL.md`, `PRODUCT.md`, `SPEC.md`, `DATABASE.md`, current monore
 
 `SPEC.md` remains the long-horizon product spec.
 This document is the concrete, build-ready V1 contract.
-When there is a conflict, `SPEC-implementation.md` controls V1 behavior.
+`OPERATING_SYSTEM.md` is the normative collaboration contract for how agents coordinate.
+When there is a conflict about collaboration behavior, `OPERATING_SYSTEM.md` wins.
+When there is a conflict about V1 product/runtime behavior, `SPEC-implementation.md` wins.
 
 ## 2. V1 Outcomes
 
@@ -18,7 +20,7 @@ Paperclip V1 must provide a full control-plane loop for autonomous agents:
 1. A human board creates a company and defines goals.
 2. The board creates and manages agents in an org tree.
 3. Agents receive and execute tasks via heartbeat invocations.
-4. All work is tracked through tasks/comments with audit visibility.
+4. All work is tracked through issues/comments, durable documents, conference rooms, approvals, and engagements with audit visibility.
 5. Token/cost usage is reported and budget limits can stop work.
 6. The board can intervene anywhere (pause agents/tasks, override decisions).
 
@@ -35,7 +37,7 @@ These decisions close open questions from `SPEC.md` for V1.
 | Board | Single human board operator per deployment |
 | Org graph | Strict tree (`reports_to` nullable root); no multi-manager reporting |
 | Visibility | Full visibility to board and all agents in same company |
-| Communication | Tasks + comments only (no separate chat system) |
+| Communication | Issues/comments are the default execution channel; documents, conference rooms, approvals, and shared-service engagements carry durable artifacts, leadership coordination, governed decisions, and consulting |
 | Task ownership | Single assignee; atomic checkout required for `in_progress` transition |
 | Recovery | No automatic reassignment; work recovery stays manual/explicit |
 | Agent adapters | Built-in `process` and `http` adapters |
@@ -234,6 +236,8 @@ Invariants:
 - `author_user_id` uuid fk `users.id` null
 - `body` text not null
 
+Comments may contain descriptive packet frontmatter (`paperclip/*.v1`), but packets are non-authoritative. Real state changes still happen through existing issue, approval, room, and engagement APIs.
+
 ## 7.8 `heartbeat_runs`
 
 - `id` uuid pk
@@ -288,11 +292,17 @@ Conference rooms themselves are not approvals.
 - `title` text not null
 - `summary` text null
 - `agenda` text null
+- `kind` text null: `executive_staff | project_leadership | architecture_review | incident | audit_release`
 - `status` enum: `open | closed | archived`
 - `created_by_user_id` uuid fk `users.id` null
 - `created_by_agent_id` uuid fk `agents.id` null
 - `updated_at` timestamptz not null
 - `closed_at` timestamptz null
+
+Invariants:
+
+- legacy rooms may remain `kind = null`; do not backfill guessed history
+- new rooms default to `project_leadership`
 
 ## 7.12 `conference_room_participants`
 
@@ -430,6 +440,18 @@ Operational policy:
   - `issue_id` uuid fk not null
   - `document_id` uuid fk not null
   - `key` text not null (`plan`, `design`, `notes`, etc.)
+
+## 7.21 Collaboration Model
+
+Paperclip phase 1 standardizes coordination without adding a second workflow engine.
+
+- issues and issue comments are the default execution channel
+- documents are the durable artifact channel
+- conference rooms are the leadership coordination channel
+- approvals are the governed decision artifact
+- shared-service engagements are the only sanctioned dotted-line consulting path
+
+Connection contracts and packet envelopes are descriptive overlays on top of those primitives. They do not mutate authority or permissions on their own.
 
 ## 8. State Machines
 

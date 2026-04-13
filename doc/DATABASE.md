@@ -146,6 +146,18 @@ Recent V1 schema additions include:
   - `conference_room_issue_links`
   - `conference_room_approvals`
 
+Current collaboration-model support also includes:
+
+- nullable `conference_rooms.kind`
+  - `executive_staff`
+  - `project_leadership`
+  - `architecture_review`
+  - `incident`
+  - `audit_release`
+- legacy rooms remain `NULL` and should render as generic/legacy rooms
+- new rooms default to `project_leadership`
+- packet comments remain string bodies in storage; packet awareness is parser/renderer behavior, not a separate table
+
 These changes are applied through Drizzle migrations and are backfilled automatically for existing local databases when the app starts or when you run `pnpm db:migrate`.
 
 ## Secret storage

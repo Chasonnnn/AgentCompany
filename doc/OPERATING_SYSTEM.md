@@ -1,0 +1,216 @@
+# Paperclip Operating System
+
+Status: Normative collaboration contract for Paperclip V1 phase-1 rollout
+Date: 2026-04-12
+Audience: Product, engineering, agent-template authors, company-package authors
+
+## 1. Source Of Truth
+
+Paperclip uses a strict collaboration hierarchy:
+
+1. `doc/OPERATING_SYSTEM.md`
+   Defines collaboration behavior, authority boundaries, room taxonomy, packet rules, cadence, escalation, and artifact ownership.
+2. `doc/SPEC-implementation.md`
+   Defines product and system behavior, data model invariants, APIs, and runtime behavior.
+3. Agent instructions bundles (`AGENTS.md`, onboarding assets, template bundles)
+   Apply the operating model locally. They do not redefine global policy.
+4. Portable company packages
+   May carry a root `OPERATING_SYSTEM.md`, but it must follow the same schema and must not introduce alternate collaboration rules.
+
+If two documents disagree about collaboration behavior, this file wins.
+
+## 2. Collaboration Planes
+
+Paperclip coordination is intentionally split into a small number of channels:
+
+- `issues` and `issue comments`
+  Default execution channel. Ownership, progress, blockers, and handoffs live here.
+- `documents`
+  Durable artifact channel. Plans, specs, risks, runbooks, and handoffs live here.
+- `conference rooms`
+  Leadership coordination channel. They gather cross-functional discussion and can later produce a formal decision request.
+- `approvals`
+  Governed decision artifact. A decision request is not a decision until it is represented as an approval outcome.
+- `shared_service_engagements`
+  The only sanctioned dotted-line consulting path in phase 1.
+
+Paperclip does not introduce a second workflow engine for packets, rooms, or contracts in phase 1.
+
+## 3. Authority Rules
+
+These are hard rules:
+
+1. Packets are descriptive, not authoritative.
+2. Comments never mutate assignee, approval, or escalation state by themselves.
+3. Conference rooms coordinate leaders; they do not replace approvals.
+4. Shared-service engagements remain the only dotted-line consulting mechanism.
+5. `agent_secondary_relationships` are advisory only in phase 1.
+6. Every durable artifact should have an owner.
+7. Legacy conference rooms without a kind remain unclassified; do not backfill guessed history.
+
+## 4. Connection Contract
+
+Template-level agent instructions may declare a machine-readable connection contract in `AGENTS.md` frontmatter:
+
+```yaml
+connectionContractKind: paperclip/connection-contract.v1
+connectionContract:
+  upstreamInputs:
+    - assignment packets on owned issues
+  downstreamOutputs:
+    - heartbeat packets and handoff docs
+  ownedArtifacts:
+    - tasks/<slug>/docs/plan.md
+  delegationRights:
+    - may delegate scoped subtasks to direct reports
+  reviewRights:
+    - may request QA review
+  escalationPath:
+    - team lead
+    - director
+    - executive sponsor
+  standingRooms:
+    - project leadership room
+  scopeBoundaries:
+    - no direct routing outside current company scope
+  cadence:
+    workerUpdates: every active work session and at least daily while work remains open
+```
+
+Phase 1 rules:
+
+- contracts live at the template or archetype layer
+- instance overrides are limited to concrete ids or principals
+- contracts are read-only in product surfaces
+- contracts do not alter permissions or routing on their own
+
+## 5. Packet Layer
+
+Paperclip recognizes five packet envelopes in markdown frontmatter:
+
+- `paperclip/assignment.v1`
+- `paperclip/heartbeat.v1`
+- `paperclip/decision-request.v1`
+- `paperclip/review-request.v1`
+- `paperclip/escalation.v1`
+
+Rules:
+
+- only parse when frontmatter `kind` is in the `paperclip/*` packet namespace
+- unknown or malformed frontmatter falls back to ordinary markdown
+- no packet creates an assignment, approval, escalation, or engagement by itself
+
+### 5.1 Preferred Locations
+
+- `assignment`
+  Preferred on issue comments and should accompany the real issue create/assign/reassign action.
+- `heartbeat`
+  Issue comments only. The latest heartbeat is the current summary; older ones are audit history.
+- `decision-request`
+  Preferred on conference-room comments and must resolve to an approval, explicit decline, or documented no-action outcome.
+- `review-request`
+  Preferred on issue or conference-room comments and must resolve to findings, handoff, or consulting closeout.
+- `escalation`
+  Preferred on issue or conference-room comments and must resolve with a disposition comment, approval, or shared-service engagement.
+
+## 6. Room Taxonomy
+
+Conference rooms may declare one of these kinds:
+
+- `executive_staff`
+- `project_leadership`
+- `architecture_review`
+- `incident`
+- `audit_release`
+
+Phase 1 behavior:
+
+- the DB field is nullable
+- existing rooms may remain `null`
+- new rooms default to `project_leadership`
+- UI should surface kind when present and show legacy/generic state when absent
+
+## 7. Durable Artifacts
+
+Reserved project document keys:
+
+- `context`
+- `decision-log`
+- `risks`
+- `runbook`
+
+Reserved issue document keys:
+
+- `plan`
+- `spec`
+- `test-plan`
+- `handoff`
+
+These keys are reserved but open-world:
+
+- product surfaces may promote them specially
+- unknown keys still coexist safely
+- phase 1 does not treat the reserved set as a closed universe
+
+Leadership owns project-level docs. Workers usually own issue-level docs unless local process says otherwise.
+
+## 8. Team Layer
+
+Paperclip has a real team layer even before first-class team tables become richer.
+
+Portable packages may include:
+
+- `teams/<slug>/TEAM.md`
+
+`TEAM.md` should define:
+
+- team charter
+- backlog and status conventions
+- interface ownership
+- upward summarization expectations
+
+Team leads are accountable for summary-up, execution-lane clarity, and interface coordination.
+
+## 9. Cadence
+
+Minimum rhythm expectations:
+
+- workers post a heartbeat summary on every active work session and at least once per business day while an issue remains `in_progress` or `blocked`
+- team leads summarize lane status upward at least once per business day for active teams
+- project leadership reviews status, risks, and dependencies at least weekly for active projects, and immediately when a blocker needs routing or a decision is requested
+- executive staff reviews portfolio state at least weekly
+- incident rooms update at least every 30 minutes, or on every material state change, until disposition
+- consultant engagements close with explicit findings, handoff, or no-action outcome before the engagement is marked complete or within one business day of the last material action
+- milestone boundaries should reset stale context before the next phase starts
+
+Company packages may choose a tighter rhythm, but they must not go looser than these minimums without an explicit override policy.
+
+## 10. Portability
+
+Phase 1 portable company packages canonically include:
+
+- `OPERATING_SYSTEM.md`
+- `COMPANY.md`
+- `teams/<slug>/TEAM.md`
+- `projects/<slug>/PROJECT.md`
+- `agents/<slug>/AGENTS.md`
+- existing `TASK.md` and `SKILL.md` content
+
+Business docs like `vision.md` or `priorities.md` may be exported, but they are non-normative for collaboration behavior.
+
+Portable exports must preserve:
+
+- `connectionContractKind`
+- `connectionContract`
+- reserved project and issue document keys
+
+## 11. Non-Goals For Phase 1
+
+Phase 1 does not add:
+
+- packet-specific tables
+- packet-driven state changes
+- contract-driven permission logic
+- room-based routing automation
+- live company-doc editing workflows
+- a second workflow engine beside issues, approvals, rooms, and engagements

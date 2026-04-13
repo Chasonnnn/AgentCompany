@@ -39,6 +39,7 @@ The format is designed to:
 
 A package root is identified by one primary markdown file:
 
+- `OPERATING_SYSTEM.md` for a collaboration contract package root
 - `COMPANY.md` for a company package
 - `TEAM.md` for a team package
 - `AGENTS.md` for an agent package
@@ -53,6 +54,7 @@ A GitHub repo may contain one package at root or many packages in subdirectories
 Common conventions:
 
 ```text
+OPERATING_SYSTEM.md
 COMPANY.md
 TEAM.md
 AGENTS.md
@@ -60,11 +62,14 @@ PROJECT.md
 TASK.md
 SKILL.md
 
+OPERATING_SYSTEM.md
 agents/<slug>/AGENTS.md
 teams/<slug>/TEAM.md
 projects/<slug>/PROJECT.md
+projects/<slug>/docs/<key>.md
 projects/<slug>/tasks/<slug>/TASK.md
 tasks/<slug>/TASK.md
+tasks/<slug>/docs/<key>.md
 skills/<slug>/SKILL.md
 .paperclip.yaml
 
@@ -82,6 +87,8 @@ Rules:
 - only markdown files are canonical content docs
 - non-markdown directories like `assets/`, `scripts/`, and `references/` are allowed
 - package tools may generate optional lock files, but lock files are not required for authoring
+- `OPERATING_SYSTEM.md` is the canonical collaboration contract when present
+- `projects/<slug>/docs/` and `tasks/<slug>/docs/` may contain reserved-but-open-world document keys
 
 ## 5. Common Frontmatter
 
@@ -190,6 +197,12 @@ tags:
 name: CEO
 title: Chief Executive Officer
 reportsTo: null
+connectionContractKind: paperclip/connection-contract.v1
+connectionContract:
+  upstreamInputs:
+    - assignment packets on owned issues
+  downstreamOutputs:
+    - heartbeat packets and handoff docs
 skills:
   - plan-ceo-review
   - review
@@ -205,6 +218,7 @@ skills:
 - tools may allow path or URL entries as an escape hatch, but exporters should prefer shortname-based skill references in `AGENTS.md`
 - vendor-specific adapter/runtime config should not live in the base package
 - local absolute paths, machine-specific cwd values, and secret values must not be exported as canonical package data
+- versioned `connectionContractKind` plus `connectionContract` frontmatter may be preserved as a read-only collaboration contract overlay
 
 ### Skill Resolution
 
@@ -533,12 +547,15 @@ Rules:
 Paperclip can map this spec to its runtime model like this:
 
 - base package:
+  - `OPERATING_SYSTEM.md` -> canonical collaboration contract for the company package
   - `COMPANY.md` -> company metadata
   - `TEAM.md` -> importable org subtree
   - `AGENTS.md` -> agent identity and instructions
   - `PROJECT.md` -> starter project definition
   - `TASK.md` -> starter issue/task definition, or recurring task template when `recurring: true`
   - `SKILL.md` -> imported skill package
+  - `projects/<slug>/docs/<key>.md` -> durable project docs such as `context`, `decision-log`, `risks`, and `runbook`
+  - `tasks/<slug>/docs/<key>.md` -> durable issue docs such as `plan`, `spec`, `test-plan`, and `handoff`
   - `sources[]` -> provenance and pinned upstream refs
 - Paperclip extension:
   - `.paperclip.yaml` -> adapter config, runtime config, env input declarations, permissions, budgets, routine triggers, and other Paperclip-specific fidelity
@@ -563,6 +580,7 @@ For Paperclip, this should be treated as a hard cutover in product direction rat
 
 ```text
 lean-dev-shop/
+├── OPERATING_SYSTEM.md
 ├── COMPANY.md
 ├── agents/
 │   ├── ceo/AGENTS.md
@@ -570,13 +588,19 @@ lean-dev-shop/
 ├── projects/
 │   └── q2-launch/
 │       ├── PROJECT.md
+│       ├── docs/
+│       │   ├── context.md
+│       │   └── risks.md
 │       └── tasks/
 │           └── monday-review/
 │               └── TASK.md
 ├── teams/
 │   └── engineering/TEAM.md
 ├── tasks/
-│   └── weekly-review/TASK.md
+│   └── weekly-review/
+│       ├── TASK.md
+│       └── docs/
+│           └── plan.md
 └── skills/
     └── review/SKILL.md
 

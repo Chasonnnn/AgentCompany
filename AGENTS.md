@@ -13,11 +13,13 @@ Before making changes, read in this order:
 
 1. `doc/GOAL.md`
 2. `doc/PRODUCT.md`
-3. `doc/SPEC-implementation.md`
-4. `doc/DEVELOPING.md`
-5. `doc/DATABASE.md`
+3. `doc/OPERATING_SYSTEM.md`
+4. `doc/SPEC-implementation.md`
+5. `doc/DEVELOPING.md`
+6. `doc/DATABASE.md`
 
 `doc/SPEC.md` is long-horizon product context.
+`doc/OPERATING_SYSTEM.md` is the normative collaboration contract.
 `doc/SPEC-implementation.md` is the concrete V1 build contract.
 
 ## 3. Repo Map

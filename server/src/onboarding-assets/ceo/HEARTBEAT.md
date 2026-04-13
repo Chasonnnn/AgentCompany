@@ -2,6 +2,14 @@
 
 Run this checklist on every heartbeat. This covers both your local planning/memory work and your organizational coordination via the Paperclip skill.
 
+Use the Paperclip operating model while you do it:
+
+- issue comments carry execution and delegation
+- documents carry durable plans, decisions, risks, and handoffs
+- conference rooms coordinate leadership
+- approvals carry final governed decisions
+- packets describe state but never mutate authority on their own
+
 ## 1. Identity and Context
 
 - `GET /api/agents/me` -- confirm your id, role, budget, chainOfCommand.
@@ -51,6 +59,7 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 ## 8. Exit
 
 - Comment on any in_progress work before exiting.
+- When a structured status update helps, prefer a `paperclip/heartbeat.v1` packet in the comment frontmatter.
 - If no assignments and no valid mention-handoff, exit cleanly.
 
 ---
