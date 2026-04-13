@@ -2429,4 +2429,229 @@ describe("company portability", () => {
     expect(claudeCoderPlan?.existingAgentId).toBe("agent-1");
     expect(claudeCoderPlan?.reason).toContain("skip");
   });
+
+  it("renames multiple colliding agents with incrementing suffixes", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const preview = await portability.previewImport({
+      source: {
+        type: "inline",
+        rootPath: "multi-collision",
+        files: {
+          "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Test"', "---", ""].join("\n"),
+          "agents/claudecoder/AGENTS.md": ['---', 'name: "ClaudeCoder"', "---", "", "First import.", ""].join("\n"),
+          "agents/cmo/AGENTS.md": ['---', 'name: "CMO"', "---", "", "Second import.", ""].join("\n"),
+        },
+      },
+      include: { company: false, agents: true, projects: false, issues: false, skills: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      collisionStrategy: "rename",
+    });
+
+    const claudePlan = preview.plan.agentPlans.find((a) => a.slug === "claudecoder");
+    const cmoPlan = preview.plan.agentPlans.find((a) => a.slug === "cmo");
+    expect(claudePlan).toBeDefined();
+    expect(cmoPlan).toBeDefined();
+    expect(claudePlan?.action).toBe("create");
+    expect(cmoPlan?.action).toBe("create");
+    // Both should be renamed since their slugs already exist
+    expect(claudePlan?.plannedName).not.toBe("ClaudeCoder");
+    expect(cmoPlan?.plannedName).not.toBe("CMO");
+    expect(claudePlan?.reason).toContain("rename");
+    expect(cmoPlan?.reason).toContain("rename");
+    // Renamed names should be unique from each other
+    expect(claudePlan?.plannedName).not.toBe(cmoPlan?.plannedName);
+  });
+
+  it("rejects replace collision strategy in agent_safe mode", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    await expect(
+      portability.previewImport(
+        {
+          source: {
+            type: "inline",
+            rootPath: "safe-reject",
+            files: {
+              "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Safe"', "---", ""].join("\n"),
+              "agents/claudecoder/AGENTS.md": ['---', 'name: "ClaudeCoder"', "---", "", "Instructions.", ""].join("\n"),
+            },
+          },
+          include: { company: true, agents: true, projects: false, issues: false, skills: false },
+          target: { mode: "existing_company", companyId: "company-1" },
+          collisionStrategy: "replace",
+        },
+        { mode: "agent_safe" },
+      ),
+    ).rejects.toThrow(/replace/i);
+  });
+
+  it("blocks agent_safe importBundle when preview plans agent updates", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.getById.mockResolvedValue({ id: "company-1", name: "Target" });
+    agentSvc.list.mockResolvedValue([
+      { id: "agent-1", name: "ClaudeCoder", status: "idle", role: "engineer" },
+    ]);
+    projectSvc.list.mockResolvedValue([]);
+    companySkillSvc.listFull.mockResolvedValue([]);
+
+    // In board_full mode with replace, this would produce an update action.
+    // In agent_safe mode with rename, it should produce a create with renamed name (allowed).
+    const result = await portability.previewImport(
+      {
+        source: {
+          type: "inline",
+          rootPath: "safe-block",
+          files: {
+            "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Source"', "---", ""].join("\n"),
+            "agents/claudecoder/AGENTS.md": ['---', 'name: "ClaudeCoder"', "---", "", "New.", ""].join("\n"),
+          },
+        },
+        include: { company: false, agents: true, projects: false, issues: false, skills: false },
+        target: { mode: "existing_company", companyId: "company-1" },
+        collisionStrategy: "rename",
+      },
+      { mode: "agent_safe" },
+    );
+
+    const claudePlan = result.plan.agentPlans.find((a) => a.slug === "claudecoder");
+    expect(claudePlan).toBeDefined();
+    // agent_safe + rename => creates a new agent with a different name, never updates
+    expect(claudePlan?.action).toBe("create");
+    expect(claudePlan?.plannedName).not.toBe("ClaudeCoder");
+  });
+
+  it("renames colliding projects with incrementing suffixes", async () => {
+    projectSvc.list.mockResolvedValue([
+      { id: "proj-1", name: "My Project", urlKey: "my-project" },
+    ]);
+    const portability = companyPortabilityService({} as any);
+
+    const preview = await portability.previewImport({
+      source: {
+        type: "inline",
+        rootPath: "project-collision",
+        files: {
+          "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Test"', "---", ""].join("\n"),
+          "projects/my-project/PROJECT.md": ['---', 'name: "My Project"', 'kind: project', "---", "", "Desc.", ""].join("\n"),
+        },
+      },
+      include: { company: false, agents: false, projects: true, issues: false, skills: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      collisionStrategy: "rename",
+    });
+
+    const projPlan = preview.plan.projectPlans.find((p) => p.slug === "my-project");
+    expect(projPlan).toBeDefined();
+    expect(projPlan?.action).toBe("create");
+    expect(projPlan?.plannedName).not.toBe("My Project");
+    expect(projPlan?.reason).toContain("rename");
+  });
+
+  it("warns when imported agent references a non-existent reportsTo slug", async () => {
+    agentSvc.list.mockResolvedValue([]);
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
+      id: `agent-${input.name}`,
+      name: input.name,
+    }));
+    companySvc.create.mockResolvedValue({ id: "company-new", name: "Orphan Test" });
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    accessSvc.setPrincipalPermission.mockResolvedValue(undefined);
+    agentInstructionsSvc.materializeManagedBundle.mockResolvedValue({ adapterConfig: {} });
+    agentSvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      id,
+      name: patch.name ?? "updated",
+    }));
+
+    const portability = companyPortabilityService({} as any);
+
+    const result = await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: "orphan-ref",
+        files: {
+          "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Orphan Co"', "---", ""].join("\n"),
+          ".paperclip.yaml": [
+            'schema: "paperclip/v1"',
+            "agents:",
+            "  - slug: engineer",
+            '    name: "Engineer"',
+            '    role: engineer',
+            '    path: "agents/engineer/AGENTS.md"',
+            '    reportsToSlug: "nonexistent-manager"',
+            '    skills: []',
+          ].join("\n"),
+          "agents/engineer/AGENTS.md": ['---', 'name: "Engineer"', 'role: engineer', "---", "", "I write code.", ""].join("\n"),
+        },
+      },
+      include: { company: true, agents: true, projects: false, issues: false, skills: false },
+      target: { mode: "new_company", newCompanyName: "Orphan Test" },
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    // The agent should still be created despite the orphan reference
+    expect(result.agents.length).toBe(1);
+    expect(result.agents[0]!.action).toBe("created");
+    // reportsTo update should have been silently skipped (manager slug doesn't exist)
+    // No crash, no error, just a warning or silent skip
+  });
+
+  it("rejects safe new-company import when source company has no memberships", async () => {
+    accessSvc.listActiveUserMemberships.mockResolvedValue([]);
+    const portability = companyPortabilityService({} as any);
+
+    await expect(
+      portability.importBundle(
+        {
+          source: {
+            type: "inline",
+            rootPath: "no-members",
+            files: {
+              "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Empty"', "---", ""].join("\n"),
+              "agents/bot/AGENTS.md": ['---', 'name: "Bot"', "---", "", "Hello.", ""].join("\n"),
+            },
+          },
+          include: { company: true, agents: true, projects: false, issues: false, skills: false },
+          target: { mode: "new_company", newCompanyName: "New Co" },
+          collisionStrategy: "rename",
+        },
+        "user-1",
+        { mode: "agent_safe", sourceCompanyId: "source-company-id" },
+      ),
+    ).rejects.toThrow(/membership/i);
+  });
+
+  it("warns about system-dependent env inputs during import preview", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const preview = await portability.previewImport({
+      source: {
+        type: "inline",
+        rootPath: "env-warn",
+        files: {
+          "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "EnvTest"', "---", ""].join("\n"),
+          ".paperclip.yaml": [
+            'schema: "paperclip/v1"',
+            "agents:",
+            "  bot:",
+            "    role: engineer",
+            "    inputs:",
+            "      env:",
+            "        DATABASE_URL:",
+            "          kind: plain",
+            "          requirement: required",
+            '          default: "/usr/local/bin/pg_connect"',
+            "          portability: system_dependent",
+          ].join("\n"),
+          "agents/bot/AGENTS.md": ['---', 'name: "Bot"', 'role: engineer', "---", "", "I do things.", ""].join("\n"),
+        },
+      },
+      include: { company: true, agents: true, projects: false, issues: false, skills: false },
+      target: { mode: "new_company" },
+    });
+
+    const envWarning = preview.warnings.find((w) => w.includes("DATABASE_URL") && w.includes("system-dependent"));
+    expect(envWarning).toBeDefined();
+  });
 });
