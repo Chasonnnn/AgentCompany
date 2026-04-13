@@ -1,8 +1,11 @@
 # Paperclip Evals
 
-Eval framework for testing Paperclip agent behaviors across models and prompt versions.
+Paperclip ships with two eval lanes:
 
-See [the evals framework plan](../doc/plans/2026-03-13-agent-evals-framework.md) for full design rationale.
+- `evals/promptfoo`: narrow component and prompt behavior checks
+- `evals/architecture`: first-party architecture evals for reliability, runtime stability, and utility
+
+See [the architecture eval contract](../doc/EVALS.md) for the normative Wave 1 design.
 
 ## Quick Start
 
@@ -23,8 +26,23 @@ export OPENAI_API_KEY=sk-...            # OpenAI direct
 ### Run evals
 
 ```bash
-# Smoke test (default models)
+# Component lane smoke test (default models)
 pnpm evals:smoke
+
+# Architecture canary lane
+pnpm evals:architecture:canary
+
+# Nightly architecture matrix
+pnpm evals:architecture:nightly
+
+# Soak / chaos seeds
+pnpm evals:architecture:soak
+
+# Baseline + ablation seeds
+pnpm evals:architecture:baseline
+
+# Rebuild the summary index from raw artifacts
+pnpm evals:architecture:rebuild
 
 # Or run promptfoo directly
 cd evals/promptfoo
@@ -36,7 +54,7 @@ promptfoo view
 
 ### What's tested
 
-Phase 0 covers narrow behavior evals for the Paperclip heartbeat skill:
+`evals/promptfoo` covers narrow behavior evals for the Paperclip heartbeat skill:
 
 | Case | Category | What it checks |
 |------|----------|---------------|
@@ -55,10 +73,12 @@ Phase 0 covers narrow behavior evals for the Paperclip heartbeat skill:
 2. Follow the existing case format (see `core-assignment-pickup.yaml` for reference)
 3. Run `promptfoo eval` to test
 
-### Phases
+`evals/architecture` currently ships Wave 1 internal-only seeded coverage:
 
-- **Phase 0 (current):** Promptfoo bootstrap - narrow behavior evals with deterministic assertions
-- **Phase 1:** TypeScript eval harness with seeded scenarios and hard checks
-- **Phase 2:** Pairwise and rubric scoring layer
-- **Phase 3:** Efficiency metrics integration
-- **Phase 4:** Production-case ingestion
+- deterministic invariants
+- role and handoff seeds
+- a small end-to-end canary set
+- artifact-backed replay envelopes
+- rebuildable summary indexes
+
+Artifacts are written to the Paperclip instance root under `data/evals/architecture/` by default.
