@@ -62,6 +62,7 @@ Wave 1 reliability coverage starts with:
 - role evals
 - handoff evals
 - a small seeded end-to-end canary set
+- shared-state execution baselines against relay-style execution
 
 ### Runtime stability
 
@@ -213,6 +214,21 @@ Seed the first eight scenarios:
 6. crash and restart with no duplicate work
 7. multi-project overnight soak seed
 8. hierarchy vs flat pod vs single-agent baseline seed
+
+Shared-state execution evals should explicitly compare:
+
+- one-owner continuity execution
+- bounded branch-and-merge execution
+- role-pipeline relay baseline
+
+Key metrics for this comparison:
+
+- drift
+- resume success
+- ownership churn
+- branch merge loss
+- reviewer effectiveness
+- operator touches
 
 PR gating stays light:
 

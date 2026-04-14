@@ -332,7 +332,7 @@ export type ConferenceRoomKind = (typeof CONFERENCE_ROOM_KINDS)[number];
 export const PROJECT_RESERVED_DOCUMENT_KEYS = ["context", "decision-log", "risks", "runbook"] as const;
 export type ProjectReservedDocumentKey = (typeof PROJECT_RESERVED_DOCUMENT_KEYS)[number];
 
-export const ISSUE_RESERVED_DOCUMENT_KEYS = ["plan", "spec", "test-plan", "handoff"] as const;
+export const ISSUE_RESERVED_DOCUMENT_KEYS = ["spec", "plan", "runbook", "progress", "test-plan", "handoff"] as const;
 export type IssueReservedDocumentKey = (typeof ISSUE_RESERVED_DOCUMENT_KEYS)[number];
 
 export const SECRET_PROVIDERS = [

@@ -36,6 +36,22 @@ Paperclip coordination is intentionally split into a small number of channels:
 
 Paperclip does not introduce a second workflow engine for packets, rooms, or contracts in phase 1.
 
+### 2.1 Governance Graph vs Execution Graph
+
+Paperclip separates two layers that were previously mixed:
+
+- governance graph
+  Accountability, escalation, approvals, staffing, budgets, visibility
+- execution graph
+  How one concrete issue keeps context, reasons, branches, resumes, and finishes
+
+Hard rule:
+
+- the org chart decides who is accountable
+- the issue thread decides how the work thinks
+- reviewers and approvers are gates, not baton-pass owners
+- subagents are for bounded branch work or adversarial review, not default relay chains
+
 ## 3. Authority Rules
 
 These are hard rules:
@@ -47,6 +63,8 @@ These are hard rules:
 5. `agent_secondary_relationships` are advisory only in phase 1.
 6. Every durable artifact should have an owner.
 7. Legacy conference rooms without a kind remain unclassified; do not backfill guessed history.
+8. Each executing issue has exactly one continuity owner at a time.
+9. Ownership transfer requires a handoff artifact.
 
 ## 4. Connection Contract
 
@@ -162,8 +180,10 @@ Reserved project document keys:
 
 Reserved issue document keys:
 
-- `plan`
 - `spec`
+- `plan`
+- `runbook`
+- `progress`
 - `test-plan`
 - `handoff`
 
@@ -174,6 +194,47 @@ These keys are reserved but open-world:
 - phase 1 does not treat the reserved set as a closed universe
 
 Leadership owns project-level docs. Workers usually own issue-level docs unless local process says otherwise.
+
+### 7.1 Issue Working Sets
+
+Paperclip uses three default issue working-set tiers:
+
+- tiny
+  `spec` + `progress`
+- normal
+  `spec` + `plan` + `progress` + `test-plan`
+- long-running
+  `spec` + `plan` + `runbook` + `progress` + `test-plan` + `handoff`
+
+`handoff` becomes mandatory before ownership transfer. Long-running issues should have the handoff slot prepared from the start.
+
+### 7.2 Continuity Rules
+
+- `spec` is the frozen task intent and scoped interface contract
+- `plan` is continuity-owner-controlled and may evolve as execution learns
+- `runbook` carries issue-local execution instructions and overrides the project runbook when needed
+- `progress` carries the current snapshot plus append-only checkpoints for resume
+- `test-plan` carries validation intent
+- `handoff` is the required ownership-transfer artifact
+
+Runbook precedence:
+
+1. issue `spec`
+2. issue `plan`
+3. issue `runbook`
+4. issue `progress`
+5. project `context`
+6. project `runbook`
+7. company operating constraints only when relevant
+
+### 7.3 Freeze and Takeover
+
+- `spec` freezes when active execution begins
+- thawing `spec` requires explicit approval-backed authority on the issue
+- only the continuity owner or project leadership may request a spec thaw
+- branch workers and reviewers must not edit `spec` directly
+- `progress` never rewrites history; only the top snapshot may compact prior checkpoints
+- reassignment, human takeover, and emergency override all require a handoff with reason code, timestamp, transfer target, unresolved branches, and exact next action
 
 ## 8. Team Layer
 

@@ -110,6 +110,75 @@ export interface ParsedConnectionContract {
   frontmatter: Record<string, unknown>;
 }
 
+export type IssueProgressDocumentKind = "paperclip/issue-progress.v1";
+export type IssueHandoffDocumentKind = "paperclip/issue-handoff.v1";
+export type IssueBranchCharterKind = "paperclip/issue-branch-charter.v1";
+export type IssueContinuityDocumentKind =
+  | IssueProgressDocumentKind
+  | IssueHandoffDocumentKind
+  | IssueBranchCharterKind;
+
+export interface IssueProgressCheckpoint {
+  at?: string | null;
+  completed: string[];
+  currentState: string;
+  knownPitfalls: string[];
+  nextAction: string;
+  openQuestions: string[];
+  evidence: string[];
+}
+
+export interface IssueProgressDocument {
+  kind: IssueProgressDocumentKind;
+  summary?: string | null;
+  currentState: string;
+  knownPitfalls: string[];
+  nextAction: string;
+  openQuestions: string[];
+  evidence: string[];
+  checkpoints: IssueProgressCheckpoint[];
+}
+
+export interface IssueHandoffDocument {
+  kind: IssueHandoffDocumentKind;
+  reasonCode: string;
+  timestamp: string;
+  transferTarget: string;
+  exactNextAction: string;
+  unresolvedBranches: string[];
+  openQuestions: string[];
+  evidence: string[];
+}
+
+export interface IssueBranchCharter {
+  kind: IssueBranchCharterKind;
+  purpose: string;
+  scope: string;
+  budget: string;
+  expectedReturnArtifact: string;
+  mergeCriteria: string[];
+  expiration?: string | null;
+  timeout?: string | null;
+}
+
+export interface ParsedIssueProgressDocument {
+  document: IssueProgressDocument;
+  body: string;
+  frontmatter: Record<string, unknown>;
+}
+
+export interface ParsedIssueHandoffDocument {
+  document: IssueHandoffDocument;
+  body: string;
+  frontmatter: Record<string, unknown>;
+}
+
+export interface ParsedIssueBranchCharter {
+  document: IssueBranchCharter;
+  body: string;
+  frontmatter: Record<string, unknown>;
+}
+
 export interface ReservedDocumentDescriptor {
   key: string;
   label: string;

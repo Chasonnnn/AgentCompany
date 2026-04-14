@@ -43,6 +43,191 @@ const baseFixturePath = "evals/fixtures/base-company";
 
 export const SEEDED_EVAL_SCENARIOS: EvalScenario[] = [
   {
+    id: "single-owner-continuity",
+    title: "Single-owner continuity",
+    description: "An executing issue keeps one continuity owner while shared state lives in issue docs.",
+    dimension: "reliability",
+    layer: "invariant",
+    horizonBucket: "15_60m",
+    canary: true,
+    tags: ["continuity", "shared-state", "owner"],
+    fixture: {
+      kind: "portable_company_package",
+      basePackagePath: baseFixturePath,
+      hermetic: true,
+      externalDependencies: [],
+      overlays: [
+        {
+          label: "continuity-docs",
+          cleanup: "delete",
+          files: [
+            {
+              path: "projects/platform/issues/ISSUE-1/spec.md",
+              content: "# Spec\n\n## Goal\n\nKeep one continuity owner for active execution.\n",
+              mode: "replace",
+            },
+            {
+              path: "projects/platform/issues/ISSUE-1/progress.md",
+              content: "---\nkind: paperclip/issue-progress.v1\nsnapshot:\n  currentState: reviewer requested a follow-up pass\n  exactNextAction: update the implementation and resubmit to review\n  knownPitfalls:\n    - do not reassign the issue during review\n  openQuestions: []\n  evidenceLinks:\n    - tasks/platform/ISSUE-1/comments/heartbeat-1.md\ncheckpoints:\n  - timestamp: 2026-04-14T09:00:00.000Z\n    completed:\n      - initial implementation drafted\n    currentState: waiting on reviewer feedback\n    knownPitfalls:\n      - continuity must stay with the executor\n    exactNextAction: review feedback and plan the next patch\n    openQuestions: []\n    evidenceLinks:\n      - tasks/platform/ISSUE-1/comments/heartbeat-1.md\n---\n",
+              mode: "replace",
+            },
+          ],
+        },
+      ],
+    },
+    fairnessConstraints: reliabilityFairness,
+    timeoutPolicy: { maxMinutes: 30, idleMinutes: 5 },
+    requiredArtifacts: ["manifest", "trace", "scorecard", "replay", "fixture-tree"],
+    chaosProfile: null,
+  },
+  {
+    id: "branch-and-merge-execution",
+    title: "Branch-and-merge execution",
+    description: "Bounded branch work returns artifacts to the parent continuity owner instead of relaying ownership.",
+    dimension: "reliability",
+    layer: "handoff",
+    horizonBucket: "1_4h",
+    canary: true,
+    tags: ["branch", "merge", "continuity"],
+    fixture: {
+      kind: "portable_company_package",
+      basePackagePath: baseFixturePath,
+      hermetic: true,
+      externalDependencies: [],
+      overlays: [
+        {
+          label: "branch-charter",
+          cleanup: "delete",
+          files: [
+            {
+              path: "projects/platform/issues/ISSUE-2/spec.md",
+              content: "# Spec\n\n## Goal\n\nParent issue owns the merged result.\n",
+              mode: "replace",
+            },
+            {
+              path: "projects/platform/issues/ISSUE-2/plan.md",
+              content: "# Plan\n\n1. Open a bounded child issue for the spike.\n2. Merge returned findings into the parent issue docs.\n",
+              mode: "replace",
+            },
+            {
+              path: "projects/platform/issues/ISSUE-2/progress.md",
+              content: "---\nkind: paperclip/issue-progress.v1\nsnapshot:\n  currentState: waiting on bounded branch spike\n  exactNextAction: merge the returned findings into the parent plan\n  knownPitfalls:\n    - branch workers cannot own the parent continuity\n  openQuestions: []\n  evidenceLinks:\n    - tasks/platform/ISSUE-2/branches/ISSUE-2A.md\ncheckpoints: []\n---\n",
+              mode: "replace",
+            },
+            {
+              path: "projects/platform/issues/ISSUE-2A/branch-charter.md",
+              content: "---\nkind: paperclip/issue-branch-charter.v1\npurpose: explore the risky implementation branch\nscope: prototype the risky change without taking parent ownership\nbudget: two focused work sessions\nexpectedReturnArtifact: a patch proposal and findings comment\nmergeCriteria:\n  - parent continuity owner accepts the result\n  - parent plan is updated with the decision\nexpiresAt: 2026-04-15T00:00:00.000Z\n---\n",
+              mode: "replace",
+            },
+          ],
+        },
+      ],
+    },
+    fairnessConstraints: reliabilityFairness,
+    timeoutPolicy: { maxMinutes: 45, idleMinutes: 10 },
+    requiredArtifacts: ["manifest", "trace", "scorecard", "replay", "fixture-tree"],
+    chaosProfile: null,
+  },
+  {
+    id: "reviewer-as-negator",
+    title: "Reviewer as negator",
+    description: "A reviewer can block, annotate, and request changes without taking continuity ownership.",
+    dimension: "reliability",
+    layer: "role",
+    horizonBucket: "15_60m",
+    canary: true,
+    tags: ["review", "negation", "gate"],
+    fixture: {
+      kind: "portable_company_package",
+      basePackagePath: baseFixturePath,
+      hermetic: true,
+      externalDependencies: [],
+      overlays: [
+        {
+          label: "review-gate",
+          cleanup: "delete",
+          files: [
+            {
+              path: "projects/platform/issues/ISSUE-3/progress.md",
+              content: "---\nkind: paperclip/issue-progress.v1\nsnapshot:\n  currentState: active review gate is open\n  exactNextAction: continuity owner addresses reviewer findings\n  knownPitfalls:\n    - reviewer must not rewrite the plan directly\n  openQuestions: []\n  evidenceLinks:\n    - tasks/platform/ISSUE-3/comments/review-findings.md\ncheckpoints: []\n---\n",
+              mode: "replace",
+            },
+          ],
+        },
+      ],
+    },
+    fairnessConstraints: reliabilityFairness,
+    timeoutPolicy: { maxMinutes: 30, idleMinutes: 5 },
+    requiredArtifacts: ["manifest", "trace", "scorecard", "replay", "fixture-tree"],
+    chaosProfile: null,
+  },
+  {
+    id: "takeover-handoff-recovery",
+    title: "Takeover and handoff recovery",
+    description: "Owner reassignment, human takeover, and emergency override require a durable handoff artifact.",
+    dimension: "reliability",
+    layer: "workflow",
+    horizonBucket: "1_4h",
+    canary: false,
+    tags: ["handoff", "takeover", "recovery"],
+    fixture: {
+      kind: "portable_company_package",
+      basePackagePath: baseFixturePath,
+      hermetic: true,
+      externalDependencies: [],
+      overlays: [
+        {
+          label: "handoff-recovery",
+          cleanup: "delete",
+          files: [
+            {
+              path: "projects/platform/issues/ISSUE-4/handoff.md",
+              content: "---\nkind: paperclip/issue-handoff.v1\nreasonCode: owner_stalled\ntransferTarget: agent:tech-lead-1\nunresolvedBranches:\n  - ISSUE-4A\nexactNextAction: resume the blocked merge and close the review loop\ntimestamp: 2026-04-14T10:15:00.000Z\n---\n",
+              mode: "replace",
+            },
+          ],
+        },
+      ],
+    },
+    fairnessConstraints: reliabilityFairness,
+    timeoutPolicy: { maxMinutes: 45, idleMinutes: 10 },
+    requiredArtifacts: ["manifest", "trace", "scorecard", "replay", "fixture-tree"],
+    chaosProfile: null,
+  },
+  {
+    id: "role-pipeline-baseline-regression",
+    title: "Role-pipeline baseline regression",
+    description: "Compare the old role-relay baseline against shared-state execution and score drift.",
+    dimension: "utility",
+    layer: "portfolio",
+    horizonBucket: "1_4h",
+    canary: false,
+    tags: ["baseline", "role-pipeline", "drift"],
+    fixture: {
+      kind: "portable_company_package",
+      basePackagePath: baseFixturePath,
+      hermetic: true,
+      externalDependencies: [],
+      overlays: [
+        {
+          label: "baseline-comparison",
+          cleanup: "delete",
+          files: [
+            {
+              path: "projects/platform/status.md",
+              content: "# Status\n\n- Compare shared-state continuity against the old role relay baseline.\n",
+              mode: "replace",
+            },
+          ],
+        },
+      ],
+    },
+    fairnessConstraints: utilityFairness,
+    timeoutPolicy: { maxMinutes: 60, idleMinutes: 10 },
+    requiredArtifacts: ["manifest", "trace", "scorecard", "replay", "fixture-tree"],
+    chaosProfile: null,
+  },
+  {
     id: "worker-isolation-across-projects",
     title: "Worker isolation across projects",
     description: "A worker cannot hold raw execution scope for two projects at once.",

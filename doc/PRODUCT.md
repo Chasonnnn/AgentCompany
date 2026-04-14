@@ -68,6 +68,10 @@ More detailed task structure TBD.
 
 5. **Control plane, not execution plane.** Paperclip orchestrates. Agents run wherever they run and phone home.
 
+6. **The org chart decides accountability; the issue thread decides how the work thinks.** Governance flows through companies, reporting lines, approvals, budgets, and escalations. Deep technical execution keeps continuity inside one issue thread with durable issue docs.
+
+7. **Continuity lives in artifacts, not chat memory.** Long-running work stays coherent through issue-local specs, plans, runbooks, progress logs, test plans, and handoffs.
+
 ## User Flow (Dream Scenario)
 
 1. Open Paperclip, create a new company
@@ -106,6 +110,7 @@ Paperclip’s core identity is a **control plane for autonomous AI companies**, 
 - Stay **board-level and company-level**. Users should manage goals, orgs, budgets, approvals, and outputs.
 - Make the first five minutes feel magical: install, answer a few questions, see a CEO do something real.
 - Keep work anchored to **issues/comments/projects/goals**, even if the surface feels conversational.
+- Keep the governance graph and execution graph separate. The company decides ownership and escalation; the issue thread carries the reasoning chain.
 - Treat **agency / internal team / startup** as the same underlying abstraction with different templates and labels.
 - Make outputs first-class: files, docs, reports, previews, links, screenshots.
 - Provide **hooks into engineering workflows**: worktrees, preview servers, PR links, external review tools.
@@ -144,3 +149,16 @@ Paperclip’s core identity is a **control plane for autonomous AI companies**, 
 
 8. **Thin core, rich edges**
    Put optional chat, knowledge, and special surfaces into plugins/extensions rather than bloating the control plane.
+
+## Shared-State Execution
+
+Paperclip keeps the company/org chart as the governance layer, but it does not require difficult execution work to think like a corporate relay chain.
+
+Execution invariants:
+
+1. Each executing issue has exactly one continuity owner at a time.
+2. Continuity lives in issue docs, not comment history or room chatter.
+3. Subagents may explore branches, but only the continuity owner merges branch output into shared state.
+4. Review and approval can block or redirect, but do not implicitly transfer ownership.
+5. Spec changes require explicit authority; plan changes do not.
+6. Any ownership transfer must produce a handoff artifact.

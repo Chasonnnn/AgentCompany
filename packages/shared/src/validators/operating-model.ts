@@ -11,8 +11,15 @@ import type {
   DecisionRequestPacket,
   EscalationPacket,
   HeartbeatPacket,
+  IssueBranchCharter,
+  IssueHandoffDocument,
+  IssueProgressCheckpoint,
+  IssueProgressDocument,
   PacketEnvelope,
   ParsedConnectionContract,
+  ParsedIssueBranchCharter,
+  ParsedIssueHandoffDocument,
+  ParsedIssueProgressDocument,
   ParsedPacketEnvelope,
   ReviewRequestPacket,
 } from "../types/operating-model.js";
@@ -210,6 +217,88 @@ export const conferenceRoomKindSchema = z.enum(CONFERENCE_ROOM_KINDS);
 export const projectReservedDocumentKeySchema = z.enum(PROJECT_RESERVED_DOCUMENT_KEYS);
 export const issueReservedDocumentKeySchema = z.enum(ISSUE_RESERVED_DOCUMENT_KEYS);
 
+const issueProgressDocumentKindSchema = z.literal("paperclip/issue-progress.v1");
+const issueHandoffDocumentKindSchema = z.literal("paperclip/issue-handoff.v1");
+const issueBranchCharterKindSchema = z.literal("paperclip/issue-branch-charter.v1");
+
+export const issueProgressCheckpointSchema = z.object({
+  at: z.string().trim().min(1).nullable().optional(),
+  completed: z.array(z.string()).optional().default([]),
+  currentState: z.string().trim().min(1),
+  knownPitfalls: z.array(z.string()).optional().default([]),
+  nextAction: z.string().trim().min(1),
+  openQuestions: z.array(z.string()).optional().default([]),
+  evidence: z.array(z.string()).optional().default([]),
+}).transform((value) => ({
+  at: normalizeNullableText(value.at),
+  completed: normalizeStringList(value.completed),
+  currentState: value.currentState.trim(),
+  knownPitfalls: normalizeStringList(value.knownPitfalls),
+  nextAction: value.nextAction.trim(),
+  openQuestions: normalizeStringList(value.openQuestions),
+  evidence: normalizeStringList(value.evidence),
+})) as z.ZodType<IssueProgressCheckpoint>;
+
+export const issueProgressDocumentSchema = z.object({
+  kind: issueProgressDocumentKindSchema,
+  summary: z.string().trim().min(1).nullable().optional(),
+  currentState: z.string().trim().min(1),
+  knownPitfalls: z.array(z.string()).optional().default([]),
+  nextAction: z.string().trim().min(1),
+  openQuestions: z.array(z.string()).optional().default([]),
+  evidence: z.array(z.string()).optional().default([]),
+  checkpoints: z.array(issueProgressCheckpointSchema).optional().default([]),
+}).transform((value) => ({
+  kind: value.kind,
+  summary: normalizeNullableText(value.summary),
+  currentState: value.currentState.trim(),
+  knownPitfalls: normalizeStringList(value.knownPitfalls),
+  nextAction: value.nextAction.trim(),
+  openQuestions: normalizeStringList(value.openQuestions),
+  evidence: normalizeStringList(value.evidence),
+  checkpoints: value.checkpoints,
+})) as z.ZodType<IssueProgressDocument>;
+
+export const issueHandoffDocumentSchema = z.object({
+  kind: issueHandoffDocumentKindSchema,
+  reasonCode: z.string().trim().min(1),
+  timestamp: z.string().trim().min(1),
+  transferTarget: z.string().trim().min(1),
+  exactNextAction: z.string().trim().min(1),
+  unresolvedBranches: z.array(z.string()).optional().default([]),
+  openQuestions: z.array(z.string()).optional().default([]),
+  evidence: z.array(z.string()).optional().default([]),
+}).transform((value) => ({
+  kind: value.kind,
+  reasonCode: value.reasonCode.trim(),
+  timestamp: value.timestamp.trim(),
+  transferTarget: value.transferTarget.trim(),
+  exactNextAction: value.exactNextAction.trim(),
+  unresolvedBranches: normalizeStringList(value.unresolvedBranches),
+  openQuestions: normalizeStringList(value.openQuestions),
+  evidence: normalizeStringList(value.evidence),
+})) as z.ZodType<IssueHandoffDocument>;
+
+export const issueBranchCharterSchema = z.object({
+  kind: issueBranchCharterKindSchema,
+  purpose: z.string().trim().min(1),
+  scope: z.string().trim().min(1),
+  budget: z.string().trim().min(1),
+  expectedReturnArtifact: z.string().trim().min(1),
+  mergeCriteria: z.array(z.string()).optional().default([]),
+  expiration: z.string().trim().min(1).nullable().optional(),
+  timeout: z.string().trim().min(1).nullable().optional(),
+}).transform((value) => ({
+  kind: value.kind,
+  purpose: value.purpose.trim(),
+  scope: value.scope.trim(),
+  budget: value.budget.trim(),
+  expectedReturnArtifact: value.expectedReturnArtifact.trim(),
+  mergeCriteria: normalizeStringList(value.mergeCriteria),
+  expiration: normalizeNullableText(value.expiration),
+  timeout: normalizeNullableText(value.timeout),
+})) as z.ZodType<IssueBranchCharter>;
+
 type FrontmatterDoc = {
   frontmatter: Record<string, unknown>;
   body: string;
@@ -396,6 +485,42 @@ export function parseConnectionContractMarkdown(raw: string): ParsedConnectionCo
   return {
     connectionContractKind: "paperclip/connection-contract.v1",
     connectionContract: contract.data,
+    body: parsed.body,
+    frontmatter: parsed.frontmatter,
+  };
+}
+
+export function parseIssueProgressMarkdown(raw: string): ParsedIssueProgressDocument | null {
+  const parsed = parseFrontmatterMarkdown(raw);
+  if (parsed.frontmatter.kind !== "paperclip/issue-progress.v1") return null;
+  const document = issueProgressDocumentSchema.safeParse(parsed.frontmatter);
+  if (!document.success) return null;
+  return {
+    document: document.data,
+    body: parsed.body,
+    frontmatter: parsed.frontmatter,
+  };
+}
+
+export function parseIssueHandoffMarkdown(raw: string): ParsedIssueHandoffDocument | null {
+  const parsed = parseFrontmatterMarkdown(raw);
+  if (parsed.frontmatter.kind !== "paperclip/issue-handoff.v1") return null;
+  const document = issueHandoffDocumentSchema.safeParse(parsed.frontmatter);
+  if (!document.success) return null;
+  return {
+    document: document.data,
+    body: parsed.body,
+    frontmatter: parsed.frontmatter,
+  };
+}
+
+export function parseIssueBranchCharterMarkdown(raw: string): ParsedIssueBranchCharter | null {
+  const parsed = parseFrontmatterMarkdown(raw);
+  if (parsed.frontmatter.kind !== "paperclip/issue-branch-charter.v1") return null;
+  const document = issueBranchCharterSchema.safeParse(parsed.frontmatter);
+  if (!document.success) return null;
+  return {
+    document: document.data,
     body: parsed.body,
     frontmatter: parsed.frontmatter,
   };

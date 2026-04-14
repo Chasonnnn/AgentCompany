@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildIssueDocumentTemplate,
   conferenceRoomKindSchema,
   connectionContractSchema,
   getReservedIssueDocumentDescriptor,
   getReservedProjectDocumentDescriptor,
   issueReservedDocumentKeySchema,
   parseConnectionContractMarkdown,
+  parseIssueBranchCharterMarkdown,
+  parseIssueHandoffMarkdown,
+  parseIssueProgressMarkdown,
   parsePacketEnvelopeMarkdown,
   packetEnvelopeSchema,
   projectReservedDocumentKeySchema,
@@ -190,11 +194,88 @@ describe("operating model schemas", () => {
 
   it("keeps reserved document keys open-world", () => {
     expect(projectReservedDocumentKeySchema.parse("context")).toBe("context");
-    expect(issueReservedDocumentKeySchema.parse("plan")).toBe("plan");
+    expect(issueReservedDocumentKeySchema.parse("runbook")).toBe("runbook");
+    expect(issueReservedDocumentKeySchema.parse("progress")).toBe("progress");
     expect(getReservedProjectDocumentDescriptor("context")?.label).toBe("Context");
-    expect(getReservedIssueDocumentDescriptor("plan")?.label).toBe("Plan");
+    expect(getReservedIssueDocumentDescriptor("progress")?.label).toBe("Progress");
     expect(getReservedProjectDocumentDescriptor("notes")).toBeNull();
     expect(getReservedIssueDocumentDescriptor("scratchpad")).toBeNull();
+  });
+
+  it("parses typed continuity documents from frontmatter markdown", () => {
+    const progress = parseIssueProgressMarkdown([
+      "---",
+      "kind: paperclip/issue-progress.v1",
+      'summary: "Checkpoint summary"',
+      'currentState: "Worktree is clean and tests are green"',
+      'nextAction: "Open the PR"',
+      "knownPitfalls:",
+      '  - "Do not squash the sync commit"',
+      "checkpoints:",
+      "  - at: 2026-04-14T00:00:00Z",
+      "    completed:",
+      '      - "Merged upstream fixes"',
+      '    currentState: "Ready for review"',
+      '    nextAction: "Request review"',
+      "---",
+      "",
+      "Freeform notes.",
+    ].join("\n"));
+    expect(progress?.document).toMatchObject({
+      kind: "paperclip/issue-progress.v1",
+      summary: "Checkpoint summary",
+      currentState: "Worktree is clean and tests are green",
+      nextAction: "Open the PR",
+      checkpoints: [
+        expect.objectContaining({
+          currentState: "Ready for review",
+          nextAction: "Request review",
+        }),
+      ],
+    });
+
+    const handoff = parseIssueHandoffMarkdown([
+      "---",
+      "kind: paperclip/issue-handoff.v1",
+      'reasonCode: "reassignment"',
+      "timestamp: 2026-04-14T00:00:00Z",
+      'transferTarget: "agent:cto"',
+      'exactNextAction: "Review the final checklist"',
+      "---",
+      "",
+      "Hand off cleanly.",
+    ].join("\n"));
+    expect(handoff?.document).toMatchObject({
+      kind: "paperclip/issue-handoff.v1",
+      transferTarget: "agent:cto",
+      exactNextAction: "Review the final checklist",
+    });
+
+    const branch = parseIssueBranchCharterMarkdown([
+      "---",
+      "kind: paperclip/issue-branch-charter.v1",
+      'purpose: "Investigate the runtime regression"',
+      'scope: "Heartbeat wakeups only"',
+      'budget: "One branch issue and one review"',
+      'expectedReturnArtifact: "Patch or reproduction notes"',
+      "mergeCriteria:",
+      '  - "Root cause is documented"',
+      "---",
+      "",
+      "Branch notes.",
+    ].join("\n"));
+    expect(branch?.document).toMatchObject({
+      kind: "paperclip/issue-branch-charter.v1",
+      purpose: "Investigate the runtime regression",
+      mergeCriteria: ["Root cause is documented"],
+    });
+  });
+
+  it("builds default templates for continuity documents", () => {
+    expect(buildIssueDocumentTemplate("spec")).toContain("## Goal");
+    expect(buildIssueDocumentTemplate("progress")).toContain("paperclip/issue-progress.v1");
+    expect(buildIssueDocumentTemplate("handoff")).toContain("paperclip/issue-handoff.v1");
+    expect(buildIssueDocumentTemplate("branch-charter")).toContain("paperclip/issue-branch-charter.v1");
   });
 
   it("accepts nullable room kinds through the shared enum schema", () => {

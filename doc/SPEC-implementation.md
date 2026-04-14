@@ -439,7 +439,7 @@ Operational policy:
   - `company_id` uuid fk not null
   - `issue_id` uuid fk not null
   - `document_id` uuid fk not null
-  - `key` text not null (`plan`, `design`, `notes`, etc.)
+  - `key` text not null (`spec`, `plan`, `runbook`, `progress`, `test-plan`, `handoff`, `branch-charter`, etc.)
 
 ## 7.21 Collaboration Model
 
@@ -452,6 +452,44 @@ Paperclip phase 1 standardizes coordination without adding a second workflow eng
 - shared-service engagements are the only sanctioned dotted-line consulting path
 
 Connection contracts and packet envelopes are descriptive overlays on top of those primitives. They do not mutate authority or permissions on their own.
+
+## 7.22 Shared-State Execution Model
+
+Paperclip keeps the company/org chart as the governance layer and the issue thread as the execution layer.
+
+Invariants:
+
+1. Each executing issue has exactly one continuity owner at a time.
+2. Continuity lives in issue docs, not comment history or room chatter.
+3. Subagents may explore branches, but only the continuity owner merges branch output into shared state.
+4. Review and approval can block or redirect, but do not implicitly transfer ownership.
+5. Spec changes require explicit authority; plan changes do not.
+6. Any ownership transfer must produce a handoff artifact.
+
+Issue working-set tiers:
+
+- tiny: `spec` + `progress`
+- normal: `spec` + `plan` + `progress` + `test-plan`
+- long-running: `spec` + `plan` + `runbook` + `progress` + `test-plan` + `handoff`
+
+Execution document semantics:
+
+- `spec`
+  Frozen task intent and interface contract once active execution begins
+- `plan`
+  Continuity-owner execution plan; may change without approval unless scope, budget, or ownership changes
+- `runbook`
+  Issue-local operating instructions that override the project runbook where needed
+- `progress`
+  Short current snapshot plus append-only checkpoints with completed work, current state, pitfalls, next action, open questions, and evidence
+- `handoff`
+  Required before reassignment, takeover, or emergency override
+
+Branch work:
+
+- durable branch work is represented as a child issue with a typed `branch-charter` doc
+- transient branch work may return comments or work products only
+- only the continuity owner merges branch output into shared state
 
 ## 8. State Machines
 
