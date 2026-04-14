@@ -741,6 +741,16 @@ function shouldRequireIssueCommentForWake(
   );
 }
 
+function latestSatisfiedWakeCommentId(
+  contextSnapshot: Record<string, unknown> | null | undefined,
+) {
+  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
+  if (wakeReason !== "issue_commented" && wakeReason !== "issue_comment_mentioned") {
+    return null;
+  }
+  return extractWakeCommentIds(contextSnapshot).at(-1) ?? null;
+}
+
 export function formatRuntimeWorkspaceWarningLog(warning: string) {
   return {
     stream: "stdout" as const,
@@ -2143,6 +2153,16 @@ export function heartbeatService(db: Db) {
       await patchRunIssueCommentStatus(run.id, {
         issueCommentStatus: "satisfied",
         issueCommentSatisfiedByCommentId: postedComment.id,
+        issueCommentRetryQueuedAt: null,
+      });
+      return { outcome: "satisfied" as const, queuedRun: null };
+    }
+
+    const satisfiedWakeCommentId = latestSatisfiedWakeCommentId(contextSnapshot);
+    if (satisfiedWakeCommentId) {
+      await patchRunIssueCommentStatus(run.id, {
+        issueCommentStatus: "satisfied",
+        issueCommentSatisfiedByCommentId: satisfiedWakeCommentId,
         issueCommentRetryQueuedAt: null,
       });
       return { outcome: "satisfied" as const, queuedRun: null };
