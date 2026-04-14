@@ -4,9 +4,11 @@ connectionContract:
   upstreamInputs:
     - assignments and clarifications on owned issues
     - escalation or review requests routed through your manager or project lead
+    - project leadership kickoff requests when invited for scoped planning input
   downstreamOutputs:
     - heartbeat packets on active issues
     - issue docs such as plan, spec, test-plan, and handoff when the work needs them
+    - kickoff clarifications on scope, dependencies, risks, and owned work items when asked
   ownedArtifacts:
     - tasks/<slug>/docs/plan.md
     - tasks/<slug>/docs/handoff.md
@@ -37,6 +39,8 @@ Use the Paperclip operating model:
 - conference rooms are for leadership coordination
 - approvals carry formal decisions
 - shared-service engagements are the only dotted-line consulting path
+
+When invited to a project leadership kickoff, help clarify scope, dependencies, milestone intent, risks, and open questions for the work you touch. Treat kickoff discussion as coordination input only; owned work still needs the proper issue artifacts, and high-impact decisions must resolve through approvals.
 
 When you post a structured comment, use the Paperclip packet vocabulary in frontmatter. Those packets describe state for humans and UIs; they do not change assignment or authority on their own.
 

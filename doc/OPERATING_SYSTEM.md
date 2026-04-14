@@ -1,7 +1,7 @@
 # Paperclip Operating System
 
 Status: Normative collaboration contract for Paperclip V1 phase-1 rollout
-Date: 2026-04-12
+Date: 2026-04-13
 Audience: Product, engineering, agent-template authors, company-package authors
 
 ## 1. Source Of Truth
@@ -129,6 +129,27 @@ Phase 1 behavior:
 - existing rooms may remain `null`
 - new rooms default to `project_leadership`
 - UI should surface kind when present and show legacy/generic state when absent
+
+### 6.1 Project Leadership Kickoffs
+
+Use a `project_leadership` conference room as the kickoff venue when:
+
+- a new project enters execution
+- a major approved plan needs decomposition into owned execution work
+
+Routine issue updates do not require a kickoff.
+
+Kickoff expectations:
+
+- include the relevant functional leads
+- include the relevant executive sponsor when prioritization, staffing, budget, risk, or strategic direction is in scope
+- leave with an owned work breakdown: issues/tasks, dependencies, milestone intent, key risks, open questions, and a named owner for each work item
+- record outcomes immediately in durable artifacts, using project `context` and `decision-log` docs plus issue `plan` docs as needed
+
+Governance rules:
+
+- kickoff discussion coordinates leaders; it does not authorize high-impact decisions or commitments by itself
+- material direction, governance, or commitment changes must resolve through an approval outcome
 
 ## 7. Durable Artifacts
 
