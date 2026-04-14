@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DocumentRevision, Issue, IssueDocument } from "@paperclipai/shared";
@@ -37,6 +37,7 @@ vi.mock("../hooks/useAutosaveIndicator", () => ({
 
 vi.mock("@/lib/router", () => ({
   useLocation: () => ({ hash: "" }),
+  Link: ({ children, to, ...props }: { children: ReactNode; to: string } & ComponentProps<"a">) => <a href={to} {...props}>{children}</a>,
 }));
 
 vi.mock("./MarkdownBody", () => ({
