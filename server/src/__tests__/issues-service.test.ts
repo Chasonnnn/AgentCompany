@@ -1008,11 +1008,17 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
 
   it("persists blocked-by relations and exposes both blockedBy and blocks summaries", async () => {
     const companyId = randomUUID();
+    const blockedAssigneeId = randomUUID();
     await db.insert(companies).values({
       id: companyId,
       name: "Paperclip",
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: blockedAssigneeId,
+      companyId,
+      name: "Blocked Owner",
     });
 
     const blockerId = randomUUID();
@@ -1031,6 +1037,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
         title: "Blocked issue",
         status: "blocked",
         priority: "medium",
+        assigneeAgentId: blockedAssigneeId,
       },
     ]);
 

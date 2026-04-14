@@ -162,7 +162,8 @@ describe("issue execution policy transitions", () => {
       });
 
       expect(result.patch.status).toBe("in_review");
-      expect(result.patch.assigneeAgentId).toBe(qaAgentId);
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
       expect(result.patch.executionState).toMatchObject({
         status: "pending",
         currentStageType: "review",
@@ -176,7 +177,7 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: qaAgentId,
+          assigneeAgentId: coderAgentId,
           assigneeUserId: null,
           executionPolicy: policy,
           executionState: {
@@ -199,8 +200,8 @@ describe("issue execution policy transitions", () => {
       });
 
       expect(result.patch.status).toBe("in_review");
-      expect(result.patch.assigneeAgentId).toBeNull();
-      expect(result.patch.assigneeUserId).toBe(ctoUserId);
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
       expect(result.patch.executionState).toMatchObject({
         status: "pending",
         currentStageType: "approval",
@@ -220,8 +221,8 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: null,
-          assigneeUserId: ctoUserId,
+          assigneeAgentId: coderAgentId,
+          assigneeUserId: null,
           executionPolicy: policy,
           executionState: {
             status: "pending",
@@ -265,7 +266,7 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: qaAgentId,
+          assigneeAgentId: coderAgentId,
           assigneeUserId: null,
           executionPolicy: policy,
           executionState: {
@@ -329,7 +330,8 @@ describe("issue execution policy transitions", () => {
       });
 
       expect(result.patch.status).toBe("in_review");
-      expect(result.patch.assigneeAgentId).toBe(qaAgentId);
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
       expect(result.patch.executionState).toMatchObject({
         status: "pending",
         currentStageId: reviewStageId,
@@ -347,7 +349,7 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: qaAgentId,
+          assigneeAgentId: coderAgentId,
           assigneeUserId: null,
           executionPolicy: policy,
           executionState: {
@@ -401,7 +403,8 @@ describe("issue execution policy transitions", () => {
       });
 
       expect(result.patch.status).toBe("in_review");
-      expect(result.patch.assigneeUserId).toBe(ctoUserId);
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
       expect(result.patch.executionState).toMatchObject({
         status: "pending",
         currentStageType: "approval",
@@ -418,7 +421,7 @@ describe("issue execution policy transitions", () => {
         applyIssueExecutionPolicyTransition({
           issue: {
             status: "in_review",
-            assigneeAgentId: qaAgentId,
+            assigneeAgentId: coderAgentId,
             assigneeUserId: null,
             executionPolicy: policy,
             executionState: {
@@ -446,7 +449,7 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: qaAgentId,
+          assigneeAgentId: coderAgentId,
           assigneeUserId: null,
           executionPolicy: policy,
           executionState: {
@@ -482,7 +485,7 @@ describe("issue execution policy transitions", () => {
         applyIssueExecutionPolicyTransition({
           issue: {
             status: "in_review",
-            assigneeAgentId: qaAgentId,
+            assigneeAgentId: coderAgentId,
             assigneeUserId: null,
             executionPolicy: policy,
             executionState: {
@@ -511,7 +514,7 @@ describe("issue execution policy transitions", () => {
         applyIssueExecutionPolicyTransition({
           issue: {
             status: "in_review",
-            assigneeAgentId: qaAgentId,
+            assigneeAgentId: coderAgentId,
             assigneeUserId: null,
             executionPolicy: policy,
             executionState: {
@@ -540,7 +543,7 @@ describe("issue execution policy transitions", () => {
         applyIssueExecutionPolicyTransition({
           issue: {
             status: "in_review",
-            assigneeAgentId: qaAgentId,
+            assigneeAgentId: coderAgentId,
             assigneeUserId: null,
             executionPolicy: policy,
             executionState: {
@@ -572,7 +575,7 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: qaAgentId,
+          assigneeAgentId: coderAgentId,
           assigneeUserId: null,
           executionPolicy: null,
           executionState: {
@@ -700,7 +703,7 @@ describe("issue execution policy transitions", () => {
 
       expect(result.patch).toMatchObject({
         status: "in_review",
-        assigneeAgentId: qaAgentId,
+        assigneeAgentId: coderAgentId,
         assigneeUserId: null,
         executionState: {
           status: "pending",
@@ -732,13 +735,13 @@ describe("issue execution policy transitions", () => {
         },
         policy,
         requestedStatus: "in_progress",
-        requestedAssigneePatch: { assigneeAgentId: coderAgentId },
+        requestedAssigneePatch: {},
         actor: { agentId: coderAgentId },
       });
 
       expect(result.patch).toMatchObject({
         status: "in_review",
-        assigneeAgentId: qaAgentId,
+        assigneeAgentId: coderAgentId,
         assigneeUserId: null,
         executionState: {
           status: "pending",
@@ -814,7 +817,11 @@ describe("issue execution policy transitions", () => {
         commentBody: "Ready for review",
       });
 
-      expect(result.patch.assigneeAgentId).toBe(ctoAgentId);
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
+      expect(result.patch.executionState).toMatchObject({
+        currentParticipant: { type: "agent", agentId: ctoAgentId },
+      });
     });
 
     it("falls back to first participant when no preference given", () => {
@@ -843,7 +850,11 @@ describe("issue execution policy transitions", () => {
         commentBody: "Ready for review",
       });
 
-      expect(result.patch.assigneeAgentId).toBe(qaAgentId);
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
+      expect(result.patch.executionState).toMatchObject({
+        currentParticipant: { type: "agent", agentId: qaAgentId },
+      });
     });
 
     it("excludes the return assignee from participant selection", () => {
@@ -873,40 +884,50 @@ describe("issue execution policy transitions", () => {
       });
 
       // coderAgentId is the returnAssignee, so QA should be selected
-      expect(result.patch.assigneeAgentId).toBe(qaAgentId);
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
+      expect(result.patch.executionState).toMatchObject({
+        currentParticipant: { type: "agent", agentId: qaAgentId },
+      });
     });
   });
 
   describe("changes requested with no return assignee", () => {
-    it("throws when requesting changes with no return assignee", () => {
+    it("falls back to the current continuity owner when return assignee is missing", () => {
       const policy = twoStagePolicy();
       const reviewStageId = policy.stages[0].id;
-      expect(() =>
-        applyIssueExecutionPolicyTransition({
-          issue: {
-            status: "in_review",
-            assigneeAgentId: qaAgentId,
-            assigneeUserId: null,
-            executionPolicy: policy,
-            executionState: {
-              status: "pending",
-              currentStageId: reviewStageId,
-              currentStageIndex: 0,
-              currentStageType: "review",
-              currentParticipant: { type: "agent", agentId: qaAgentId },
-              returnAssignee: null,
-              completedStageIds: [],
-              lastDecisionId: null,
-              lastDecisionOutcome: null,
-            },
+      const result = applyIssueExecutionPolicyTransition({
+        issue: {
+          status: "in_review",
+          assigneeAgentId: coderAgentId,
+          assigneeUserId: null,
+          executionPolicy: policy,
+          executionState: {
+            status: "pending",
+            currentStageId: reviewStageId,
+            currentStageIndex: 0,
+            currentStageType: "review",
+            currentParticipant: { type: "agent", agentId: qaAgentId },
+            returnAssignee: null,
+            completedStageIds: [],
+            lastDecisionId: null,
+            lastDecisionOutcome: null,
           },
-          policy,
-          requestedStatus: "in_progress",
-          requestedAssigneePatch: {},
-          actor: { agentId: qaAgentId },
-          commentBody: "Changes needed",
-        }),
-      ).toThrow("no return assignee");
+        },
+        policy,
+        requestedStatus: "in_progress",
+        requestedAssigneePatch: {},
+        actor: { agentId: qaAgentId },
+        commentBody: "Changes needed",
+      });
+
+      expect(result.patch.status).toBe("in_progress");
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
+      expect(result.patch.executionState).toMatchObject({
+        status: "changes_requested",
+        returnAssignee: { type: "agent", agentId: coderAgentId },
+      });
     });
   });
 
@@ -918,8 +939,8 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: null,
-          assigneeUserId: ctoUserId,
+          assigneeAgentId: coderAgentId,
+          assigneeUserId: null,
           executionPolicy: policy,
           executionState: {
             status: "pending",
@@ -977,8 +998,11 @@ describe("issue execution policy transitions", () => {
       });
 
       expect(result.patch.status).toBe("in_review");
-      expect(result.patch.assigneeAgentId).toBeNull();
-      expect(result.patch.assigneeUserId).toBe(boardUserId);
+      expect(result.patch.assigneeAgentId).toBe(coderAgentId);
+      expect(result.patch.assigneeUserId).toBeNull();
+      expect(result.patch.executionState).toMatchObject({
+        currentParticipant: { type: "user", userId: boardUserId },
+      });
     });
   });
 
@@ -990,7 +1014,7 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: qaAgentId,
+          assigneeAgentId: coderAgentId,
           assigneeUserId: null,
           executionPolicy: reviewAndApproval,
           executionState: {
@@ -1039,7 +1063,7 @@ describe("issue execution policy transitions", () => {
       const result = applyIssueExecutionPolicyTransition({
         issue: {
           status: "in_review",
-          assigneeAgentId: qaAgentId,
+          assigneeAgentId: coderAgentId,
           assigneeUserId: null,
           executionPolicy: policy,
           executionState: {
@@ -1065,7 +1089,7 @@ describe("issue execution policy transitions", () => {
 
       expect(result.patch).toMatchObject({
         status: "in_review",
-        assigneeAgentId: ctoAgentId,
+        assigneeAgentId: coderAgentId,
         assigneeUserId: null,
         executionState: {
           status: "pending",

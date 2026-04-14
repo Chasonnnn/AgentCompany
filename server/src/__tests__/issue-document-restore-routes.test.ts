@@ -82,6 +82,21 @@ describe("issue document revision routes", () => {
     });
     mockDocumentsService.listIssueDocumentRevisions.mockResolvedValue([
       {
+        id: "revision-1",
+        companyId,
+        documentId: "document-1",
+        issueId,
+        key: "plan",
+        revisionNumber: 1,
+        title: "Plan v1",
+        format: "markdown",
+        body: "# One",
+        changeSummary: null,
+        createdByAgentId: null,
+        createdByUserId: "board-user",
+        createdAt: new Date("2026-03-26T11:00:00.000Z"),
+      },
+      {
         id: "revision-2",
         companyId,
         documentId: "document-1",
@@ -125,14 +140,14 @@ describe("issue document revision routes", () => {
     const res = await request(createApp()).get(`/api/issues/${issueId}/documents/plan/revisions`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([
+    expect(res.body).toEqual(expect.arrayContaining([
       expect.objectContaining({
         revisionNumber: 2,
         title: "Plan v2",
         format: "markdown",
         body: "# Two",
       }),
-    ]);
+    ]));
   });
 
   it("restores a revision through the append-only route and logs the action", async () => {

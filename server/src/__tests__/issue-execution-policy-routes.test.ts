@@ -164,7 +164,7 @@ describe("issue execution policy routes", () => {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       companyId: "company-1",
       status: "in_review",
-      assigneeAgentId: reviewerAgentId,
+      assigneeAgentId: executorAgentId,
       assigneeUserId: null,
       createdByUserId: "local-board",
       identifier: "PAP-1000",

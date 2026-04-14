@@ -212,8 +212,11 @@ function buildPendingStagePatch(input: {
   participant: IssueExecutionStagePrincipal;
   returnAssignee: IssueExecutionStagePrincipal | null;
 }) {
+  if (!input.returnAssignee) {
+    throw unprocessable("Active execution requires a continuity owner");
+  }
   input.patch.status = "in_review";
-  Object.assign(input.patch, patchForPrincipal(input.participant));
+  Object.assign(input.patch, patchForPrincipal(input.returnAssignee));
   input.patch.executionState = buildPendingState({
     previous: input.previous,
     stage: input.stage,
@@ -310,11 +313,10 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
         policy: input.policy,
         stage: activeStage,
         participant,
-        returnAssignee: existingState?.returnAssignee ?? currentAssignee ?? actor,
+        returnAssignee: existingState?.returnAssignee ?? currentAssignee,
       });
       return {
         patch,
-        workflowControlledAssignment: true,
       };
     }
 
@@ -324,6 +326,7 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
           throw unprocessable("Approving a review or approval stage requires a comment");
         }
         const approvedState = buildCompletedState(existingState, activeStage);
+        const nextReturnAssignee = explicitAssignee ?? existingState?.returnAssignee ?? currentAssignee;
         const nextStage = nextPendingStage(
           input.policy,
           { ...approvedState, completedStageIds: approvedState.completedStageIds },
@@ -356,7 +359,7 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
           policy: input.policy,
           stage: nextStage,
           participant,
-          returnAssignee: existingState?.returnAssignee ?? currentAssignee ?? actor,
+          returnAssignee: nextReturnAssignee,
         });
         return {
           patch,
@@ -366,7 +369,6 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
             outcome: "approved",
             body: input.commentBody.trim(),
           },
-          workflowControlledAssignment: true,
         };
       }
 
@@ -374,12 +376,19 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
         if (!input.commentBody?.trim()) {
           throw unprocessable("Requesting changes requires a comment");
         }
-        if (!existingState?.returnAssignee) {
+        const nextReturnAssignee = explicitAssignee ?? existingState?.returnAssignee ?? currentAssignee;
+        if (!nextReturnAssignee) {
           throw unprocessable("This execution stage has no return assignee");
         }
         patch.status = "in_progress";
-        Object.assign(patch, patchForPrincipal(existingState.returnAssignee));
-        patch.executionState = buildChangesRequestedState(existingState, activeStage);
+        Object.assign(patch, patchForPrincipal(nextReturnAssignee));
+        patch.executionState = buildChangesRequestedState(
+          {
+            ...existingState!,
+            returnAssignee: nextReturnAssignee,
+          },
+          activeStage,
+        );
         return {
           patch,
           decision: {
@@ -388,21 +397,31 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
             outcome: "changes_requested",
             body: input.commentBody.trim(),
           },
-          workflowControlledAssignment: true,
         };
       }
     }
 
     const attemptedStageAdvance =
-      (requestedStatus !== undefined && requestedStatus !== "in_review") ||
-      (requestedAssigneePatchProvided && !principalsEqual(explicitAssignee, currentParticipant));
+      requestedStatus !== undefined && requestedStatus !== "in_review";
     const stageStateDrifted =
       input.issue.status !== "in_review" ||
-      !principalsEqual(currentAssignee, currentParticipant) ||
-      !principalsEqual(existingState?.currentParticipant ?? null, currentParticipant);
+      !principalsEqual(existingState?.currentParticipant ?? null, currentParticipant) ||
+      !principalsEqual(existingState?.returnAssignee ?? null, currentAssignee);
 
     if (attemptedStageAdvance && !stageStateDrifted) {
       throw unprocessable("Only the active reviewer or approver can advance the current execution stage");
+    }
+
+    if (requestedAssigneePatchProvided && !explicitAssignee) {
+      throw unprocessable("Active execution requires a continuity owner");
+    }
+
+    if (requestedAssigneePatchProvided && explicitAssignee) {
+      patch.executionState = {
+        ...existingState,
+        returnAssignee: explicitAssignee,
+      };
+      return { patch };
     }
 
     if (stageStateDrifted) {
@@ -412,11 +431,10 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
         policy: input.policy,
         stage: activeStage,
         participant: currentParticipant,
-        returnAssignee: existingState?.returnAssignee ?? currentAssignee ?? actor,
+        returnAssignee: existingState?.returnAssignee ?? currentAssignee,
       });
       return {
         patch,
-        workflowControlledAssignment: true,
       };
     }
 
@@ -459,6 +477,5 @@ export function applyIssueExecutionPolicyTransition(input: TransitionInput): Tra
   });
   return {
     patch,
-    workflowControlledAssignment: true,
   };
 }

@@ -4,8 +4,9 @@ Run this checklist on every heartbeat. This covers both your local planning/memo
 
 Use the Paperclip operating model while you do it:
 
+- the org chart decides accountability; the issue thread decides how the work thinks
 - issue comments carry execution and delegation
-- documents carry durable plans, decisions, risks, and handoffs
+- documents carry durable specs, plans, progress, decisions, risks, and handoffs
 - conference rooms coordinate leadership
 - approvals carry final governed decisions
 - packets describe state but never mutate authority on their own
@@ -43,7 +44,7 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 - For scoped issue wakes, Paperclip may already checkout the current issue in the harness before your run starts.
 - Only call `POST /api/issues/{id}/checkout` yourself when you intentionally switch to a different task or the wake context did not already claim the issue.
 - Never retry a 409 -- that task belongs to someone else.
-- Do the work. Update status and comment when done.
+- If you take an issue into active execution, make sure its required issue docs are present and current enough for another session to resume. Do the work. Update status and comment when done.
 
 ## 6. Delegation
 

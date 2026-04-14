@@ -37,6 +37,7 @@ import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallbac
 import { getDefaultCompanyGoal } from "./goals.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
+const EXECUTING_ISSUE_STATUSES = new Set(["in_progress", "in_review", "blocked"]);
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
 
 function assertTransition(from: string, to: string) {
@@ -1386,6 +1387,7 @@ export function issueService(db: Db) {
         ...issueData
       } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
+      const requestedStatus = issueData.status ?? "todo";
       if (!isolatedWorkspacesEnabled) {
         delete issueData.executionWorkspaceId;
         delete issueData.executionWorkspacePreference;
@@ -1400,8 +1402,8 @@ export function issueService(db: Db) {
       if (data.assigneeUserId) {
         await assertAssignableUser(companyId, data.assigneeUserId);
       }
-      if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
-        throw unprocessable("in_progress issues require an assignee");
+      if (EXECUTING_ISSUE_STATUSES.has(requestedStatus) && !data.assigneeAgentId && !data.assigneeUserId) {
+        throw unprocessable(`${requestedStatus} issues require an assignee`);
       }
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, companyId);
@@ -1602,8 +1604,9 @@ export function issueService(db: Db) {
       if (nextAssigneeAgentId && nextAssigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
       }
-      if (patch.status === "in_progress" && !nextAssigneeAgentId && !nextAssigneeUserId) {
-        throw unprocessable("in_progress issues require an assignee");
+      const nextStatus = issueData.status !== undefined ? issueData.status : existing.status;
+      if (EXECUTING_ISSUE_STATUSES.has(nextStatus) && !nextAssigneeAgentId && !nextAssigneeUserId) {
+        throw unprocessable(`${nextStatus} issues require an assignee`);
       }
       if (issueData.assigneeAgentId) {
         await assertAssignableAgent(existing.companyId, issueData.assigneeAgentId);

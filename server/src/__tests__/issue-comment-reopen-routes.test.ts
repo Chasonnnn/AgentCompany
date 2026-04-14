@@ -51,7 +51,9 @@ vi.mock("../telemetry.js", () => ({
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
-  documentService: () => ({}),
+  documentService: () => ({
+    getIssueDocumentByKey: vi.fn(async () => null),
+  }),
   executionWorkspaceService: () => ({}),
   feedbackService: () => ({
     listIssueVotesForUser: vi.fn(async () => []),
@@ -426,7 +428,7 @@ describe("issue comment reopen routes", () => {
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({
         status: "in_review",
-        assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+        assigneeAgentId: "22222222-2222-4222-8222-222222222222",
         assigneeUserId: null,
         executionState: expect.objectContaining({
           status: "pending",
@@ -471,7 +473,7 @@ describe("issue comment reopen routes", () => {
     const issue = {
       ...makeIssue("todo"),
       status: "in_review",
-      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      assigneeAgentId: "22222222-2222-4222-8222-222222222222",
       executionPolicy: policy,
       executionState: {
         status: "pending",

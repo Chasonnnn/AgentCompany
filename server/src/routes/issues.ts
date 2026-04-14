@@ -6,6 +6,7 @@ import type { Db } from "@paperclipai/db";
 import { issueExecutionDecisions } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
+  ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
   createIssueAttachmentMetadataSchema,
   createIssueWorkProductSchema,
   createIssueLabelSchema,
@@ -17,6 +18,9 @@ import {
   upsertIssueFeedbackVoteSchema,
   linkIssueApprovalSchema,
   issueDocumentKeySchema,
+  parseIssueBranchCharterMarkdown,
+  parseIssueHandoffMarkdown,
+  parseIssueProgressMarkdown,
   restoreIssueDocumentRevisionSchema,
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
@@ -134,6 +138,66 @@ function buildExecutionStageWakeContext(input: {
     lastDecisionOutcome: input.state.lastDecisionOutcome,
     allowedActions: input.allowedActions,
   };
+}
+
+const CONTINUITY_CONTROLLED_DOCUMENT_KEYS = new Set([
+  "spec",
+  "plan",
+  "runbook",
+  "progress",
+  "handoff",
+  ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
+]);
+
+function isContinuityActive(issue: {
+  status: string;
+  startedAt?: Date | null;
+  executionState?: unknown;
+}) {
+  const executionState = parseIssueExecutionState(issue.executionState ?? null);
+  return (
+    issue.startedAt != null ||
+    issue.status === "in_progress" ||
+    issue.status === "in_review" ||
+    issue.status === "blocked" ||
+    executionState?.status === "pending" ||
+    executionState?.status === "changes_requested"
+  );
+}
+
+function issueActorPrincipal(req: Request): ParsedExecutionState["currentParticipant"] | null {
+  if (req.actor.type === "agent" && req.actor.agentId) {
+    return { type: "agent", agentId: req.actor.agentId, userId: null };
+  }
+  if (req.actor.type === "board" && req.actor.userId) {
+    return { type: "user", userId: req.actor.userId, agentId: null };
+  }
+  return null;
+}
+
+function isContinuityOwnerActor(
+  req: Request,
+  issue: { assigneeAgentId: string | null; assigneeUserId?: string | null },
+) {
+  if (req.actor.type === "board") return true;
+  if (req.actor.type === "agent" && req.actor.agentId) {
+    return issue.assigneeAgentId === req.actor.agentId;
+  }
+  return false;
+}
+
+function isActiveExecutionParticipantActor(
+  req: Request,
+  issue: { executionState?: unknown },
+) {
+  const executionState = parseIssueExecutionState(issue.executionState ?? null);
+  return executionPrincipalsEqual(executionState?.currentParticipant ?? null, issueActorPrincipal(req));
+}
+
+function requestedAssigneeTarget(input: { assigneeAgentId?: string | null; assigneeUserId?: string | null }) {
+  if (input.assigneeAgentId) return `agent:${input.assigneeAgentId}`;
+  if (input.assigneeUserId) return `user:${input.assigneeUserId}`;
+  return null;
 }
 
 function summarizeIssueRelationForActivity(relation: {
@@ -851,11 +915,48 @@ export function issueRoutes(
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
       return;
     }
+    const documentKey = keyParsed.data;
+    const existingDocument = await documentsSvc.getIssueDocumentByKey(issue.id, documentKey);
+    const continuityActive = isContinuityActive(issue);
+
+    if (documentKey === "progress" && !parseIssueProgressMarkdown(req.body.body)) {
+      res.status(422).json({ error: "Progress documents require paperclip/issue-progress.v1 frontmatter" });
+      return;
+    }
+    if (documentKey === "handoff" && !parseIssueHandoffMarkdown(req.body.body)) {
+      res.status(422).json({ error: "Handoff documents require paperclip/issue-handoff.v1 frontmatter" });
+      return;
+    }
+    if (documentKey === ISSUE_BRANCH_CHARTER_DOCUMENT_KEY) {
+      if (!issue.parentId) {
+        res.status(422).json({ error: "Branch charter documents are only valid on child issues" });
+        return;
+      }
+      if (!parseIssueBranchCharterMarkdown(req.body.body)) {
+        res.status(422).json({ error: "Branch charter documents require paperclip/issue-branch-charter.v1 frontmatter" });
+        return;
+      }
+    }
+    if (
+      continuityActive &&
+      CONTINUITY_CONTROLLED_DOCUMENT_KEYS.has(documentKey) &&
+      !isContinuityOwnerActor(req, issue)
+    ) {
+      res.status(403).json({ error: "Only the continuity owner can edit this document while execution is active" });
+      return;
+    }
+    if (continuityActive && documentKey === "spec" && existingDocument) {
+      const linkedApprovals = await issueApprovalsSvc.listApprovalsForIssue(issue.id);
+      if (!linkedApprovals.some((approval) => approval.status === "approved")) {
+        res.status(403).json({ error: "Editing a frozen spec requires an approved linked approval" });
+        return;
+      }
+    }
 
     const actor = getActorInfo(req);
     const result = await documentsSvc.upsertIssueDocument({
       issueId: issue.id,
-      key: keyParsed.data,
+      key: documentKey,
       title: req.body.title ?? null,
       format: req.body.format,
       body: req.body.body,
@@ -922,11 +1023,52 @@ export function issueRoutes(
         res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
         return;
       }
+      const documentKey = keyParsed.data;
+      const revisions = await documentsSvc.listIssueDocumentRevisions(issue.id, documentKey);
+      const revision = revisions.find((entry) => entry.id === revisionId);
+      if (!revision) {
+        res.status(404).json({ error: "Document revision not found" });
+        return;
+      }
+      const continuityActive = isContinuityActive(issue);
+      if (
+        continuityActive &&
+        CONTINUITY_CONTROLLED_DOCUMENT_KEYS.has(documentKey) &&
+        !isContinuityOwnerActor(req, issue)
+      ) {
+        res.status(403).json({ error: "Only the continuity owner can restore this document while execution is active" });
+        return;
+      }
+      if (documentKey === "progress" && !parseIssueProgressMarkdown(revision.body)) {
+        res.status(422).json({ error: "Progress documents require paperclip/issue-progress.v1 frontmatter" });
+        return;
+      }
+      if (documentKey === "handoff" && !parseIssueHandoffMarkdown(revision.body)) {
+        res.status(422).json({ error: "Handoff documents require paperclip/issue-handoff.v1 frontmatter" });
+        return;
+      }
+      if (documentKey === ISSUE_BRANCH_CHARTER_DOCUMENT_KEY) {
+        if (!issue.parentId) {
+          res.status(422).json({ error: "Branch charter documents are only valid on child issues" });
+          return;
+        }
+        if (!parseIssueBranchCharterMarkdown(revision.body)) {
+          res.status(422).json({ error: "Branch charter documents require paperclip/issue-branch-charter.v1 frontmatter" });
+          return;
+        }
+      }
+      if (continuityActive && documentKey === "spec") {
+        const linkedApprovals = await issueApprovalsSvc.listApprovalsForIssue(issue.id);
+        if (!linkedApprovals.some((approval) => approval.status === "approved")) {
+          res.status(403).json({ error: "Restoring a frozen spec requires an approved linked approval" });
+          return;
+        }
+      }
 
       const actor = getActorInfo(req);
       const result = await documentsSvc.restoreIssueDocumentRevision({
         issueId: issue.id,
-        key: keyParsed.data,
+        key: documentKey,
         revisionId,
         createdByAgentId: actor.agentId ?? null,
         createdByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -1371,6 +1513,9 @@ export function issueRoutes(
       hiddenAt: hiddenAtRaw,
       ...updateFields
     } = req.body;
+    const requestedUpdateKeys = Object.keys(updateFields).filter(
+      (key) => updateFields[key as keyof typeof updateFields] !== undefined,
+    );
     let interruptedRunId: string | null = null;
     const closedExecutionWorkspace = await getClosedIssueExecutionWorkspace(existing);
     const isAgentWorkUpdate = req.actor.type === "agent" && Object.keys(updateFields).length > 0;
@@ -1460,6 +1605,8 @@ export function issueRoutes(
       updateFields.assigneeUserId === undefined ? existing.assigneeUserId : (updateFields.assigneeUserId as string | null);
     const assigneeWillChange =
       nextAssigneeAgentId !== existing.assigneeAgentId || nextAssigneeUserId !== existing.assigneeUserId;
+    const continuityActive = isContinuityActive(existing);
+    const activeExecutionParticipantActor = isActiveExecutionParticipantActor(req, existing);
     const isAgentReturningIssueToCreator =
       req.actor.type === "agent" &&
       !!req.actor.agentId &&
@@ -1469,7 +1616,32 @@ export function issueRoutes(
       !!existing.createdByUserId &&
       nextAssigneeUserId === existing.createdByUserId;
 
+    if (req.actor.type === "agent" && existing.assigneeAgentId !== req.actor.agentId) {
+      const stageDecisionOnly =
+        activeExecutionParticipantActor &&
+        requestedUpdateKeys.every((key) => key === "status") &&
+        !!commentBody;
+      if (!stageDecisionOnly) {
+        res.status(403).json({ error: "Only the continuity owner can mutate this issue directly" });
+        return;
+      }
+    }
+
     if (assigneeWillChange && !transition.workflowControlledAssignment) {
+      if (continuityActive) {
+        const handoffDocument = await documentsSvc.getIssueDocumentByKey(existing.id, "handoff");
+        const parsedHandoff = handoffDocument ? parseIssueHandoffMarkdown(handoffDocument.body ?? "") : null;
+        const transferTarget = requestedAssigneeTarget({
+          assigneeAgentId: nextAssigneeAgentId,
+          assigneeUserId: nextAssigneeUserId,
+        });
+        if (!transferTarget || !parsedHandoff || parsedHandoff.document.transferTarget !== transferTarget) {
+          res.status(409).json({
+            error: "Active execution ownership transfer requires a typed handoff document for the new owner",
+          });
+          return;
+        }
+      }
       if (!isAgentReturningIssueToCreator) {
         await assertCanAssignTasks(req, existing.companyId);
       }
@@ -1730,12 +1902,34 @@ export function issueRoutes(
     void (async () => {
       type WakeupRequest = NonNullable<Parameters<typeof heartbeat.wakeup>[1]>;
       const wakeups = new Map<string, { agentId: string; wakeup: WakeupRequest }>();
+      const wakeupPriority = (wakeup: WakeupRequest) => {
+        switch (wakeup.reason) {
+          case "execution_changes_requested":
+          case "execution_review_requested":
+          case "execution_approval_requested":
+            return 3;
+          case "issue_assigned":
+          case "issue_reopened_via_comment":
+          case "issue_status_changed":
+            return 2;
+          case "issue_comment_mentioned":
+            return 1;
+          case "issue_commented":
+          default:
+            return 0;
+        }
+      };
       const addWakeup = (agentId: string, wakeup: WakeupRequest) => {
         const wakeIssueId =
           wakeup.payload && typeof wakeup.payload === "object" && typeof wakeup.payload.issueId === "string"
             ? wakeup.payload.issueId
             : issue.id;
-        wakeups.set(`${agentId}:${wakeIssueId}`, { agentId, wakeup });
+        const key = `${agentId}:${wakeIssueId}`;
+        const existingWakeup = wakeups.get(key);
+        if (existingWakeup && wakeupPriority(existingWakeup.wakeup) > wakeupPriority(wakeup)) {
+          return;
+        }
+        wakeups.set(key, { agentId, wakeup });
       };
 
       if (executionStageWakeup) {
