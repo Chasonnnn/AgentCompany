@@ -58,6 +58,24 @@ import type { BetterAuthSessionResult } from "./auth/better-auth.js";
 
 type UiMode = "none" | "static" | "vite-dev";
 const FEEDBACK_EXPORT_FLUSH_INTERVAL_MS = 5_000;
+const VITE_DEV_ASSET_PREFIXES = [
+  "/@fs/",
+  "/@id/",
+  "/@react-refresh",
+  "/@vite/",
+  "/assets/",
+  "/node_modules/",
+  "/src/",
+];
+const VITE_DEV_STATIC_PATHS = new Set([
+  "/apple-touch-icon.png",
+  "/favicon-16x16.png",
+  "/favicon-32x32.png",
+  "/favicon.ico",
+  "/favicon.svg",
+  "/site.webmanifest",
+  "/sw.js",
+]);
 
 export function resolveViteHmrPort(serverPort: number): number {
   if (serverPort <= 55_535) {
@@ -66,6 +84,22 @@ export function resolveViteHmrPort(serverPort: number): number {
   return Math.max(1_024, serverPort - 10_000);
 }
 
+export function shouldServeViteDevHtml(req: ExpressRequest): boolean {
+  const pathname = req.path;
+  if (VITE_DEV_STATIC_PATHS.has(pathname)) return false;
+  if (VITE_DEV_ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return false;
+  return req.accepts(["html"]) === "html";
+}
+
+export function shouldEnablePrivateHostnameGuard(opts: {
+  deploymentMode: DeploymentMode;
+  deploymentExposure: DeploymentExposure;
+}): boolean {
+  return (
+    opts.deploymentExposure === "private" &&
+    (opts.deploymentMode === "local_trusted" || opts.deploymentMode === "authenticated")
+  );
+}
 export async function createApp(
   db: Db,
   opts: {
@@ -326,6 +360,7 @@ export async function createApp(
 
   if (opts.uiMode === "vite-dev") {
     const uiRoot = path.resolve(__dirname, "../../ui");
+    const publicUiRoot = path.resolve(uiRoot, "public");
     const hmrPort = resolveViteHmrPort(opts.serverPort);
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
@@ -341,9 +376,14 @@ export async function createApp(
         allowedHosts: privateHostnameGateEnabled ? Array.from(privateHostnameAllowSet) : undefined,
       },
     });
-
-    app.use(vite.middlewares);
+    if (fs.existsSync(publicUiRoot)) {
+      app.use(express.static(publicUiRoot, { index: false }));
+    }
     app.get(/.*/, async (req, res, next) => {
+      if (!shouldServeViteDevHtml(req)) {
+        next();
+        return;
+      }
       try {
         const templatePath = path.resolve(uiRoot, "index.html");
         const template = fs.readFileSync(templatePath, "utf-8");
@@ -353,6 +393,7 @@ export async function createApp(
         next(err);
       }
     });
+    app.use(vite.middlewares);
   }
 
   app.use(errorHandler);
