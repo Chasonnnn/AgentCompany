@@ -49,7 +49,7 @@ import {
   notifyHireApproved
 } from "../services/index.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
-import { assertCompanyAccess } from "./authz.js";
+import { assertAuthenticated, assertCompanyAccess } from "./authz.js";
 import {
   claimBoardOwnership,
   inspectBoardClaimChallenge
@@ -1907,11 +1907,13 @@ export function accessRoutes(
     return company?.name ?? null;
   }
 
-  router.get("/skills/available", (_req, res) => {
+  router.get("/skills/available", (req, res) => {
+    assertAuthenticated(req);
     res.json({ skills: listAvailableSkills() });
   });
 
-  router.get("/skills/index", (_req, res) => {
+  router.get("/skills/index", (req, res) => {
+    assertAuthenticated(req);
     res.json({
       skills: [
         { name: "paperclip", path: "/api/skills/paperclip" },
@@ -1928,6 +1930,7 @@ export function accessRoutes(
   });
 
   router.get("/skills/:skillName", (req, res) => {
+    assertAuthenticated(req);
     const skillName = (req.params.skillName as string).trim().toLowerCase();
     const markdown = readSkillMarkdown(skillName);
     if (!markdown) throw notFound("Skill not found");

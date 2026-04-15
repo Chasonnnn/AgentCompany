@@ -49,6 +49,7 @@ import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   detectAdapterModel,
+  findActiveServerAdapter,
   findServerAdapter,
   listAdapterModels,
   requireServerAdapter,
@@ -72,6 +73,10 @@ import {
 } from "../services/default-agent-instructions.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
+import {
+  assertNoAgentHostWorkspaceCommandMutation,
+  collectAgentAdapterWorkspaceCommandPaths,
+} from "./workspace-command-authz.js";
 
 export function agentRoutes(db: Db) {
   // Legacy hardcoded maps — used as fallback when adapter module does not
@@ -795,83 +800,6 @@ export function agentRoutes(db: Db) {
 
     return details;
   }
-  function buildUnsupportedSkillSnapshot(
-    adapterType: string,
-    desiredSkills: string[] = [],
-  ): AgentSkillSnapshot {
-    return {
-      adapterType,
-      supported: false,
-      mode: "unsupported",
-      desiredSkills,
-      entries: [],
-      warnings: ["This adapter does not implement skill sync yet."],
-    };
-  }
-
-  // Legacy hardcoded set — used as fallback when adapter module does not
-  // declare requiresMaterializedRuntimeSkills explicitly.
-  const LEGACY_MATERIALIZED_SKILLS_SET = new Set([
-    "cursor",
-    "gemini_local",
-    "opencode_local",
-    "pi_local",
-  ]);
-
-  function shouldMaterializeRuntimeSkillsForAdapter(adapterType: string) {
-    const adapter = findActiveServerAdapter(adapterType);
-    if (adapter?.requiresMaterializedRuntimeSkills !== undefined) {
-      return adapter.requiresMaterializedRuntimeSkills;
-    }
-    return LEGACY_MATERIALIZED_SKILLS_SET.has(adapterType);
-  }
-
-  async function buildRuntimeSkillConfig(
-    companyId: string,
-    adapterType: string,
-    config: Record<string, unknown>,
-  ) {
-    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(companyId, {
-      materializeMissing: shouldMaterializeRuntimeSkillsForAdapter(adapterType),
-    });
-    return {
-      ...config,
-      paperclipRuntimeSkills: runtimeSkillEntries,
-    };
-  }
-
-  async function resolveDesiredSkillAssignment(
-    companyId: string,
-    adapterType: string,
-    adapterConfig: Record<string, unknown>,
-    requestedDesiredSkills: string[] | undefined,
-  ) {
-    if (!requestedDesiredSkills) {
-      return {
-        adapterConfig,
-        desiredSkills: null as string[] | null,
-        runtimeSkillEntries: null as Awaited<ReturnType<typeof companySkills.listRuntimeSkillEntries>> | null,
-      };
-    }
-
-    const resolvedRequestedSkills = await companySkills.resolveRequestedSkillKeys(
-      companyId,
-      requestedDesiredSkills,
-    );
-    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(companyId, {
-      materializeMissing: shouldMaterializeRuntimeSkillsForAdapter(adapterType),
-    });
-    const requiredSkills = runtimeSkillEntries
-      .filter((entry) => entry.required)
-      .map((entry) => entry.key);
-    const desiredSkills = Array.from(new Set([...requiredSkills, ...resolvedRequestedSkills]));
-
-    return {
-      adapterConfig: writePaperclipSkillSyncPreference(adapterConfig, desiredSkills),
-      desiredSkills,
-      runtimeSkillEntries,
-    };
-  }
   function redactForRestrictedAgentView(agent: Awaited<ReturnType<typeof svc.getById>>) {
     if (!agent) return null;
     return {
@@ -1417,6 +1345,10 @@ export function agentRoutes(db: Db) {
     hireInput.adapterType = assertKnownAdapterType(
       typeof hireInput.adapterType === "string" ? hireInput.adapterType : null,
     );
+    assertNoAgentHostWorkspaceCommandMutation(
+      req,
+      collectAgentAdapterWorkspaceCommandPaths(hireInput.adapterConfig),
+    );
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       hireInput.adapterType as string,
       ((hireInput.adapterConfig ?? {}) as Record<string, unknown>),
@@ -1632,6 +1564,10 @@ export function agentRoutes(db: Db) {
     createInput.role = typeof createInput.role === "string" ? createInput.role : "general";
     createInput.adapterType = assertKnownAdapterType(
       typeof createInput.adapterType === "string" ? createInput.adapterType : null,
+    );
+    assertNoAgentHostWorkspaceCommandMutation(
+      req,
+      collectAgentAdapterWorkspaceCommandPaths(createInput.adapterConfig),
     );
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       createInput.adapterType as string,
@@ -2149,6 +2085,10 @@ export function agentRoutes(db: Db) {
         res.status(422).json({ error: "adapterConfig must be an object" });
         return;
       }
+      assertNoAgentHostWorkspaceCommandMutation(
+        req,
+        collectAgentAdapterWorkspaceCommandPaths(adapterConfig),
+      );
       const changingInstructionsPath = Object.keys(adapterConfig).some((key) =>
         KNOWN_INSTRUCTIONS_PATH_KEYS.has(key),
       );
@@ -2632,7 +2572,7 @@ export function agentRoutes(db: Db) {
 
   router.get("/heartbeat-runs/:runId/log", async (req, res) => {
     const runId = req.params.runId as string;
-    const run = await heartbeat.getRun(runId);
+    const run = await heartbeat.getRunLogAccess(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });
       return;
@@ -2641,7 +2581,7 @@ export function agentRoutes(db: Db) {
 
     const offset = Number(req.query.offset ?? 0);
     const limitBytes = Number(req.query.limitBytes ?? 256000);
-    const result = await heartbeat.readLog(runId, {
+    const result = await heartbeat.readLog(run, {
       offset: Number.isFinite(offset) ? offset : 0,
       limitBytes: Number.isFinite(limitBytes) ? limitBytes : 256000,
     });

@@ -168,9 +168,10 @@ export function approvalRoutes(db: Db) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
+    const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.approve(
       id,
-      req.body.decidedByUserId ?? "board",
+      decidedByUserId,
       req.body.decisionNote,
     );
 
@@ -267,9 +268,10 @@ export function approvalRoutes(db: Db) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
+    const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.reject(
       id,
-      req.body.decidedByUserId ?? "board",
+      decidedByUserId,
       req.body.decisionNote,
     );
 
@@ -299,9 +301,10 @@ export function approvalRoutes(db: Db) {
         res.status(404).json({ error: "Approval not found" });
         return;
       }
+      const decidedByUserId = req.actor.userId ?? "board";
       const approval = await svc.requestRevision(
         id,
-        req.body.decidedByUserId ?? "board",
+        decidedByUserId,
         req.body.decisionNote,
       );
 
