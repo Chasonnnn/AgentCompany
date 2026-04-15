@@ -37,12 +37,14 @@ function createHarness(actor: any) {
         artifactDirectory: "runs/run-1",
         failureKinds: [],
         tags: ["scope"],
+        sourceKind: "seeded",
       },
     ]),
     getRun: vi.fn().mockResolvedValue({
       runId: "run-1",
       status: "passed",
       redactionMode: "redacted",
+      sourceKind: "seeded",
     }),
   };
 

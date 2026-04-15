@@ -100,6 +100,7 @@ describe("InstanceEvals", () => {
         artifactDirectory: "runs/run-1",
         failureKinds: [],
         tags: ["scope"],
+        sourceKind: "seeded",
       },
     ]);
     mockEvalsApi.getRun.mockResolvedValue(null);
@@ -124,6 +125,7 @@ describe("InstanceEvals", () => {
 
     expect(container.textContent).toContain("Architecture Evals");
     expect(container.textContent).toContain("Worker isolation across projects");
+    expect(container.textContent).toContain("Seeded");
     expect(container.querySelector('a[href="/instance/settings/evals/run-1"]')).not.toBeNull();
 
     await act(async () => {

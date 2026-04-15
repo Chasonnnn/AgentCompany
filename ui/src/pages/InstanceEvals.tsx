@@ -1,14 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   EvalDimension,
   EvalRunArtifact,
+  EvalRunListItem,
   EvalRunStatus,
   EvalSummaryIndex,
   EvalSummaryScenarioEntry,
 } from "@paperclipai/shared";
 import { ActivitySquare, AlertTriangle, BarChart3, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Link, useParams } from "@/lib/router";
 import { evalsApi } from "@/api/evals";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
@@ -38,6 +40,10 @@ function RunStatusBadge({ status }: { status: EvalRunStatus }) {
       {status.replace(/_/g, " ")}
     </Badge>
   );
+}
+
+function sourceLabel(sourceKind: "seeded" | "observed") {
+  return sourceKind === "observed" ? "Observed" : "Seeded";
 }
 
 function RunDetail({ run }: { run: EvalRunArtifact }) {
@@ -78,6 +84,10 @@ function RunDetail({ run }: { run: EvalRunArtifact }) {
             <dd className="mt-1 text-sm">{run.bundle.label}</dd>
           </div>
           <div>
+            <dt className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Source</dt>
+            <dd className="mt-1 text-sm">{sourceLabel(run.sourceKind)}</dd>
+          </div>
+          <div>
             <dt className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Seed</dt>
             <dd className="mt-1 text-sm">{run.environment.seed}</dd>
           </div>
@@ -90,6 +100,18 @@ function RunDetail({ run }: { run: EvalRunArtifact }) {
             <dd className="mt-1 text-sm">{run.completedAt}</dd>
           </div>
         </dl>
+        {run.sourceKind === "observed" && run.observedRun ? (
+          <dl className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <dt className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Observed Issue</dt>
+              <dd className="mt-1 text-sm">{run.observedRun.issueId ?? "none"}</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Heartbeat Run</dt>
+              <dd className="mt-1 text-sm">{run.observedRun.heartbeatRunId ?? "none"}</dd>
+            </div>
+          </dl>
+        ) : null}
       </section>
 
       <section className="rounded-xl border border-border bg-card p-5 space-y-3">
@@ -143,6 +165,7 @@ function RunDetail({ run }: { run: EvalRunArtifact }) {
 export function InstanceEvals() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { runId } = useParams<{ runId?: string }>();
+  const [sourceFilter, setSourceFilter] = useState<"all" | "seeded" | "observed">("all");
 
   useEffect(() => {
     setBreadcrumbs([
@@ -167,6 +190,15 @@ export function InstanceEvals() {
     queryFn: () => evalsApi.getRun(runId!),
     enabled: Boolean(runId),
   });
+
+  const summary = summaryQuery.data ?? null;
+  const recentRuns = runsQuery.data ?? [];
+  const filteredRuns = useMemo(
+    () => recentRuns.filter((run) => sourceFilter === "all" || run.sourceKind === sourceFilter),
+    [recentRuns, sourceFilter],
+  );
+  const observedCount = recentRuns.filter((run) => run.sourceKind === "observed").length;
+  const seededCount = recentRuns.filter((run) => run.sourceKind === "seeded").length;
 
   if (summaryQuery.isLoading || runsQuery.isLoading || (runId && runQuery.isLoading)) {
     return <div className="text-sm text-muted-foreground">Loading architecture evals...</div>;
@@ -205,8 +237,10 @@ export function InstanceEvals() {
     );
   }
 
-  const summary = summaryQuery.data!;
-  const recentRuns = runsQuery.data!;
+  if (!summary) {
+    return <div className="text-sm text-muted-foreground">No architecture eval summary available yet.</div>;
+  }
+
   const reliability = findDimension(summary, "reliability");
   const stability = findDimension(summary, "stability");
   const utility = findDimension(summary, "utility");
@@ -243,6 +277,33 @@ export function InstanceEvals() {
       </section>
 
       <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">Run sources</h2>
+            <p className="text-sm text-muted-foreground">
+              Seeded scenarios and observed continuity traces share the same artifact root.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { value: "all", label: `All (${recentRuns.length})` },
+              { value: "seeded", label: `Seeded (${seededCount})` },
+              { value: "observed", label: `Observed (${observedCount})` },
+            ].map((option) => (
+              <Button
+                key={option.value}
+                size="sm"
+                variant={sourceFilter === option.value ? "default" : "outline"}
+                onClick={() => setSourceFilter(option.value as typeof sourceFilter)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5 space-y-4">
         <div className="flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">Failing scenarios</h2>
@@ -275,13 +336,13 @@ export function InstanceEvals() {
           <ShieldCheck className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">Recent runs</h2>
         </div>
-        {recentRuns.length === 0 ? (
+        {filteredRuns.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/70 bg-muted/10 px-4 py-4 text-sm text-muted-foreground">
             No architecture eval artifacts found yet. Run <code>pnpm evals:architecture:canary</code> and then <code>pnpm evals:architecture:rebuild</code>.
           </div>
         ) : (
           <ul className="space-y-2">
-            {recentRuns.map((run) => (
+            {filteredRuns.map((run: EvalRunListItem) => (
               <li key={run.runId} className="rounded-lg border border-border/70 bg-background px-4 py-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="space-y-1">
@@ -290,6 +351,7 @@ export function InstanceEvals() {
                       <RunStatusBadge status={run.status} />
                       <Badge variant="outline">{run.dimension}</Badge>
                       <Badge variant="secondary">{run.layer}</Badge>
+                      <Badge variant="secondary">{sourceLabel(run.sourceKind)}</Badge>
                     </div>
                     <p className="text-sm text-muted-foreground">
                       {run.bundleLabel} • completed {run.completedAt}

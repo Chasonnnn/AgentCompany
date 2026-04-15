@@ -33,6 +33,8 @@ async function seedArtifactRoot(artifactRoot: string) {
     evalContractVersion: EVAL_CONTRACT_VERSION,
     scorecardVersion: EVAL_SCORECARD_VERSION,
     runId,
+    sourceKind: "seeded",
+    observedRun: null,
     scenario: {
       id: "worker-isolation-across-projects",
       title: "Worker isolation across projects",
@@ -100,6 +102,7 @@ async function seedArtifactRoot(artifactRoot: string) {
       startedAt: "2026-04-13T12:00:00.000Z",
     },
     replay: {
+      sourceKind: "seeded",
       scenarioId: "worker-isolation-across-projects",
       bundleId: "architecture-canary",
       lane: "canary",
@@ -122,6 +125,7 @@ async function seedArtifactRoot(artifactRoot: string) {
         dependencies: [],
         notes: null,
       },
+      observedRun: null,
       env: {
         NODE_ENV: "test",
       },

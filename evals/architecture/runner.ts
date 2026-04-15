@@ -1,8 +1,8 @@
 import path from "node:path";
 import { getBundlesForLane, getScenarioById } from "./scenarios.js";
-import { getDefaultArtifactRoot, rebuildSummaryFromArtifactRoot, runSeededLane } from "./core.js";
+import { getDefaultArtifactRoot, rebuildSummaryFromArtifactRoot, runObservedLane, runSeededLane } from "./core.js";
 
-type Command = "run" | "rebuild-summary";
+type Command = "run" | "run-observed" | "rebuild-summary";
 
 function readArg(flag: string, args: string[]) {
   const index = args.indexOf(flag);
@@ -12,7 +12,7 @@ function readArg(flag: string, args: string[]) {
 
 function readCommand(args: string[]): Command {
   const command = (args[0] ?? "run") as Command;
-  if (command !== "run" && command !== "rebuild-summary") {
+  if (command !== "run" && command !== "run-observed" && command !== "rebuild-summary") {
     throw new Error(`Unknown eval runner command '${command}'.`);
   }
   return command;
@@ -29,6 +29,27 @@ async function main() {
       artifactRoot,
       generatedAt: summary.generatedAt,
       runCount: summary.runCount,
+    }, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "run-observed") {
+    const lookbackHours = Number.parseInt(readArg("--lookback-hours", args) ?? "24", 10);
+    const maxRuns = Number.parseInt(readArg("--max-runs", args) ?? "12", 10);
+    const seedValue = readArg("--seed", args);
+    const seed = seedValue ? Number.parseInt(seedValue, 10) : undefined;
+    const result = await runObservedLane({
+      repoRoot: path.resolve(process.cwd()),
+      artifactRoot,
+      lookbackHours,
+      maxRuns,
+      seed,
+    });
+    process.stdout.write(`${JSON.stringify({
+      artifactRoot,
+      runCount: result.artifacts.length,
+      latestRunId: result.summary.latestRunId,
+      sourceKind: "observed",
     }, null, 2)}\n`);
     return;
   }
