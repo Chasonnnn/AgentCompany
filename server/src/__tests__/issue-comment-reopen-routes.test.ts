@@ -7,6 +7,8 @@ const mockIssueService = vi.hoisted(() => ({
   assertCheckoutOwner: vi.fn(),
   update: vi.fn(),
   addComment: vi.fn(),
+  getComment: vi.fn(),
+  removeComment: vi.fn(),
   findMentionedAgents: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
@@ -155,6 +157,8 @@ describe("issue comment reopen routes", () => {
     mockIssueService.assertCheckoutOwner.mockReset();
     mockIssueService.update.mockReset();
     mockIssueService.addComment.mockReset();
+    mockIssueService.getComment.mockReset();
+    mockIssueService.removeComment.mockReset();
     mockIssueService.findMentionedAgents.mockReset();
     mockIssueService.listWakeableBlockedDependents.mockReset();
     mockIssueService.getWakeableParentAfterChildCompletion.mockReset();
@@ -180,6 +184,26 @@ describe("issue comment reopen routes", () => {
     mockHeartbeatService.cancelRun.mockResolvedValue(null);
     mockLogActivity.mockResolvedValue(undefined);
     mockIssueService.addComment.mockResolvedValue({
+      id: "comment-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      body: "hello",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: null,
+      authorUserId: "local-board",
+    });
+    mockIssueService.getComment.mockResolvedValue({
+      id: "comment-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      body: "hello",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: null,
+      authorUserId: "local-board",
+    });
+    mockIssueService.removeComment.mockResolvedValue({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
       companyId: "company-1",
@@ -249,6 +273,44 @@ describe("issue comment reopen routes", () => {
           reopened: true,
           reopenedFrom: "done",
           status: "todo",
+        }),
+      }),
+    );
+  });
+
+  it("implicitly reopens a closed issue when another agent comments", async () => {
+    const closedIssue = {
+      ...makeIssue("done"),
+      assigneeAgentId: "22222222-2222-4222-8222-222222222222",
+      assigneeUserId: null,
+    };
+    mockIssueService.getById.mockResolvedValue(closedIssue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...closedIssue,
+      ...patch,
+    }));
+
+    const res = await request(await installActor(createApp(), {
+      type: "agent",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      companyId: "company-1",
+      source: "agent_api_key",
+    }))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "picking this back up" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      { status: "todo" },
+    );
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "22222222-2222-4222-8222-222222222222",
+      expect.objectContaining({
+        reason: "issue_reopened_via_comment",
+        contextSnapshot: expect.objectContaining({
+          source: "issue.comment.reopen",
+          wakeReason: "issue_reopened_via_comment",
         }),
       }),
     );
@@ -331,6 +393,59 @@ describe("issue comment reopen routes", () => {
     );
     expect(mockIssueService.update).not.toHaveBeenCalled();
     expect(res.body.body).toBe(body);
+  });
+
+  it("allows the author to cancel a queued issue comment for the active run", async () => {
+    const issue = {
+      ...makeIssue("todo"),
+      executionRunId: "run-1",
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-1",
+      companyId: "company-1",
+      agentId: "99999999-9999-4999-8999-999999999999",
+      status: "running",
+      startedAt: new Date("2026-04-15T12:00:00.000Z"),
+      createdAt: new Date("2026-04-15T11:59:59.000Z"),
+      contextSnapshot: { issueId: issue.id },
+    });
+    mockIssueService.getComment.mockResolvedValue({
+      id: "comment-queued",
+      issueId: issue.id,
+      companyId: "company-1",
+      body: "queue me",
+      createdAt: new Date("2026-04-15T12:00:01.000Z"),
+      updatedAt: new Date("2026-04-15T12:00:01.000Z"),
+      authorAgentId: null,
+      authorUserId: "local-board",
+    });
+    mockIssueService.removeComment.mockResolvedValue({
+      id: "comment-queued",
+      issueId: issue.id,
+      companyId: "company-1",
+      body: "queue me",
+      createdAt: new Date("2026-04-15T12:00:01.000Z"),
+      updatedAt: new Date("2026-04-15T12:00:01.000Z"),
+      authorAgentId: null,
+      authorUserId: "local-board",
+    });
+
+    const res = await request(await installActor(createApp()))
+      .delete("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-queued");
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.removeComment).toHaveBeenCalledWith("comment-queued");
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.comment_cancelled",
+        details: expect.objectContaining({
+          source: "queue_cancel",
+          queueTargetRunId: "run-1",
+        }),
+      }),
+    );
   });
 
   it("writes decision ids into executionState and inserts the decision inside the transaction", async () => {
