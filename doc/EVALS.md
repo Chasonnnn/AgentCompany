@@ -84,6 +84,8 @@ Utility asks whether the hierarchy earns its cost versus simpler alternatives.
 
 Wave 1 utility remains informational. It does not gate PRs until the nightly harness is stable.
 
+Wave 3 adds observed runtime continuity traces beside the seeded lane. These observed runs are sourced from real issue-backed heartbeat executions, remain internal-only, nightly-only, and informational, and reuse runtime evidence rather than introducing a parallel workflow engine.
+
 ## Reproducibility
 
 Every run must capture a replay envelope:
@@ -102,6 +104,11 @@ Every run must capture a replay envelope:
 
 Raw artifacts must be sufficient to reproduce the run locally without requiring hidden DB-only state.
 
+Observed runs carry an explicit source marker:
+
+- `seeded`
+- `observed`
+
 ## Artifact Model
 
 Wave 1 artifacts live under the Paperclip instance root:
@@ -117,6 +124,8 @@ Wave 1 artifacts live under the Paperclip instance root:
 
 `artifact.json` is the canonical per-run bundle for read APIs.
 `summary/index.json` must always be rebuildable from the run artifacts.
+
+Observed continuity artifacts may add runtime evidence snapshots such as heartbeat context, continuity bundle hashes, issue activity, document revisions, and linked approvals. These artifacts stay redacted by default just like seeded runs.
 
 ## Trace Completeness
 
@@ -266,3 +275,16 @@ Every recurring failure should enter the eval loop:
 3. convert that bundle into a scenario, grader, or hard check
 4. add it to the nightly matrix
 5. promote it to PR canary only after it stabilizes
+
+## Observed continuity lane
+
+Observed continuity scorecards focus on runtime execution quality rather than seeded scenario completion. At minimum they should report:
+
+- resume stability after continuity bundle changes
+- ownership churn
+- stale-progress incidence
+- invalid-handoff recovery
+- reviewer return latency and findings closure
+- branch return and merge loss
+
+Observed continuity captures stay read-only and non-gating in this wave. They are there to harden the harness and continuity model before any release decisions depend on them.

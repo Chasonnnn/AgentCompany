@@ -186,6 +186,8 @@ Reserved issue document keys:
 - `progress`
 - `test-plan`
 - `handoff`
+- `review-findings`
+- `branch-return`
 
 These keys are reserved but open-world:
 
@@ -216,6 +218,13 @@ Paperclip uses three default issue working-set tiers:
 - `progress` carries the current snapshot plus append-only checkpoints for resume
 - `test-plan` carries validation intent
 - `handoff` is the required ownership-transfer artifact
+- `review-findings` is the durable reviewer return artifact; review comments and packets may point to it, but they do not replace it
+- `branch-return` is the required branch-owner return artifact before any parent merge preview or merge confirmation
+- the server owns a persisted continuity snapshot for tier, status, health, spec state, required docs, and unresolved branches; UI hints are never the source of truth once that state exists
+- execution starts must fail explicitly when required continuity docs are missing or handoff state is invalid
+- continuity scaffolding happens only through explicit continuity actions such as prepare, handoff, spec thaw, and branch creation; heartbeat execution must not silently create docs
+- remediation is explicit and actor-scoped: stale progress, invalid handoffs, open findings, and returned branches must surface as server-derived actions, not client heuristics
+- real-run continuity eval traces may be captured nightly beside seeded evals, but they remain informational and read-only until the signal is stable
 
 Runbook precedence:
 

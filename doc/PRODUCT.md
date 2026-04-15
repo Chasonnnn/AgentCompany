@@ -162,3 +162,7 @@ Execution invariants:
 4. Review and approval can block or redirect, but do not implicitly transfer ownership.
 5. Spec changes require explicit authority; plan changes do not.
 6. Any ownership transfer must produce a handoff artifact.
+
+Wave 2 productizes those rules as persisted issue continuity state plus a runtime continuity bundle. The continuity owner remains the assignee for active execution, but the server now owns the orchestration snapshot for tier, health, spec freeze/thaw, missing docs, and unresolved branches. Heartbeat execution for issue-backed work resumes from that bundle instead of piecing continuity together from UI heuristics.
+
+Wave 3 makes that model feel complete rather than merely valid. Review return now writes a durable `review-findings` artifact instead of relying on comments to carry continuity, branch work returns through an explicit `branch-return` artifact before the parent owner previews and confirms any merge, and unhealthy continuity is remediated through explicit owner-scoped actions such as progress checkpoints, handoff repair, and handoff cancel. Architecture evals also begin capturing observed runtime continuity traces alongside seeded scenarios, but those observed traces remain nightly-only and informational until the evidence is stable enough to gate anything.

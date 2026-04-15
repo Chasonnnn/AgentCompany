@@ -219,6 +219,7 @@ Invariant:
 - `started_at` timestamptz null
 - `completed_at` timestamptz null
 - `cancelled_at` timestamptz null
+- `continuity_state` jsonb null
 
 Invariants:
 
@@ -226,6 +227,9 @@ Invariants:
 - task must trace to company goal chain via `goal_id`, `parent_id`, or project-goal linkage
 - `in_progress` requires assignee
 - terminal states: `done | cancelled`
+- `continuity_state` is server-owned orchestration state for execution continuity; it stores tier, status, health, required/missing docs, spec state, branch role/status, unresolved branches, and continuity timestamps, but it never duplicates owner identity
+- the continuity owner remains the current assignee once execution is active
+- spec thaw remains approval-backed; continuity state reflects the approval outcome rather than replacing it
 
 ## 7.7 `issue_comments`
 
@@ -250,6 +254,16 @@ Comments may contain descriptive packet frontmatter (`paperclip/*.v1`), but pack
 - `error` text null
 - `external_run_id` text null
 - `context_snapshot` jsonb null
+
+For issue-backed execution, `context_snapshot` must capture continuity resume metadata:
+
+- `continuityBundleHash`
+- referenced issue/project document revision ids
+- `continuityTier`
+- `specState`
+- unresolved branch ids
+
+If the referenced bundle hash or document revisions change, resume logic must invalidate the previous bundle and force a fresh continuity load.
 
 ## 7.9 `cost_events`
 
@@ -484,12 +498,17 @@ Execution document semantics:
   Short current snapshot plus append-only checkpoints with completed work, current state, pitfalls, next action, open questions, and evidence
 - `handoff`
   Required before reassignment, takeover, or emergency override
+- `review-findings`
+  Durable reviewer return artifact with structured findings, outcome, evidence, and owner-facing next action
+- `branch-return`
+  Durable branch-owner return artifact with proposed parent updates, merge checklist, unresolved risks, and returned artifacts
 
 Branch work:
 
 - durable branch work is represented as a child issue with a typed `branch-charter` doc
 - transient branch work may return comments or work products only
 - only the continuity owner merges branch output into shared state
+- reviewers and approvers remain gates; they may block, annotate, and return findings, but they do not become the continuity owner implicitly
 
 ## 8. State Machines
 
@@ -612,11 +631,37 @@ All endpoints are under `/api` and return JSON.
 - `POST /issues/:issueId/checkout`
 - `POST /issues/:issueId/release`
 - `POST /issues/:issueId/comments`
+- `GET /issues/:issueId/continuity`
+- `POST /issues/:issueId/continuity/prepare`
+- `POST /issues/:issueId/continuity/handoff`
+- `POST /issues/:issueId/continuity/progress-checkpoint`
+- `POST /issues/:issueId/continuity/review-return`
+- `POST /issues/:issueId/continuity/review-resubmit`
+- `POST /issues/:issueId/continuity/handoff-repair`
+- `POST /issues/:issueId/continuity/handoff-cancel`
+- `POST /issues/:issueId/continuity/spec-thaw`
+- `POST /issues/:issueId/continuity/branches`
+- `POST /issues/:issueId/continuity/branches/:branchIssueId/return`
+- `GET /issues/:issueId/continuity/branches/:branchIssueId/merge-preview`
+- `POST /issues/:issueId/continuity/branches/:branchIssueId/merge`
 - `GET /issues/:issueId/comments`
 - `POST /companies/:companyId/issues/:issueId/attachments` (multipart upload)
 - `GET /issues/:issueId/attachments`
 - `GET /attachments/:attachmentId/content`
 - `DELETE /attachments/:attachmentId`
+
+Continuity orchestration rules:
+
+- `prepare` selects/confirms the issue tier, scaffolds missing required continuity docs, and marks continuity ready without silently mutating execution ownership
+- `handoff` validates a typed handoff artifact and coordinates reassignment through the existing issue update flow
+- `progress-checkpoint` appends a valid checkpoint and refreshes the top continuity snapshot
+- `review-return` writes `review-findings`, returns work to the same owner, and updates gate state without changing assignee
+- `review-resubmit` marks findings addressed, records the owner response, and reopens the same review gate explicitly
+- `handoff-repair` and `handoff-cancel` remediate malformed or stale pending handoffs explicitly; no silent auto-repair is allowed
+- `spec-thaw` creates or links an approval-backed thaw request; approval remains the governed artifact
+- `branches` creates child-issue branch work; branch state lives in parent/child continuity state rather than separate workflow tables
+- branch owners return through a typed `branch-return` artifact
+- parent continuity owners preview a structured merge bundle and explicitly confirm which parent updates to apply; merge assist never mutates parent continuity automatically
 
 ### 10.4.1 Atomic Checkout Contract
 
