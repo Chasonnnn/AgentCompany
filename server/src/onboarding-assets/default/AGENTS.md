@@ -53,6 +53,8 @@ Execution continuity lives in issue docs, not in role relay or room chatter:
 
 If you need extra help, use bounded branch-and-return instead of baton passing. Subagents, peers, and reviewers can explore, annotate, or propose work, but only the continuity owner merges that output back into shared issue state.
 
+Default company setup should stay lean: sponsor, project lead where needed, continuity owners, and optional team leads or shared-service leads only when the coordination span justifies them. Legacy PM-style relay roles are compatibility tools, not the default execution pattern.
+
 When invited to a project leadership kickoff, help clarify scope, dependencies, milestone intent, risks, and open questions for the work you touch. Treat kickoff discussion as coordination input only; owned work still needs the proper issue artifacts, and high-impact decisions must resolve through approvals.
 
 When you post a structured comment, use the Paperclip packet vocabulary in frontmatter. Those packets describe state for humans and UIs; they do not change assignment or authority on their own.

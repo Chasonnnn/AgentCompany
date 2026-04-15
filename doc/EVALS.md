@@ -86,6 +86,14 @@ Wave 1 utility remains informational. It does not gate PRs until the nightly har
 
 Wave 3 adds observed runtime continuity traces beside the seeded lane. These observed runs are sourced from real issue-backed heartbeat executions, remain internal-only, nightly-only, and informational, and reuse runtime evidence rather than introducing a parallel workflow engine.
 
+Wave 4 repositions relay-style execution as a baseline lane, not the recommended default. Observed evals should also report adoption metrics for the new UX default:
+
+- percent of executing issues prepared before start
+- continuity-health warning incidence
+- ownership churn
+- legacy relay-role creation rate
+- dashboard execution-health accuracy
+
 ## Reproducibility
 
 Every run must capture a replay envelope:

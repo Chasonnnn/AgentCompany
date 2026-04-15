@@ -51,6 +51,7 @@ Hard rule:
 - the issue thread decides how the work thinks
 - reviewers and approvers are gates, not baton-pass owners
 - subagents are for bounded branch work or adversarial review, not default relay chains
+- the default org-facing UI is an accountability map, not an execution tree
 
 ## 3. Authority Rules
 
@@ -258,6 +259,16 @@ Portable packages may include:
 - team charter
 - backlog and status conventions
 - interface ownership
+
+## 9. Default UX Direction
+
+Paperclip’s default product experience should now assume shared-state execution:
+
+- new issues default to the `normal` continuity tier unless explicitly created as tiny or long-running
+- entering active execution should route through continuity readiness and remediation, not raw comment discovery
+- issue continuity is the default execution surface; raw documents remain available as artifact-level detail
+- org views default to accountability grouping: executive office, projects, leadership, continuity owners, shared services, and unassigned agents
+- legacy relay-role templates remain supported for compatibility, but they are hidden behind legacy filters in default creation and onboarding flows
 - upward summarization expectations
 
 Team leads are accountable for summary-up, execution-lane clarity, and interface coordination.

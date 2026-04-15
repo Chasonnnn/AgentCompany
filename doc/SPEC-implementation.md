@@ -230,6 +230,8 @@ Invariants:
 - `continuity_state` is server-owned orchestration state for execution continuity; it stores tier, status, health, required/missing docs, spec state, branch role/status, unresolved branches, and continuity timestamps, but it never duplicates owner identity
 - the continuity owner remains the current assignee once execution is active
 - spec thaw remains approval-backed; continuity state reflects the approval outcome rather than replacing it
+- the default issue creation path selects `normal` continuity unless the caller explicitly chooses another tier
+- issue list and dashboard payloads should project compact continuity health so operators can act without opening every issue
 
 ## 7.7 `issue_comments`
 
@@ -241,6 +243,13 @@ Invariants:
 - `body` text not null
 
 Comments may contain descriptive packet frontmatter (`paperclip/*.v1`), but packets are non-authoritative. Real state changes still happen through existing issue, approval, room, and engagement APIs.
+
+Wave 4 default UX rules:
+
+- issue continuity is the primary execution surface in issue detail
+- raw issue documents remain available as artifacts, but they are no longer the default first view
+- org/accountability surfaces must group by responsibility and continuity ownership rather than implying a baton-passing relay chain
+- legacy relay archetypes remain loadable and editable, but default role pickers and onboarding flows should prefer governance, shared-service, and shared-state execution roles
 
 ## 7.8 `heartbeat_runs`
 
