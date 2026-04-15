@@ -5,13 +5,18 @@ import {
   AGENT_DEPARTMENT_LABELS,
   AGENT_ROLE_LABELS,
   type Agent,
+  type AccountabilityAgentSummary,
+  type AccountabilityProjectNode,
   type AgentHierarchyMemberSummary,
   type AgentNavigationClusterNode,
   type AgentNavigationDepartmentNode,
   type AgentNavigationLayout,
   type AgentNavigationProjectNode,
   type AgentNavigationTeamNode,
+  type CompanyAgentAccountability,
   type CompanyAgentNavigation,
+  type OperatingHierarchyDepartmentSummary,
+  type OperatingHierarchyProjectSummary,
 } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -20,7 +25,7 @@ import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
-import { getStoredAgentLayout, setStoredAgentLayout } from "../lib/agent-layout";
+import { getStoredAgentLayout, setStoredAgentLayout, type AgentLayoutMode } from "../lib/agent-layout";
 import { queryKeys } from "../lib/queryKeys";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
@@ -459,16 +464,157 @@ function DepartmentBlock({
   );
 }
 
+function OperatingProjectBlock({
+  project,
+  agentMap,
+  liveRunByAgent,
+}: {
+  project: OperatingHierarchyProjectSummary;
+  agentMap: Map<string, Agent>;
+  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+}) {
+  return (
+    <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+          Project
+        </div>
+        <div className="text-lg font-semibold">{project.projectName}</div>
+      </div>
+      <MemberBlock label="Leadership" members={project.leadership} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+      <MemberBlock label="Workers" members={project.workers} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+      <MemberBlock label="Consultants" members={project.consultants} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+    </section>
+  );
+}
+
+function OperatingDepartmentBlock({
+  department,
+  agentMap,
+  liveRunByAgent,
+}: {
+  department: OperatingHierarchyDepartmentSummary;
+  agentMap: Map<string, Agent>;
+  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+        {department.name}
+      </div>
+      <MemberBlock label="Leads" members={department.leaders} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+      {department.projects.map((project) => (
+        <OperatingProjectBlock
+          key={`${department.key}:${project.projectId}`}
+          project={project}
+          agentMap={agentMap}
+          liveRunByAgent={liveRunByAgent}
+        />
+      ))}
+    </section>
+  );
+}
+
+function filterAccountability(
+  accountability: CompanyAgentAccountability,
+  tab: FilterTab,
+  showTerminated: boolean,
+): CompanyAgentAccountability {
+  const filterOwners = (owners: AccountabilityAgentSummary[]) =>
+    owners.filter((owner) => matchesFilter(owner.status, tab, showTerminated));
+  const filterOperatingProject = (
+    project: OperatingHierarchyProjectSummary,
+  ): OperatingHierarchyProjectSummary | null => {
+    const leadership = filterMembers(project.leadership, tab, showTerminated);
+    const workers = filterMembers(project.workers, tab, showTerminated);
+    const consultants = filterMembers(project.consultants, tab, showTerminated);
+    if (leadership.length === 0 && workers.length === 0 && consultants.length === 0) return null;
+    return { ...project, leadership, workers, consultants };
+  };
+  const filterOperatingDepartment = (
+    department: OperatingHierarchyDepartmentSummary,
+  ): OperatingHierarchyDepartmentSummary | null => {
+    const leaders = filterMembers(department.leaders, tab, showTerminated);
+    const projects = department.projects
+      .map((project) => filterOperatingProject(project))
+      .filter((project): project is OperatingHierarchyProjectSummary => Boolean(project));
+    if (leaders.length === 0 && projects.length === 0) return null;
+    return { ...department, leaders, projects };
+  };
+  const projects = accountability.projects
+    .map((project) => {
+      const leadership = filterMembers(project.leadership, tab, showTerminated);
+      const continuityOwners = filterOwners(project.continuityOwners);
+      const sharedServices = filterMembers(project.sharedServices, tab, showTerminated);
+      if (leadership.length === 0 && continuityOwners.length === 0 && sharedServices.length === 0) return null;
+      return { ...project, leadership, continuityOwners, sharedServices };
+    })
+    .filter((project): project is AccountabilityProjectNode => Boolean(project));
+  return {
+    ...accountability,
+    executiveOffice: filterMembers(accountability.executiveOffice, tab, showTerminated),
+    projects,
+    sharedServices: accountability.sharedServices
+      .map((department) => filterOperatingDepartment(department))
+      .filter((department): department is OperatingHierarchyDepartmentSummary => Boolean(department)),
+    unassigned: filterMembers(accountability.unassigned, tab, showTerminated),
+  };
+}
+
+function accountabilityCount(accountability: CompanyAgentAccountability) {
+  const ids = new Set<string>();
+  for (const agent of accountability.executiveOffice) ids.add(agent.id);
+  for (const project of accountability.projects) {
+    for (const leader of project.leadership) ids.add(leader.id);
+    for (const owner of project.continuityOwners) ids.add(owner.id);
+    for (const agent of project.sharedServices) ids.add(agent.id);
+  }
+  for (const department of accountability.sharedServices) {
+    for (const agent of department.leaders) ids.add(agent.id);
+  }
+  for (const agent of accountability.unassigned) ids.add(agent.id);
+  return ids.size;
+}
+
+function AccountabilityProjectBlock({
+  project,
+  agentMap,
+  liveRunByAgent,
+}: {
+  project: AccountabilityProjectNode;
+  agentMap: Map<string, Agent>;
+  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+        <span>{project.projectName}</span>
+        {project.issueCounts.blockedMissingDocs > 0 ? <span>{project.issueCounts.blockedMissingDocs} missing docs</span> : null}
+        {project.issueCounts.openReviewFindings > 0 ? <span>{project.issueCounts.openReviewFindings} findings</span> : null}
+        {project.issueCounts.returnedBranches > 0 ? <span>{project.issueCounts.returnedBranches} returns</span> : null}
+      </div>
+      <MemberBlock label="Leadership" members={project.leadership} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+      <MemberBlock
+        label="Continuity Owners"
+        members={project.continuityOwners}
+        agentMap={agentMap}
+        liveRunByAgent={liveRunByAgent}
+      />
+      <MemberBlock label="Shared Services" members={project.sharedServices} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+    </section>
+  );
+}
+
 function LayoutToggle({
   layout,
   onChange,
 }: {
-  layout: AgentNavigationLayout;
-  onChange: (layout: AgentNavigationLayout) => void;
+  layout: AgentLayoutMode;
+  onChange: (layout: AgentLayoutMode) => void;
 }) {
   return (
     <div className="flex items-center border border-border">
-      {(["department", "project"] as const).map((value) => (
+      {(["accountability", "department", "project"] as const).map((value) => (
         <button
           key={value}
           className={cn(
@@ -479,7 +625,7 @@ function LayoutToggle({
           )}
           onClick={() => onChange(value)}
         >
-          {value}
+          {value === "accountability" ? "accountability" : value}
         </button>
       ))}
     </div>
@@ -509,7 +655,7 @@ export function Agents() {
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
-  const [layout, setLayout] = useState<AgentNavigationLayout>("department");
+  const [layout, setLayout] = useState<AgentLayoutMode>("accountability");
 
   useEffect(() => {
     if (!selectedCompanyId) return;
@@ -523,9 +669,15 @@ export function Agents() {
   });
 
   const { data: navigation } = useQuery({
-    queryKey: queryKeys.agents.navigation(selectedCompanyId!, layout),
-    queryFn: () => agentsApi.navigation(selectedCompanyId!, layout),
-    enabled: !!selectedCompanyId && effectiveView === "tree",
+    queryKey: queryKeys.agents.navigation(selectedCompanyId!, layout === "accountability" ? "department" : layout),
+    queryFn: () => agentsApi.navigation(selectedCompanyId!, layout === "accountability" ? "department" : layout),
+    enabled: !!selectedCompanyId && effectiveView === "tree" && layout !== "accountability",
+  });
+
+  const { data: accountability } = useQuery({
+    queryKey: queryKeys.agents.accountability(selectedCompanyId!),
+    queryFn: () => agentsApi.accountability(selectedCompanyId!),
+    enabled: !!selectedCompanyId && effectiveView === "tree" && layout === "accountability",
   });
 
   const { data: runs } = useQuery({
@@ -569,9 +721,11 @@ export function Agents() {
 
   const filteredAgents = filterAgents(agents ?? [], tab, showTerminated);
   const filteredNavigation = navigation ? filterNavigation(navigation, tab, showTerminated) : null;
+  const filteredAccountability = accountability ? filterAccountability(accountability, tab, showTerminated) : null;
   const filteredNavigationCount = filteredNavigation ? navigationCount(filteredNavigation) : 0;
+  const filteredAccountabilityCount = filteredAccountability ? accountabilityCount(filteredAccountability) : 0;
 
-  function updateLayout(next: AgentNavigationLayout) {
+  function updateLayout(next: AgentLayoutMode) {
     if (!selectedCompanyId) return;
     setLayout(next);
     setStoredAgentLayout(selectedCompanyId, next, currentUserId);
@@ -671,9 +825,10 @@ export function Agents() {
           {filteredAgents.length} agent{filteredAgents.length !== 1 ? "s" : ""}
         </p>
       ) : null}
-      {effectiveView === "tree" && filteredNavigation ? (
+      {effectiveView === "tree" && (layout === "accountability" ? filteredAccountability : filteredNavigation) ? (
         <p className="text-xs text-muted-foreground">
-          {filteredNavigationCount} agent{filteredNavigationCount !== 1 ? "s" : ""} in {layout} layout
+          {(layout === "accountability" ? filteredAccountabilityCount : filteredNavigationCount)} agent
+          {(layout === "accountability" ? filteredAccountabilityCount : filteredNavigationCount) !== 1 ? "s" : ""} in {layout} layout
         </p>
       ) : null}
 
@@ -743,7 +898,64 @@ export function Agents() {
         </p>
       ) : null}
 
-      {effectiveView === "tree" && filteredNavigation && filteredNavigationCount > 0 ? (
+      {effectiveView === "tree" && layout === "accountability" && filteredAccountability && filteredAccountabilityCount > 0 ? (
+        <div className="space-y-6">
+          {filteredAccountability.executiveOffice.length > 0 ? (
+            <section className="space-y-3">
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Executive Office
+              </div>
+              <MemberBlock
+                label="Governance"
+                members={filteredAccountability.executiveOffice}
+                agentMap={agentMap}
+                liveRunByAgent={liveRunByAgent}
+              />
+            </section>
+          ) : null}
+
+          {filteredAccountability.projects.map((project) => (
+            <AccountabilityProjectBlock
+              key={project.projectId ?? project.projectName}
+              project={project}
+              agentMap={agentMap}
+              liveRunByAgent={liveRunByAgent}
+            />
+          ))}
+
+          {filteredAccountability.sharedServices.length > 0 ? (
+            <section className="space-y-4">
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Shared Services
+              </div>
+              {filteredAccountability.sharedServices.map((department) => (
+                <OperatingDepartmentBlock
+                  key={`${department.key}:${department.name}`}
+                  department={department}
+                  agentMap={agentMap}
+                  liveRunByAgent={liveRunByAgent}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {filteredAccountability.unassigned.length > 0 ? (
+            <section className="space-y-3">
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Unassigned
+              </div>
+              <MemberBlock
+                label="Needs scope"
+                members={filteredAccountability.unassigned}
+                agentMap={agentMap}
+                liveRunByAgent={liveRunByAgent}
+              />
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+
+      {effectiveView === "tree" && layout !== "accountability" && filteredNavigation && filteredNavigationCount > 0 ? (
         <div className="space-y-6">
           {filteredNavigation.executives.length > 0 ? (
             <section className="space-y-3">
@@ -818,7 +1030,13 @@ export function Agents() {
         </div>
       ) : null}
 
-      {effectiveView === "tree" && filteredNavigation && filteredNavigationCount === 0 ? (
+      {effectiveView === "tree" && layout === "accountability" && filteredAccountability && filteredAccountabilityCount === 0 ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          No agents match the selected filter.
+        </p>
+      ) : null}
+
+      {effectiveView === "tree" && layout !== "accountability" && filteredNavigation && filteredNavigationCount === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
           No agents match the selected filter.
         </p>

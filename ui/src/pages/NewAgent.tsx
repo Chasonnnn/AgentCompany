@@ -76,6 +76,7 @@ export function NewAgent() {
   const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
   const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
   const [roleOpen, setRoleOpen] = useState(false);
+  const [showLegacyRoles, setShowLegacyRoles] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const { data: agents } = useQuery({
@@ -203,6 +204,7 @@ export function NewAgent() {
   }
 
   const availableSkills = (companySkills ?? []).filter((skill) => !skill.key.startsWith("paperclipai/paperclip/"));
+  const visibleRoles = showLegacyRoles ? AGENT_ROLES : AGENT_ROLES.filter((candidate) => candidate !== "pm");
 
   function toggleSkill(key: string, checked: boolean) {
     setSelectedSkillKeys((prev) => {
@@ -218,7 +220,7 @@ export function NewAgent() {
       <div>
         <h1 className="text-lg font-semibold">New Agent</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Advanced agent configuration
+          Accountability and execution-owner setup
         </p>
       </div>
 
@@ -260,7 +262,7 @@ export function NewAgent() {
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-36 p-1" align="start">
-              {AGENT_ROLES.map((r) => (
+              {visibleRoles.map((r) => (
                 <button
                   key={r}
                   className={cn(
@@ -269,9 +271,15 @@ export function NewAgent() {
                   )}
                   onClick={() => { setRole(r); setRoleOpen(false); }}
                 >
-                  {roleLabels[r] ?? r}
+                  {r === "pm" ? `${roleLabels[r] ?? r} (legacy)` : (roleLabels[r] ?? r)}
                 </button>
               ))}
+              <div className="border-t border-border mt-1 pt-1 px-2">
+                <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <Checkbox checked={showLegacyRoles} onCheckedChange={(checked) => setShowLegacyRoles(checked === true)} />
+                  Show legacy relay roles
+                </label>
+              </div>
             </PopoverContent>
           </Popover>
 

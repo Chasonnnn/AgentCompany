@@ -1,15 +1,19 @@
 import type { AgentNavigationLayout } from "@paperclipai/shared";
 
-const DEFAULT_LAYOUT: AgentNavigationLayout = "department";
+export type AgentLayoutMode = AgentNavigationLayout | "accountability";
+
+const DEFAULT_LAYOUT: AgentLayoutMode = "accountability";
 
 function storageKey(companyId: string, userId?: string | null) {
   return `paperclip:agent-layout:${userId ?? "anon"}:${companyId}`;
 }
 
-export function getStoredAgentLayout(companyId: string, userId?: string | null): AgentNavigationLayout {
+export function getStoredAgentLayout(companyId: string, userId?: string | null): AgentLayoutMode {
   try {
     const raw = localStorage.getItem(storageKey(companyId, userId));
-    return raw === "project" ? "project" : DEFAULT_LAYOUT;
+    return raw === "project" || raw === "department" || raw === "accountability"
+      ? raw
+      : DEFAULT_LAYOUT;
   } catch {
     return DEFAULT_LAYOUT;
   }
@@ -17,7 +21,7 @@ export function getStoredAgentLayout(companyId: string, userId?: string | null):
 
 export function setStoredAgentLayout(
   companyId: string,
-  layout: AgentNavigationLayout,
+  layout: AgentLayoutMode,
   userId?: string | null,
 ) {
   try {

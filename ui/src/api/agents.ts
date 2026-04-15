@@ -1,5 +1,6 @@
 import type {
   Agent,
+  CompanyAgentAccountability,
   AgentDetail,
   AgentNavigationLayout,
   CompanyAgentHierarchy,
@@ -86,6 +87,8 @@ export const agentsApi = {
   hierarchy: (companyId: string) => api.get<CompanyAgentHierarchy>(`/companies/${companyId}/agent-hierarchy`),
   operatingHierarchy: (companyId: string) =>
     api.get<CompanyOperatingHierarchy>(`/companies/${companyId}/operating-hierarchy`),
+  accountability: (companyId: string) =>
+    api.get<CompanyAgentAccountability>(`/companies/${companyId}/agent-accountability`),
   navigation: (companyId: string, layout: AgentNavigationLayout = "department") =>
     api.get<CompanyAgentNavigation>(`/companies/${companyId}/agent-navigation?layout=${encodeURIComponent(layout)}`),
   listConfigurations: (companyId: string) =>

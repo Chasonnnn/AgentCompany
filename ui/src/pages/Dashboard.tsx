@@ -13,6 +13,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { MetricCard } from "../components/MetricCard";
 import { EmptyState } from "../components/EmptyState";
+import { IssueContinuityBadge } from "../components/IssueContinuityBadge";
 import { StatusIcon } from "../components/StatusIcon";
 
 import { ActivityRow } from "../components/ActivityRow";
@@ -283,6 +284,42 @@ export function Dashboard() {
             />
           </div>
 
+          <div className="rounded-lg border border-border/70 bg-card/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold">Execution health</h3>
+                <p className="text-xs text-muted-foreground">
+                  Continuity owners, blocked starts, findings, returns, and pending handoffs.
+                </p>
+              </div>
+              <Link to="/issues" className="text-xs text-muted-foreground underline underline-offset-2">
+                Open issues
+              </Link>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Owners</div>
+                <div className="mt-1 text-2xl font-semibold">{data.executionHealth.activeContinuityOwners}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Blocked</div>
+                <div className="mt-1 text-2xl font-semibold">{data.executionHealth.blockedMissingDocs}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Findings</div>
+                <div className="mt-1 text-2xl font-semibold">{data.executionHealth.openReviewFindings}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Returns</div>
+                <div className="mt-1 text-2xl font-semibold">{data.executionHealth.returnedBranches}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Handoffs</div>
+                <div className="mt-1 text-2xl font-semibold">{data.executionHealth.handoffPending}</div>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <ChartCard title="Run Activity" subtitle="Last 14 days">
               <RunActivityChart runs={runs ?? []} />
@@ -360,6 +397,7 @@ export function Dashboard() {
                             <span className="text-xs font-mono text-muted-foreground">
                               {issue.identifier ?? issue.id.slice(0, 8)}
                             </span>
+                            <IssueContinuityBadge issue={issue} />
                             {issue.assigneeAgentId && (() => {
                               const name = agentName(issue.assigneeAgentId);
                               return name

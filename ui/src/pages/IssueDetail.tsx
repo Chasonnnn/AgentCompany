@@ -81,6 +81,7 @@ import {
   ChevronRight,
   Copy,
   EyeOff,
+  GitBranch,
   Hexagon,
   ListTree,
   MessageSquare,
@@ -379,6 +380,7 @@ export function IssueDetail() {
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("chat");
+  const [executionSurfaceTab, setExecutionSurfaceTab] = useState<"continuity" | "artifacts">("continuity");
   const [pendingApprovalAction, setPendingApprovalAction] = useState<{
     approvalId: string;
     action: "approve" | "reject";
@@ -1926,72 +1928,91 @@ export function IssueDetail() {
         </div>
       )}
 
-      <IssueContinuityPanel
-        issue={issue}
-        agents={agents ?? []}
-        childIssues={childIssues}
-      />
-
-      <IssueDocumentsSection
-        issue={issue}
-        canDeleteDocuments={Boolean(session?.user?.id)}
-        feedbackVotes={feedbackVotes}
-        feedbackDataSharingPreference={feedbackDataSharingPreference}
-        feedbackTermsUrl={FEEDBACK_TERMS_URL}
-        mentions={mentionOptions}
-        imageUploadHandler={async (file) => {
-          const attachment = await uploadAttachment.mutateAsync(file);
-          return attachment.contentPath;
-        }}
-        onVote={async (revisionId, vote, options) => {
-          await feedbackVoteMutation.mutateAsync({
-            targetType: "issue_document_revision",
-            targetId: revisionId,
-            vote,
-            reason: options?.reason,
-            allowSharing: options?.allowSharing,
-            sharingPreferenceAtSubmit: feedbackDataSharingPreference,
-          });
-        }}
-        extraActions={
-          <>
-            {!hasAttachments && attachmentUploadButton}
-            {childIssues.length === 0 && (
-              <Button variant="outline" size="sm" onClick={openNewSubIssue} className="shadow-none">
-                <ListTree className="h-3.5 w-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Add sub-issue</span>
-                <span className="sm:hidden">Sub-issue</span>
-              </Button>
-            )}
-          </>
-        }
-      />
-
-      {attachmentsInitialLoading ? (
-        <IssueSectionSkeleton titleWidth="w-24" rows={2} />
-      ) : hasAttachments ? (
-        <div
-        className={cn(
-          "space-y-3 rounded-lg transition-colors",
-        )}
-        onDragEnter={(evt) => {
-          evt.preventDefault();
-          setAttachmentDragActive(true);
-        }}
-        onDragOver={(evt) => {
-          evt.preventDefault();
-          setAttachmentDragActive(true);
-        }}
-        onDragLeave={(evt) => {
-          if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
-          setAttachmentDragActive(false);
-        }}
-        onDrop={(evt) => void handleAttachmentDrop(evt)}
+      <Tabs
+        value={executionSurfaceTab}
+        onValueChange={(value) => setExecutionSurfaceTab(value as "continuity" | "artifacts")}
+        className="space-y-3"
       >
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
-          {attachmentUploadButton}
-        </div>
+        <TabsList variant="line" className="w-full justify-start gap-1">
+          <TabsTrigger value="continuity" className="gap-1.5">
+            <GitBranch className="h-3.5 w-3.5" />
+            Execution
+          </TabsTrigger>
+          <TabsTrigger value="artifacts" className="gap-1.5">
+            <Paperclip className="h-3.5 w-3.5" />
+            Artifacts
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="continuity" className="space-y-3">
+          <IssueContinuityPanel
+            issue={issue}
+            agents={agents ?? []}
+            childIssues={childIssues}
+          />
+        </TabsContent>
+
+        <TabsContent value="artifacts" className="space-y-4">
+          <IssueDocumentsSection
+            issue={issue}
+            canDeleteDocuments={Boolean(session?.user?.id)}
+            feedbackVotes={feedbackVotes}
+            feedbackDataSharingPreference={feedbackDataSharingPreference}
+            feedbackTermsUrl={FEEDBACK_TERMS_URL}
+            mentions={mentionOptions}
+            imageUploadHandler={async (file) => {
+              const attachment = await uploadAttachment.mutateAsync(file);
+              return attachment.contentPath;
+            }}
+            onVote={async (revisionId, vote, options) => {
+              await feedbackVoteMutation.mutateAsync({
+                targetType: "issue_document_revision",
+                targetId: revisionId,
+                vote,
+                reason: options?.reason,
+                allowSharing: options?.allowSharing,
+                sharingPreferenceAtSubmit: feedbackDataSharingPreference,
+              });
+            }}
+            extraActions={
+              <>
+                {!hasAttachments && attachmentUploadButton}
+                {childIssues.length === 0 && (
+                  <Button variant="outline" size="sm" onClick={openNewSubIssue} className="shadow-none">
+                    <ListTree className="h-3.5 w-3.5 mr-1.5" />
+                    <span className="hidden sm:inline">Add sub-issue</span>
+                    <span className="sm:hidden">Sub-issue</span>
+                  </Button>
+                )}
+              </>
+            }
+          />
+
+          {attachmentsInitialLoading ? (
+            <IssueSectionSkeleton titleWidth="w-24" rows={2} />
+          ) : hasAttachments ? (
+            <div
+            className={cn(
+              "space-y-3 rounded-lg transition-colors",
+            )}
+            onDragEnter={(evt) => {
+              evt.preventDefault();
+              setAttachmentDragActive(true);
+            }}
+            onDragOver={(evt) => {
+              evt.preventDefault();
+              setAttachmentDragActive(true);
+            }}
+            onDragLeave={(evt) => {
+              if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
+              setAttachmentDragActive(false);
+            }}
+            onDrop={(evt) => void handleAttachmentDrop(evt)}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
+              {attachmentUploadButton}
+            </div>
 
         {attachmentError && (
           <p className="text-xs text-destructive">{attachmentError}</p>
@@ -2096,8 +2117,10 @@ export function IssueDetail() {
             ))}
           </div>
         )}
-        </div>
-      ) : null}
+            </div>
+          ) : null}
+        </TabsContent>
+      </Tabs>
 
       <ImageGalleryModal
         images={imageAttachments}

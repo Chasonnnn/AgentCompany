@@ -18,6 +18,7 @@ import type { InboxIssueColumn } from "../lib/inbox";
 import { cn } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Identity } from "./Identity";
+import { IssueContinuityBadge } from "./IssueContinuityBadge";
 import { StatusIcon } from "./StatusIcon";
 
 export const issueTrailingColumns: InboxIssueColumn[] = ["assignee", "project", "workspace", "parent", "labels", "updated"];
@@ -184,6 +185,7 @@ export function InboxIssueMetaLeading({
           </span>
         </span>
       )}
+      <IssueContinuityBadge issue={issue} />
     </>
   );
 }

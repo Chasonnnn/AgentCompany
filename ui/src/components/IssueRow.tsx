@@ -9,6 +9,7 @@ import {
 } from "../lib/issueDetailBreadcrumb";
 import { cn } from "../lib/utils";
 import { StatusIcon } from "./StatusIcon";
+import { IssueContinuityBadge } from "./IssueContinuityBadge";
 
 type UnreadState = "hidden" | "visible" | "fading";
 
@@ -87,6 +88,7 @@ export function IssueRow({
               <span className="shrink-0 font-mono text-xs text-muted-foreground">
                 {identifier}
               </span>
+              <IssueContinuityBadge issue={issue} />
             </>
           )}
           {mobileMeta ? (
