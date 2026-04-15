@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   summarizeHeartbeatRunResultJson,
+  summarizeHeartbeatRunContextSnapshot,
   buildHeartbeatRunIssueComment,
   mergeHeartbeatRunResultJson,
 } from "../services/heartbeat-run-summary.js";
@@ -33,6 +34,39 @@ describe("summarizeHeartbeatRunResultJson", () => {
     expect(summarizeHeartbeatRunResultJson(null)).toBeNull();
     expect(summarizeHeartbeatRunResultJson(["nope"] as unknown as Record<string, unknown>)).toBeNull();
     expect(summarizeHeartbeatRunResultJson({ nested: { only: "ignored" } })).toBeNull();
+  });
+});
+
+describe("summarizeHeartbeatRunContextSnapshot", () => {
+  it("keeps only the routing fields needed for run summaries", () => {
+    expect(
+      summarizeHeartbeatRunContextSnapshot({
+        issueId: "issue-1",
+        taskId: "task-1",
+        taskKey: "task-key-1",
+        commentId: "comment-1",
+        wakeCommentId: "wake-comment-1",
+        wakeReason: "issue_commented",
+        wakeSource: "automation",
+        wakeTriggerDetail: "system",
+        continuityTier: "normal",
+        nested: { ignored: true },
+      }),
+    ).toEqual({
+      issueId: "issue-1",
+      taskId: "task-1",
+      taskKey: "task-key-1",
+      commentId: "comment-1",
+      wakeCommentId: "wake-comment-1",
+      wakeReason: "issue_commented",
+      wakeSource: "automation",
+      wakeTriggerDetail: "system",
+    });
+  });
+
+  it("returns null when there is no useful routing context", () => {
+    expect(summarizeHeartbeatRunContextSnapshot(null)).toBeNull();
+    expect(summarizeHeartbeatRunContextSnapshot({ nested: { ignored: true } })).toBeNull();
   });
 });
 

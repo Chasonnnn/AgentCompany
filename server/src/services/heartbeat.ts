@@ -35,6 +35,7 @@ import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } fr
 import {
   buildHeartbeatRunIssueComment,
   mergeHeartbeatRunResultJson,
+  summarizeHeartbeatRunContextSnapshot,
   summarizeHeartbeatRunResultJson,
 } from "./heartbeat-run-summary.js";
 import {
@@ -305,6 +306,13 @@ const heartbeatRunListColumns = {
   contextSnapshot: heartbeatRuns.contextSnapshot,
   createdAt: heartbeatRuns.createdAt,
   updatedAt: heartbeatRuns.updatedAt,
+} as const;
+
+const heartbeatRunLogAccessColumns = {
+  id: heartbeatRuns.id,
+  companyId: heartbeatRuns.companyId,
+  logStore: heartbeatRuns.logStore,
+  logRef: heartbeatRuns.logRef,
 } as const;
 
 const heartbeatRunIssueSummaryColumns = {
@@ -1255,6 +1263,14 @@ export function heartbeatService(db: Db) {
   async function getRun(runId: string) {
     return db
       .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function getRunLogAccess(runId: string) {
+    return db
+      .select(heartbeatRunLogAccessColumns)
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
@@ -3544,8 +3560,11 @@ export function heartbeatService(db: Db) {
         });
         if (issueId && outcome === "succeeded") {
           try {
-            const issueComment = buildHeartbeatRunIssueComment(persistedResultJson);
-            if (issueComment) {
+            const existingRunComment = await findRunIssueComment(finalizedRun.id, finalizedRun.companyId, issueId);
+            const issueComment = existingRunComment
+              ? null
+              : buildHeartbeatRunIssueComment(persistedResultJson);
+            if (issueComment && !existingRunComment) {
               await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: finalizedRun.id });
             }
           } catch (err) {
@@ -4559,11 +4578,14 @@ export function heartbeatService(db: Db) {
       const rows = limit ? await query.limit(limit) : await query;
       return rows.map((row) => ({
         ...row,
+        contextSnapshot: summarizeHeartbeatRunContextSnapshot(row.contextSnapshot as Record<string, unknown> | null),
         resultJson: summarizeHeartbeatRunResultJson(row.resultJson),
       }));
     },
 
     getRun,
+
+    getRunLogAccess,
 
     getRuntimeState: async (agentId: string) => {
       const state = await getRuntimeState(agentId);
@@ -4638,8 +4660,18 @@ export function heartbeatService(db: Db) {
         .orderBy(asc(heartbeatRunEvents.seq))
         .limit(Math.max(1, Math.min(limit, 1000))),
 
-    readLog: async (runId: string, opts?: { offset?: number; limitBytes?: number }) => {
-      const run = await getRun(runId);
+    readLog: async (
+      runOrLookup:
+        | string
+        | {
+          id: string;
+          logStore: string | null;
+          logRef: string | null;
+        },
+      opts?: { offset?: number; limitBytes?: number },
+    ) => {
+      const run = typeof runOrLookup === "string" ? await getRunLogAccess(runOrLookup) : runOrLookup;
+      const runId = typeof runOrLookup === "string" ? runOrLookup : runOrLookup.id;
       if (!run) throw notFound("Heartbeat run not found");
       if (!run.logStore || !run.logRef) throw notFound("Run log not found");
 
