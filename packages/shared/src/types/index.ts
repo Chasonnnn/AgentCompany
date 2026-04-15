@@ -63,6 +63,9 @@ export type {
   AgentSkillSyncRequest,
 } from "./adapter-skills.js";
 export type {
+  AccountabilityAgentSummary,
+  AccountabilityIssueOwnershipSummary,
+  AccountabilityProjectNode,
   Agent,
   AgentAccessState,
   AgentChainOfCommandEntry,
@@ -78,6 +81,7 @@ export type {
   AgentTemplate,
   AgentTemplateRevision,
   AgentTemplateSnapshot,
+  CompanyAgentAccountability,
   CompanyAgentHierarchy,
   CompanyAgentHierarchyDepartment,
   CompanyAgentHierarchyExecutiveGroup,
@@ -176,6 +180,7 @@ export type {
   IssueContinuityDocumentSnapshot,
   IssueContinuityRemediation,
   IssueContinuityRemediationAction,
+  IssueContinuitySummary,
   IssueContinuityState,
   IssueBranchMergePreview,
   IssueBranchMergePreviewUpdate,

@@ -181,6 +181,17 @@ export const issueContinuityBundleSchema = z.object({
   referencedRevisionIds: z.record(z.string(), z.string().uuid().nullable()),
 });
 
+export const issueContinuitySummarySchema = z.object({
+  tier: issueContinuityTierSchema.nullable(),
+  status: issueContinuityStatusSchema.nullable(),
+  health: issueContinuityHealthSchema.nullable(),
+  specState: issueSpecStateSchema.nullable(),
+  missingDocumentCount: z.number().int().nonnegative(),
+  activeGatePresent: z.boolean(),
+  openReviewFindings: z.boolean(),
+  returnedBranchCount: z.number().int().nonnegative(),
+});
+
 export const issueContinuityRemediationActionSchema = z.object({
   id: z.enum([
     "prepare_execution",
@@ -350,6 +361,7 @@ export const createIssueSchema = z.object({
   billingCode: z.string().optional().nullable(),
   assigneeAdapterOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
   executionPolicy: issueExecutionPolicySchema.optional().nullable(),
+  continuityTier: issueContinuityTierSchema.optional(),
   executionWorkspaceId: z.string().uuid().optional().nullable(),
   executionWorkspacePreference: z.enum(ISSUE_EXECUTION_WORKSPACE_PREFERENCES).optional().nullable(),
   executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),

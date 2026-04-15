@@ -79,6 +79,7 @@ import {
   normalizeIssueExecutionPolicy,
   parseIssueExecutionState,
 } from "../services/issue-execution-policy.js";
+import { buildIssueContinuitySummary } from "../services/issue-continuity-summary.js";
 import {
   conferenceContextService,
   sanitizeConferenceContextForActor,
@@ -248,6 +249,13 @@ function isContinuityActive(issue: {
     executionState?.status === "pending" ||
     executionState?.status === "changes_requested"
   );
+}
+
+function withIssueContinuitySummary<T extends { continuityState?: unknown; executionState?: unknown }>(issue: T) {
+  return {
+    ...issue,
+    continuitySummary: buildIssueContinuitySummary(issue),
+  };
 }
 
 function issueActorPrincipal(req: Request): ParsedExecutionState["currentParticipant"] | null {
@@ -771,7 +779,7 @@ export function issueRoutes(
       q: req.query.q as string | undefined,
       limit,
     });
-    res.json(result);
+    res.json(result.map((issue) => withIssueContinuitySummary(issue)));
   });
 
   router.get("/companies/:companyId/labels", async (req, res) => {
@@ -851,7 +859,7 @@ export function issueRoutes(
       ? await executionWorkspacesSvc.getById(issue.executionWorkspaceId)
       : null;
     const workProducts = await workProductsSvc.listForIssue(issue.id);
-    res.json({
+    res.json(withIssueContinuitySummary({
       ...issue,
       continuityState,
       goalId: goal?.id ?? issue.goalId,
@@ -864,7 +872,7 @@ export function issueRoutes(
       mentionedProjects,
       currentExecutionWorkspace,
       workProducts,
-    });
+    }));
   });
 
   router.get("/issues/:id/continuity", async (req, res) => {
@@ -1856,13 +1864,16 @@ export function issueRoutes(
 
     const actor = getActorInfo(req);
     const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
+    const { continuityTier, ...createInput } = req.body;
     const issue = await svc.create(companyId, {
-      ...req.body,
+      ...createInput,
       executionPolicy,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
-    const continuityState = await continuitySvc.recomputeIssueContinuityState(issue.id);
+    const continuityState = await continuitySvc.recomputeIssueContinuityState(issue.id, {
+      tier: continuityTier ?? "normal",
+    });
 
     await logActivity(db, {
       companyId,
@@ -1890,7 +1901,7 @@ export function issueRoutes(
       requestedByActorId: actor.actorId,
     });
 
-    res.status(201).json({ ...issue, continuityState });
+    res.status(201).json(withIssueContinuitySummary({ ...issue, continuityState }));
   });
 
   router.patch("/issues/:id", validate(updateIssueRouteSchema), async (req, res) => {
@@ -2516,7 +2527,7 @@ export function issueRoutes(
       }
     })();
 
-    res.json({ ...issueResponse, comment });
+    res.json(withIssueContinuitySummary({ ...issueResponse, comment }));
   });
 
   router.delete("/issues/:id", async (req, res) => {

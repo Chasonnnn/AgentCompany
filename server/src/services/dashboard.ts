@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, issues } from "@paperclipai/db";
 import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
+import { buildIssueContinuitySummary } from "./issue-continuity-summary.js";
 
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
@@ -28,11 +29,22 @@ export function dashboardService(db: Db) {
         .where(eq(issues.companyId, companyId))
         .groupBy(issues.status);
 
-      const pendingApprovals = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(approvals)
-        .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
-        .then((rows) => Number(rows[0]?.count ?? 0));
+      const [pendingApprovals, continuityRows] = await Promise.all([
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(approvals)
+          .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
+          .then((rows) => Number(rows[0]?.count ?? 0)),
+        db
+          .select({
+            assigneeAgentId: issues.assigneeAgentId,
+            continuityState: issues.continuityState,
+            executionState: issues.executionState,
+            status: issues.status,
+          })
+          .from(issues)
+          .where(and(eq(issues.companyId, companyId), sql`${issues.hiddenAt} is null`, sql`${issues.status} <> 'done'`, sql`${issues.status} <> 'cancelled'`)),
+      ]);
 
       const agentCounts: Record<string, number> = {
         active: 0,
@@ -53,6 +65,16 @@ export function dashboardService(db: Db) {
         blocked: 0,
         done: 0,
       };
+      const activeContinuityOwners = new Set<string>();
+      const executionHealth = {
+        activeContinuityOwners: 0,
+        blockedMissingDocs: 0,
+        staleProgress: 0,
+        invalidHandoff: 0,
+        openReviewFindings: 0,
+        returnedBranches: 0,
+        handoffPending: 0,
+      };
       for (const row of taskRows) {
         const count = Number(row.count);
         if (row.status === "in_progress") taskCounts.inProgress += count;
@@ -60,6 +82,28 @@ export function dashboardService(db: Db) {
         if (row.status === "done") taskCounts.done += count;
         if (row.status !== "done" && row.status !== "cancelled") taskCounts.open += count;
       }
+
+      for (const row of continuityRows) {
+        const summary = buildIssueContinuitySummary({
+          continuityState: row.continuityState,
+          executionState: row.executionState,
+        });
+        const state = row.continuityState as {
+          status?: string | null;
+          health?: string | null;
+          returnedBranchIssueIds?: string[];
+        } | null;
+        if ((summary?.status === "active" || summary?.status === "ready" || summary?.status === "handoff_pending") && row.assigneeAgentId) {
+          activeContinuityOwners.add(row.assigneeAgentId);
+        }
+        if (state?.health === "missing_required_docs") executionHealth.blockedMissingDocs += 1;
+        if (state?.health === "stale_progress") executionHealth.staleProgress += 1;
+        if (state?.health === "invalid_handoff") executionHealth.invalidHandoff += 1;
+        if (summary?.openReviewFindings) executionHealth.openReviewFindings += 1;
+        executionHealth.returnedBranches += state?.returnedBranchIssueIds?.length ?? 0;
+        if (state?.status === "handoff_pending") executionHealth.handoffPending += 1;
+      }
+      executionHealth.activeContinuityOwners = activeContinuityOwners.size;
 
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -97,6 +141,7 @@ export function dashboardService(db: Db) {
           monthUtilizationPercent: Number(utilization.toFixed(2)),
         },
         pendingApprovals,
+        executionHealth,
         budgets: {
           activeIncidents: budgetOverview.activeIncidents.length,
           pendingApprovals: budgetOverview.pendingApprovalCount,

@@ -1042,6 +1042,13 @@ export function agentRoutes(db: Db) {
     res.json(hierarchy);
   });
 
+  router.get("/companies/:companyId/agent-accountability", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const accountability = await svc.accountabilityForCompany(companyId);
+    res.json(accountability);
+  });
+
   router.get("/companies/:companyId/agent-navigation", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);

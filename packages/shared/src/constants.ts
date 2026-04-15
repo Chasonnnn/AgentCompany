@@ -115,6 +115,17 @@ export type AgentSecondaryRelationshipType = (typeof AGENT_SECONDARY_RELATIONSHI
 export const AGENT_NAVIGATION_LAYOUTS = ["department", "project"] as const;
 export type AgentNavigationLayout = (typeof AGENT_NAVIGATION_LAYOUTS)[number];
 
+export const AGENT_EXECUTION_MODELS = [
+  "shared_state",
+  "governance",
+  "shared_service",
+  "relay_legacy",
+] as const;
+export type AgentExecutionModel = (typeof AGENT_EXECUTION_MODELS)[number];
+
+export const AGENT_TEMPLATE_LIFECYCLE_STATUSES = ["active", "legacy"] as const;
+export type AgentTemplateLifecycleStatus = (typeof AGENT_TEMPLATE_LIFECYCLE_STATUSES)[number];
+
 export const ACTOR_PRINCIPAL_KINDS = ["human_operator", "agent_instance", "system_process"] as const;
 export type ActorPrincipalKind = (typeof ACTOR_PRINCIPAL_KINDS)[number];
 

@@ -3,6 +3,7 @@ import {
   ACTOR_PRINCIPAL_KINDS,
   AGENT_CAPABILITY_PROFILE_KEYS,
   AGENT_DEPARTMENT_KEYS,
+  AGENT_EXECUTION_MODELS,
   AGENT_ICON_NAMES,
   AGENT_NAVIGATION_LAYOUTS,
   AGENT_ORG_LEVELS,
@@ -12,10 +13,15 @@ import {
   AGENT_ROLES,
   AGENT_SECONDARY_RELATIONSHIP_TYPES,
   AGENT_STATUSES,
+  AGENT_TEMPLATE_LIFECYCLE_STATUSES,
   INBOX_MINE_ISSUE_STATUS_FILTER,
+  ISSUE_STATUSES,
 } from "../constants.js";
 import { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "../adapter-type.js";
 import type {
+  AccountabilityAgentSummary,
+  AccountabilityIssueOwnershipSummary,
+  AccountabilityProjectNode,
   AgentHierarchyMemberSummary,
   AgentTemplateImportPackItem,
   AgentTemplateImportPackRequest,
@@ -30,6 +36,7 @@ import type {
   AgentTemplate,
   AgentTemplateRevision,
   AgentTemplateSnapshot,
+  CompanyAgentAccountability,
   CompanyAgentNavigation,
   CompanyAgentHierarchy,
   CompanyAgentHierarchyDepartment,
@@ -41,6 +48,10 @@ import type {
   OperatingHierarchyPortfolioClusterSummary,
   OperatingHierarchyProjectSummary,
 } from "../types/agent.js";
+import {
+  issueContinuityHealthSchema,
+  issueContinuityStatusSchema,
+} from "./issue.js";
 import { envConfigSchema } from "./secret.js";
 
 export const agentPermissionsSchema = z.object({
@@ -91,6 +102,8 @@ export const agentProjectRoleSchema = z.enum(AGENT_PROJECT_ROLES);
 export const agentSecondaryRelationshipTypeSchema = z.enum(AGENT_SECONDARY_RELATIONSHIP_TYPES);
 export const agentNavigationLayoutSchema = z.enum(AGENT_NAVIGATION_LAYOUTS);
 export const actorPrincipalKindSchema = z.enum(ACTOR_PRINCIPAL_KINDS);
+export const agentExecutionModelSchema = z.enum(AGENT_EXECUTION_MODELS);
+export const agentTemplateLifecycleStatusSchema = z.enum(AGENT_TEMPLATE_LIFECYCLE_STATUSES);
 
 export const agentHierarchyMemberSummarySchema = z.object({
   id: z.string().uuid(),
@@ -127,6 +140,8 @@ export const agentTemplateSnapshotSchema = z.object({
   runtimeConfig: z.record(z.unknown()),
   budgetMonthlyCents: z.number().int().nonnegative(),
   metadata: z.record(z.unknown()).nullable(),
+  executionModel: agentExecutionModelSchema.nullable().optional(),
+  lifecycleStatus: agentTemplateLifecycleStatusSchema.nullable().optional(),
   instructionsBody: z.string(),
 }).strict();
 
@@ -139,6 +154,8 @@ export const agentTemplateSchema = z.object({
   capabilityProfileKey: agentCapabilityProfileKeySchema,
   archetypeKey: z.string().trim().min(1),
   metadata: z.record(z.unknown()).nullable(),
+  executionModel: agentExecutionModelSchema.nullable().optional(),
+  lifecycleStatus: agentTemplateLifecycleStatusSchema.nullable().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   archivedAt: z.coerce.date().nullable(),
@@ -255,6 +272,52 @@ export const companyOperatingHierarchySchema = z.object({
   sharedServices: z.array(operatingHierarchyDepartmentSummarySchema),
   unassigned: z.array(operatingHierarchyAgentSummarySchema),
 }).strict() satisfies z.ZodType<CompanyOperatingHierarchy>;
+
+export const accountabilityIssueOwnershipSummarySchema = z.object({
+  issueId: z.string().uuid(),
+  identifier: z.string().nullable(),
+  title: z.string().min(1),
+  status: z.enum(ISSUE_STATUSES),
+  continuityStatus: issueContinuityStatusSchema.nullable(),
+  continuityHealth: issueContinuityHealthSchema.nullable(),
+}).strict() satisfies z.ZodType<AccountabilityIssueOwnershipSummary>;
+
+export const accountabilityAgentSummarySchema = operatingHierarchyAgentSummarySchema.extend({
+  activeIssueCount: z.number().int().nonnegative(),
+  blockedContinuityIssueCount: z.number().int().nonnegative(),
+  openReviewFindingsCount: z.number().int().nonnegative(),
+  returnedBranchCount: z.number().int().nonnegative(),
+  issues: z.array(accountabilityIssueOwnershipSummarySchema),
+}).strict() satisfies z.ZodType<AccountabilityAgentSummary>;
+
+export const accountabilityProjectNodeSchema = z.object({
+  projectId: z.string().uuid().nullable(),
+  projectName: z.string().min(1),
+  color: z.string().nullable(),
+  executiveSponsor: operatingHierarchyAgentSummarySchema.nullable(),
+  portfolioDirector: operatingHierarchyAgentSummarySchema.nullable(),
+  leadership: z.array(operatingHierarchyAgentSummarySchema),
+  continuityOwners: z.array(accountabilityAgentSummarySchema),
+  sharedServices: z.array(operatingHierarchyAgentSummarySchema),
+  issueCounts: z.object({
+    active: z.number().int().nonnegative(),
+    blockedMissingDocs: z.number().int().nonnegative(),
+    staleProgress: z.number().int().nonnegative(),
+    invalidHandoff: z.number().int().nonnegative(),
+    openReviewFindings: z.number().int().nonnegative(),
+    returnedBranches: z.number().int().nonnegative(),
+    handoffPending: z.number().int().nonnegative(),
+  }).strict(),
+}).strict() satisfies z.ZodType<AccountabilityProjectNode>;
+
+export const companyAgentAccountabilitySchema = z.object({
+  companyId: z.string().uuid(),
+  generatedAt: z.string().datetime(),
+  executiveOffice: z.array(operatingHierarchyAgentSummarySchema),
+  projects: z.array(accountabilityProjectNodeSchema),
+  sharedServices: z.array(operatingHierarchyDepartmentSummarySchema),
+  unassigned: z.array(operatingHierarchyAgentSummarySchema),
+}).strict() satisfies z.ZodType<CompanyAgentAccountability>;
 
 export const agentNavigationTeamNodeSchema = z.object({
   key: z.string().min(1),

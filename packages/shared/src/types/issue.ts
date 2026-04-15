@@ -234,6 +234,17 @@ export interface IssueContinuityBundle {
   referencedRevisionIds: Record<string, string | null>;
 }
 
+export interface IssueContinuitySummary {
+  tier: IssueContinuityTier | null;
+  status: IssueContinuityStatus | null;
+  health: IssueContinuityHealth | null;
+  specState: IssueSpecState | null;
+  missingDocumentCount: number;
+  activeGatePresent: boolean;
+  openReviewFindings: boolean;
+  returnedBranchCount: number;
+}
+
 export type IssueContinuityRemediationActionId =
   | "prepare_execution"
   | "progress_checkpoint"
@@ -317,6 +328,7 @@ export interface Issue {
   executionPolicy?: IssueExecutionPolicy | null;
   executionState?: IssueExecutionState | null;
   continuityState?: IssueContinuityState | null;
+  continuitySummary?: IssueContinuitySummary | null;
   executionWorkspaceId: string | null;
   executionWorkspacePreference: string | null;
   executionWorkspaceSettings: IssueExecutionWorkspaceSettings | null;

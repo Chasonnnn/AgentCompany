@@ -18,6 +18,15 @@ export interface DashboardSummary {
     monthUtilizationPercent: number;
   };
   pendingApprovals: number;
+  executionHealth: {
+    activeContinuityOwners: number;
+    blockedMissingDocs: number;
+    staleProgress: number;
+    invalidHandoff: number;
+    openReviewFindings: number;
+    returnedBranches: number;
+    handoffPending: number;
+  };
   budgets: {
     activeIncidents: number;
     pendingApprovals: number;

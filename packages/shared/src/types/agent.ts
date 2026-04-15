@@ -2,6 +2,7 @@ import type {
   AgentAdapterType,
   AgentCapabilityProfileKey,
   AgentDepartmentKey,
+  AgentExecutionModel,
   AgentNavigationLayout,
   AgentOperatingClass,
   AgentOrgLevel,
@@ -11,7 +12,11 @@ import type {
   AgentRole,
   AgentSecondaryRelationshipType,
   AgentStatus,
+  AgentTemplateLifecycleStatus,
   ActorPrincipalKind,
+  IssueContinuityHealth,
+  IssueContinuityStatus,
+  IssueStatus,
 } from "../constants.js";
 import type {
   CompanyMembership,
@@ -131,6 +136,8 @@ export interface AgentTemplateSnapshot {
   runtimeConfig: Record<string, unknown>;
   budgetMonthlyCents: number;
   metadata: Record<string, unknown> | null;
+  executionModel?: AgentExecutionModel | null;
+  lifecycleStatus?: AgentTemplateLifecycleStatus | null;
   instructionsBody: string;
 }
 
@@ -143,6 +150,8 @@ export interface AgentTemplate {
   capabilityProfileKey: AgentCapabilityProfileKey;
   archetypeKey: string;
   metadata: Record<string, unknown> | null;
+  executionModel?: AgentExecutionModel | null;
+  lifecycleStatus?: AgentTemplateLifecycleStatus | null;
   createdAt: Date;
   updatedAt: Date;
   archivedAt: Date | null;
@@ -256,6 +265,52 @@ export interface CompanyOperatingHierarchy {
   executiveOffice: OperatingHierarchyAgentSummary[];
   portfolioClusters?: OperatingHierarchyPortfolioClusterSummary[];
   projectPods: OperatingHierarchyProjectSummary[];
+  sharedServices: OperatingHierarchyDepartmentSummary[];
+  unassigned: OperatingHierarchyAgentSummary[];
+}
+
+export interface AccountabilityIssueOwnershipSummary {
+  issueId: string;
+  identifier: string | null;
+  title: string;
+  status: IssueStatus;
+  continuityStatus: IssueContinuityStatus | null;
+  continuityHealth: IssueContinuityHealth | null;
+}
+
+export interface AccountabilityAgentSummary extends OperatingHierarchyAgentSummary {
+  activeIssueCount: number;
+  blockedContinuityIssueCount: number;
+  openReviewFindingsCount: number;
+  returnedBranchCount: number;
+  issues: AccountabilityIssueOwnershipSummary[];
+}
+
+export interface AccountabilityProjectNode {
+  projectId: string | null;
+  projectName: string;
+  color: string | null;
+  executiveSponsor: OperatingHierarchyAgentSummary | null;
+  portfolioDirector: OperatingHierarchyAgentSummary | null;
+  leadership: OperatingHierarchyAgentSummary[];
+  continuityOwners: AccountabilityAgentSummary[];
+  sharedServices: OperatingHierarchyAgentSummary[];
+  issueCounts: {
+    active: number;
+    blockedMissingDocs: number;
+    staleProgress: number;
+    invalidHandoff: number;
+    openReviewFindings: number;
+    returnedBranches: number;
+    handoffPending: number;
+  };
+}
+
+export interface CompanyAgentAccountability {
+  companyId: string;
+  generatedAt: string;
+  executiveOffice: OperatingHierarchyAgentSummary[];
+  projects: AccountabilityProjectNode[];
   sharedServices: OperatingHierarchyDepartmentSummary[];
   unassigned: OperatingHierarchyAgentSummary[];
 }

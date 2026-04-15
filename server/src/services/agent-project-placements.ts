@@ -69,17 +69,6 @@ function inferPlacementDefaults(
     };
   }
 
-  if (
-    archetypeKey === "product_manager"
-    || archetypeKey === "project_product_manager"
-    || archetypeKey === "program_manager"
-  ) {
-    return {
-      scopeMode: "leadership_raw",
-      projectRole: "product_manager",
-    };
-  }
-
   if (archetypeKey.includes("team_lead")) {
     return {
       scopeMode: "leadership_raw",

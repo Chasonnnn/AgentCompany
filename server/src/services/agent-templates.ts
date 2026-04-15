@@ -3,6 +3,8 @@ import type { Db } from "@paperclipai/db";
 import { agentTemplateRevisions, agentTemplates } from "@paperclipai/db";
 import {
   agentTemplateSnapshotSchema,
+  inferAgentExecutionModel,
+  inferAgentTemplateLifecycleStatus,
   type AgentTemplateImportPackRequest,
 } from "@paperclipai/shared";
 import { notFound, unprocessable } from "../errors.js";
@@ -40,6 +42,25 @@ function snapshotsEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function decorateTemplate<T extends {
+  role: string;
+  operatingClass: string | null;
+  capabilityProfileKey: string | null;
+  archetypeKey: string | null;
+}>(template: T) {
+  const executionModel = inferAgentExecutionModel({
+    role: template.role,
+    operatingClass: template.operatingClass,
+    capabilityProfileKey: template.capabilityProfileKey,
+    archetypeKey: template.archetypeKey,
+  });
+  return {
+    ...template,
+    executionModel,
+    lifecycleStatus: inferAgentTemplateLifecycleStatus(executionModel),
+  };
+}
+
 function buildTemplateSnapshotFromFrontmatter(frontmatter: Record<string, unknown>, body: string) {
   const metadata = asObject(frontmatter.metadata);
   if (frontmatter.connectionContractKind === "paperclip/connection-contract.v1" && typeof frontmatter.connectionContract === "object" && frontmatter.connectionContract !== null && !Array.isArray(frontmatter.connectionContract)) {
@@ -48,6 +69,12 @@ function buildTemplateSnapshotFromFrontmatter(frontmatter: Record<string, unknow
       ...(frontmatter.connectionContract as Record<string, unknown>),
     };
   }
+  const executionModel = inferAgentExecutionModel({
+    role: frontmatter.role as string | null | undefined,
+    operatingClass: frontmatter.operatingClass as string | null | undefined,
+    capabilityProfileKey: frontmatter.capabilityProfileKey as string | null | undefined,
+    archetypeKey: asString(frontmatter.archetypeKey),
+  });
   const parsed = agentTemplateSnapshotSchema.safeParse({
     name: asString(frontmatter.name),
     role: frontmatter.role,
@@ -69,6 +96,8 @@ function buildTemplateSnapshotFromFrontmatter(frontmatter: Record<string, unknow
         ? frontmatter.budgetMonthlyCents
         : 0,
     metadata: Object.keys(metadata).length ? metadata : null,
+    executionModel,
+    lifecycleStatus: inferAgentTemplateLifecycleStatus(executionModel),
     instructionsBody: body,
   });
   if (!parsed.success) {
@@ -85,7 +114,9 @@ export function agentTemplateService(db: Db) {
         .from(agentTemplates)
         .where(and(eq(agentTemplates.companyId, companyId), isNull(agentTemplates.archivedAt)))
         .orderBy(agentTemplates.name);
-      return templates.filter((template) => readAgentTemplateMode(template.metadata) === "reusable");
+      return templates
+        .filter((template) => readAgentTemplateMode(template.metadata) === "reusable")
+        .map((template) => decorateTemplate(template));
     },
 
     listRevisions: async (templateId: string) => {
@@ -101,7 +132,10 @@ export function agentTemplateService(db: Db) {
         .select()
         .from(agentTemplates)
         .where(eq(agentTemplates.id, templateId))
-        .then((rows) => rows[0] ?? null);
+        .then((rows) => {
+          const row = rows[0] ?? null;
+          return row ? decorateTemplate(row) : null;
+        });
     },
 
     resolveRevisionForInstantiation: async (companyId: string, input: {

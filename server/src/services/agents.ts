@@ -45,6 +45,7 @@ import {
 } from "./agent-permissions.js";
 import { readAgentTemplateMode, withAgentTemplateMode } from "./agent-template-metadata.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
+import { buildIssueContinuitySummary } from "./issue-continuity-summary.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -1940,6 +1941,229 @@ export function agentService(db: Db) {
             workers: sortOperatingAgents(dedupeById(group.workers)).map(toOperatingSummary),
             consultants: sortOperatingAgents(dedupeById(group.consultants)).map(toOperatingSummary),
           })),
+        sharedServices: Array.from(sharedServicesByDepartment.values())
+          .sort((left, right) => departmentSortKey(left.key === "shared_service" ? "general" : left.key, left.name).localeCompare(
+            departmentSortKey(right.key === "shared_service" ? "general" : right.key, right.name),
+          ))
+          .map((group) => ({
+            key: group.key,
+            name: group.name,
+            leaders: sortOperatingAgents(dedupeById(group.leaders)).map(toOperatingSummary),
+            projects: [],
+          })),
+        unassigned: sortOperatingAgents(dedupeById(unassigned)).map(toOperatingSummary),
+      };
+    },
+
+    accountabilityForCompany: async (companyId: string) => {
+      const [rows, scopeRows, clusterRows, projectRows, issueRows] = await Promise.all([
+        db
+          .select()
+          .from(agents)
+          .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated"))),
+        listActiveScopesForCompany(companyId),
+        db
+          .select()
+          .from(portfolioClusters)
+          .where(eq(portfolioClusters.companyId, companyId)),
+        db
+          .select({
+            id: projects.id,
+            name: projects.name,
+            color: projects.color,
+            portfolioClusterId: projects.portfolioClusterId,
+          })
+          .from(projects)
+          .where(eq(projects.companyId, companyId)),
+        db
+          .select({
+            id: issues.id,
+            identifier: issues.identifier,
+            title: issues.title,
+            status: issues.status,
+            projectId: issues.projectId,
+            assigneeAgentId: issues.assigneeAgentId,
+            continuityState: issues.continuityState,
+            executionState: issues.executionState,
+          })
+          .from(issues)
+          .where(and(eq(issues.companyId, companyId), isNull(issues.hiddenAt), ne(issues.status, "done"), ne(issues.status, "cancelled"))),
+      ]);
+
+      const normalizedRows: NormalizedAgentRow[] = rows.map(normalizeAgentRow);
+      const byId = new Map(normalizedRows.map((row) => [row.id, row]));
+      const projectPods = buildProjectPodGroups(scopeRows, byId);
+      const portfolioClusterGroups = buildOperatingClusterGroups(clusterRows, scopeRows, byId, projectPods);
+      const clusterById = new Map(portfolioClusterGroups.map((group) => [group.clusterId, group]));
+      const projectRowById = new Map(projectRows.map((row) => [row.id, row]));
+      const scopedAgentIds = new Set(scopeRows.map((row) => row.scope.agentId));
+      const unassigned: NormalizedAgentRow[] = [];
+      const sharedServicesByDepartment = new Map<string, NavigationDepartmentGroup>();
+
+      for (const row of normalizedRows) {
+        if (row.operatingClass === "shared_service_lead") {
+          const departmentName = departmentDisplayName(row.departmentKey, row.departmentName);
+          const key = `${row.departmentKey}:${departmentName.toLowerCase()}`;
+          const group = sharedServicesByDepartment.get(key) ?? {
+            key: row.departmentKey,
+            name: departmentName,
+            leaders: [],
+            clusters: new Map<string, NavigationClusterGroup>(),
+            projects: new Map<string, NavigationProjectGroup>(),
+          };
+          group.leaders.push(row);
+          sharedServicesByDepartment.set(key, group);
+          continue;
+        }
+        if (row.operatingClass === "executive") continue;
+        if (!scopedAgentIds.has(row.id)) {
+          unassigned.push(row);
+        }
+      }
+
+      const projectNodes = new Map<string, {
+        projectId: string | null;
+        projectName: string;
+        color: string | null;
+        executiveSponsor: NormalizedAgentRow | null;
+        portfolioDirector: NormalizedAgentRow | null;
+        leadership: NormalizedAgentRow[];
+        continuityOwners: Map<string, {
+          agent: NormalizedAgentRow;
+          activeIssueCount: number;
+          blockedContinuityIssueCount: number;
+          openReviewFindingsCount: number;
+          returnedBranchCount: number;
+          issues: Array<{
+            issueId: string;
+            identifier: string | null;
+            title: string;
+            status: string;
+            continuityStatus: string | null;
+            continuityHealth: string | null;
+          }>;
+        }>;
+        sharedServices: NormalizedAgentRow[];
+        issueCounts: {
+          active: number;
+          blockedMissingDocs: number;
+          staleProgress: number;
+          invalidHandoff: number;
+          openReviewFindings: number;
+          returnedBranches: number;
+          handoffPending: number;
+        };
+      }>();
+
+      const ensureProjectNode = (projectId: string | null) => {
+        const key = projectId ?? "__unscoped__";
+        const existing = projectNodes.get(key);
+        if (existing) return existing;
+        const projectRow = projectId ? (projectRowById.get(projectId) ?? null) : null;
+        const pod = projectId ? (projectPods.get(projectId) ?? null) : null;
+        const clusterId = projectRow?.portfolioClusterId ?? null;
+        const cluster = clusterId ? (clusterById.get(clusterId) ?? null) : null;
+        const created = {
+          projectId,
+          projectName: projectRow?.name ?? (projectId ? "Unknown project" : "Unscoped execution"),
+          color: projectRow?.color ?? pod?.color ?? null,
+          executiveSponsor: cluster?.executiveSponsor ?? null,
+          portfolioDirector: cluster?.portfolioDirector ?? null,
+          leadership: pod ? dedupeById(pod.leadership) : [],
+          continuityOwners: new Map(),
+          sharedServices: pod ? dedupeById(pod.consultants) : [],
+          issueCounts: {
+            active: 0,
+            blockedMissingDocs: 0,
+            staleProgress: 0,
+            invalidHandoff: 0,
+            openReviewFindings: 0,
+            returnedBranches: 0,
+            handoffPending: 0,
+          },
+        };
+        projectNodes.set(key, created);
+        return created;
+      };
+
+      for (const row of issueRows) {
+        const summary = buildIssueContinuitySummary({
+          continuityState: row.continuityState,
+          executionState: row.executionState,
+        });
+        const state = row.continuityState as {
+          status?: string | null;
+          health?: string | null;
+          returnedBranchIssueIds?: string[];
+        } | null;
+        if (!summary && !row.projectId) {
+          continue;
+        }
+        const node = ensureProjectNode(row.projectId ?? null);
+        node.issueCounts.active += 1;
+        if (state?.health === "missing_required_docs") node.issueCounts.blockedMissingDocs += 1;
+        if (state?.health === "stale_progress") node.issueCounts.staleProgress += 1;
+        if (state?.health === "invalid_handoff") node.issueCounts.invalidHandoff += 1;
+        if (summary?.openReviewFindings) node.issueCounts.openReviewFindings += 1;
+        node.issueCounts.returnedBranches += summary?.returnedBranchCount ?? 0;
+        if (state?.status === "handoff_pending") node.issueCounts.handoffPending += 1;
+
+        if (!row.assigneeAgentId) continue;
+        const agent = byId.get(row.assigneeAgentId);
+        if (!agent) continue;
+        const ownerBucket = node.continuityOwners.get(agent.id) ?? {
+          agent,
+          activeIssueCount: 0,
+          blockedContinuityIssueCount: 0,
+          openReviewFindingsCount: 0,
+          returnedBranchCount: 0,
+          issues: [],
+        };
+        ownerBucket.activeIssueCount += 1;
+        if (summary?.health && summary.health !== "healthy") ownerBucket.blockedContinuityIssueCount += 1;
+        if (summary?.openReviewFindings) ownerBucket.openReviewFindingsCount += 1;
+        ownerBucket.returnedBranchCount += summary?.returnedBranchCount ?? 0;
+        ownerBucket.issues.push({
+          issueId: row.id,
+          identifier: row.identifier ?? null,
+          title: row.title,
+          status: row.status,
+          continuityStatus: summary?.status ?? null,
+          continuityHealth: summary?.health ?? null,
+        });
+        node.continuityOwners.set(agent.id, ownerBucket);
+      }
+
+      const serializedProjects = Array.from(projectNodes.values())
+        .sort((left, right) => left.projectName.localeCompare(right.projectName))
+        .map((node) => ({
+          projectId: node.projectId,
+          projectName: node.projectName,
+          color: node.color,
+          executiveSponsor: node.executiveSponsor ? toOperatingSummary(node.executiveSponsor) : null,
+          portfolioDirector: node.portfolioDirector ? toOperatingSummary(node.portfolioDirector) : null,
+          leadership: sortOperatingAgents(node.leadership).map(toOperatingSummary),
+          continuityOwners: Array.from(node.continuityOwners.values())
+            .sort((left, right) => left.agent.name.localeCompare(right.agent.name))
+            .map((owner) => ({
+              ...toOperatingSummary(owner.agent),
+              activeIssueCount: owner.activeIssueCount,
+              blockedContinuityIssueCount: owner.blockedContinuityIssueCount,
+              openReviewFindingsCount: owner.openReviewFindingsCount,
+              returnedBranchCount: owner.returnedBranchCount,
+              issues: owner.issues.sort((left, right) => left.title.localeCompare(right.title)),
+            })),
+          sharedServices: sortOperatingAgents(node.sharedServices).map(toOperatingSummary),
+          issueCounts: node.issueCounts,
+        }));
+
+      return {
+        companyId,
+        generatedAt: new Date().toISOString(),
+        executiveOffice: sortOperatingAgents(
+          normalizedRows.filter((row) => row.operatingClass === "executive"),
+        ).map(toOperatingSummary),
+        projects: serializedProjects,
         sharedServices: Array.from(sharedServicesByDepartment.values())
           .sort((left, right) => departmentSortKey(left.key === "shared_service" ? "general" : left.key, left.name).localeCompare(
             departmentSortKey(right.key === "shared_service" ? "general" : right.key, right.name),
