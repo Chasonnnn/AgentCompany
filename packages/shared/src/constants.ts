@@ -332,8 +332,46 @@ export type ConferenceRoomKind = (typeof CONFERENCE_ROOM_KINDS)[number];
 export const PROJECT_RESERVED_DOCUMENT_KEYS = ["context", "decision-log", "risks", "runbook"] as const;
 export type ProjectReservedDocumentKey = (typeof PROJECT_RESERVED_DOCUMENT_KEYS)[number];
 
-export const ISSUE_RESERVED_DOCUMENT_KEYS = ["spec", "plan", "runbook", "progress", "test-plan", "handoff"] as const;
+export const ISSUE_RESERVED_DOCUMENT_KEYS = [
+  "spec",
+  "plan",
+  "runbook",
+  "progress",
+  "test-plan",
+  "handoff",
+  "review-findings",
+  "branch-return",
+] as const;
 export type IssueReservedDocumentKey = (typeof ISSUE_RESERVED_DOCUMENT_KEYS)[number];
+
+export const ISSUE_CONTINUITY_TIERS = ["tiny", "normal", "long_running"] as const;
+export type IssueContinuityTier = (typeof ISSUE_CONTINUITY_TIERS)[number];
+
+export const ISSUE_CONTINUITY_STATUSES = [
+  "draft",
+  "ready",
+  "active",
+  "blocked_missing_docs",
+  "handoff_pending",
+] as const;
+export type IssueContinuityStatus = (typeof ISSUE_CONTINUITY_STATUSES)[number];
+
+export const ISSUE_SPEC_STATES = ["editable", "frozen", "thaw_requested", "thawed"] as const;
+export type IssueSpecState = (typeof ISSUE_SPEC_STATES)[number];
+
+export const ISSUE_BRANCH_ROLES = ["none", "parent", "branch"] as const;
+export type IssueBranchRole = (typeof ISSUE_BRANCH_ROLES)[number];
+
+export const ISSUE_BRANCH_STATUSES = ["none", "open", "returned", "merged", "expired"] as const;
+export type IssueBranchStatus = (typeof ISSUE_BRANCH_STATUSES)[number];
+
+export const ISSUE_CONTINUITY_HEALTHS = [
+  "healthy",
+  "stale_progress",
+  "missing_required_docs",
+  "invalid_handoff",
+] as const;
+export type IssueContinuityHealth = (typeof ISSUE_CONTINUITY_HEALTHS)[number];
 
 export const SECRET_PROVIDERS = [
   "local_encrypted",

@@ -28,13 +28,25 @@ export interface EvalScenarioOverlay {
   cleanup: "delete" | "retain_on_failure" | "retain";
 }
 
-export interface EvalScenarioFixture {
+export type EvalRunSourceKind = "seeded" | "observed";
+
+export interface EvalPortableScenarioFixture {
   kind: "portable_company_package";
   basePackagePath: string;
   overlays: EvalScenarioOverlay[];
   hermetic: boolean;
   externalDependencies: string[];
 }
+
+export interface EvalObservedScenarioFixture {
+  kind: "observed_issue_continuity";
+  lookbackHours: number;
+  maxRuns: number;
+  hermetic: false;
+  externalDependencies: string[];
+}
+
+export type EvalScenarioFixture = EvalPortableScenarioFixture | EvalObservedScenarioFixture;
 
 export interface EvalTimeoutPolicy {
   maxMinutes: number;
@@ -101,6 +113,13 @@ export interface EvalEnvironmentManifest {
   startedAt: string;
 }
 
+export interface EvalObservedRunReference {
+  companyId: string | null;
+  issueId: string | null;
+  heartbeatRunId: string | null;
+  agentId: string | null;
+}
+
 export interface EvalExternalDependencyPolicy {
   hermetic: boolean;
   dependencies: string[];
@@ -108,17 +127,19 @@ export interface EvalExternalDependencyPolicy {
 }
 
 export interface EvalReplaySpec {
+  sourceKind: EvalRunSourceKind;
   scenarioId: string;
   bundleId: string;
   lane: EvalBundle["lane"];
   command: string;
   artifactRoot: string;
-  basePackagePath: string;
+  basePackagePath: string | null;
   overlayLabels: string[];
   featureFlags: string[];
   seed: number;
   fairnessConstraints: EvalFairnessConstraints;
   externalDependencyPolicy: EvalExternalDependencyPolicy;
+  observedRun: EvalObservedRunReference | null;
   env: Record<string, string>;
 }
 
@@ -231,10 +252,12 @@ export interface EvalRunArtifact {
   evalContractVersion: number;
   scorecardVersion: number;
   runId: string;
+  sourceKind: EvalRunSourceKind;
   scenario: EvalScenario;
   bundle: EvalBundle;
   environment: EvalEnvironmentManifest;
   replay: EvalReplaySpec;
+  observedRun: EvalObservedRunReference | null;
   graders: EvalGrader[];
   acceptanceOracle: EvalAcceptanceOracle;
   failureTaxonomy: EvalFailureTaxonomy[];
@@ -255,6 +278,7 @@ export interface EvalStatusCount {
 
 export interface EvalRunListItem {
   runId: string;
+  sourceKind: EvalRunSourceKind;
   scenarioId: string;
   scenarioTitle: string;
   bundleId: string;

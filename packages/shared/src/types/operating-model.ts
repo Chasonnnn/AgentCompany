@@ -113,10 +113,18 @@ export interface ParsedConnectionContract {
 export type IssueProgressDocumentKind = "paperclip/issue-progress.v1";
 export type IssueHandoffDocumentKind = "paperclip/issue-handoff.v1";
 export type IssueBranchCharterKind = "paperclip/issue-branch-charter.v1";
+export type IssueReviewFindingsDocumentKind = "paperclip/issue-review-findings.v1";
+export type IssueBranchReturnDocumentKind = "paperclip/issue-branch-return.v1";
 export type IssueContinuityDocumentKind =
   | IssueProgressDocumentKind
   | IssueHandoffDocumentKind
-  | IssueBranchCharterKind;
+  | IssueBranchCharterKind
+  | IssueReviewFindingsDocumentKind
+  | IssueBranchReturnDocumentKind;
+
+export type IssueReviewFindingsOutcome = "changes_requested" | "approved_with_notes" | "blocked";
+export type IssueReviewFindingsResolutionState = "open" | "addressed";
+export type IssueReviewFindingSeverity = "critical" | "high" | "medium" | "low";
 
 export interface IssueProgressCheckpoint {
   at?: string | null;
@@ -161,6 +169,49 @@ export interface IssueBranchCharter {
   timeout?: string | null;
 }
 
+export interface IssueReviewFinding {
+  severity: IssueReviewFindingSeverity;
+  category: string;
+  title: string;
+  detail: string;
+  requiredAction: string;
+  evidence: string[];
+}
+
+export interface IssueReviewFindingsDocument {
+  kind: IssueReviewFindingsDocumentKind;
+  reviewer: string;
+  gateParticipant: string;
+  reviewStage: string;
+  decisionContext?: string | null;
+  outcome: IssueReviewFindingsOutcome;
+  resolutionState: IssueReviewFindingsResolutionState;
+  ownerNextAction: string;
+  ownerResponseNote?: string | null;
+  addressedAt?: string | null;
+  findings: IssueReviewFinding[];
+}
+
+export interface IssueBranchReturnProposedUpdate {
+  documentKey: string;
+  action: "append" | "replace";
+  summary: string;
+  content: string;
+  title?: string | null;
+}
+
+export interface IssueBranchReturnDocument {
+  kind: IssueBranchReturnDocumentKind;
+  purposeScopeRecap: string;
+  resultSummary: string;
+  proposedParentUpdates: IssueBranchReturnProposedUpdate[];
+  mergeChecklist: string[];
+  unresolvedRisks: string[];
+  openQuestions: string[];
+  evidence: string[];
+  returnedArtifacts: string[];
+}
+
 export interface ParsedIssueProgressDocument {
   document: IssueProgressDocument;
   body: string;
@@ -175,6 +226,18 @@ export interface ParsedIssueHandoffDocument {
 
 export interface ParsedIssueBranchCharter {
   document: IssueBranchCharter;
+  body: string;
+  frontmatter: Record<string, unknown>;
+}
+
+export interface ParsedIssueReviewFindingsDocument {
+  document: IssueReviewFindingsDocument;
+  body: string;
+  frontmatter: Record<string, unknown>;
+}
+
+export interface ParsedIssueBranchReturnDocument {
+  document: IssueBranchReturnDocument;
   body: string;
   frontmatter: Record<string, unknown>;
 }

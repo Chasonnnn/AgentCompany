@@ -62,13 +62,24 @@ export const evalScenarioOverlaySchema = z.object({
   cleanup: z.enum(["delete", "retain_on_failure", "retain"]),
 });
 
-export const evalScenarioFixtureSchema = z.object({
-  kind: z.literal("portable_company_package"),
-  basePackagePath: trimmedString,
-  overlays: z.array(evalScenarioOverlaySchema),
-  hermetic: z.boolean(),
-  externalDependencies: z.array(trimmedString),
-});
+export const evalRunSourceKindSchema = z.enum(["seeded", "observed"]);
+
+export const evalScenarioFixtureSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("portable_company_package"),
+    basePackagePath: trimmedString,
+    overlays: z.array(evalScenarioOverlaySchema),
+    hermetic: z.boolean(),
+    externalDependencies: z.array(trimmedString),
+  }),
+  z.object({
+    kind: z.literal("observed_issue_continuity"),
+    lookbackHours: z.number().int().positive(),
+    maxRuns: z.number().int().positive(),
+    hermetic: z.literal(false),
+    externalDependencies: z.array(trimmedString),
+  }),
+]);
 
 export const evalTimeoutPolicySchema = z.object({
   maxMinutes: z.number().int().positive(),
@@ -139,18 +150,27 @@ export const evalExternalDependencyPolicySchema = z.object({
   notes: nullableTrimmedString,
 }) as z.ZodType<EvalExternalDependencyPolicy>;
 
+export const evalObservedRunReferenceSchema = z.object({
+  companyId: nullableTrimmedString,
+  issueId: nullableTrimmedString,
+  heartbeatRunId: nullableTrimmedString,
+  agentId: nullableTrimmedString,
+});
+
 export const evalReplaySpecSchema = z.object({
+  sourceKind: evalRunSourceKindSchema,
   scenarioId: trimmedString,
   bundleId: trimmedString,
   lane: evalBundleLaneSchema,
   command: trimmedString,
   artifactRoot: trimmedString,
-  basePackagePath: trimmedString,
+  basePackagePath: nullableTrimmedString,
   overlayLabels: z.array(trimmedString),
   featureFlags: z.array(trimmedString),
   seed: z.number().int(),
   fairnessConstraints: evalFairnessConstraintsSchema,
   externalDependencyPolicy: evalExternalDependencyPolicySchema,
+  observedRun: evalObservedRunReferenceSchema.nullable(),
   env: z.record(z.string(), z.string()),
 }) as z.ZodType<EvalReplaySpec>;
 
@@ -259,10 +279,12 @@ export const evalRunArtifactSchema = z.object({
   evalContractVersion: z.literal(EVAL_CONTRACT_VERSION),
   scorecardVersion: z.literal(EVAL_SCORECARD_VERSION),
   runId: trimmedString,
+  sourceKind: evalRunSourceKindSchema,
   scenario: evalScenarioSchema,
   bundle: evalBundleSchema,
   environment: evalEnvironmentManifestSchema,
   replay: evalReplaySpecSchema,
+  observedRun: evalObservedRunReferenceSchema.nullable(),
   graders: z.array(evalGraderSchema),
   acceptanceOracle: evalAcceptanceOracleSchema,
   failureTaxonomy: z.array(evalFailureTaxonomySchema),
@@ -307,6 +329,7 @@ export const evalSummaryScenarioEntrySchema = z.object({
 
 export const evalRunListItemSchema = z.object({
   runId: trimmedString,
+  sourceKind: evalRunSourceKindSchema,
   scenarioId: trimmedString,
   scenarioTitle: trimmedString,
   bundleId: trimmedString,

@@ -1,10 +1,16 @@
 import type {
+  IssueBranchRole,
+  IssueBranchStatus,
+  IssueContinuityHealth,
+  IssueContinuityStatus,
+  IssueContinuityTier,
   IssueExecutionDecisionOutcome,
   IssueExecutionPolicyMode,
   IssueExecutionStageType,
   IssueExecutionStateStatus,
   IssueOriginKind,
   IssuePriority,
+  IssueSpecState,
   IssueStatus,
 } from "../constants.js";
 import type { Goal } from "./goal.js";
@@ -173,6 +179,113 @@ export interface IssueExecutionDecision {
   updatedAt: Date;
 }
 
+export interface IssueContinuityState {
+  tier: IssueContinuityTier;
+  status: IssueContinuityStatus;
+  health: IssueContinuityHealth;
+  healthReason?: string | null;
+  healthDetails?: string[] | null;
+  requiredDocumentKeys: string[];
+  missingDocumentKeys: string[];
+  specState: IssueSpecState;
+  branchRole: IssueBranchRole;
+  branchStatus: IssueBranchStatus;
+  unresolvedBranchIssueIds: string[];
+  returnedBranchIssueIds?: string[];
+  openReviewFindingsRevisionId?: string | null;
+  lastProgressAt: string | null;
+  lastHandoffAt: string | null;
+  lastReviewFindingsAt?: string | null;
+  lastReviewReturnAt?: string | null;
+  lastBranchReturnAt?: string | null;
+  lastPreparedAt: string | null;
+  lastBundleHash: string | null;
+}
+
+export interface IssueContinuityDocumentSnapshot {
+  key: string;
+  title: string | null;
+  body: string;
+  latestRevisionId: string | null;
+  latestRevisionNumber: number;
+  updatedAt: string;
+}
+
+export interface IssueContinuityBundle {
+  issueId: string;
+  generatedAt: string;
+  bundleHash: string;
+  continuityState: IssueContinuityState | null;
+  executionState: IssueExecutionState | null;
+  issueDocuments: {
+    spec: IssueContinuityDocumentSnapshot | null;
+    plan: IssueContinuityDocumentSnapshot | null;
+    runbook: IssueContinuityDocumentSnapshot | null;
+    progress: IssueContinuityDocumentSnapshot | null;
+    "test-plan": IssueContinuityDocumentSnapshot | null;
+    handoff: IssueContinuityDocumentSnapshot | null;
+    "review-findings": IssueContinuityDocumentSnapshot | null;
+    "branch-return": IssueContinuityDocumentSnapshot | null;
+  };
+  projectDocuments: {
+    context: IssueContinuityDocumentSnapshot | null;
+    runbook: IssueContinuityDocumentSnapshot | null;
+  };
+  referencedRevisionIds: Record<string, string | null>;
+}
+
+export type IssueContinuityRemediationActionId =
+  | "prepare_execution"
+  | "progress_checkpoint"
+  | "handoff_repair"
+  | "handoff_cancel"
+  | "review_resubmit"
+  | "branch_merge";
+
+export type IssueContinuityRemediationActor =
+  | "continuity_owner"
+  | "active_gate_participant"
+  | "branch_owner"
+  | "board";
+
+export interface IssueContinuityRemediationAction {
+  id: IssueContinuityRemediationActionId;
+  label: string;
+  description: string;
+  actor: IssueContinuityRemediationActor;
+  eligible: boolean;
+  blockedReason: string | null;
+  targetIssueIds?: string[];
+}
+
+export interface IssueContinuityRemediation {
+  suggestedActions: IssueContinuityRemediationAction[];
+  blockedActions: IssueContinuityRemediationAction[];
+}
+
+export interface IssueBranchMergePreviewUpdate {
+  documentKey: string;
+  action: "append" | "replace";
+  summary: string;
+  content: string;
+  title: string | null;
+  existingParentRevisionId: string | null;
+}
+
+export interface IssueBranchMergePreview {
+  branchIssueId: string;
+  parentIssueId: string;
+  canMerge: boolean;
+  blockedReason: string | null;
+  branchStatus: IssueBranchStatus;
+  proposedUpdates: IssueBranchMergePreviewUpdate[];
+  mergeChecklist: string[];
+  unresolvedRisks: string[];
+  openQuestions: string[];
+  evidence: string[];
+  returnedArtifacts: string[];
+}
+
 export interface Issue {
   id: string;
   companyId: string;
@@ -203,6 +316,7 @@ export interface Issue {
   assigneeAdapterOverrides: IssueAssigneeAdapterOverrides | null;
   executionPolicy?: IssueExecutionPolicy | null;
   executionState?: IssueExecutionState | null;
+  continuityState?: IssueContinuityState | null;
   executionWorkspaceId: string | null;
   executionWorkspacePreference: string | null;
   executionWorkspaceSettings: IssueExecutionWorkspaceSettings | null;

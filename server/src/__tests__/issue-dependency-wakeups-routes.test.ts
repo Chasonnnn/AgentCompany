@@ -45,6 +45,23 @@ function registerRouteMocks() {
       listCompanyIds: vi.fn(),
     }),
     issueApprovalService: () => ({}),
+    issueContinuityService: () => ({
+      recomputeIssueContinuityState: vi.fn(async () => ({
+        tier: "normal",
+        status: "draft",
+        health: "healthy",
+        requiredDocumentKeys: [],
+        missingDocumentKeys: [],
+        specState: "editable",
+        branchRole: "none",
+        branchStatus: "none",
+        unresolvedBranchIssueIds: [],
+        lastProgressAt: null,
+        lastHandoffAt: null,
+        lastPreparedAt: null,
+        lastBundleHash: null,
+      })),
+    }),
     issueService: () => mockIssueService,
     logActivity: vi.fn(async () => undefined),
     projectService: () => ({

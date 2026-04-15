@@ -10,13 +10,11 @@ import type {
 } from "@paperclipai/shared";
 import {
   buildIssueDocumentTemplate,
-  getIssueContinuityTierRequirements,
-  ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
   ISSUE_RESERVED_DOCUMENT_KEYS,
   getReservedIssueDocumentDescriptor,
   isReservedIssueDocumentKey,
 } from "@paperclipai/shared";
-import { Link, useLocation } from "@/lib/router";
+import { useLocation } from "@/lib/router";
 import { ApiError } from "../api/client";
 import { issuesApi } from "../api/issues";
 import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
@@ -87,30 +85,6 @@ function isPlanKey(key: string) {
 
 function documentBadgeLabel(key: string) {
   return getReservedIssueDocumentDescriptor(key)?.label ?? key;
-}
-
-function inferContinuityTier(issue: Issue, documentKeys: Set<string>) {
-  if (
-    issue.parentId ||
-    Boolean(issue.executionWorkspaceId) ||
-    Boolean(issue.currentExecutionWorkspace) ||
-    (issue.executionPolicy?.stages?.length ?? 0) > 0 ||
-    documentKeys.has("runbook") ||
-    documentKeys.has("handoff") ||
-    documentKeys.has(ISSUE_BRANCH_CHARTER_DOCUMENT_KEY)
-  ) {
-    return "long_running" as const;
-  }
-  if (
-    issue.status === "in_progress" ||
-    issue.status === "in_review" ||
-    issue.status === "blocked" ||
-    documentKeys.has("plan") ||
-    documentKeys.has("test-plan")
-  ) {
-    return "normal" as const;
-  }
-  return "tiny" as const;
 }
 
 function titlesMatchKey(title: string | null | undefined, key: string) {
@@ -331,18 +305,6 @@ export function IssueDocumentsSection({
   }, [feedbackVotes]);
 
   const hasRealPlan = sortedDocuments.some((doc) => doc.key === "plan");
-  const documentKeys = useMemo(() => new Set(sortedDocuments.map((doc) => doc.key)), [sortedDocuments]);
-  const continuityTier = useMemo(() => inferContinuityTier(issue, documentKeys), [documentKeys, issue]);
-  const requiredContinuityDocs = useMemo(
-    () => getIssueContinuityTierRequirements(continuityTier),
-    [continuityTier],
-  );
-  const missingContinuityDocs = useMemo(
-    () => requiredContinuityDocs.filter((key) => !documentKeys.has(key)),
-    [documentKeys, requiredContinuityDocs],
-  );
-  const isBranchIssue = issue.parentId != null && documentKeys.has(ISSUE_BRANCH_CHARTER_DOCUMENT_KEY);
-  const branchParent = issue.ancestors?.[0];
   const isEmpty = sortedDocuments.length === 0 && !issue.legacyPlanDocument;
   const newDocumentKeyError =
     draft?.isNew && draft.key.trim().length > 0 && !DOCUMENT_KEY_PATTERN.test(draft.key.trim())
@@ -773,51 +735,6 @@ export function IssueDocumentsSection({
       )}
 
       {error && <p className="text-xs text-destructive">{error}</p>}
-
-      <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Continuity</span>
-          <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-foreground">
-            {continuityTier === "tiny" ? "Tiny" : continuityTier === "normal" ? "Normal" : "Long-running"}
-          </span>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Required docs: {requiredContinuityDocs.map((key) => documentBadgeLabel(key)).join(", ")}
-        </p>
-        {missingContinuityDocs.length > 0 ? (
-          <div className="mt-2 space-y-2">
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              Missing continuity docs: {missingContinuityDocs.map((key) => documentBadgeLabel(key)).join(", ")}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {missingContinuityDocs.map((key) => (
-                <Button
-                  key={key}
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => beginTemplatedDocument(key)}
-                >
-                  Add {documentBadgeLabel(key)}
-                </Button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-        {isBranchIssue ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Branch issue for{" "}
-            <Link
-              to={`/issues/${branchParent?.identifier ?? issue.parentId}`}
-              className="underline underline-offset-2"
-            >
-              {branchParent?.identifier ?? issue.parentId}
-            </Link>
-            .
-          </p>
-        ) : null}
-      </div>
 
       {draft?.isNew && (
         <div

@@ -49,6 +49,7 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
+import { issueContinuityService } from "./issue-continuity.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import { isProcessGroupAlive, terminateLocalService } from "./local-service-supervisor.js";
@@ -1234,6 +1235,7 @@ export function heartbeatService(db: Db) {
   const secretsSvc = secretService(db);
   const companySkills = companySkillService(db);
   const issuesSvc = issueService(db);
+  const issueContinuitySvc = issueContinuityService(db);
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
   const activeRunExecutions = new Set<string>();
@@ -1259,7 +1261,7 @@ export function heartbeatService(db: Db) {
   }
 
   async function getIssueExecutionContext(companyId: string, issueId: string) {
-    return db
+    const issue = await db
       .select({
         id: issues.id,
         identifier: issues.identifier,
@@ -1273,10 +1275,18 @@ export function heartbeatService(db: Db) {
         assigneeAgentId: issues.assigneeAgentId,
         assigneeAdapterOverrides: issues.assigneeAdapterOverrides,
         executionWorkspaceSettings: issues.executionWorkspaceSettings,
+        continuityState: issues.continuityState,
       })
       .from(issues)
       .where(and(eq(issues.id, issueId), eq(issues.companyId, companyId)))
       .then((rows) => rows[0] ?? null);
+    if (!issue) return null;
+    const continuity = await issueContinuitySvc.getIssueContinuity(issue.id);
+    return {
+      ...issue,
+      continuityState: continuity.continuityState,
+      continuityBundle: continuity.continuityBundle,
+    };
   }
 
   async function getRuntimeState(agentId: string) {
@@ -2737,6 +2747,34 @@ export function heartbeatService(db: Db) {
       }
       issueContext = await getIssueExecutionContext(agent.companyId, issueId);
     }
+    if (issueContext?.continuityState) {
+      const invalidContinuity =
+        issueContext.continuityState.missingDocumentKeys.length > 0 ||
+        issueContext.continuityState.health === "invalid_handoff";
+      if (invalidContinuity) {
+        throw conflict(
+          issueContext.continuityState.health === "invalid_handoff"
+            ? "Issue continuity is invalid: complete a valid handoff before starting execution"
+            : `Issue continuity is missing required docs: ${issueContext.continuityState.missingDocumentKeys.join(", ")}`,
+        );
+      }
+      const continuityRevisionIds = issueContext.continuityBundle.referencedRevisionIds;
+      const previousBundleHash = readNonEmptyString(context.continuityBundleHash);
+      const previousRevisionIds = parseObject(context.continuityRevisionIds);
+      const continuityChanged =
+        previousBundleHash !== null &&
+        (previousBundleHash !== issueContext.continuityBundle.bundleHash ||
+          JSON.stringify(previousRevisionIds) !== JSON.stringify(continuityRevisionIds));
+      context.continuityBundleHash = issueContext.continuityBundle.bundleHash;
+      context.continuityRevisionIds = continuityRevisionIds;
+      context.continuityTier = issueContext.continuityState.tier;
+      context.specState = issueContext.continuityState.specState;
+      context.unresolvedBranchIssueIds = issueContext.continuityState.unresolvedBranchIssueIds;
+      if (continuityChanged) {
+        context.forceFreshSession = true;
+        context.continuityInvalidated = true;
+      }
+    }
     const issueAssigneeOverrides =
       issueContext && issueContext.assigneeAgentId === agent.id
         ? parseIssueAssigneeAdapterOverrides(
@@ -2804,6 +2842,7 @@ export function heartbeatService(db: Db) {
           projectWorkspaceId: issueContext.projectWorkspaceId,
           executionWorkspaceId: issueContext.executionWorkspaceId,
           executionWorkspacePreference: issueContext.executionWorkspacePreference,
+          continuityState: issueContext.continuityState,
         }
       : null;
     const paperclipWakePayload = await buildPaperclipWakePayload({

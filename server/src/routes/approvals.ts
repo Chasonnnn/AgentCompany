@@ -17,6 +17,7 @@ import {
   logActivity,
   secretService,
 } from "../services/index.js";
+import * as serviceRegistry from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { serializeApprovalForActor } from "../services/conference-context.js";
 
@@ -26,6 +27,9 @@ export function approvalRoutes(db: Db) {
   const conferenceApprovals = conferenceApprovalService(db);
   const heartbeat = heartbeatService(db);
   const issueApprovalsSvc = issueApprovalService(db);
+  const continuitySvc = serviceRegistry.issueContinuityService
+    ? serviceRegistry.issueContinuityService(db)
+    : { recomputeIssueContinuityState: async () => null };
   const secretsSvc = secretService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
 
@@ -40,6 +44,12 @@ export function approvalRoutes(db: Db) {
 
   function getConferenceActor(req: Parameters<typeof assertCompanyAccess>[0]) {
     return req.actor.type === "agent" ? "agent" : "board";
+  }
+
+  async function recomputeLinkedIssueContinuity(approvalId: string) {
+    const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approvalId);
+    await Promise.all(linkedIssues.map((issue) => continuitySvc.recomputeIssueContinuityState(issue.id)));
+    return linkedIssues;
   }
 
   router.get("/companies/:companyId/approvals", async (req, res) => {
@@ -165,7 +175,7 @@ export function approvalRoutes(db: Db) {
     );
 
     if (applied) {
-      const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approval.id);
+      const linkedIssues = await recomputeLinkedIssueContinuity(approval.id);
       const linkedIssueIds = linkedIssues.map((issue) => issue.id);
       const primaryIssueId = linkedIssueIds[0] ?? null;
 
@@ -264,6 +274,7 @@ export function approvalRoutes(db: Db) {
     );
 
     if (applied) {
+      await recomputeLinkedIssueContinuity(approval.id);
       await logActivity(db, {
         companyId: approval.companyId,
         actorType: "user",
@@ -293,6 +304,8 @@ export function approvalRoutes(db: Db) {
         req.body.decidedByUserId ?? "board",
         req.body.decisionNote,
       );
+
+      await recomputeLinkedIssueContinuity(approval.id);
 
       await logActivity(db, {
         companyId: approval.companyId,
@@ -332,6 +345,7 @@ export function approvalRoutes(db: Db) {
         : req.body.payload
       : undefined;
     const approval = await svc.resubmit(id, normalizedPayload);
+    await recomputeLinkedIssueContinuity(approval.id);
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: approval.companyId,

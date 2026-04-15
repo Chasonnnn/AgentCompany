@@ -19,6 +19,7 @@ import {
   issues,
 } from "@paperclipai/db";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { issueContinuityService } from "../services/issue-continuity.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -238,6 +239,7 @@ describe("heartbeat comment wake batching", () => {
     const issueId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const heartbeat = heartbeatService(db);
+    const continuity = issueContinuityService(db);
 
     try {
       await db.insert(companies).values({
@@ -278,6 +280,7 @@ describe("heartbeat comment wake batching", () => {
         issueNumber: 1,
         identifier: `${issuePrefix}-1`,
       });
+      await continuity.prepare(issueId, { tier: "tiny" });
 
       const comment1 = await db
         .insert(issueComments)
@@ -450,6 +453,7 @@ describe("heartbeat comment wake batching", () => {
     const issueId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const heartbeat = heartbeatService(db);
+    const continuity = issueContinuityService(db);
 
     try {
       await db.insert(companies).values({
@@ -490,6 +494,7 @@ describe("heartbeat comment wake batching", () => {
         issueNumber: 1,
         identifier: `${issuePrefix}-1`,
       });
+      await continuity.prepare(issueId, { tier: "tiny" });
 
       const firstRun = await heartbeat.wakeup(agentId, {
         source: "assignment",

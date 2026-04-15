@@ -10,16 +10,22 @@ import type {
   ConnectionContractCadence,
   DecisionRequestPacket,
   EscalationPacket,
+  IssueBranchReturnDocument,
+  IssueBranchReturnProposedUpdate,
   HeartbeatPacket,
   IssueBranchCharter,
   IssueHandoffDocument,
   IssueProgressCheckpoint,
   IssueProgressDocument,
+  IssueReviewFinding,
+  IssueReviewFindingsDocument,
   PacketEnvelope,
+  ParsedIssueBranchReturnDocument,
   ParsedConnectionContract,
   ParsedIssueBranchCharter,
   ParsedIssueHandoffDocument,
   ParsedIssueProgressDocument,
+  ParsedIssueReviewFindingsDocument,
   ParsedPacketEnvelope,
   ReviewRequestPacket,
 } from "../types/operating-model.js";
@@ -220,6 +226,8 @@ export const issueReservedDocumentKeySchema = z.enum(ISSUE_RESERVED_DOCUMENT_KEY
 const issueProgressDocumentKindSchema = z.literal("paperclip/issue-progress.v1");
 const issueHandoffDocumentKindSchema = z.literal("paperclip/issue-handoff.v1");
 const issueBranchCharterKindSchema = z.literal("paperclip/issue-branch-charter.v1");
+const issueReviewFindingsDocumentKindSchema = z.literal("paperclip/issue-review-findings.v1");
+const issueBranchReturnDocumentKindSchema = z.literal("paperclip/issue-branch-return.v1");
 
 export const issueProgressCheckpointSchema = z.object({
   at: z.string().trim().min(1).nullable().optional(),
@@ -299,6 +307,84 @@ export const issueBranchCharterSchema = z.object({
   timeout: normalizeNullableText(value.timeout),
 })) as z.ZodType<IssueBranchCharter>;
 
+export const issueReviewFindingSchema = z.object({
+  severity: z.enum(["critical", "high", "medium", "low"]),
+  category: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  detail: z.string().trim().min(1),
+  requiredAction: z.string().trim().min(1),
+  evidence: z.array(z.string()).optional().default([]),
+}).transform((value) => ({
+  severity: value.severity,
+  category: value.category.trim(),
+  title: value.title.trim(),
+  detail: value.detail.trim(),
+  requiredAction: value.requiredAction.trim(),
+  evidence: normalizeStringList(value.evidence),
+})) as z.ZodType<IssueReviewFinding>;
+
+export const issueReviewFindingsDocumentSchema = z.object({
+  kind: issueReviewFindingsDocumentKindSchema,
+  reviewer: z.string().trim().min(1),
+  gateParticipant: z.string().trim().min(1),
+  reviewStage: z.string().trim().min(1),
+  decisionContext: z.string().trim().min(1).nullable().optional(),
+  outcome: z.enum(["changes_requested", "approved_with_notes", "blocked"]),
+  resolutionState: z.enum(["open", "addressed"]).optional().default("open"),
+  ownerNextAction: z.string().trim().min(1),
+  ownerResponseNote: z.string().trim().min(1).nullable().optional(),
+  addressedAt: z.string().trim().min(1).nullable().optional(),
+  findings: z.array(issueReviewFindingSchema).min(1),
+}).transform((value) => ({
+  kind: value.kind,
+  reviewer: value.reviewer.trim(),
+  gateParticipant: value.gateParticipant.trim(),
+  reviewStage: value.reviewStage.trim(),
+  decisionContext: normalizeNullableText(value.decisionContext),
+  outcome: value.outcome,
+  resolutionState: value.resolutionState,
+  ownerNextAction: value.ownerNextAction.trim(),
+  ownerResponseNote: normalizeNullableText(value.ownerResponseNote),
+  addressedAt: normalizeNullableText(value.addressedAt),
+  findings: value.findings,
+})) as z.ZodType<IssueReviewFindingsDocument>;
+
+export const issueBranchReturnProposedUpdateSchema = z.object({
+  documentKey: z.string().trim().min(1),
+  action: z.enum(["append", "replace"]),
+  summary: z.string().trim().min(1),
+  content: z.string().trim().min(1),
+  title: z.string().trim().min(1).nullable().optional(),
+}).transform((value) => ({
+  documentKey: value.documentKey.trim(),
+  action: value.action,
+  summary: value.summary.trim(),
+  content: value.content.trim(),
+  title: normalizeNullableText(value.title),
+})) as z.ZodType<IssueBranchReturnProposedUpdate>;
+
+export const issueBranchReturnDocumentSchema = z.object({
+  kind: issueBranchReturnDocumentKindSchema,
+  purposeScopeRecap: z.string().trim().min(1),
+  resultSummary: z.string().trim().min(1),
+  proposedParentUpdates: z.array(issueBranchReturnProposedUpdateSchema).default([]),
+  mergeChecklist: z.array(z.string()).optional().default([]),
+  unresolvedRisks: z.array(z.string()).optional().default([]),
+  openQuestions: z.array(z.string()).optional().default([]),
+  evidence: z.array(z.string()).optional().default([]),
+  returnedArtifacts: z.array(z.string()).optional().default([]),
+}).transform((value) => ({
+  kind: value.kind,
+  purposeScopeRecap: value.purposeScopeRecap.trim(),
+  resultSummary: value.resultSummary.trim(),
+  proposedParentUpdates: value.proposedParentUpdates,
+  mergeChecklist: normalizeStringList(value.mergeChecklist),
+  unresolvedRisks: normalizeStringList(value.unresolvedRisks),
+  openQuestions: normalizeStringList(value.openQuestions),
+  evidence: normalizeStringList(value.evidence),
+  returnedArtifacts: normalizeStringList(value.returnedArtifacts),
+})) as z.ZodType<IssueBranchReturnDocument>;
+
 type FrontmatterDoc = {
   frontmatter: Record<string, unknown>;
   body: string;
@@ -320,6 +406,13 @@ function parseYamlScalar(raw: string): unknown {
     (value.startsWith("\"") && value.endsWith("\""))
     || (value.startsWith("'") && value.endsWith("'"))
   ) {
+    if (value.startsWith("\"") && value.endsWith("\"")) {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value.slice(1, -1);
+      }
+    }
     return value.slice(1, -1);
   }
   if (value.startsWith("[") && value.endsWith("]")) {
@@ -518,6 +611,30 @@ export function parseIssueBranchCharterMarkdown(raw: string): ParsedIssueBranchC
   const parsed = parseFrontmatterMarkdown(raw);
   if (parsed.frontmatter.kind !== "paperclip/issue-branch-charter.v1") return null;
   const document = issueBranchCharterSchema.safeParse(parsed.frontmatter);
+  if (!document.success) return null;
+  return {
+    document: document.data,
+    body: parsed.body,
+    frontmatter: parsed.frontmatter,
+  };
+}
+
+export function parseIssueReviewFindingsMarkdown(raw: string): ParsedIssueReviewFindingsDocument | null {
+  const parsed = parseFrontmatterMarkdown(raw);
+  if (parsed.frontmatter.kind !== "paperclip/issue-review-findings.v1") return null;
+  const document = issueReviewFindingsDocumentSchema.safeParse(parsed.frontmatter);
+  if (!document.success) return null;
+  return {
+    document: document.data,
+    body: parsed.body,
+    frontmatter: parsed.frontmatter,
+  };
+}
+
+export function parseIssueBranchReturnMarkdown(raw: string): ParsedIssueBranchReturnDocument | null {
+  const parsed = parseFrontmatterMarkdown(raw);
+  if (parsed.frontmatter.kind !== "paperclip/issue-branch-return.v1") return null;
+  const document = issueBranchReturnDocumentSchema.safeParse(parsed.frontmatter);
   if (!document.success) return null;
   return {
     document: document.data,

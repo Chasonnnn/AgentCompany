@@ -1,10 +1,16 @@
 import { z } from "zod";
 import {
+  ISSUE_BRANCH_ROLES,
+  ISSUE_BRANCH_STATUSES,
+  ISSUE_CONTINUITY_HEALTHS,
+  ISSUE_CONTINUITY_STATUSES,
+  ISSUE_CONTINUITY_TIERS,
   ISSUE_EXECUTION_DECISION_OUTCOMES,
   ISSUE_EXECUTION_POLICY_MODES,
   ISSUE_EXECUTION_STAGE_TYPES,
   ISSUE_EXECUTION_STATE_STATUSES,
   ISSUE_PRIORITIES,
+  ISSUE_SPEC_STATES,
   ISSUE_STATUSES,
 } from "../constants.js";
 
@@ -113,6 +119,220 @@ export const issueExecutionStateSchema = z.object({
   lastDecisionOutcome: z.enum(ISSUE_EXECUTION_DECISION_OUTCOMES).nullable(),
 });
 
+export const issueContinuityTierSchema = z.enum(ISSUE_CONTINUITY_TIERS);
+export const issueContinuityStatusSchema = z.enum(ISSUE_CONTINUITY_STATUSES);
+export const issueSpecStateSchema = z.enum(ISSUE_SPEC_STATES);
+export const issueBranchRoleSchema = z.enum(ISSUE_BRANCH_ROLES);
+export const issueBranchStatusSchema = z.enum(ISSUE_BRANCH_STATUSES);
+export const issueContinuityHealthSchema = z.enum(ISSUE_CONTINUITY_HEALTHS);
+
+export const issueContinuityStateSchema = z.object({
+  tier: issueContinuityTierSchema,
+  status: issueContinuityStatusSchema,
+  health: issueContinuityHealthSchema,
+  healthReason: z.string().trim().min(1).nullable().optional(),
+  healthDetails: z.array(z.string()).optional().default([]),
+  requiredDocumentKeys: z.array(z.string()).default([]),
+  missingDocumentKeys: z.array(z.string()).default([]),
+  specState: issueSpecStateSchema,
+  branchRole: issueBranchRoleSchema,
+  branchStatus: issueBranchStatusSchema,
+  unresolvedBranchIssueIds: z.array(z.string().uuid()).default([]),
+  returnedBranchIssueIds: z.array(z.string().uuid()).default([]),
+  openReviewFindingsRevisionId: z.string().uuid().nullable().optional(),
+  lastProgressAt: z.string().datetime().nullable(),
+  lastHandoffAt: z.string().datetime().nullable(),
+  lastReviewFindingsAt: z.string().datetime().nullable().optional(),
+  lastReviewReturnAt: z.string().datetime().nullable().optional(),
+  lastBranchReturnAt: z.string().datetime().nullable().optional(),
+  lastPreparedAt: z.string().datetime().nullable(),
+  lastBundleHash: z.string().nullable(),
+});
+
+const issueContinuityDocumentSnapshotSchema = z.object({
+  key: z.string().min(1),
+  title: z.string().nullable(),
+  body: z.string(),
+  latestRevisionId: z.string().uuid().nullable(),
+  latestRevisionNumber: z.number().int().nonnegative(),
+  updatedAt: z.string().datetime(),
+});
+
+export const issueContinuityBundleSchema = z.object({
+  issueId: z.string().uuid(),
+  generatedAt: z.string().datetime(),
+  bundleHash: z.string().min(1),
+  continuityState: issueContinuityStateSchema.nullable(),
+  executionState: issueExecutionStateSchema.nullable(),
+  issueDocuments: z.object({
+    spec: issueContinuityDocumentSnapshotSchema.nullable(),
+    plan: issueContinuityDocumentSnapshotSchema.nullable(),
+    runbook: issueContinuityDocumentSnapshotSchema.nullable(),
+    progress: issueContinuityDocumentSnapshotSchema.nullable(),
+    "test-plan": issueContinuityDocumentSnapshotSchema.nullable(),
+    handoff: issueContinuityDocumentSnapshotSchema.nullable(),
+    "review-findings": issueContinuityDocumentSnapshotSchema.nullable(),
+    "branch-return": issueContinuityDocumentSnapshotSchema.nullable(),
+  }),
+  projectDocuments: z.object({
+    context: issueContinuityDocumentSnapshotSchema.nullable(),
+    runbook: issueContinuityDocumentSnapshotSchema.nullable(),
+  }),
+  referencedRevisionIds: z.record(z.string(), z.string().uuid().nullable()),
+});
+
+export const issueContinuityRemediationActionSchema = z.object({
+  id: z.enum([
+    "prepare_execution",
+    "progress_checkpoint",
+    "handoff_repair",
+    "handoff_cancel",
+    "review_resubmit",
+    "branch_merge",
+  ]),
+  label: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+  actor: z.enum(["continuity_owner", "active_gate_participant", "branch_owner", "board"]),
+  eligible: z.boolean(),
+  blockedReason: z.string().trim().min(1).nullable(),
+  targetIssueIds: z.array(z.string().uuid()).optional(),
+});
+
+export const issueContinuityRemediationSchema = z.object({
+  suggestedActions: z.array(issueContinuityRemediationActionSchema).default([]),
+  blockedActions: z.array(issueContinuityRemediationActionSchema).default([]),
+});
+
+export const issueBranchMergePreviewUpdateSchema = z.object({
+  documentKey: z.string().trim().min(1),
+  action: z.enum(["append", "replace"]),
+  summary: z.string().trim().min(1),
+  content: z.string().trim().min(1),
+  title: z.string().trim().min(1).nullable(),
+  existingParentRevisionId: z.string().uuid().nullable(),
+});
+
+export const issueBranchMergePreviewSchema = z.object({
+  branchIssueId: z.string().uuid(),
+  parentIssueId: z.string().uuid(),
+  canMerge: z.boolean(),
+  blockedReason: z.string().trim().min(1).nullable(),
+  branchStatus: issueBranchStatusSchema,
+  proposedUpdates: z.array(issueBranchMergePreviewUpdateSchema).default([]),
+  mergeChecklist: z.array(z.string()).default([]),
+  unresolvedRisks: z.array(z.string()).default([]),
+  openQuestions: z.array(z.string()).default([]),
+  evidence: z.array(z.string()).default([]),
+  returnedArtifacts: z.array(z.string()).default([]),
+});
+
+export const prepareIssueContinuitySchema = z.object({
+  tier: issueContinuityTierSchema.optional(),
+});
+
+export const handoffIssueContinuitySchema = z.object({
+  assigneeAgentId: z.string().uuid().optional().nullable(),
+  assigneeUserId: z.string().optional().nullable(),
+  reasonCode: z.string().trim().min(1),
+  exactNextAction: z.string().trim().min(1),
+  unresolvedBranches: z.array(z.string().uuid()).optional(),
+  openQuestions: z.array(z.string()).optional(),
+  evidence: z.array(z.string()).optional(),
+});
+
+export const issueReviewFindingInputSchema = z.object({
+  severity: z.enum(["critical", "high", "medium", "low"]),
+  category: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  detail: z.string().trim().min(1),
+  requiredAction: z.string().trim().min(1),
+  evidence: z.array(z.string()).optional(),
+});
+
+export const reviewReturnIssueContinuitySchema = z.object({
+  decisionContext: z.string().trim().min(1).optional().nullable(),
+  outcome: z.enum(["changes_requested", "approved_with_notes", "blocked"]),
+  ownerNextAction: z.string().trim().min(1),
+  findings: z.array(issueReviewFindingInputSchema).min(1),
+});
+
+export const progressCheckpointIssueContinuitySchema = z.object({
+  summary: z.string().trim().min(1).optional().nullable(),
+  currentState: z.string().trim().min(1),
+  nextAction: z.string().trim().min(1),
+  completed: z.array(z.string()).optional(),
+  knownPitfalls: z.array(z.string()).optional(),
+  openQuestions: z.array(z.string()).optional(),
+  evidence: z.array(z.string()).optional(),
+});
+
+export const reviewResubmitIssueContinuitySchema = z.object({
+  responseNote: z.string().trim().min(1).optional().nullable(),
+  progressCheckpoint: progressCheckpointIssueContinuitySchema.optional(),
+});
+
+export const handoffRepairIssueContinuitySchema = z.object({
+  reasonCode: z.string().trim().min(1),
+  exactNextAction: z.string().trim().min(1),
+  unresolvedBranches: z.array(z.string().uuid()).optional(),
+  openQuestions: z.array(z.string()).optional(),
+  evidence: z.array(z.string()).optional(),
+});
+
+export const handoffCancelIssueContinuitySchema = z.object({
+  reasonNote: z.string().trim().min(1),
+});
+
+export const branchReturnProposedUpdateInputSchema = z.object({
+  documentKey: z.string().trim().min(1),
+  action: z.enum(["append", "replace"]),
+  summary: z.string().trim().min(1),
+  content: z.string().trim().min(1),
+  title: z.string().trim().min(1).optional().nullable(),
+});
+
+export const returnIssueContinuityBranchSchema = z.object({
+  purposeScopeRecap: z.string().trim().min(1),
+  resultSummary: z.string().trim().min(1),
+  proposedParentUpdates: z.array(branchReturnProposedUpdateInputSchema).default([]),
+  mergeChecklist: z.array(z.string()).optional(),
+  unresolvedRisks: z.array(z.string()).optional(),
+  openQuestions: z.array(z.string()).optional(),
+  evidence: z.array(z.string()).optional(),
+  returnedArtifacts: z.array(z.string()).optional(),
+});
+
+export const mergeIssueContinuityBranchSchema = z.object({
+  selectedDocumentKeys: z.array(z.string().trim().min(1)).default([]),
+});
+
+export const requestIssueSpecThawSchema = z.object({
+  approvalId: z.string().uuid().optional().nullable(),
+  reason: z.string().trim().min(1).optional().nullable(),
+});
+
+export const createIssueContinuityBranchSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("create"),
+    title: z.string().trim().min(1),
+    description: z.string().optional().nullable(),
+    purpose: z.string().trim().min(1),
+    scope: z.string().trim().min(1),
+    budget: z.string().trim().min(1),
+    expectedReturnArtifact: z.string().trim().min(1),
+    mergeCriteria: z.array(z.string()).optional(),
+    expiration: z.string().trim().min(1).optional().nullable(),
+    timeout: z.string().trim().min(1).optional().nullable(),
+    assigneeAgentId: z.string().uuid().optional().nullable(),
+    assigneeUserId: z.string().optional().nullable(),
+    priority: z.enum(ISSUE_PRIORITIES).optional(),
+  }),
+  z.object({
+    action: z.literal("merge"),
+    branchIssueId: z.string().uuid(),
+  }),
+]);
+
 export const createIssueSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   projectWorkspaceId: z.string().uuid().optional().nullable(),
@@ -206,3 +426,14 @@ export const restoreIssueDocumentRevisionSchema = z.object({});
 export type IssueDocumentFormat = z.infer<typeof issueDocumentFormatSchema>;
 export type UpsertIssueDocument = z.infer<typeof upsertIssueDocumentSchema>;
 export type RestoreIssueDocumentRevision = z.infer<typeof restoreIssueDocumentRevisionSchema>;
+export type PrepareIssueContinuity = z.infer<typeof prepareIssueContinuitySchema>;
+export type HandoffIssueContinuity = z.infer<typeof handoffIssueContinuitySchema>;
+export type ReviewReturnIssueContinuity = z.infer<typeof reviewReturnIssueContinuitySchema>;
+export type ReviewResubmitIssueContinuity = z.infer<typeof reviewResubmitIssueContinuitySchema>;
+export type ProgressCheckpointIssueContinuity = z.infer<typeof progressCheckpointIssueContinuitySchema>;
+export type HandoffRepairIssueContinuity = z.infer<typeof handoffRepairIssueContinuitySchema>;
+export type HandoffCancelIssueContinuity = z.infer<typeof handoffCancelIssueContinuitySchema>;
+export type RequestIssueSpecThaw = z.infer<typeof requestIssueSpecThawSchema>;
+export type CreateIssueContinuityBranch = z.infer<typeof createIssueContinuityBranchSchema>;
+export type ReturnIssueContinuityBranch = z.infer<typeof returnIssueContinuityBranchSchema>;
+export type MergeIssueContinuityBranch = z.infer<typeof mergeIssueContinuityBranchSchema>;

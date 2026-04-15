@@ -55,6 +55,7 @@ import { InlineEditor } from "../components/InlineEditor";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
+import { IssueContinuityPanel } from "../components/IssueContinuityPanel";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import type { MentionOption } from "../components/MarkdownEditor";
@@ -1924,6 +1925,12 @@ export function IssueDetail() {
           )}
         </div>
       )}
+
+      <IssueContinuityPanel
+        issue={issue}
+        agents={agents ?? []}
+        childIssues={childIssues}
+      />
 
       <IssueDocumentsSection
         issue={issue}

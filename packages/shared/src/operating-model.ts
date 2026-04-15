@@ -1,8 +1,10 @@
 import {
   CONFERENCE_ROOM_KINDS,
   ISSUE_RESERVED_DOCUMENT_KEYS,
+  ISSUE_CONTINUITY_TIERS,
   PROJECT_RESERVED_DOCUMENT_KEYS,
   type ConferenceRoomKind,
+  type IssueContinuityTier,
   type IssueReservedDocumentKey,
   type ProjectReservedDocumentKey,
 } from "./constants.js";
@@ -23,9 +25,9 @@ export const PAPERCLIP_PACKET_KINDS = [
 export const ISSUE_PROGRESS_DOCUMENT_KIND = "paperclip/issue-progress.v1" as const;
 export const ISSUE_HANDOFF_DOCUMENT_KIND = "paperclip/issue-handoff.v1" as const;
 export const ISSUE_BRANCH_CHARTER_KIND = "paperclip/issue-branch-charter.v1" as const;
+export const ISSUE_REVIEW_FINDINGS_DOCUMENT_KIND = "paperclip/issue-review-findings.v1" as const;
+export const ISSUE_BRANCH_RETURN_DOCUMENT_KIND = "paperclip/issue-branch-return.v1" as const;
 export const ISSUE_BRANCH_CHARTER_DOCUMENT_KEY = "branch-charter" as const;
-export const ISSUE_CONTINUITY_TIERS = ["tiny", "normal", "long_running"] as const;
-export type IssueContinuityTier = (typeof ISSUE_CONTINUITY_TIERS)[number];
 
 const ISSUE_CONTINUITY_TIER_REQUIREMENTS: Record<IssueContinuityTier, string[]> = {
   tiny: ["spec", "progress"],
@@ -96,6 +98,18 @@ export const ISSUE_RESERVED_DOCUMENT_DESCRIPTORS: Record<IssueReservedDocumentKe
     label: "Handoff",
     owner: "Continuity owner",
     description: "What the next owner or reviewer needs to know to continue safely.",
+  },
+  "review-findings": {
+    key: "review-findings",
+    label: "Review Findings",
+    owner: "Reviewer or approver",
+    description: "Durable findings and return-to-owner guidance captured at a review or approval gate.",
+  },
+  "branch-return": {
+    key: "branch-return",
+    label: "Branch Return",
+    owner: "Branch owner",
+    description: "Structured return artifact that proposes explicit parent updates before merge.",
   },
 };
 
@@ -263,6 +277,29 @@ export function buildIssueDocumentTemplate(key: string): string | null {
         "",
         "Optional narrative context for the next owner.",
       ].join("\n");
+    case "review-findings":
+      return [
+        "---",
+        `kind: ${ISSUE_REVIEW_FINDINGS_DOCUMENT_KIND}`,
+        'reviewer: "agent:<id> or user:<id>"',
+        'gateParticipant: "agent:<id> or user:<id>"',
+        'reviewStage: "review or approval"',
+        'decisionContext: "Why this gate is happening"',
+        'outcome: "changes_requested"',
+        'resolutionState: "open"',
+        'ownerNextAction: "What the continuity owner must do next"',
+        "findings:",
+        "  - severity: critical",
+        '    category: "correctness"',
+        '    title: "Describe the finding"',
+        '    detail: "What is wrong and why it matters"',
+        '    requiredAction: "The exact fix or response needed"',
+        "    evidence:",
+        '      - "Link or artifact"',
+        "---",
+        "",
+        "Optional reviewer narrative or summary below the structured findings.",
+      ].join("\n");
     case ISSUE_BRANCH_CHARTER_DOCUMENT_KEY:
       return [
         "---",
@@ -278,6 +315,31 @@ export function buildIssueDocumentTemplate(key: string): string | null {
         "---",
         "",
         "Optional branch-specific notes.",
+      ].join("\n");
+    case "branch-return":
+      return [
+        "---",
+        `kind: ${ISSUE_BRANCH_RETURN_DOCUMENT_KIND}`,
+        'purposeScopeRecap: "What this branch was supposed to do"',
+        'resultSummary: "What came back from the branch"',
+        "proposedParentUpdates:",
+        '  - documentKey: "plan"',
+        '    action: "append"',
+        '    summary: "What should change in the parent doc"',
+        '    content: "Markdown content to apply"',
+        "mergeChecklist:",
+        '  - "What the parent owner should verify before merge"',
+        "unresolvedRisks:",
+        '  - "Risk or tradeoff that remains"',
+        "openQuestions:",
+        '  - "Open question for the parent owner"',
+        "evidence:",
+        '  - "Link or artifact"',
+        "returnedArtifacts:",
+        '  - "Patch, doc, or screenshot"',
+        "---",
+        "",
+        "Optional branch return notes.",
       ].join("\n");
     default:
       return null;

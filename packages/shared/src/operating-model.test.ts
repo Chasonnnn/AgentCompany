@@ -6,10 +6,12 @@ import {
   getReservedIssueDocumentDescriptor,
   getReservedProjectDocumentDescriptor,
   issueReservedDocumentKeySchema,
+  parseIssueBranchReturnMarkdown,
   parseConnectionContractMarkdown,
   parseIssueBranchCharterMarkdown,
   parseIssueHandoffMarkdown,
   parseIssueProgressMarkdown,
+  parseIssueReviewFindingsMarkdown,
   parsePacketEnvelopeMarkdown,
   packetEnvelopeSchema,
   projectReservedDocumentKeySchema,
@@ -269,6 +271,54 @@ describe("operating model schemas", () => {
       purpose: "Investigate the runtime regression",
       mergeCriteria: ["Root cause is documented"],
     });
+
+    const reviewFindings = parseIssueReviewFindingsMarkdown([
+      "---",
+      "kind: paperclip/issue-review-findings.v1",
+      'reviewer: "agent:qa"',
+      'gateParticipant: "agent:qa"',
+      'reviewStage: "review"',
+      'outcome: "changes_requested"',
+      'resolutionState: "open"',
+      'ownerNextAction: "Address the failing edge case"',
+      "findings:",
+      "  - severity: medium",
+      '    category: "correctness"',
+      '    title: "Edge case missing"',
+      '    detail: "The null path still fails."',
+      '    requiredAction: "Add the missing guard."',
+      "---",
+      "",
+      "Findings body.",
+    ].join("\n"));
+    expect(reviewFindings?.document).toMatchObject({
+      kind: "paperclip/issue-review-findings.v1",
+      outcome: "changes_requested",
+      ownerNextAction: "Address the failing edge case",
+      findings: [expect.objectContaining({ title: "Edge case missing", severity: "medium" })],
+    });
+
+    const branchReturn = parseIssueBranchReturnMarkdown([
+      "---",
+      "kind: paperclip/issue-branch-return.v1",
+      'purposeScopeRecap: "Validate the branch fix"',
+      'resultSummary: "Found the correct patch"',
+      "proposedParentUpdates:",
+      "  - documentKey: plan",
+      "    action: append",
+      '    summary: "Append the branch outcome"',
+      '    content: "Add the accepted branch patch."',
+      "mergeChecklist:",
+      '  - "Confirm parent tests still pass"',
+      "---",
+      "",
+      "Return body.",
+    ].join("\n"));
+    expect(branchReturn?.document).toMatchObject({
+      kind: "paperclip/issue-branch-return.v1",
+      resultSummary: "Found the correct patch",
+      proposedParentUpdates: [expect.objectContaining({ documentKey: "plan", action: "append" })],
+    });
   });
 
   it("builds default templates for continuity documents", () => {
@@ -276,6 +326,8 @@ describe("operating model schemas", () => {
     expect(buildIssueDocumentTemplate("progress")).toContain("paperclip/issue-progress.v1");
     expect(buildIssueDocumentTemplate("handoff")).toContain("paperclip/issue-handoff.v1");
     expect(buildIssueDocumentTemplate("branch-charter")).toContain("paperclip/issue-branch-charter.v1");
+    expect(buildIssueDocumentTemplate("review-findings")).toContain("paperclip/issue-review-findings.v1");
+    expect(buildIssueDocumentTemplate("branch-return")).toContain("paperclip/issue-branch-return.v1");
   });
 
   it("accepts nullable room kinds through the shared enum schema", () => {

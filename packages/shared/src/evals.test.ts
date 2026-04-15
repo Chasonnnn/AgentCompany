@@ -18,6 +18,8 @@ function createArtifact(runId: string) {
     evalContractVersion: EVAL_CONTRACT_VERSION,
     scorecardVersion: EVAL_SCORECARD_VERSION,
     runId,
+    sourceKind: "seeded",
+    observedRun: null,
     scenario: {
       id: "worker-isolation",
       title: "Worker isolation across projects",
@@ -97,6 +99,7 @@ function createArtifact(runId: string) {
       startedAt: "2026-04-13T12:00:00.000Z",
     },
     replay: {
+      sourceKind: "seeded",
       scenarioId: "worker-isolation",
       bundleId: "canary-reliability",
       lane: "canary",
@@ -119,6 +122,7 @@ function createArtifact(runId: string) {
         dependencies: [],
         notes: null,
       },
+      observedRun: null,
       env: {
         NODE_ENV: "test",
       },

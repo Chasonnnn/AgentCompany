@@ -2,13 +2,19 @@ import type {
   Approval,
   ConferenceContext,
   DocumentRevision,
+  IssueBranchMergePreview,
+  IssueBranchReturnDocument,
+  IssueContinuityRemediation,
   FeedbackTargetType,
   FeedbackTrace,
   FeedbackVote,
   Issue,
   IssueAttachment,
+  IssueContinuityBundle,
+  IssueContinuityState,
   IssueComment,
   IssueDocument,
+  IssueExecutionStagePrincipal,
   IssueLabel,
   IssueWorkProduct,
   UpsertIssueDocument,
@@ -18,6 +24,18 @@ import { api } from "./client";
 export type IssueUpdateResponse = Issue & {
   comment?: IssueComment | null;
 };
+
+export interface IssueContinuityResponse {
+  issueId: string;
+  continuityState: IssueContinuityState;
+  continuityBundle: IssueContinuityBundle;
+  continuityOwner: {
+    assigneeAgentId: string | null;
+    assigneeUserId: string | null;
+  };
+  activeGateParticipant: IssueExecutionStagePrincipal | null;
+  remediation: IssueContinuityRemediation;
+}
 
 export const issuesApi = {
   list: (
@@ -66,6 +84,7 @@ export const issuesApi = {
     api.post<IssueLabel>(`/companies/${companyId}/labels`, data),
   deleteLabel: (id: string) => api.delete<IssueLabel>(`/labels/${id}`),
   get: (id: string) => api.get<Issue>(`/issues/${id}`),
+  getContinuity: (id: string) => api.get<IssueContinuityResponse>(`/issues/${id}/continuity`),
   markRead: (id: string) => api.post<{ id: string; lastReadAt: Date }>(`/issues/${id}/read`, {}),
   markUnread: (id: string) => api.delete<{ id: string; removed: boolean }>(`/issues/${id}/read`),
   archiveFromInbox: (id: string) =>
@@ -137,6 +156,152 @@ export const issuesApi = {
     api.post<IssueDocument>(`/issues/${id}/documents/${encodeURIComponent(key)}/revisions/${revisionId}/restore`, {}),
   deleteDocument: (id: string, key: string) =>
     api.delete<{ ok: true }>(`/issues/${id}/documents/${encodeURIComponent(key)}`),
+  prepareContinuity: (id: string, data: { tier?: IssueContinuityState["tier"] }) =>
+    api.post<{ continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/prepare`,
+      data,
+    ),
+  addProgressCheckpoint: (
+    id: string,
+    data: {
+      summary?: string | null;
+      completed?: string[];
+      currentState: string;
+      knownPitfalls?: string[];
+      nextAction: string;
+      openQuestions?: string[];
+      evidence?: string[];
+    },
+  ) =>
+    api.post<{ continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/progress-checkpoint`,
+      data,
+    ),
+  handoffContinuity: (
+    id: string,
+    data: {
+      assigneeAgentId?: string | null;
+      assigneeUserId?: string | null;
+      reasonCode: string;
+      exactNextAction: string;
+      unresolvedBranches?: string[];
+      openQuestions?: string[];
+      evidence?: string[];
+    },
+  ) =>
+    api.post<{ issue: Issue; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/handoff`,
+      data,
+    ),
+  repairHandoff: (
+    id: string,
+    data: {
+      reasonCode: string;
+      exactNextAction: string;
+      unresolvedBranches?: string[];
+      openQuestions?: string[];
+      evidence?: string[];
+    },
+  ) =>
+    api.post<{ continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/handoff-repair`,
+      data,
+    ),
+  cancelHandoff: (id: string, data: { reason: string }) =>
+    api.post<{ continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/handoff-cancel`,
+      data,
+    ),
+  reviewReturn: (
+    id: string,
+    data: {
+      decisionContext?: string | null;
+      outcome: "changes_requested" | "approved_with_notes" | "blocked";
+      findings: Array<{
+        severity: "critical" | "high" | "medium" | "low";
+        category: string;
+        title: string;
+        detail: string;
+        requiredAction: string;
+        evidence?: string[];
+      }>;
+      ownerNextAction: string;
+    },
+  ) =>
+    api.post<{ issue: Issue; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/review-return`,
+      data,
+    ),
+  reviewResubmit: (
+    id: string,
+    data: {
+      responseNote?: string | null;
+      progressCheckpoint?: {
+        summary?: string | null;
+        completed?: string[];
+        currentState: string;
+        knownPitfalls?: string[];
+        nextAction: string;
+        openQuestions?: string[];
+        evidence?: string[];
+      } | null;
+    },
+  ) =>
+    api.post<{ issue: Issue; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/review-resubmit`,
+      data,
+    ),
+  requestSpecThaw: (id: string, data: { approvalId?: string | null; reason?: string | null }) =>
+    api.post<{ approvalId: string; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/spec-thaw`,
+      data,
+    ),
+  mutateContinuityBranch: (
+    id: string,
+    data:
+      | {
+          action: "create";
+          title: string;
+          description?: string | null;
+          purpose: string;
+          scope: string;
+          budget: string;
+          expectedReturnArtifact: string;
+          mergeCriteria?: string[];
+          expiration?: string | null;
+          timeout?: string | null;
+          assigneeAgentId?: string | null;
+          assigneeUserId?: string | null;
+          priority?: Issue["priority"];
+        }
+      | {
+          action: "merge";
+          branchIssueId: string;
+        },
+    ) =>
+    api.post<
+      | { branchIssue: Issue; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }
+      | { branchIssueId: string; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }
+    >(`/issues/${id}/continuity/branches`, data),
+  returnContinuityBranch: (id: string, branchIssueId: string, data: IssueBranchReturnDocument) =>
+    api.post<{ branchIssue: Issue; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/branches/${branchIssueId}/return`,
+      data,
+    ),
+  getBranchMergePreview: (id: string, branchIssueId: string) =>
+    api.get<IssueBranchMergePreview>(`/issues/${id}/continuity/branches/${branchIssueId}/merge-preview`),
+  mergeContinuityBranch: (
+    id: string,
+    branchIssueId: string,
+    data: { selectedDocumentKeys?: string[] },
+  ) =>
+    api.post<{
+      branchIssueId: string;
+      appliedDocumentKeys: string[];
+      deferredDocumentKeys: string[];
+      continuityState: IssueContinuityState;
+      continuityBundle: IssueContinuityBundle;
+    }>(`/issues/${id}/continuity/branches/${branchIssueId}/merge`, data),
   listAttachments: (id: string) => api.get<IssueAttachment[]>(`/issues/${id}/attachments`),
   uploadAttachment: (
     companyId: string,

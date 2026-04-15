@@ -6,6 +6,7 @@ import type { Db } from "@paperclipai/db";
 import { issueExecutionDecisions } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
+  createIssueContinuityBranchSchema,
   ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
   createIssueAttachmentMetadataSchema,
   createIssueWorkProductSchema,
@@ -19,9 +20,21 @@ import {
   linkIssueApprovalSchema,
   issueDocumentKeySchema,
   parseIssueBranchCharterMarkdown,
+  parseIssueBranchReturnMarkdown,
   parseIssueHandoffMarkdown,
   parseIssueProgressMarkdown,
+  parseIssueReviewFindingsMarkdown,
+  progressCheckpointIssueContinuitySchema,
+  prepareIssueContinuitySchema,
+  requestIssueSpecThawSchema,
   restoreIssueDocumentRevisionSchema,
+  returnIssueContinuityBranchSchema,
+  reviewResubmitIssueContinuitySchema,
+  reviewReturnIssueContinuitySchema,
+  mergeIssueContinuityBranchSchema,
+  handoffRepairIssueContinuitySchema,
+  handoffCancelIssueContinuitySchema,
+  handoffIssueContinuitySchema,
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
@@ -33,6 +46,7 @@ import { trackAgentTaskCompleted } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
+import * as serviceRegistry from "../services/index.js";
 import {
   accessService,
   agentService,
@@ -80,6 +94,7 @@ const updateIssueRouteSchema = updateIssueSchema.extend({
 type IssueRouteDeps = {
   accessService: ReturnType<typeof accessService>;
   agentService: ReturnType<typeof agentService>;
+  issueContinuityService: ReturnType<typeof createFallbackIssueContinuityService>;
   documentService: ReturnType<typeof documentService>;
   executionWorkspaceService: ReturnType<typeof executionWorkspaceService>;
   feedbackService: ReturnType<typeof feedbackService>;
@@ -106,6 +121,74 @@ type ActivityExecutionParticipant = Pick<
   NormalizedExecutionPolicy["stages"][number]["participants"][number],
   "type" | "agentId" | "userId"
 >;
+
+function createFallbackIssueContinuityService() {
+  return {
+    recomputeIssueContinuityState: async () => null,
+    getIssueContinuity: async (issueId: string) => ({
+      issueId,
+      continuityState: null,
+      continuityBundle: null,
+      continuityOwner: null,
+      activeGateParticipant: null,
+      remediation: { suggestedActions: [], blockedActions: [] },
+    }),
+    prepare: async () => ({
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    handoff: async (_issueId: string) => ({
+      issue: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    requestSpecThaw: async () => ({
+      approvalId: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    progressCheckpoint: async () => ({
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    reviewReturn: async (_issueId: string) => ({
+      issue: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    reviewResubmit: async (_issueId: string) => ({
+      issue: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    handoffRepair: async () => ({
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    handoffCancel: async () => ({
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    mutateBranch: async () => ({
+      branchIssue: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    returnBranch: async () => ({
+      branchIssue: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    getBranchMergePreview: async () => null,
+    mergeBranch: async () => ({
+      branchIssueId: null,
+      appliedDocumentKeys: [],
+      deferredDocumentKeys: [],
+      continuityState: null,
+      continuityBundle: null,
+    }),
+  };
+}
 type ExecutionStageWakeContext = {
   wakeRole: "reviewer" | "approver" | "executor";
   stageId: string | null;
@@ -146,6 +229,8 @@ const CONTINUITY_CONTROLLED_DOCUMENT_KEYS = new Set([
   "runbook",
   "progress",
   "handoff",
+  "review-findings",
+  "branch-return",
   ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
 ]);
 
@@ -375,6 +460,10 @@ export function issueRoutes(
   const projectsSvc = opts?.services?.projectService ?? projectService(db);
   const goalsSvc = opts?.services?.goalService ?? goalService(db);
   const issueApprovalsSvc = opts?.services?.issueApprovalService ?? issueApprovalService(db);
+  const continuitySvc = opts?.services?.issueContinuityService
+    ?? (serviceRegistry.issueContinuityService
+      ? serviceRegistry.issueContinuityService(db)
+      : createFallbackIssueContinuityService());
   const executionWorkspacesSvc =
     opts?.services?.executionWorkspaceService ?? executionWorkspaceService(db);
   const workProductsSvc = opts?.services?.workProductService ?? workProductService(db);
@@ -747,7 +836,8 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const [{ project, goal }, ancestors, mentionedProjectIds, documentPayload, relations] = await Promise.all([
+    const [continuityState, { project, goal }, ancestors, mentionedProjectIds, documentPayload, relations] = await Promise.all([
+      continuitySvc.recomputeIssueContinuityState(issue.id),
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.findMentionedProjectIds(issue.id),
@@ -763,6 +853,7 @@ export function issueRoutes(
     const workProducts = await workProductsSvc.listForIssue(issue.id);
     res.json({
       ...issue,
+      continuityState,
       goalId: goal?.id ?? issue.goalId,
       ancestors,
       blockedBy: relations.blockedBy,
@@ -775,6 +866,308 @@ export function issueRoutes(
       workProducts,
     });
   });
+
+  router.get("/issues/:id/continuity", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    res.json(await continuitySvc.getIssueContinuity(issue.id, {
+      agentId: req.actor.type === "agent" ? req.actor.agentId ?? null : null,
+      userId: req.actor.type === "board" ? req.actor.userId ?? null : null,
+      isBoard: req.actor.type === "board",
+    }));
+  });
+
+  router.post("/issues/:id/continuity/prepare", validate(prepareIssueContinuitySchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!isContinuityOwnerActor(req, issue)) {
+      res.status(403).json({ error: "Only the continuity owner can prepare execution" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    res.json(
+      await continuitySvc.prepare(issue.id, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      }),
+    );
+  });
+
+  router.post("/issues/:id/continuity/handoff", validate(handoffIssueContinuitySchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!isContinuityOwnerActor(req, issue)) {
+      res.status(403).json({ error: "Only the continuity owner can start a handoff" });
+      return;
+    }
+    if (req.body.assigneeAgentId || req.body.assigneeUserId) {
+      await assertCanAssignTasks(req, issue.companyId);
+    }
+    const actor = getActorInfo(req);
+    res.json(
+      await continuitySvc.handoff(issue.id, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      }),
+    );
+  });
+
+  router.post("/issues/:id/continuity/progress-checkpoint", validate(progressCheckpointIssueContinuitySchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!isContinuityOwnerActor(req, issue)) {
+      res.status(403).json({ error: "Only the continuity owner can add progress checkpoints" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    res.json(await continuitySvc.progressCheckpoint(issue.id, req.body, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      runId: actor.runId ?? null,
+    }));
+  });
+
+  router.post("/issues/:id/continuity/review-return", validate(reviewReturnIssueContinuitySchema), async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+    if (!isActiveExecutionParticipantActor(req, existing)) {
+      res.status(403).json({ error: "Only the active reviewer or approver can return findings" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const result = await continuitySvc.reviewReturn(existing.id, req.body, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      runId: actor.runId ?? null,
+    });
+    const executionStageWakeup = buildExecutionStageWakeup({
+      issueId: existing.id,
+      previousState: parseIssueExecutionState(existing.executionState),
+      nextState: parseIssueExecutionState(result.issue?.executionState),
+      interruptedRunId: null,
+      requestedByActorType: actor.actorType,
+      requestedByActorId: actor.actorId,
+    });
+    if (executionStageWakeup) {
+      void heartbeat
+        .wakeup(executionStageWakeup.agentId, executionStageWakeup.wakeup)
+        .catch((err) => logger.warn({ err, issueId: existing.id }, "failed to wake agent after review return"));
+    }
+    res.json(result);
+  });
+
+  router.post("/issues/:id/continuity/review-resubmit", validate(reviewResubmitIssueContinuitySchema), async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+    if (!isContinuityOwnerActor(req, existing)) {
+      res.status(403).json({ error: "Only the continuity owner can resubmit after findings" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const result = await continuitySvc.reviewResubmit(existing.id, req.body, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      runId: actor.runId ?? null,
+    });
+    const executionStageWakeup = buildExecutionStageWakeup({
+      issueId: existing.id,
+      previousState: parseIssueExecutionState(existing.executionState),
+      nextState: parseIssueExecutionState(result.issue?.executionState),
+      interruptedRunId: null,
+      requestedByActorType: actor.actorType,
+      requestedByActorId: actor.actorId,
+    });
+    if (executionStageWakeup) {
+      void heartbeat
+        .wakeup(executionStageWakeup.agentId, executionStageWakeup.wakeup)
+        .catch((err) => logger.warn({ err, issueId: existing.id }, "failed to wake agent after review resubmit"));
+    }
+    res.json(result);
+  });
+
+  router.post("/issues/:id/continuity/handoff-repair", validate(handoffRepairIssueContinuitySchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!isContinuityOwnerActor(req, issue)) {
+      res.status(403).json({ error: "Only the continuity owner can repair handoff state" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    res.json(await continuitySvc.handoffRepair(issue.id, req.body, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      runId: actor.runId ?? null,
+    }));
+  });
+
+  router.post("/issues/:id/continuity/handoff-cancel", validate(handoffCancelIssueContinuitySchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!isContinuityOwnerActor(req, issue)) {
+      res.status(403).json({ error: "Only the continuity owner can cancel a pending handoff" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    res.json(await continuitySvc.handoffCancel(issue.id, req.body, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      runId: actor.runId ?? null,
+    }));
+  });
+
+  router.post("/issues/:id/continuity/spec-thaw", validate(requestIssueSpecThawSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!isContinuityOwnerActor(req, issue)) {
+      res.status(403).json({ error: "Only the continuity owner can request a spec thaw" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    res.json(
+      await continuitySvc.requestSpecThaw(issue.id, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      }),
+    );
+  });
+
+  router.post("/issues/:id/continuity/branches", validate(createIssueContinuityBranchSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!isContinuityOwnerActor(req, issue)) {
+      res.status(403).json({ error: "Only the continuity owner can manage branch work" });
+      return;
+    }
+    if (req.body.action === "create" && (req.body.assigneeAgentId || req.body.assigneeUserId)) {
+      await assertCanAssignTasks(req, issue.companyId);
+    }
+    const actor = getActorInfo(req);
+    const result = await continuitySvc.mutateBranch(issue.id, req.body, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      runId: actor.runId ?? null,
+    });
+    res.status(req.body.action === "create" ? 201 : 200).json(result);
+  });
+
+  router.post(
+    "/issues/:id/continuity/branches/:branchIssueId/return",
+    validate(returnIssueContinuityBranchSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const branchIssueId = req.params.branchIssueId as string;
+      const parentIssue = await svc.getById(id);
+      const branchIssue = await svc.getById(branchIssueId);
+      if (!parentIssue || !branchIssue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, parentIssue.companyId);
+      if (!isContinuityOwnerActor(req, branchIssue)) {
+        res.status(403).json({ error: "Only the branch continuity owner can return branch work" });
+        return;
+      }
+      const actor = getActorInfo(req);
+      res.status(200).json(await continuitySvc.returnBranch(parentIssue.id, branchIssue.id, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      }));
+    },
+  );
+
+  router.get("/issues/:id/continuity/branches/:branchIssueId/merge-preview", async (req, res) => {
+    const id = req.params.id as string;
+    const branchIssueId = req.params.branchIssueId as string;
+    const parentIssue = await svc.getById(id);
+    if (!parentIssue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, parentIssue.companyId);
+    if (!isContinuityOwnerActor(req, parentIssue)) {
+      res.status(403).json({ error: "Only the parent continuity owner can preview branch merges" });
+      return;
+    }
+    res.json(await continuitySvc.getBranchMergePreview(parentIssue.id, branchIssueId));
+  });
+
+  router.post(
+    "/issues/:id/continuity/branches/:branchIssueId/merge",
+    validate(mergeIssueContinuityBranchSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const branchIssueId = req.params.branchIssueId as string;
+      const parentIssue = await svc.getById(id);
+      if (!parentIssue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, parentIssue.companyId);
+      if (!isContinuityOwnerActor(req, parentIssue)) {
+        res.status(403).json({ error: "Only the parent continuity owner can merge branch returns" });
+        return;
+      }
+      const actor = getActorInfo(req);
+      res.json(await continuitySvc.mergeBranch(parentIssue.id, branchIssueId, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      }));
+    },
+  );
 
   router.get("/issues/:id/heartbeat-context", async (req, res) => {
     const id = req.params.id as string;
@@ -986,6 +1379,8 @@ export function issueRoutes(
       },
     });
 
+    await continuitySvc.recomputeIssueContinuityState(issue.id);
+
     res.status(result.created ? 201 : 200).json(doc);
   });
 
@@ -1094,6 +1489,8 @@ export function issueRoutes(
         },
       });
 
+      await continuitySvc.recomputeIssueContinuityState(issue.id);
+
       res.json(result.document);
     },
   );
@@ -1136,6 +1533,7 @@ export function issueRoutes(
         title: removed.title,
       },
     });
+    await continuitySvc.recomputeIssueContinuityState(issue.id);
     res.json({ ok: true });
   });
 
@@ -1412,6 +1810,8 @@ export function issueRoutes(
       details: { approvalId: req.body.approvalId },
     });
 
+    await continuitySvc.recomputeIssueContinuityState(issue.id);
+
     const approvals = await issueApprovalsSvc.listApprovalsForIssue(id);
     const conferenceActor = getConferenceActor(req);
     res.status(201).json(approvals.map((approval) => serializeApprovalForActor(approval, conferenceActor)));
@@ -1442,6 +1842,8 @@ export function issueRoutes(
       details: { approvalId },
     });
 
+    await continuitySvc.recomputeIssueContinuityState(issue.id);
+
     res.json({ ok: true });
   });
 
@@ -1460,6 +1862,7 @@ export function issueRoutes(
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
+    const continuityState = await continuitySvc.recomputeIssueContinuityState(issue.id);
 
     await logActivity(db, {
       companyId,
@@ -1487,7 +1890,7 @@ export function issueRoutes(
       requestedByActorId: actor.actorId,
     });
 
-    res.status(201).json(issue);
+    res.status(201).json({ ...issue, continuityState });
   });
 
   router.patch("/issues/:id", validate(updateIssueRouteSchema), async (req, res) => {
@@ -1713,7 +2116,7 @@ export function issueRoutes(
       res.status(404).json({ error: "Issue not found" });
       return;
     }
-    let issueResponse: typeof issue & { blockedBy?: unknown; blocks?: unknown } = issue;
+    let issueResponse: typeof issue & { blockedBy?: unknown; blocks?: unknown; continuityState?: unknown } = issue;
     let updatedRelations: Awaited<ReturnType<typeof svc.getRelationSummaries>> | null = null;
     if (issue && Array.isArray(req.body.blockedByIssueIds)) {
       updatedRelations = await svc.getRelationSummaries(issue.id);
@@ -1723,6 +2126,14 @@ export function issueRoutes(
         blocks: updatedRelations.blocks,
       };
     }
+    const continuityState = await continuitySvc.recomputeIssueContinuityState(issue.id);
+    if (issue.parentId) {
+      await continuitySvc.recomputeIssueContinuityState(issue.parentId);
+    }
+    issueResponse = {
+      ...issueResponse,
+      continuityState: continuityState as unknown as Record<string, unknown>,
+    };
     await routinesSvc.syncRunStatusForIssue(issue.id);
 
     if (actor.runId) {

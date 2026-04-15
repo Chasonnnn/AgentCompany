@@ -333,6 +333,7 @@ export function summarizeEvalRunArtifact(artifact: EvalRunArtifact): EvalRunList
 
   return {
     runId: artifact.runId,
+    sourceKind: artifact.sourceKind,
     scenarioId: artifact.scenario.id,
     scenarioTitle: artifact.scenario.title,
     bundleId: artifact.bundle.id,

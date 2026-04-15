@@ -39,6 +39,9 @@ async function createApp(actorOverrides: Record<string, unknown> = {}) {
     conferenceApprovalService: () => mockConferenceApprovalService,
     heartbeatService: () => mockHeartbeatService,
     issueApprovalService: () => mockIssueApprovalService,
+    issueContinuityService: () => ({
+      recomputeIssueContinuityState: vi.fn(async () => null),
+    }),
     logActivity: mockLogActivity,
     secretService: () => mockSecretService,
   }));
@@ -70,6 +73,9 @@ async function createAgentApp() {
     conferenceApprovalService: () => mockConferenceApprovalService,
     heartbeatService: () => mockHeartbeatService,
     issueApprovalService: () => mockIssueApprovalService,
+    issueContinuityService: () => ({
+      recomputeIssueContinuityState: vi.fn(async () => null),
+    }),
     logActivity: mockLogActivity,
     secretService: () => mockSecretService,
   }));

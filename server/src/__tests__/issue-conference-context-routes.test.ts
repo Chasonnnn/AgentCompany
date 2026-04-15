@@ -59,6 +59,23 @@ async function createApp(actor: Record<string, unknown>) {
       listCompanyIds: vi.fn(async () => ["company-1"]),
     }),
     issueApprovalService: () => mockIssueApprovalService,
+    issueContinuityService: () => ({
+      recomputeIssueContinuityState: vi.fn(async () => ({
+        tier: "normal",
+        status: "draft",
+        health: "healthy",
+        requiredDocumentKeys: [],
+        missingDocumentKeys: [],
+        specState: "editable",
+        branchRole: "none",
+        branchStatus: "none",
+        unresolvedBranchIssueIds: [],
+        lastProgressAt: null,
+        lastHandoffAt: null,
+        lastPreparedAt: null,
+        lastBundleHash: null,
+      })),
+    }),
     issueService: () => mockIssueService,
     logActivity: vi.fn(async () => undefined),
     projectService: () => ({
