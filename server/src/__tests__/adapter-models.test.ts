@@ -85,6 +85,12 @@ describe("adapter model listing", () => {
     expect(models).toEqual(opencodeFallbackModels);
   });
 
+  it("returns claude fallback models including Opus 4.7", async () => {
+    const models = await listAdapterModels("claude_local");
+
+    expect(models.some((model) => model.id === "claude-opus-4-7")).toBe(true);
+  });
+
   it("loads cursor models dynamically and caches them", async () => {
     const runner = vi.fn(() => ({
       status: 0,
