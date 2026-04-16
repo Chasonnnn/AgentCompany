@@ -23,6 +23,7 @@ import type {
   AccountabilityIssueOwnershipSummary,
   AccountabilityProjectNode,
   AgentHierarchyMemberSummary,
+  CompanyAgentCompositionSummary,
   AgentTemplateImportPackItem,
   AgentTemplateImportPackRequest,
   AgentTemplateImportPackResult,
@@ -37,11 +38,18 @@ import type {
   AgentTemplateRevision,
   AgentTemplateSnapshot,
   CompanyAgentAccountability,
+  CompanyOrgSimplificationReport,
   CompanyAgentNavigation,
   CompanyAgentHierarchy,
   CompanyAgentHierarchyDepartment,
   CompanyAgentHierarchyExecutiveGroup,
   CompanyAgentHierarchyUnassigned,
+  OrgSimplificationAction,
+  OrgSimplificationActionResult,
+  OrgSimplificationArchiveRequest,
+  OrgSimplificationCandidate,
+  OrgSimplificationConvertSharedServiceRequest,
+  OrgSimplificationReparentReportsRequest,
   CompanyOperatingHierarchy,
   OperatingHierarchyAgentSummary,
   OperatingHierarchyDepartmentSummary,
@@ -310,14 +318,79 @@ export const accountabilityProjectNodeSchema = z.object({
   }).strict(),
 }).strict() satisfies z.ZodType<AccountabilityProjectNode>;
 
+export const companyAgentCompositionSummarySchema = z.object({
+  totalConfiguredAgents: z.number().int().nonnegative(),
+  activeContinuityOwners: z.number().int().nonnegative(),
+  activeGovernanceLeads: z.number().int().nonnegative(),
+  activeSharedServiceAgents: z.number().int().nonnegative(),
+  legacyAgents: z.number().int().nonnegative(),
+  inactiveAgents: z.number().int().nonnegative(),
+  simplificationCandidates: z.number().int().nonnegative(),
+}).strict() satisfies z.ZodType<CompanyAgentCompositionSummary>;
+
 export const companyAgentAccountabilitySchema = z.object({
   companyId: z.string().uuid(),
   generatedAt: z.string().datetime(),
+  counts: companyAgentCompositionSummarySchema,
   executiveOffice: z.array(operatingHierarchyAgentSummarySchema),
   projects: z.array(accountabilityProjectNodeSchema),
   sharedServices: z.array(operatingHierarchyDepartmentSummarySchema),
   unassigned: z.array(operatingHierarchyAgentSummarySchema),
 }).strict() satisfies z.ZodType<CompanyAgentAccountability>;
+
+export const orgSimplificationActionSchema = z.enum([
+  "archive",
+  "reparent_reports",
+  "convert_shared_service",
+] as const) satisfies z.ZodType<OrgSimplificationAction>;
+
+export const orgSimplificationCandidateSchema = z.object({
+  agent: operatingHierarchyAgentSummarySchema,
+  classification: z.enum(["keep", "merge", "convert", "archive"]),
+  confidence: z.enum(["high", "medium", "low"]),
+  reasons: z.array(z.string().trim().min(1)),
+  activeIssueCount: z.number().int().nonnegative(),
+  directReportCount: z.number().int().nonnegative(),
+  recentRunCount: z.number().int().nonnegative(),
+  activeSharedServiceEngagementCount: z.number().int().nonnegative(),
+  activeGateCount: z.number().int().nonnegative(),
+  suggestedTargetAgentId: z.string().uuid().nullable(),
+  suggestedTargetName: z.string().nullable(),
+}).strict() satisfies z.ZodType<OrgSimplificationCandidate>;
+
+export const companyOrgSimplificationReportSchema = z.object({
+  companyId: z.string().uuid(),
+  generatedAt: z.string().datetime(),
+  recommendedSteadyStateAgents: z.object({
+    min: z.number().int().positive(),
+    max: z.number().int().positive(),
+  }).strict(),
+  counts: companyAgentCompositionSummarySchema,
+  candidates: z.array(orgSimplificationCandidateSchema),
+}).strict() satisfies z.ZodType<CompanyOrgSimplificationReport>;
+
+export const orgSimplificationArchiveRequestSchema = z.object({
+  agentIds: z.array(z.string().uuid()).min(1),
+  reason: z.string().trim().min(1).nullable().optional(),
+}).strict() satisfies z.ZodType<OrgSimplificationArchiveRequest>;
+
+export const orgSimplificationReparentReportsRequestSchema = z.object({
+  fromAgentIds: z.array(z.string().uuid()).min(1),
+  targetAgentId: z.string().uuid(),
+  reason: z.string().trim().min(1).nullable().optional(),
+}).strict() satisfies z.ZodType<OrgSimplificationReparentReportsRequest>;
+
+export const orgSimplificationConvertSharedServiceRequestSchema = z.object({
+  agentIds: z.array(z.string().uuid()).min(1),
+  reason: z.string().trim().min(1).nullable().optional(),
+}).strict() satisfies z.ZodType<OrgSimplificationConvertSharedServiceRequest>;
+
+export const orgSimplificationActionResultSchema = z.object({
+  companyId: z.string().uuid(),
+  action: orgSimplificationActionSchema,
+  affectedAgentIds: z.array(z.string().uuid()),
+  report: companyOrgSimplificationReportSchema,
+}).strict() satisfies z.ZodType<OrgSimplificationActionResult>;
 
 export const agentNavigationTeamNodeSchema = z.object({
   key: z.string().min(1),

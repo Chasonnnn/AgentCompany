@@ -1,3 +1,5 @@
+import type { CompanyAgentCompositionSummary } from "./agent.js";
+
 export interface DashboardSummary {
   companyId: string;
   agents: {
@@ -5,6 +7,7 @@ export interface DashboardSummary {
     running: number;
     paused: number;
     error: number;
+    composition: CompanyAgentCompositionSummary;
   };
   tasks: {
     open: number;

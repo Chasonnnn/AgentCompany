@@ -22,17 +22,22 @@ import {
   issueComments,
   portfolioClusters,
   projects,
+  sharedServiceEngagementAssignments,
+  sharedServiceEngagements,
   workspaceOperations,
 } from "@paperclipai/db";
 import {
   AGENT_ROLES,
   AGENT_DEPARTMENT_LABELS,
+  inferAgentExecutionModel,
   type AgentDepartmentKey,
   type AgentNavigationLayout,
   type AgentOperatingClass,
   type AgentOrgLevel,
   type AgentProjectRole,
   type AgentRole,
+  type CompanyAgentCompositionSummary,
+  type CompanyOrgSimplificationReport,
   isUuidLike,
   normalizeAgentUrlKey,
 } from "@paperclipai/shared";
@@ -245,6 +250,15 @@ interface OperatingClusterGroup {
   executiveSponsor: NormalizedAgentRow | null;
   portfolioDirector: NormalizedAgentRow | null;
   projects: Map<string, ProjectPodGroup>;
+}
+
+interface SimplificationSignalRow {
+  activeIssueCount: number;
+  directReportCount: number;
+  recentRunCount: number;
+  activeSharedServiceEngagementCount: number;
+  activeGateCount: number;
+  executionModel: ReturnType<typeof inferAgentExecutionModel>;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -1163,6 +1177,290 @@ export function agentService(db: Db) {
     return Array.from(clusterGroups.values())
       .filter((group) => group.projects.size > 0 || group.portfolioDirector || group.executiveSponsor)
       .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  function buildDirectReportCountMap(rows: NormalizedAgentRow[]) {
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      if (!row.reportsTo) continue;
+      counts.set(row.reportsTo, (counts.get(row.reportsTo) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  function buildCountMap<T extends { agentId: string; count: number | string | null | undefined }>(
+    rows: T[],
+  ) {
+    return new Map(rows.map((row) => [row.agentId, Number(row.count ?? 0)]));
+  }
+
+  function parseExecutionParticipantAgentId(executionState: unknown) {
+    if (!isPlainRecord(executionState)) return null;
+    const currentParticipant = executionState.currentParticipant;
+    if (!isPlainRecord(currentParticipant)) return null;
+    if (currentParticipant.type !== "agent") return null;
+    return typeof currentParticipant.agentId === "string" && currentParticipant.agentId.trim().length > 0
+      ? currentParticipant.agentId
+      : null;
+  }
+
+  function classifySimplificationCandidate(
+    row: NormalizedAgentRow,
+    signal: SimplificationSignalRow,
+    flags: {
+      activeContinuityOwnerIds: Set<string>;
+      activeGovernanceLeadIds: Set<string>;
+      activeSharedServiceAgentIds: Set<string>;
+      byId: Map<string, NormalizedAgentRow>;
+    },
+  ) {
+    const reasons: string[] = [];
+    const hasActiveOwnership = flags.activeContinuityOwnerIds.has(row.id) || signal.activeIssueCount > 0;
+    const hasGovernanceResponsibility = flags.activeGovernanceLeadIds.has(row.id);
+    const hasSharedServiceResponsibility = flags.activeSharedServiceAgentIds.has(row.id)
+      || signal.activeSharedServiceEngagementCount > 0;
+    const hasRealSpan = signal.directReportCount > 1;
+    const hasAnySpan = signal.directReportCount > 0;
+    const hasRecentActivity = signal.recentRunCount > 0 || signal.activeGateCount > 0 || row.status === "running";
+    const suggestedTarget = row.reportsTo ? (flags.byId.get(row.reportsTo) ?? null) : null;
+
+    if (hasActiveOwnership) reasons.push("Owns active execution continuity.");
+    if (hasGovernanceResponsibility) reasons.push("Carries active governance or leadership scope.");
+    if (hasSharedServiceResponsibility) reasons.push("Is assigned to live shared-service support.");
+    if (hasRealSpan) reasons.push("Coordinates multiple direct reports.");
+    if (!hasRecentActivity && !hasActiveOwnership && !hasGovernanceResponsibility && !hasSharedServiceResponsibility) {
+      reasons.push("Shows no recent execution, governance, or consulting activity.");
+    }
+
+    if (hasActiveOwnership || hasGovernanceResponsibility || hasSharedServiceResponsibility || hasRealSpan) {
+      return {
+        classification: "keep" as const,
+        confidence: "high" as const,
+        reasons,
+        suggestedTargetAgentId: null,
+        suggestedTargetName: null,
+      };
+    }
+
+    if (hasAnySpan && suggestedTarget && row.operatingClass !== "worker") {
+      reasons.push(`Only coordinates a singleton span and can collapse into ${suggestedTarget.name}.`);
+      return {
+        classification: "merge" as const,
+        confidence: hasRecentActivity ? "medium" as const : "high" as const,
+        reasons,
+        suggestedTargetAgentId: suggestedTarget.id,
+        suggestedTargetName: suggestedTarget.name,
+      };
+    }
+
+    if (
+      row.operatingClass === "shared_service_lead" ||
+      row.role === "designer" ||
+      row.role === "qa" ||
+      row.role === "devops" ||
+      row.role === "researcher"
+    ) {
+      reasons.push("Looks better as on-demand specialist capacity than a permanently staffed lane.");
+      return {
+        classification: "convert" as const,
+        confidence: hasRecentActivity ? "medium" as const : "high" as const,
+        reasons,
+        suggestedTargetAgentId: null,
+        suggestedTargetName: null,
+      };
+    }
+
+    if (signal.executionModel === "relay_legacy") {
+      reasons.push("Uses a legacy relay execution role with no active responsibility.");
+      return {
+        classification: "archive" as const,
+        confidence: hasRecentActivity ? "medium" as const : "high" as const,
+        reasons,
+        suggestedTargetAgentId: null,
+        suggestedTargetName: null,
+      };
+    }
+
+    return {
+      classification: hasRecentActivity ? ("keep" as const) : ("archive" as const),
+      confidence: "low" as const,
+      reasons,
+      suggestedTargetAgentId: null,
+      suggestedTargetName: null,
+    };
+  }
+
+  async function orgSimplificationForCompany(companyId: string): Promise<CompanyOrgSimplificationReport> {
+    const recentActivityCutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const [rows, scopeRows, issueRows, recentRunRows, engagementRows] = await Promise.all([
+      db
+        .select()
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated"))),
+      listActiveScopesForCompany(companyId),
+      db
+        .select({
+          assigneeAgentId: issues.assigneeAgentId,
+          continuityState: issues.continuityState,
+          executionState: issues.executionState,
+          status: issues.status,
+        })
+        .from(issues)
+        .where(and(eq(issues.companyId, companyId), isNull(issues.hiddenAt), ne(issues.status, "done"), ne(issues.status, "cancelled"))),
+      db
+        .select({
+          agentId: heartbeatRuns.agentId,
+          count: sql<number>`count(*)`,
+        })
+        .from(heartbeatRuns)
+        .where(and(eq(heartbeatRuns.companyId, companyId), gte(heartbeatRuns.createdAt, recentActivityCutoff)))
+        .groupBy(heartbeatRuns.agentId),
+      db
+        .select({
+          agentId: sharedServiceEngagementAssignments.agentId,
+          count: sql<number>`count(*)`,
+        })
+        .from(sharedServiceEngagementAssignments)
+        .innerJoin(
+          sharedServiceEngagements,
+          eq(sharedServiceEngagementAssignments.engagementId, sharedServiceEngagements.id),
+        )
+        .where(
+          and(
+            eq(sharedServiceEngagementAssignments.companyId, companyId),
+            eq(sharedServiceEngagements.status, "approved"),
+          ),
+        )
+        .groupBy(sharedServiceEngagementAssignments.agentId),
+    ]);
+
+    const normalizedRows = rows.map(normalizeAgentRow);
+    const byId = new Map(normalizedRows.map((row) => [row.id, row]));
+    const directReportCountByAgent = buildDirectReportCountMap(normalizedRows);
+    const recentRunCountByAgent = buildCountMap(recentRunRows);
+    const engagementCountByAgent = buildCountMap(engagementRows);
+    const activeContinuityOwnerIds = new Set<string>();
+    const activeGovernanceLeadIds = new Set<string>();
+    const activeSharedServiceAgentIds = new Set<string>(engagementRows.map((row) => row.agentId));
+    const activeIssueCountByAgent = new Map<string, number>();
+    const activeGateCountByAgent = new Map<string, number>();
+
+    for (const scopeRow of scopeRows) {
+      if (scopeRow.scope.scopeMode !== "execution" && scopeRow.scope.scopeMode !== "consulting") {
+        activeGovernanceLeadIds.add(scopeRow.scope.agentId);
+      }
+    }
+
+    for (const row of issueRows) {
+      const summary = buildIssueContinuitySummary({
+        continuityState: row.continuityState,
+        executionState: row.executionState,
+      });
+      if (
+        row.assigneeAgentId &&
+        (summary?.status === "ready" || summary?.status === "active" || summary?.status === "handoff_pending")
+      ) {
+        activeContinuityOwnerIds.add(row.assigneeAgentId);
+        activeIssueCountByAgent.set(row.assigneeAgentId, (activeIssueCountByAgent.get(row.assigneeAgentId) ?? 0) + 1);
+      }
+      const gateParticipantAgentId = parseExecutionParticipantAgentId(row.executionState);
+      if (gateParticipantAgentId) {
+        activeGateCountByAgent.set(
+          gateParticipantAgentId,
+          (activeGateCountByAgent.get(gateParticipantAgentId) ?? 0) + 1,
+        );
+      }
+    }
+
+    for (const row of normalizedRows) {
+      if (row.operatingClass !== "executive") continue;
+      const directReportCount = directReportCountByAgent.get(row.id) ?? 0;
+      const recentRunCount = recentRunCountByAgent.get(row.id) ?? 0;
+      const activeGateCount = activeGateCountByAgent.get(row.id) ?? 0;
+      if (directReportCount > 0 || recentRunCount > 0 || activeGateCount > 0 || normalizedRows.length === 1) {
+        activeGovernanceLeadIds.add(row.id);
+      }
+    }
+
+    const candidates = sortOperatingAgents(normalizedRows)
+      .map((row) => {
+        const signal: SimplificationSignalRow = {
+          activeIssueCount: activeIssueCountByAgent.get(row.id) ?? 0,
+          directReportCount: directReportCountByAgent.get(row.id) ?? 0,
+          recentRunCount: recentRunCountByAgent.get(row.id) ?? 0,
+          activeSharedServiceEngagementCount: engagementCountByAgent.get(row.id) ?? 0,
+          activeGateCount: activeGateCountByAgent.get(row.id) ?? 0,
+          executionModel: inferAgentExecutionModel({
+            role: row.role,
+            operatingClass: row.operatingClass,
+            capabilityProfileKey: row.capabilityProfileKey,
+            archetypeKey: row.archetypeKey,
+          }),
+        };
+        const classified = classifySimplificationCandidate(row, signal, {
+          activeContinuityOwnerIds,
+          activeGovernanceLeadIds,
+          activeSharedServiceAgentIds,
+          byId,
+        });
+        return {
+          agent: toOperatingSummary(row),
+          ...classified,
+          activeIssueCount: signal.activeIssueCount,
+          directReportCount: signal.directReportCount,
+          recentRunCount: signal.recentRunCount,
+          activeSharedServiceEngagementCount: signal.activeSharedServiceEngagementCount,
+          activeGateCount: signal.activeGateCount,
+        };
+      })
+      .sort((left, right) => {
+        const classificationOrder = { archive: 0, merge: 1, convert: 2, keep: 3 } as const;
+        const leftOrder = classificationOrder[left.classification];
+        const rightOrder = classificationOrder[right.classification];
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+        return left.agent.name.localeCompare(right.agent.name);
+      });
+
+    const inactiveAgents = normalizedRows.filter((row) => {
+      const signal = candidates.find((candidate) => candidate.agent.id === row.id);
+      if (!signal) return false;
+      return (
+        signal.activeIssueCount === 0 &&
+        signal.directReportCount === 0 &&
+        signal.recentRunCount === 0 &&
+        signal.activeSharedServiceEngagementCount === 0 &&
+        signal.activeGateCount === 0 &&
+        !activeGovernanceLeadIds.has(row.id) &&
+        !activeContinuityOwnerIds.has(row.id)
+      );
+    }).length;
+
+    const counts: CompanyAgentCompositionSummary = {
+      totalConfiguredAgents: normalizedRows.length,
+      activeContinuityOwners: activeContinuityOwnerIds.size,
+      activeGovernanceLeads: activeGovernanceLeadIds.size,
+      activeSharedServiceAgents: activeSharedServiceAgentIds.size,
+      legacyAgents: candidates.filter((candidate) =>
+        inferAgentExecutionModel({
+          role: candidate.agent.role,
+          operatingClass: candidate.agent.operatingClass,
+          capabilityProfileKey: candidate.agent.capabilityProfileKey,
+          archetypeKey: candidate.agent.archetypeKey,
+        }) === "relay_legacy").length,
+      inactiveAgents,
+      simplificationCandidates: candidates.filter((candidate) => candidate.classification !== "keep").length,
+    };
+
+    return {
+      companyId,
+      generatedAt: new Date().toISOString(),
+      recommendedSteadyStateAgents: {
+        min: 8,
+        max: 12,
+      },
+      counts,
+      candidates,
+    };
   }
 
   function buildNavigationByDepartment(
@@ -2157,9 +2455,12 @@ export function agentService(db: Db) {
           issueCounts: node.issueCounts,
         }));
 
+      const simplificationReport = await orgSimplificationForCompany(companyId);
+
       return {
         companyId,
         generatedAt: new Date().toISOString(),
+        counts: simplificationReport.counts,
         executiveOffice: sortOperatingAgents(
           normalizedRows.filter((row) => row.operatingClass === "executive"),
         ).map(toOperatingSummary),
@@ -2176,6 +2477,136 @@ export function agentService(db: Db) {
           })),
         unassigned: sortOperatingAgents(dedupeById(unassigned)).map(toOperatingSummary),
       };
+    },
+
+    orgSimplificationForCompany,
+
+    archiveForSimplification: async (companyId: string, agentIds: string[]) => {
+      const uniqueIds = Array.from(new Set(agentIds));
+      const activeIssueRows = await db
+        .select({
+          agentId: issues.assigneeAgentId,
+          count: sql<number>`count(*)`,
+        })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            isNull(issues.hiddenAt),
+            inArray(issues.assigneeAgentId, uniqueIds),
+            ne(issues.status, "done"),
+            ne(issues.status, "cancelled"),
+          ),
+        )
+        .groupBy(issues.assigneeAgentId);
+      const activeOwnershipByAgent = buildCountMap(
+        activeIssueRows
+          .filter((row): row is { agentId: string; count: number } => typeof row.agentId === "string"),
+      );
+      const rows = await db
+        .select()
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), inArray(agents.id, uniqueIds)));
+      if (rows.length !== uniqueIds.length) throw notFound("One or more agents were not found");
+      const normalizedRows = rows.map(normalizeAgentRow);
+      const reportRows = await db
+        .select({ reportsTo: agents.reportsTo })
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), inArray(agents.reportsTo, uniqueIds), ne(agents.status, "terminated")));
+      const directReportCountByAgent = new Map<string, number>();
+      for (const reportRow of reportRows) {
+        if (!reportRow.reportsTo) continue;
+        directReportCountByAgent.set(
+          reportRow.reportsTo,
+          (directReportCountByAgent.get(reportRow.reportsTo) ?? 0) + 1,
+        );
+      }
+
+      for (const row of normalizedRows) {
+        if ((activeOwnershipByAgent.get(row.id) ?? 0) > 0) {
+          throw conflict(`Cannot archive ${row.name} while they own active issues`);
+        }
+        if ((directReportCountByAgent.get(row.id) ?? 0) > 0) {
+          throw conflict(`Cannot archive ${row.name} before reparenting their reports`);
+        }
+      }
+
+      const archivedIds: string[] = [];
+      for (const agentId of uniqueIds) {
+        const result = await db
+          .update(agents)
+          .set({
+            status: "terminated",
+            pauseReason: null,
+            pausedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(agents.id, agentId))
+          .returning({ id: agents.id })
+          .then((resultRows) => resultRows[0] ?? null);
+        await db
+          .update(agentApiKeys)
+          .set({ revokedAt: new Date() })
+          .where(eq(agentApiKeys.agentId, agentId));
+        if (result) archivedIds.push(result.id);
+      }
+      return archivedIds;
+    },
+
+    reparentReportsForSimplification: async (companyId: string, fromAgentIds: string[], targetAgentId: string) => {
+      const uniqueFromIds = Array.from(new Set(fromAgentIds)).filter((id) => id !== targetAgentId);
+      const target = await getById(targetAgentId);
+      if (!target || target.companyId !== companyId) throw notFound("Target agent not found");
+
+      const reportRows = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), inArray(agents.reportsTo, uniqueFromIds), ne(agents.status, "terminated")));
+
+      const updatedIds: string[] = [];
+      for (const reportRow of reportRows) {
+        const updated = await updateAgent(reportRow.id, { reportsTo: targetAgentId });
+        if (updated) updatedIds.push(updated.id);
+      }
+      return updatedIds;
+    },
+
+    convertAgentsToSharedService: async (companyId: string, agentIds: string[]) => {
+      const uniqueIds = Array.from(new Set(agentIds));
+      const rows = await db
+        .select()
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), inArray(agents.id, uniqueIds)));
+      if (rows.length !== uniqueIds.length) throw notFound("One or more agents were not found");
+      const normalizedRows = rows.map(normalizeAgentRow);
+      const reportRows = await db
+        .select({ reportsTo: agents.reportsTo })
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), inArray(agents.reportsTo, uniqueIds), ne(agents.status, "terminated")));
+      const directReportCountByAgent = new Map<string, number>();
+      for (const reportRow of reportRows) {
+        if (!reportRow.reportsTo) continue;
+        directReportCountByAgent.set(
+          reportRow.reportsTo,
+          (directReportCountByAgent.get(reportRow.reportsTo) ?? 0) + 1,
+        );
+      }
+      for (const row of normalizedRows) {
+        if ((directReportCountByAgent.get(row.id) ?? 0) > 0) {
+          throw conflict(`Cannot convert ${row.name} to shared service while they still manage reports`);
+        }
+      }
+
+      const updatedIds: string[] = [];
+      for (const agentId of uniqueIds) {
+        const updated = await updateAgent(agentId, {
+          operatingClass: "shared_service_lead",
+          capabilityProfileKey: "shared_service_lead",
+          orgLevel: "director",
+        });
+        if (updated) updatedIds.push(updated.id);
+      }
+      return updatedIds;
     },
 
     navigationForCompany: async (companyId: string, layout: AgentNavigationLayout = "department") => {

@@ -10,6 +10,9 @@ import {
   agentTemplateSnapshotSchema,
   agentSkillSyncSchema,
   agentMineInboxQuerySchema,
+  orgSimplificationArchiveRequestSchema,
+  orgSimplificationConvertSharedServiceRequestSchema,
+  orgSimplificationReparentReportsRequestSchema,
   createAgentKeySchema,
   createAgentHireSchema,
   createAgentSchema,
@@ -1070,6 +1073,118 @@ export function agentRoutes(db: Db) {
     const accountability = await svc.accountabilityForCompany(companyId);
     res.json(accountability);
   });
+
+  router.get("/companies/:companyId/org-simplification", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const report = await svc.orgSimplificationForCompany(companyId);
+    res.json(report);
+  });
+
+  router.post(
+    "/companies/:companyId/org-simplification/archive",
+    validate(orgSimplificationArchiveRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertBoard(req);
+      assertCompanyAccess(req, companyId);
+      const body = req.body;
+      const archivedIds = await svc.archiveForSimplification(companyId, body.agentIds);
+      await Promise.all(archivedIds.map((agentId) => heartbeat.cancelActiveForAgent(agentId)));
+      for (const agentId of archivedIds) {
+        await logActivity(db, {
+          companyId,
+          actorType: "user",
+          actorId: req.actor.userId ?? "board",
+          action: "agent.terminated",
+          entityType: "agent",
+          entityId: agentId,
+          details: { source: "org_simplification_archive", reason: body.reason ?? null },
+        });
+      }
+      await logActivity(db, {
+        companyId,
+        actorType: "user",
+        actorId: req.actor.userId ?? "board",
+        action: "company.org_simplification_archive",
+        entityType: "company",
+        entityId: companyId,
+        details: { agentIds: archivedIds, reason: body.reason ?? null },
+      });
+      const report = await svc.orgSimplificationForCompany(companyId);
+      res.json({
+        companyId,
+        action: "archive",
+        affectedAgentIds: archivedIds,
+        report,
+      });
+    },
+  );
+
+  router.post(
+    "/companies/:companyId/org-simplification/reparent-reports",
+    validate(orgSimplificationReparentReportsRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertBoard(req);
+      assertCompanyAccess(req, companyId);
+      const body = req.body;
+      const updatedIds = await svc.reparentReportsForSimplification(
+        companyId,
+        body.fromAgentIds,
+        body.targetAgentId,
+      );
+      await logActivity(db, {
+        companyId,
+        actorType: "user",
+        actorId: req.actor.userId ?? "board",
+        action: "company.org_simplification_reparent_reports",
+        entityType: "company",
+        entityId: companyId,
+        details: {
+          fromAgentIds: body.fromAgentIds,
+          targetAgentId: body.targetAgentId,
+          updatedAgentIds: updatedIds,
+          reason: body.reason ?? null,
+        },
+      });
+      const report = await svc.orgSimplificationForCompany(companyId);
+      res.json({
+        companyId,
+        action: "reparent_reports",
+        affectedAgentIds: updatedIds,
+        report,
+      });
+    },
+  );
+
+  router.post(
+    "/companies/:companyId/org-simplification/convert-shared-service",
+    validate(orgSimplificationConvertSharedServiceRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertBoard(req);
+      assertCompanyAccess(req, companyId);
+      const body = req.body;
+      const updatedIds = await svc.convertAgentsToSharedService(companyId, body.agentIds);
+      await logActivity(db, {
+        companyId,
+        actorType: "user",
+        actorId: req.actor.userId ?? "board",
+        action: "company.org_simplification_convert_shared_service",
+        entityType: "company",
+        entityId: companyId,
+        details: { agentIds: updatedIds, reason: body.reason ?? null },
+      });
+      const report = await svc.orgSimplificationForCompany(companyId);
+      res.json({
+        companyId,
+        action: "convert_shared_service",
+        affectedAgentIds: updatedIds,
+        report,
+      });
+    },
+  );
 
   router.get("/companies/:companyId/agent-navigation", async (req, res) => {
     const companyId = req.params.companyId as string;

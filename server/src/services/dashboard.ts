@@ -1,14 +1,17 @@
 import { and, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, issues } from "@paperclipai/db";
+import type { DashboardSummary } from "@paperclipai/shared";
 import { notFound } from "../errors.js";
+import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { buildIssueContinuitySummary } from "./issue-continuity-summary.js";
 
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
+  const agentSvc = agentService(db);
   return {
-    summary: async (companyId: string) => {
+    summary: async (companyId: string): Promise<DashboardSummary> => {
       const company = await db
         .select()
         .from(companies)
@@ -29,7 +32,7 @@ export function dashboardService(db: Db) {
         .where(eq(issues.companyId, companyId))
         .groupBy(issues.status);
 
-      const [pendingApprovals, continuityRows] = await Promise.all([
+      const [pendingApprovals, continuityRows, simplificationReport] = await Promise.all([
         db
           .select({ count: sql<number>`count(*)` })
           .from(approvals)
@@ -44,22 +47,39 @@ export function dashboardService(db: Db) {
           })
           .from(issues)
           .where(and(eq(issues.companyId, companyId), sql`${issues.hiddenAt} is null`, sql`${issues.status} <> 'done'`, sql`${issues.status} <> 'cancelled'`)),
+        agentSvc.orgSimplificationForCompany(companyId),
       ]);
 
-      const agentCounts: Record<string, number> = {
+      const agentCounts: DashboardSummary["agents"] = {
         active: 0,
         running: 0,
         paused: 0,
         error: 0,
+        composition: simplificationReport.counts,
       };
       for (const row of agentRows) {
         const count = Number(row.count);
-        // "idle" agents are operational — count them as active
-        const bucket = row.status === "idle" ? "active" : row.status;
-        agentCounts[bucket] = (agentCounts[bucket] ?? 0) + count;
+        switch (row.status) {
+          case "idle":
+          case "active":
+          case "pending_approval":
+            agentCounts.active += count;
+            break;
+          case "running":
+            agentCounts.running += count;
+            break;
+          case "paused":
+            agentCounts.paused += count;
+            break;
+          case "error":
+            agentCounts.error += count;
+            break;
+          default:
+            break;
+        }
       }
 
-      const taskCounts: Record<string, number> = {
+      const taskCounts: DashboardSummary["tasks"] = {
         open: 0,
         inProgress: 0,
         blocked: 0,
@@ -133,6 +153,7 @@ export function dashboardService(db: Db) {
           running: agentCounts.running,
           paused: agentCounts.paused,
           error: agentCounts.error,
+          composition: agentCounts.composition,
         },
         tasks: taskCounts,
         costs: {

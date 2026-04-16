@@ -306,13 +306,74 @@ export interface AccountabilityProjectNode {
   };
 }
 
+export interface CompanyAgentCompositionSummary {
+  totalConfiguredAgents: number;
+  activeContinuityOwners: number;
+  activeGovernanceLeads: number;
+  activeSharedServiceAgents: number;
+  legacyAgents: number;
+  inactiveAgents: number;
+  simplificationCandidates: number;
+}
+
 export interface CompanyAgentAccountability {
   companyId: string;
   generatedAt: string;
+  counts: CompanyAgentCompositionSummary;
   executiveOffice: OperatingHierarchyAgentSummary[];
   projects: AccountabilityProjectNode[];
   sharedServices: OperatingHierarchyDepartmentSummary[];
   unassigned: OperatingHierarchyAgentSummary[];
+}
+
+export type OrgSimplificationAction = "archive" | "reparent_reports" | "convert_shared_service";
+
+export interface OrgSimplificationCandidate {
+  agent: OperatingHierarchyAgentSummary;
+  classification: "keep" | "merge" | "convert" | "archive";
+  confidence: "high" | "medium" | "low";
+  reasons: string[];
+  activeIssueCount: number;
+  directReportCount: number;
+  recentRunCount: number;
+  activeSharedServiceEngagementCount: number;
+  activeGateCount: number;
+  suggestedTargetAgentId: string | null;
+  suggestedTargetName: string | null;
+}
+
+export interface CompanyOrgSimplificationReport {
+  companyId: string;
+  generatedAt: string;
+  recommendedSteadyStateAgents: {
+    min: number;
+    max: number;
+  };
+  counts: CompanyAgentCompositionSummary;
+  candidates: OrgSimplificationCandidate[];
+}
+
+export interface OrgSimplificationArchiveRequest {
+  agentIds: string[];
+  reason?: string | null;
+}
+
+export interface OrgSimplificationReparentReportsRequest {
+  fromAgentIds: string[];
+  targetAgentId: string;
+  reason?: string | null;
+}
+
+export interface OrgSimplificationConvertSharedServiceRequest {
+  agentIds: string[];
+  reason?: string | null;
+}
+
+export interface OrgSimplificationActionResult {
+  companyId: string;
+  action: OrgSimplificationAction;
+  affectedAgentIds: string[];
+  report: CompanyOrgSimplificationReport;
 }
 
 export interface AgentNavigationTeamNode {
