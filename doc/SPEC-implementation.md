@@ -250,6 +250,8 @@ Wave 4 default UX rules:
 - raw issue documents remain available as artifacts, but they are no longer the default first view
 - org/accountability surfaces must group by responsibility and continuity ownership rather than implying a baton-passing relay chain
 - legacy relay archetypes remain loadable and editable, but default role pickers and onboarding flows should prefer governance, shared-service, and shared-state execution roles
+- the recommended default company shape is lean: roughly 8-12 configured agents after initial expansion, sized by active execution lanes rather than a full department tree
+- dashboard and accountability payloads should lead with execution-relevant counts rather than raw org breadth alone
 
 ## 7.8 `heartbeat_runs`
 
@@ -617,12 +619,16 @@ All endpoints are under `/api` and return JSON.
 
 - `GET /companies/:companyId/agents`
 - `GET /companies/:companyId/agent-hierarchy`
+- `GET /companies/:companyId/org-simplification`
 - `POST /companies/:companyId/agents`
 - `GET /agents/:agentId`
 - `PATCH /agents/:agentId`
 - `POST /agents/:agentId/pause`
 - `POST /agents/:agentId/resume`
 - `POST /agents/:agentId/terminate`
+- `POST /companies/:companyId/org-simplification/archive`
+- `POST /companies/:companyId/org-simplification/reparent-reports`
+- `POST /companies/:companyId/org-simplification/convert-shared-service`
 - `POST /agents/:agentId/keys` (create API key)
 - `POST /agents/:agentId/heartbeat/invoke`
 

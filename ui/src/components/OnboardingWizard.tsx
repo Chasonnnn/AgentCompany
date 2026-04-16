@@ -63,9 +63,9 @@ type AdapterType = string;
 
 const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the company.
 
-- hire a founding engineer
-- write a hiring plan
-- break the roadmap into concrete tasks and start delegating work`;
+- create one lean execution lane
+- hire a project lead or continuity owner only if needed
+- break the first milestone into concrete issue continuity work`;
 
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
@@ -124,7 +124,7 @@ export function OnboardingWizard() {
 
   // Step 3
   const [taskTitle, setTaskTitle] = useState(
-    "Hire your first engineer and create a hiring plan"
+    "Set up the first lean execution lane"
   );
   const [taskDescription, setTaskDescription] = useState(
     DEFAULT_TASK_DESCRIPTION
@@ -298,7 +298,7 @@ export function OnboardingWizard() {
     setAdapterEnvLoading(false);
     setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
-    setTaskTitle("Hire your first engineer and create a hiring plan");
+    setTaskTitle("Set up the first lean execution lane");
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
     setCreatedCompanyPrefix(null);

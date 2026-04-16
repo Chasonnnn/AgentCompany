@@ -58,6 +58,10 @@ function createValuesForAdapterType(
   return nextValues;
 }
 
+const DEFAULT_VISIBLE_ROLES = AGENT_ROLES.filter(
+  (candidate) => !["cto", "cmo", "cfo", "coo", "pm"].includes(candidate),
+);
+
 export function NewAgent() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -204,7 +208,7 @@ export function NewAgent() {
   }
 
   const availableSkills = (companySkills ?? []).filter((skill) => !skill.key.startsWith("paperclipai/paperclip/"));
-  const visibleRoles = showLegacyRoles ? AGENT_ROLES : AGENT_ROLES.filter((candidate) => candidate !== "pm");
+  const visibleRoles = showLegacyRoles ? AGENT_ROLES : DEFAULT_VISIBLE_ROLES;
 
   function toggleSkill(key: string, checked: boolean) {
     setSelectedSkillKeys((prev) => {
@@ -220,7 +224,7 @@ export function NewAgent() {
       <div>
         <h1 className="text-lg font-semibold">New Agent</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Accountability and execution-owner setup
+          Lean accountability and execution-owner setup
         </p>
       </div>
 
@@ -271,13 +275,15 @@ export function NewAgent() {
                   )}
                   onClick={() => { setRole(r); setRoleOpen(false); }}
                 >
-                  {r === "pm" ? `${roleLabels[r] ?? r} (legacy)` : (roleLabels[r] ?? r)}
+                  {["cto", "cmo", "cfo", "coo", "pm"].includes(r)
+                    ? `${roleLabels[r] ?? r} (legacy)`
+                    : (roleLabels[r] ?? r)}
                 </button>
               ))}
               <div className="border-t border-border mt-1 pt-1 px-2">
                 <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
                   <Checkbox checked={showLegacyRoles} onCheckedChange={(checked) => setShowLegacyRoles(checked === true)} />
-                  Show legacy relay roles
+                  Show legacy and broad executive roles
                 </label>
               </div>
             </PopoverContent>

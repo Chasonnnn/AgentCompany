@@ -52,6 +52,7 @@ Hard rule:
 - reviewers and approvers are gates, not baton-pass owners
 - subagents are for bounded branch work or adversarial review, not default relay chains
 - the default org-facing UI is an accountability map, not an execution tree
+- the recommended default company is lean: 1-2 executive sponsors, 1-3 project leads, 4-6 continuity owners, and optional shared-service leads only when justified
 
 ## 3. Authority Rules
 
