@@ -80,7 +80,7 @@ Package a local unsigned macOS `.app` directory build:
 pnpm desktop:package
 ```
 
-`desktop:package` stages the built server runtime into `desktop/.stage/server/` and then runs Electron Builder with the `mac dir` target. This is the local developer packaging flow: it stays unsigned/unnotarized and does not bundle an update feed URL, so in-app update checks remain disabled for those builds.
+`desktop:package` stages the built server runtime into `desktop/.stage/server/`, verifies that the staged and packaged `server/ui-dist` copies exactly match the repo's current server UI bundle, and then runs Electron Builder with the `mac dir` target. This is the local developer packaging flow: it stays unsigned/unnotarized and does not bundle an update feed URL, so in-app update checks remain disabled for those builds.
 
 Build CI-style desktop release artifacts:
 
@@ -88,7 +88,7 @@ Build CI-style desktop release artifacts:
 pnpm desktop:dist
 ```
 
-This produces versioned ARM64 macOS release artifacts in `desktop/dist/release/raw/`, including:
+This produces versioned ARM64 macOS release artifacts in `desktop/dist/release/raw/`, verifies the embedded `server/ui-dist` contents before cleanup, and includes:
 
 - `.zip` for updater installs
 - `.dmg` for manual downloads
