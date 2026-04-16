@@ -1,10 +1,9 @@
 import express from "express";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { evalRoutes } from "../routes/evals.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-function createHarness(actor: any) {
+async function createHarness(actor: any) {
+  vi.resetModules();
   const evalService = {
     getSummary: vi.fn().mockResolvedValue({
       artifactSchemaVersion: 1,
@@ -48,6 +47,11 @@ function createHarness(actor: any) {
     }),
   };
 
+  const [{ errorHandler }, { evalRoutes }] = await Promise.all([
+    import("../middleware/index.js"),
+    import("../routes/evals.js"),
+  ]);
+
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -61,8 +65,12 @@ function createHarness(actor: any) {
 }
 
 describe("eval routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("allows instance admins to read summary and run detail", async () => {
-    const { app, evalService } = createHarness({
+    const { app, evalService } = await createHarness({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
@@ -83,7 +91,7 @@ describe("eval routes", () => {
   });
 
   it("rejects non-admin board users", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "user-1",
       source: "session",
@@ -97,7 +105,7 @@ describe("eval routes", () => {
   });
 
   it("rejects agent callers", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "agent",
       agentId: "agent-1",
       companyId: "company-1",
@@ -110,7 +118,7 @@ describe("eval routes", () => {
   });
 
   it("returns 404 for unknown runs", async () => {
-    const { app, evalService } = createHarness({
+    const { app, evalService } = await createHarness({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
