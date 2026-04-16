@@ -2,6 +2,8 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
+const AUTH_WILDCARD_ROUTE = /^\/api\/auth(?:\/.*)?$/;
+
 /**
  * Regression test for https://github.com/paperclipai/paperclip/issues/2898
  *
@@ -10,9 +12,10 @@ import { describe, expect, it, vi } from "vitest";
  * silently fail to match, causing every `/api/auth/*` request to fall
  * through and return 404.
  *
- * The correct Express 5 syntax for a named catch-all is `{*paramName}`.
+ * We use an explicit regex route instead of string wildcard syntax so
+ * auth matching stays precise under Express 5/path-to-regexp changes.
  * These tests verify that the better-auth handler is invoked for both
- * shallow and deep auth sub-paths.
+ * shallow and deep auth sub-paths without broadening past /api/auth.
  */
 describe("Express 5 /api/auth wildcard route", () => {
   function buildApp() {
@@ -22,7 +25,7 @@ describe("Express 5 /api/auth wildcard route", () => {
       hits += 1;
       res.status(200).json({ ok: true });
     });
-    app.all("/api/auth/{*authPath}", handler);
+    app.all(AUTH_WILDCARD_ROUTE, handler);
     return { app, handler, getHits: () => hits };
   }
 

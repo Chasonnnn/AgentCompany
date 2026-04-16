@@ -58,6 +58,7 @@ import type { BetterAuthSessionResult } from "./auth/better-auth.js";
 
 type UiMode = "none" | "static" | "vite-dev";
 const FEEDBACK_EXPORT_FLUSH_INTERVAL_MS = 5_000;
+const AUTH_WILDCARD_ROUTE = /^\/api\/auth(?:\/.*)?$/;
 const VITE_DEV_ASSET_PREFIXES = [
   "/@fs/",
   "/@id/",
@@ -177,7 +178,7 @@ export async function createApp(
   // Spec §16: "rate limit auth and key-management endpoints".
   const authRateLimit = rateLimitMiddleware({ maxRequests: 20, windowMs: 60_000 });
   if (opts.betterAuthHandler) {
-    app.all("/api/auth/{*authPath}", authRateLimit, opts.betterAuthHandler);
+    app.all(AUTH_WILDCARD_ROUTE, authRateLimit, opts.betterAuthHandler);
   }
   app.use(llmRoutes(db));
 
