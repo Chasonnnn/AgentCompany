@@ -1,33 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   AGENT_DEPARTMENT_LABELS,
   AGENT_ROLE_LABELS,
   type Agent,
-  type AccountabilityAgentSummary,
-  type AccountabilityProjectNode,
   type AgentHierarchyMemberSummary,
   type AgentNavigationClusterNode,
   type AgentNavigationDepartmentNode,
-  type AgentNavigationLayout,
   type AgentNavigationProjectNode,
   type AgentNavigationTeamNode,
-  type CompanyAgentAccountability,
-  type CompanyOrgSimplificationReport,
   type CompanyAgentNavigation,
-  type OperatingHierarchyDepartmentSummary,
-  type OperatingHierarchyProjectSummary,
-  type OrgSimplificationCandidate,
 } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
-import { authApi } from "../api/auth";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
-import { getStoredAgentLayout, setStoredAgentLayout, type AgentLayoutMode } from "../lib/agent-layout";
 import { queryKeys } from "../lib/queryKeys";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
@@ -98,10 +88,6 @@ function filterCluster(
   tab: FilterTab,
   showTerminated: boolean,
 ): AgentNavigationClusterNode | null {
-  const executiveSponsor =
-    cluster.executiveSponsor && matchesFilter(cluster.executiveSponsor.status, tab, showTerminated)
-      ? cluster.executiveSponsor
-      : null;
   const portfolioDirector =
     cluster.portfolioDirector && matchesFilter(cluster.portfolioDirector.status, tab, showTerminated)
       ? cluster.portfolioDirector
@@ -109,8 +95,8 @@ function filterCluster(
   const projects = cluster.projects
     .map((project) => filterProject(project, tab, showTerminated))
     .filter((project): project is AgentNavigationProjectNode => Boolean(project));
-  if (!executiveSponsor && !portfolioDirector && projects.length === 0) return null;
-  return { ...cluster, executiveSponsor, portfolioDirector, projects };
+  if (!portfolioDirector && projects.length === 0) return null;
+  return { ...cluster, portfolioDirector, projects };
 }
 
 function filterDepartment(
@@ -159,7 +145,6 @@ function navigationCount(navigation: CompanyAgentNavigation) {
   for (const department of navigation.departments) {
     for (const leader of department.leaders) ids.add(leader.id);
     for (const cluster of department.clusters ?? []) {
-      if (cluster.executiveSponsor) ids.add(cluster.executiveSponsor.id);
       if (cluster.portfolioDirector) ids.add(cluster.portfolioDirector.id);
       for (const project of cluster.projects) {
         for (const leader of project.leaders) ids.add(leader.id);
@@ -182,7 +167,6 @@ function navigationCount(navigation: CompanyAgentNavigation) {
   for (const department of navigation.sharedServices) {
     for (const leader of department.leaders) ids.add(leader.id);
     for (const cluster of department.clusters ?? []) {
-      if (cluster.executiveSponsor) ids.add(cluster.executiveSponsor.id);
       if (cluster.portfolioDirector) ids.add(cluster.portfolioDirector.id);
       for (const project of cluster.projects) {
         for (const leader of project.leaders) ids.add(leader.id);
@@ -203,7 +187,6 @@ function navigationCount(navigation: CompanyAgentNavigation) {
     }
   }
   for (const cluster of navigation.portfolioClusters ?? []) {
-    if (cluster.executiveSponsor) ids.add(cluster.executiveSponsor.id);
     if (cluster.portfolioDirector) ids.add(cluster.portfolioDirector.id);
     for (const project of cluster.projects) {
       for (const leader of project.leaders) ids.add(leader.id);
@@ -466,322 +449,10 @@ function DepartmentBlock({
   );
 }
 
-function OperatingProjectBlock({
-  project,
-  agentMap,
-  liveRunByAgent,
-}: {
-  project: OperatingHierarchyProjectSummary;
-  agentMap: Map<string, Agent>;
-  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
-}) {
-  return (
-    <section className="space-y-3 rounded-xl border border-border bg-card p-4">
-      <div>
-        <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-          Project
-        </div>
-        <div className="text-lg font-semibold">{project.projectName}</div>
-      </div>
-      <MemberBlock label="Leadership" members={project.leadership} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
-      <MemberBlock label="Workers" members={project.workers} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
-      <MemberBlock label="Consultants" members={project.consultants} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
-    </section>
-  );
-}
-
-function OperatingDepartmentBlock({
-  department,
-  agentMap,
-  liveRunByAgent,
-}: {
-  department: OperatingHierarchyDepartmentSummary;
-  agentMap: Map<string, Agent>;
-  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
-}) {
-  return (
-    <section className="space-y-4">
-      <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-        {department.name}
-      </div>
-      <MemberBlock label="Leads" members={department.leaders} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
-      {department.projects.map((project) => (
-        <OperatingProjectBlock
-          key={`${department.key}:${project.projectId}`}
-          project={project}
-          agentMap={agentMap}
-          liveRunByAgent={liveRunByAgent}
-        />
-      ))}
-    </section>
-  );
-}
-
-function filterAccountability(
-  accountability: CompanyAgentAccountability,
-  tab: FilterTab,
-  showTerminated: boolean,
-): CompanyAgentAccountability {
-  const filterOwners = (owners: AccountabilityAgentSummary[]) =>
-    owners.filter((owner) => matchesFilter(owner.status, tab, showTerminated));
-  const filterOperatingProject = (
-    project: OperatingHierarchyProjectSummary,
-  ): OperatingHierarchyProjectSummary | null => {
-    const leadership = filterMembers(project.leadership, tab, showTerminated);
-    const workers = filterMembers(project.workers, tab, showTerminated);
-    const consultants = filterMembers(project.consultants, tab, showTerminated);
-    if (leadership.length === 0 && workers.length === 0 && consultants.length === 0) return null;
-    return { ...project, leadership, workers, consultants };
-  };
-  const filterOperatingDepartment = (
-    department: OperatingHierarchyDepartmentSummary,
-  ): OperatingHierarchyDepartmentSummary | null => {
-    const leaders = filterMembers(department.leaders, tab, showTerminated);
-    const projects = department.projects
-      .map((project) => filterOperatingProject(project))
-      .filter((project): project is OperatingHierarchyProjectSummary => Boolean(project));
-    if (leaders.length === 0 && projects.length === 0) return null;
-    return { ...department, leaders, projects };
-  };
-  const projects = accountability.projects
-    .map((project) => {
-      const leadership = filterMembers(project.leadership, tab, showTerminated);
-      const continuityOwners = filterOwners(project.continuityOwners);
-      const sharedServices = filterMembers(project.sharedServices, tab, showTerminated);
-      if (leadership.length === 0 && continuityOwners.length === 0 && sharedServices.length === 0) return null;
-      return { ...project, leadership, continuityOwners, sharedServices };
-    })
-    .filter((project): project is AccountabilityProjectNode => Boolean(project));
-  return {
-    ...accountability,
-    executiveOffice: filterMembers(accountability.executiveOffice, tab, showTerminated),
-    projects,
-    sharedServices: accountability.sharedServices
-      .map((department) => filterOperatingDepartment(department))
-      .filter((department): department is OperatingHierarchyDepartmentSummary => Boolean(department)),
-    unassigned: filterMembers(accountability.unassigned, tab, showTerminated),
-  };
-}
-
-function accountabilityCount(accountability: CompanyAgentAccountability) {
-  const ids = new Set<string>();
-  for (const agent of accountability.executiveOffice) ids.add(agent.id);
-  for (const project of accountability.projects) {
-    for (const leader of project.leadership) ids.add(leader.id);
-    for (const owner of project.continuityOwners) ids.add(owner.id);
-    for (const agent of project.sharedServices) ids.add(agent.id);
-  }
-  for (const department of accountability.sharedServices) {
-    for (const agent of department.leaders) ids.add(agent.id);
-  }
-  for (const agent of accountability.unassigned) ids.add(agent.id);
-  return ids.size;
-}
-
-function AccountabilityProjectBlock({
-  project,
-  agentMap,
-  liveRunByAgent,
-}: {
-  project: AccountabilityProjectNode;
-  agentMap: Map<string, Agent>;
-  liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
-}) {
-  return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-        <span>{project.projectName}</span>
-        {project.issueCounts.blockedMissingDocs > 0 ? <span>{project.issueCounts.blockedMissingDocs} missing docs</span> : null}
-        {project.issueCounts.openReviewFindings > 0 ? <span>{project.issueCounts.openReviewFindings} findings</span> : null}
-        {project.issueCounts.returnedBranches > 0 ? <span>{project.issueCounts.returnedBranches} returns</span> : null}
-      </div>
-      <MemberBlock label="Leadership" members={project.leadership} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
-      <MemberBlock
-        label="Continuity Owners"
-        members={project.continuityOwners}
-        agentMap={agentMap}
-        liveRunByAgent={liveRunByAgent}
-      />
-      <MemberBlock label="Shared Services" members={project.sharedServices} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
-    </section>
-  );
-}
-
-function AccountabilitySummaryCard({
-  accountability,
-}: {
-  accountability: CompanyAgentAccountability;
-}) {
-  const counts = accountability.counts;
-  return (
-    <section className="rounded-xl border border-border/70 bg-card/60 p-4">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-            Lean default
-          </div>
-          <div className="text-lg font-semibold">
-            {counts.activeContinuityOwners} active lanes, {counts.totalConfiguredAgents} configured total
-          </div>
-        </div>
-        <div className="text-xs text-muted-foreground">
-          Single-project/internal target: seed 4 live roles, expand to 6 only when new lanes become real.
-        </div>
-      </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Continuity</div>
-          <div className="mt-1 text-2xl font-semibold">{counts.activeContinuityOwners}</div>
-        </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Governance</div>
-          <div className="mt-1 text-2xl font-semibold">{counts.activeGovernanceLeads}</div>
-        </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Shared Service</div>
-          <div className="mt-1 text-2xl font-semibold">{counts.activeSharedServiceAgents}</div>
-        </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Legacy / Inactive</div>
-          <div className="mt-1 text-2xl font-semibold">{counts.legacyAgents + counts.inactiveAgents}</div>
-          <div className="mt-1 text-[11px] text-muted-foreground">
-            {counts.legacyAgents} legacy, {counts.inactiveAgents} inactive
-          </div>
-        </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Candidates</div>
-          <div className="mt-1 text-2xl font-semibold">{counts.simplificationCandidates}</div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function candidateActionLabel(candidate: OrgSimplificationCandidate) {
-  if (candidate.classification === "archive") return "Archive";
-  if (candidate.classification === "convert") return "Convert to shared service";
-  if (candidate.classification === "merge") return candidate.suggestedTargetName
-    ? `Reparent reports to ${candidate.suggestedTargetName}`
-    : "Reparent reports";
-  return null;
-}
-
-function OrgSimplificationPanel({
-  report,
-  onArchive,
-  onConvert,
-  onReparentReports,
-  pendingAction,
-}: {
-  report: CompanyOrgSimplificationReport;
-  onArchive: (candidate: OrgSimplificationCandidate) => void;
-  onConvert: (candidate: OrgSimplificationCandidate) => void;
-  onReparentReports: (candidate: OrgSimplificationCandidate) => void;
-  pendingAction: string | null;
-}) {
-  const candidates = report.candidates.filter((candidate) => candidate.classification !== "keep").slice(0, 8);
-  if (candidates.length === 0) return null;
-
-  return (
-    <section className="rounded-xl border border-border/70 bg-card/60 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-            Org simplification
-          </div>
-          <div className="text-lg font-semibold">
-            {report.counts.simplificationCandidates} candidates to simplify
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Archive unused relay roles, collapse singleton layers, and shift permanent specialists toward shared-service usage.
-          </p>
-        </div>
-      </div>
-      <div className="mt-4 space-y-3">
-        {candidates.map((candidate) => {
-          const actionLabel = candidateActionLabel(candidate);
-          const actionKey = `${candidate.classification}:${candidate.agent.id}`;
-          return (
-            <div key={candidate.agent.id} className="rounded-lg border border-border/70 bg-background/50 p-3">
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{candidate.agent.name}</span>
-                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                      {candidate.classification}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {candidate.agent.title ?? candidate.agent.role}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                    <span>{candidate.activeIssueCount} active issues</span>
-                    <span>{candidate.directReportCount} reports</span>
-                    <span>{candidate.recentRunCount} recent runs</span>
-                    <span>{candidate.activeSharedServiceEngagementCount} engagements</span>
-                    <span>{candidate.activeGateCount} gates</span>
-                  </div>
-                  <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                    {candidate.reasons.slice(0, 3).map((reason) => (
-                      <li key={reason}>• {reason}</li>
-                    ))}
-                  </ul>
-                </div>
-                {actionLabel ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={pendingAction === actionKey}
-                    onClick={() => {
-                      if (candidate.classification === "archive") onArchive(candidate);
-                      if (candidate.classification === "convert") onConvert(candidate);
-                      if (candidate.classification === "merge") onReparentReports(candidate);
-                    }}
-                  >
-                    {pendingAction === actionKey ? "Working..." : actionLabel}
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function LayoutToggle({
-  layout,
-  onChange,
-}: {
-  layout: AgentLayoutMode;
-  onChange: (layout: AgentLayoutMode) => void;
-}) {
-  return (
-    <div className="flex items-center border border-border">
-      {(["accountability", "department", "project"] as const).map((value) => (
-        <button
-          key={value}
-          className={cn(
-            "px-2.5 py-1.5 text-xs capitalize transition-colors",
-            layout === value
-              ? "bg-accent text-foreground"
-              : "text-muted-foreground hover:bg-accent/50",
-          )}
-          onClick={() => onChange(value)}
-        >
-          {value === "accountability" ? "accountability" : value}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export function Agents() {
   const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
   const { isMobile } = useSidebar();
@@ -796,18 +467,6 @@ export function Agents() {
   const [showTerminated, setShowTerminated] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const { data: session } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-  });
-  const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
-  const [layout, setLayout] = useState<AgentLayoutMode>("accountability");
-
-  useEffect(() => {
-    if (!selectedCompanyId) return;
-    setLayout(getStoredAgentLayout(selectedCompanyId, currentUserId));
-  }, [selectedCompanyId, currentUserId]);
-
   const { data: agents, isLoading, error } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
     queryFn: () => agentsApi.list(selectedCompanyId!),
@@ -815,21 +474,9 @@ export function Agents() {
   });
 
   const { data: navigation } = useQuery({
-    queryKey: queryKeys.agents.navigation(selectedCompanyId!, layout === "accountability" ? "department" : layout),
-    queryFn: () => agentsApi.navigation(selectedCompanyId!, layout === "accountability" ? "department" : layout),
-    enabled: !!selectedCompanyId && effectiveView === "tree" && layout !== "accountability",
-  });
-
-  const { data: accountability } = useQuery({
-    queryKey: queryKeys.agents.accountability(selectedCompanyId!),
-    queryFn: () => agentsApi.accountability(selectedCompanyId!),
-    enabled: !!selectedCompanyId && effectiveView === "tree" && layout === "accountability",
-  });
-
-  const { data: simplificationReport } = useQuery({
-    queryKey: queryKeys.agents.orgSimplification(selectedCompanyId!),
-    queryFn: () => agentsApi.orgSimplification(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    queryKey: queryKeys.agents.navigation(selectedCompanyId!, "department"),
+    queryFn: () => agentsApi.navigation(selectedCompanyId!, "department"),
+    enabled: !!selectedCompanyId && effectiveView === "tree",
   });
 
   const { data: runs } = useQuery({
@@ -863,52 +510,6 @@ export function Agents() {
     setBreadcrumbs([{ label: "Agents" }]);
   }, [setBreadcrumbs]);
 
-  const refreshAgentViews = () => {
-    if (!selectedCompanyId) return;
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.accountability(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId, "department") });
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId, "project") });
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.orgSimplification(selectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(selectedCompanyId) });
-  };
-
-  const archiveCandidate = useMutation({
-    mutationFn: (candidate: OrgSimplificationCandidate) =>
-      agentsApi.archiveForSimplification(selectedCompanyId!, { agentIds: [candidate.agent.id] }),
-    onSuccess: refreshAgentViews,
-  });
-
-  const convertCandidate = useMutation({
-    mutationFn: (candidate: OrgSimplificationCandidate) =>
-      agentsApi.convertToSharedServiceForSimplification(selectedCompanyId!, { agentIds: [candidate.agent.id] }),
-    onSuccess: refreshAgentViews,
-  });
-
-  const reparentReports = useMutation({
-    mutationFn: (candidate: OrgSimplificationCandidate) =>
-      agentsApi.reparentReportsForSimplification(selectedCompanyId!, {
-        fromAgentIds: [candidate.agent.id],
-        targetAgentId: candidate.suggestedTargetAgentId!,
-      }),
-    onSuccess: refreshAgentViews,
-  });
-
-  const pendingSimplificationAction =
-    (archiveCandidate.isPending && archiveCandidate.variables)
-      ? `archive:${archiveCandidate.variables.agent.id}`
-      : (convertCandidate.isPending && convertCandidate.variables)
-        ? `convert:${convertCandidate.variables.agent.id}`
-        : (reparentReports.isPending && reparentReports.variables)
-          ? `merge:${reparentReports.variables.agent.id}`
-          : null;
-  const simplificationError = archiveCandidate.error ?? convertCandidate.error ?? reparentReports.error ?? null;
-  const simplificationErrorMessage = simplificationError instanceof Error
-    ? simplificationError.message
-    : simplificationError
-      ? String(simplificationError)
-      : null;
-
   if (!selectedCompanyId) {
     return <EmptyState icon={Bot} message="Select a company to view agents." />;
   }
@@ -919,21 +520,7 @@ export function Agents() {
 
   const filteredAgents = filterAgents(agents ?? [], tab, showTerminated);
   const filteredNavigation = navigation ? filterNavigation(navigation, tab, showTerminated) : null;
-  const filteredAccountability = accountability ? filterAccountability(accountability, tab, showTerminated) : null;
   const filteredNavigationCount = filteredNavigation ? navigationCount(filteredNavigation) : 0;
-  const filteredAccountabilityCount = filteredAccountability ? accountabilityCount(filteredAccountability) : 0;
-  const archivedCandidateIds = useMemo(
-    () => new Set(simplificationReport?.candidates
-      .filter((candidate) => candidate.classification === "archive")
-      .map((candidate) => candidate.agent.id) ?? []),
-    [simplificationReport],
-  );
-
-  function updateLayout(next: AgentLayoutMode) {
-    if (!selectedCompanyId) return;
-    setLayout(next);
-    setStoredAgentLayout(selectedCompanyId, next, currentUserId);
-  }
 
   return (
     <div className="space-y-4">
@@ -988,33 +575,30 @@ export function Agents() {
           </div>
 
           {!forceListView ? (
-            <>
-              <LayoutToggle layout={layout} onChange={updateLayout} />
-              <div className="flex items-center border border-border">
-                <button
-                  className={cn(
-                    "p-1.5 transition-colors",
-                    effectiveView === "list"
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/50",
-                  )}
-                  onClick={() => setView("list")}
-                >
-                  <List className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  className={cn(
-                    "p-1.5 transition-colors",
-                    effectiveView === "tree"
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/50",
-                  )}
-                  onClick={() => setView("tree")}
-                >
-                  <GitBranch className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </>
+            <div className="flex items-center border border-border">
+              <button
+                className={cn(
+                  "p-1.5 transition-colors",
+                  effectiveView === "list"
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50",
+                )}
+                onClick={() => setView("list")}
+              >
+                <List className="h-3.5 w-3.5" />
+              </button>
+              <button
+                className={cn(
+                  "p-1.5 transition-colors",
+                  effectiveView === "tree"
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50",
+                )}
+                onClick={() => setView("tree")}
+              >
+                <GitBranch className="h-3.5 w-3.5" />
+              </button>
+            </div>
           ) : null}
 
           <Button size="sm" variant="outline" onClick={openNewAgent}>
@@ -1029,16 +613,13 @@ export function Agents() {
           {filteredAgents.length} agent{filteredAgents.length !== 1 ? "s" : ""}
         </p>
       ) : null}
-      {effectiveView === "tree" && (layout === "accountability" ? filteredAccountability : filteredNavigation) ? (
+      {effectiveView === "tree" && filteredNavigation ? (
         <p className="text-xs text-muted-foreground">
-          {layout === "accountability" && accountability
-            ? `${accountability.counts.activeContinuityOwners} active lanes, ${accountability.counts.simplificationCandidates} simplification candidates, ${accountability.counts.totalConfiguredAgents} configured total`
-            : `${filteredNavigationCount} agent${filteredNavigationCount !== 1 ? "s" : ""} in ${layout} layout`}
+          {filteredNavigationCount} agent{filteredNavigationCount !== 1 ? "s" : ""} in departments
         </p>
       ) : null}
 
       {error ? <p className="text-sm text-destructive">{error.message}</p> : null}
-      {simplificationErrorMessage ? <p className="text-sm text-destructive">{simplificationErrorMessage}</p> : null}
 
       {agents && agents.length === 0 ? (
         <EmptyState
@@ -1104,99 +685,7 @@ export function Agents() {
         </p>
       ) : null}
 
-      {effectiveView === "tree" && layout === "accountability" && filteredAccountability && filteredAccountabilityCount > 0 ? (
-        <div className="space-y-6">
-          <AccountabilitySummaryCard accountability={accountability ?? filteredAccountability} />
-          {simplificationReport ? (
-            <OrgSimplificationPanel
-              report={simplificationReport}
-              pendingAction={pendingSimplificationAction}
-              onArchive={(candidate) => {
-                if (!window.confirm(`Archive ${candidate.agent.name}? This will terminate the agent but keep audit history.`)) return;
-                archiveCandidate.mutate(candidate);
-              }}
-              onConvert={(candidate) => {
-                if (!window.confirm(`Convert ${candidate.agent.name} to shared-service lead?`)) return;
-                convertCandidate.mutate(candidate);
-              }}
-              onReparentReports={(candidate) => {
-                if (!candidate.suggestedTargetAgentId || !candidate.suggestedTargetName) return;
-                if (!window.confirm(`Reparent reports from ${candidate.agent.name} to ${candidate.suggestedTargetName}?`)) return;
-                reparentReports.mutate(candidate);
-              }}
-            />
-          ) : null}
-          {filteredAccountability.executiveOffice.length > 0 ? (
-            <section className="space-y-3">
-              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                Executive Office
-              </div>
-              <MemberBlock
-                label="Governance"
-                members={filteredAccountability.executiveOffice}
-                agentMap={agentMap}
-                liveRunByAgent={liveRunByAgent}
-              />
-            </section>
-          ) : null}
-
-          {filteredAccountability.projects.map((project) => (
-            <AccountabilityProjectBlock
-              key={project.projectId ?? project.projectName}
-              project={project}
-              agentMap={agentMap}
-              liveRunByAgent={liveRunByAgent}
-            />
-          ))}
-
-          {filteredAccountability.sharedServices.length > 0 ? (
-            <section className="space-y-4">
-              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                Shared Services
-              </div>
-              {filteredAccountability.sharedServices.map((department) => (
-                <OperatingDepartmentBlock
-                  key={`${department.key}:${department.name}`}
-                  department={department}
-                  agentMap={agentMap}
-                  liveRunByAgent={liveRunByAgent}
-                />
-              ))}
-            </section>
-          ) : null}
-
-          {filteredAccountability.unassigned.length > 0 ? (
-            <section className="space-y-3">
-              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                Unassigned
-              </div>
-              <MemberBlock
-                label="Needs scope"
-                members={filteredAccountability.unassigned.filter((member) => !archivedCandidateIds.has(member.id))}
-                agentMap={agentMap}
-                liveRunByAgent={liveRunByAgent}
-              />
-              {filteredAccountability.unassigned.some((member) => archivedCandidateIds.has(member.id)) ? (
-                <details className="rounded-xl border border-border/70 bg-card/40 p-4">
-                  <summary className="cursor-pointer text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                    Legacy / inactive ({filteredAccountability.unassigned.filter((member) => archivedCandidateIds.has(member.id)).length})
-                  </summary>
-                  <div className="mt-3">
-                    <MemberBlock
-                      label="Compatibility only"
-                      members={filteredAccountability.unassigned.filter((member) => archivedCandidateIds.has(member.id))}
-                      agentMap={agentMap}
-                      liveRunByAgent={liveRunByAgent}
-                    />
-                  </div>
-                </details>
-              ) : null}
-            </section>
-          ) : null}
-        </div>
-      ) : null}
-
-      {effectiveView === "tree" && layout !== "accountability" && filteredNavigation && filteredNavigationCount > 0 ? (
+      {effectiveView === "tree" && filteredNavigation && filteredNavigationCount > 0 ? (
         <div className="space-y-6">
           {filteredNavigation.executives.length > 0 ? (
             <section className="space-y-3">
@@ -1212,32 +701,14 @@ export function Agents() {
             </section>
           ) : null}
 
-          {layout === "department"
-            ? filteredNavigation.departments.map((department) => (
-                <DepartmentBlock
-                  key={`${department.key}:${department.name}`}
-                  department={department}
-                  agentMap={agentMap}
-                  liveRunByAgent={liveRunByAgent}
-                />
-              ))
-            : (filteredNavigation.portfolioClusters?.length ?? 0) > 0
-              ? (filteredNavigation.portfolioClusters ?? []).map((cluster) => (
-                  <ClusterBlock
-                    key={cluster.clusterId}
-                    cluster={cluster}
-                    agentMap={agentMap}
-                    liveRunByAgent={liveRunByAgent}
-                  />
-                ))
-              : filteredNavigation.projectPods.map((project) => (
-                  <ProjectBlock
-                    key={project.projectId}
-                    project={project}
-                    agentMap={agentMap}
-                    liveRunByAgent={liveRunByAgent}
-                  />
-                ))}
+          {filteredNavigation.departments.map((department) => (
+            <DepartmentBlock
+              key={`${department.key}:${department.name}`}
+              department={department}
+              agentMap={agentMap}
+              liveRunByAgent={liveRunByAgent}
+            />
+          ))}
 
           {filteredNavigation.sharedServices.length > 0 ? (
             <section className="space-y-4">
@@ -1271,13 +742,7 @@ export function Agents() {
         </div>
       ) : null}
 
-      {effectiveView === "tree" && layout === "accountability" && filteredAccountability && filteredAccountabilityCount === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">
-          No agents match the selected filter.
-        </p>
-      ) : null}
-
-      {effectiveView === "tree" && layout !== "accountability" && filteredNavigation && filteredNavigationCount === 0 ? (
+      {effectiveView === "tree" && filteredNavigation && filteredNavigationCount === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
           No agents match the selected filter.
         </p>

@@ -11,7 +11,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Company } from "@paperclipai/shared";
 import { companiesApi } from "../api/companies";
 import { ApiError } from "../api/client";
-import { pruneStoredAgentLayouts } from "../lib/agent-layout";
 import { pruneRememberedCompanyPaths } from "../lib/company-page-memory";
 import { queryKeys } from "../lib/queryKeys";
 import type { CompanySelectionSource } from "../lib/company-selection";
@@ -57,7 +56,6 @@ function pruneStoredCompanyState(companies: Company[]) {
     (selectableCompanies.length > 0 ? selectableCompanies : companies).map((company) => company.id),
   );
   pruneRememberedCompanyPaths(validCompanyIds);
-  pruneStoredAgentLayouts(validCompanyIds);
 }
 
 const CompanyContext = createContext<CompanyContextValue | null>(null);
