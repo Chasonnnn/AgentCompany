@@ -79,6 +79,7 @@ async function main() {
   }
 
   await run(electronBuilderBin, args, env);
+  await run(process.execPath, ["./scripts/verify-package-ui.mjs", mode], env);
 
   if (mode === "dist") {
     await removeIntermediateReleaseAppBundle();

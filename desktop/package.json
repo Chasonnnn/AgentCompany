@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "pnpm run build && electron .",
     "build": "tsc -p tsconfig.json",
-    "package": "pnpm run build && node ./scripts/stage-server-runtime.mjs && node ./scripts/run-electron-builder.mjs package",
-    "dist": "pnpm run build && node ./scripts/stage-server-runtime.mjs && node ./scripts/run-electron-builder.mjs dist",
+    "verify-package-ui": "node ./scripts/verify-package-ui.mjs",
+    "package": "pnpm run build && node ./scripts/stage-server-runtime.mjs && pnpm run verify-package-ui -- staged && node ./scripts/run-electron-builder.mjs package",
+    "dist": "pnpm run build && node ./scripts/stage-server-runtime.mjs && pnpm run verify-package-ui -- staged && node ./scripts/run-electron-builder.mjs dist",
     "prepare-pages-release": "node ./scripts/prepare-pages-release.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
