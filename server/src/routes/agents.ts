@@ -1250,6 +1250,7 @@ export function agentRoutes(db: Db) {
     const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       assigneeAgentId: req.actor.agentId,
+      includeRoutineExecutions: true,
       status: "todo,in_progress,blocked",
     });
 
