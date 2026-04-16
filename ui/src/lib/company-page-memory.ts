@@ -5,6 +5,42 @@ import {
 } from "./company-routes";
 
 const GLOBAL_SEGMENTS = new Set(["auth", "invite", "board-claim", "cli-auth", "docs"]);
+export const COMPANY_PATHS_STORAGE_KEY = "paperclip.companyPaths";
+
+export function readRememberedCompanyPaths(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(COMPANY_PATHS_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    /* ignore */
+  }
+  return {};
+}
+
+function writeRememberedCompanyPaths(paths: Record<string, string>) {
+  try {
+    localStorage.setItem(COMPANY_PATHS_STORAGE_KEY, JSON.stringify(paths));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function rememberCompanyPath(companyId: string, path: string) {
+  const paths = readRememberedCompanyPaths();
+  paths[companyId] = path;
+  writeRememberedCompanyPaths(paths);
+}
+
+export function pruneRememberedCompanyPaths(companyIds: Iterable<string>): Record<string, string> {
+  const allowedCompanyIds = new Set(companyIds);
+  const paths = readRememberedCompanyPaths();
+  const nextEntries = Object.entries(paths).filter(([companyId]) => allowedCompanyIds.has(companyId));
+  const nextPaths = Object.fromEntries(nextEntries);
+  if (nextEntries.length !== Object.keys(paths).length) {
+    writeRememberedCompanyPaths(nextPaths);
+  }
+  return nextPaths;
+}
 
 export function isRememberableCompanyPath(path: string): boolean {
   const pathname = path.split("?")[0] ?? "";

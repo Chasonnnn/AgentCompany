@@ -86,6 +86,10 @@ export function Layout() {
     const requestedPrefix = companyPrefix.toUpperCase();
     return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix) ?? null;
   }, [companies, companyPrefix]);
+  const selectableCompanies = useMemo(() => {
+    const activeCompanies = companies.filter((company) => company.status !== "archived");
+    return activeCompanies.length > 0 ? activeCompanies : companies;
+  }, [companies]);
   const hasUnknownCompanyPrefix =
     Boolean(companyPrefix) && !companiesLoading && companies.length > 0 && !matchedCompany;
   const { data: health } = useQuery({
@@ -116,8 +120,10 @@ export function Layout() {
     if (!companyPrefix || companiesLoading || companies.length === 0) return;
 
     if (!matchedCompany) {
-      const fallback = (selectedCompanyId ? companies.find((company) => company.id === selectedCompanyId) : null)
-        ?? companies[0]
+      const fallback = (selectedCompanyId
+        ? selectableCompanies.find((company) => company.id === selectedCompanyId)
+        : null)
+        ?? selectableCompanies[0]
         ?? null;
       if (fallback && selectedCompanyId !== fallback.id) {
         setSelectedCompanyId(fallback.id, { source: "route_sync" });
@@ -142,7 +148,6 @@ export function Layout() {
     }
   }, [
     companyPrefix,
-    companies,
     companiesLoading,
     matchedCompany,
     location.pathname,
@@ -150,6 +155,7 @@ export function Layout() {
     navigate,
     selectionSource,
     selectedCompanyId,
+    selectableCompanies,
     setSelectedCompanyId,
   ]);
 

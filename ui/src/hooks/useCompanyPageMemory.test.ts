@@ -1,8 +1,31 @@
+// @vitest-environment node
+
 import { describe, expect, it } from "vitest";
 import {
   getRememberedPathOwnerCompanyId,
+  pruneRememberedCompanyPaths,
+  readRememberedCompanyPaths,
+  rememberCompanyPath,
   sanitizeRememberedPathForCompany,
 } from "../lib/company-page-memory";
+
+const storage = new Map<string, string>();
+
+Object.defineProperty(globalThis, "localStorage", {
+  value: {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      storage.set(key, value);
+    },
+    removeItem: (key: string) => {
+      storage.delete(key);
+    },
+    clear: () => {
+      storage.clear();
+    },
+  },
+  configurable: true,
+});
 
 const companies = [
   { id: "for", issuePrefix: "FOR" },
@@ -86,5 +109,18 @@ describe("sanitizeRememberedPathForCompany", () => {
         companyPrefix: "PAP",
       }),
     ).toBe("/skills/skill-123/files/SKILL.md");
+  });
+});
+
+describe("company page memory storage", () => {
+  it("prunes remembered paths for archived or missing companies", () => {
+    localStorage.clear();
+    rememberCompanyPath("pap", "/issues/PAP-12");
+    rememberCompanyPath("old", "/issues/OLD-1");
+
+    const paths = pruneRememberedCompanyPaths(["pap"]);
+
+    expect(paths).toEqual({ pap: "/issues/PAP-12" });
+    expect(readRememberedCompanyPaths()).toEqual({ pap: "/issues/PAP-12" });
   });
 });

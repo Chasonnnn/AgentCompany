@@ -11,6 +11,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Company } from "@paperclipai/shared";
 import { companiesApi } from "../api/companies";
 import { ApiError } from "../api/client";
+import { pruneStoredAgentLayouts } from "../lib/agent-layout";
+import { pruneRememberedCompanyPaths } from "../lib/company-page-memory";
 import { queryKeys } from "../lib/queryKeys";
 import type { CompanySelectionSource } from "../lib/company-selection";
 type CompanySelectionOptions = { source?: CompanySelectionSource };
@@ -33,12 +35,37 @@ interface CompanyContextValue {
 
 const STORAGE_KEY = "paperclip.selectedCompanyId";
 
+function readStoredSelectedCompanyId(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredSelectedCompanyId(companyId: string) {
+  try {
+    localStorage.setItem(STORAGE_KEY, companyId);
+  } catch {
+    // Ignore localStorage failures.
+  }
+}
+
+function pruneStoredCompanyState(companies: Company[]) {
+  const selectableCompanies = companies.filter((company) => company.status !== "archived");
+  const validCompanyIds = new Set(
+    (selectableCompanies.length > 0 ? selectableCompanies : companies).map((company) => company.id),
+  );
+  pruneRememberedCompanyPaths(validCompanyIds);
+  pruneStoredAgentLayouts(validCompanyIds);
+}
+
 const CompanyContext = createContext<CompanyContextValue | null>(null);
 
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [selectionSource, setSelectionSource] = useState<CompanySelectionSource>("bootstrap");
-  const [selectedCompanyId, setSelectedCompanyIdState] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY));
+  const [selectedCompanyId, setSelectedCompanyIdState] = useState<string | null>(readStoredSelectedCompanyId);
 
   const { data: companies = [], isLoading, error } = useQuery({
     queryKey: queryKeys.companies.all,
@@ -64,20 +91,21 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     if (companies.length === 0) return;
 
     const selectableCompanies = sidebarCompanies.length > 0 ? sidebarCompanies : companies;
-    const stored = localStorage.getItem(STORAGE_KEY);
+    pruneStoredCompanyState(companies);
+    const stored = readStoredSelectedCompanyId();
     if (stored && selectableCompanies.some((c) => c.id === stored)) return;
     if (selectedCompanyId && selectableCompanies.some((c) => c.id === selectedCompanyId)) return;
 
     const next = selectableCompanies[0]!.id;
     setSelectedCompanyIdState(next);
     setSelectionSource("bootstrap");
-    localStorage.setItem(STORAGE_KEY, next);
+    writeStoredSelectedCompanyId(next);
   }, [companies, selectedCompanyId, sidebarCompanies]);
 
   const setSelectedCompanyId = useCallback((companyId: string, options?: CompanySelectionOptions) => {
     setSelectedCompanyIdState(companyId);
     setSelectionSource(options?.source ?? "manual");
-    localStorage.setItem(STORAGE_KEY, companyId);
+    writeStoredSelectedCompanyId(companyId);
   }, []);
 
   const reloadCompanies = useCallback(async () => {
@@ -109,8 +137,13 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   );
 
   const selectedCompany = useMemo(
-    () => companies.find((company) => company.id === selectedCompanyId) ?? null,
-    [companies, selectedCompanyId],
+    () => {
+      const company = companies.find((candidate) => candidate.id === selectedCompanyId) ?? null;
+      if (!company) return null;
+      if (company.status !== "archived" || sidebarCompanies.length === 0) return company;
+      return null;
+    },
+    [companies, selectedCompanyId, sidebarCompanies],
   );
 
   const value = useMemo(
