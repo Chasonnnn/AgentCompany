@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AGENT_DEPARTMENT_LABELS,
   AGENT_ROLE_LABELS,
@@ -14,9 +14,11 @@ import {
   type AgentNavigationProjectNode,
   type AgentNavigationTeamNode,
   type CompanyAgentAccountability,
+  type CompanyOrgSimplificationReport,
   type CompanyAgentNavigation,
   type OperatingHierarchyDepartmentSummary,
   type OperatingHierarchyProjectSummary,
+  type OrgSimplificationCandidate,
 } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -605,6 +607,149 @@ function AccountabilityProjectBlock({
   );
 }
 
+function AccountabilitySummaryCard({
+  accountability,
+}: {
+  accountability: CompanyAgentAccountability;
+}) {
+  const counts = accountability.counts;
+  return (
+    <section className="rounded-xl border border-border/70 bg-card/60 p-4">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            Lean default
+          </div>
+          <div className="text-lg font-semibold">
+            {counts.activeContinuityOwners} active lanes, {counts.totalConfiguredAgents} configured agents
+          </div>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Recommended steady state: 8-12 agents after initial expansion.
+        </div>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Continuity</div>
+          <div className="mt-1 text-2xl font-semibold">{counts.activeContinuityOwners}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Governance</div>
+          <div className="mt-1 text-2xl font-semibold">{counts.activeGovernanceLeads}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Shared Service</div>
+          <div className="mt-1 text-2xl font-semibold">{counts.activeSharedServiceAgents}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Legacy / Inactive</div>
+          <div className="mt-1 text-2xl font-semibold">{counts.legacyAgents + counts.inactiveAgents}</div>
+          <div className="mt-1 text-[11px] text-muted-foreground">
+            {counts.legacyAgents} legacy, {counts.inactiveAgents} inactive
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Candidates</div>
+          <div className="mt-1 text-2xl font-semibold">{counts.simplificationCandidates}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function candidateActionLabel(candidate: OrgSimplificationCandidate) {
+  if (candidate.classification === "archive") return "Archive";
+  if (candidate.classification === "convert") return "Convert to shared service";
+  if (candidate.classification === "merge") return candidate.suggestedTargetName
+    ? `Reparent reports to ${candidate.suggestedTargetName}`
+    : "Reparent reports";
+  return null;
+}
+
+function OrgSimplificationPanel({
+  report,
+  onArchive,
+  onConvert,
+  onReparentReports,
+  pendingAction,
+}: {
+  report: CompanyOrgSimplificationReport;
+  onArchive: (candidate: OrgSimplificationCandidate) => void;
+  onConvert: (candidate: OrgSimplificationCandidate) => void;
+  onReparentReports: (candidate: OrgSimplificationCandidate) => void;
+  pendingAction: string | null;
+}) {
+  const candidates = report.candidates.filter((candidate) => candidate.classification !== "keep").slice(0, 8);
+  if (candidates.length === 0) return null;
+
+  return (
+    <section className="rounded-xl border border-border/70 bg-card/60 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            Org simplification
+          </div>
+          <div className="text-lg font-semibold">
+            {report.counts.simplificationCandidates} candidates to simplify
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Archive unused relay roles, collapse singleton layers, and shift permanent specialists toward shared-service usage.
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 space-y-3">
+        {candidates.map((candidate) => {
+          const actionLabel = candidateActionLabel(candidate);
+          const actionKey = `${candidate.classification}:${candidate.agent.id}`;
+          return (
+            <div key={candidate.agent.id} className="rounded-lg border border-border/70 bg-background/50 p-3">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{candidate.agent.name}</span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      {candidate.classification}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {candidate.agent.title ?? candidate.agent.role}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                    <span>{candidate.activeIssueCount} active issues</span>
+                    <span>{candidate.directReportCount} reports</span>
+                    <span>{candidate.recentRunCount} recent runs</span>
+                    <span>{candidate.activeSharedServiceEngagementCount} engagements</span>
+                    <span>{candidate.activeGateCount} gates</span>
+                  </div>
+                  <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                    {candidate.reasons.slice(0, 3).map((reason) => (
+                      <li key={reason}>• {reason}</li>
+                    ))}
+                  </ul>
+                </div>
+                {actionLabel ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pendingAction === actionKey}
+                    onClick={() => {
+                      if (candidate.classification === "archive") onArchive(candidate);
+                      if (candidate.classification === "convert") onConvert(candidate);
+                      if (candidate.classification === "merge") onReparentReports(candidate);
+                    }}
+                  >
+                    {pendingAction === actionKey ? "Working..." : actionLabel}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function LayoutToggle({
   layout,
   onChange,
@@ -636,6 +781,7 @@ export function Agents() {
   const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
   const { isMobile } = useSidebar();
@@ -680,6 +826,12 @@ export function Agents() {
     enabled: !!selectedCompanyId && effectiveView === "tree" && layout === "accountability",
   });
 
+  const { data: simplificationReport } = useQuery({
+    queryKey: queryKeys.agents.orgSimplification(selectedCompanyId!),
+    queryFn: () => agentsApi.orgSimplification(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
   const { data: runs } = useQuery({
     queryKey: queryKeys.heartbeats(selectedCompanyId!),
     queryFn: () => heartbeatsApi.list(selectedCompanyId!),
@@ -711,6 +863,52 @@ export function Agents() {
     setBreadcrumbs([{ label: "Agents" }]);
   }, [setBreadcrumbs]);
 
+  const refreshAgentViews = () => {
+    if (!selectedCompanyId) return;
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.accountability(selectedCompanyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId, "department") });
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId, "project") });
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.orgSimplification(selectedCompanyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(selectedCompanyId) });
+  };
+
+  const archiveCandidate = useMutation({
+    mutationFn: (candidate: OrgSimplificationCandidate) =>
+      agentsApi.archiveForSimplification(selectedCompanyId!, { agentIds: [candidate.agent.id] }),
+    onSuccess: refreshAgentViews,
+  });
+
+  const convertCandidate = useMutation({
+    mutationFn: (candidate: OrgSimplificationCandidate) =>
+      agentsApi.convertToSharedServiceForSimplification(selectedCompanyId!, { agentIds: [candidate.agent.id] }),
+    onSuccess: refreshAgentViews,
+  });
+
+  const reparentReports = useMutation({
+    mutationFn: (candidate: OrgSimplificationCandidate) =>
+      agentsApi.reparentReportsForSimplification(selectedCompanyId!, {
+        fromAgentIds: [candidate.agent.id],
+        targetAgentId: candidate.suggestedTargetAgentId!,
+      }),
+    onSuccess: refreshAgentViews,
+  });
+
+  const pendingSimplificationAction =
+    (archiveCandidate.isPending && archiveCandidate.variables)
+      ? `archive:${archiveCandidate.variables.agent.id}`
+      : (convertCandidate.isPending && convertCandidate.variables)
+        ? `convert:${convertCandidate.variables.agent.id}`
+        : (reparentReports.isPending && reparentReports.variables)
+          ? `merge:${reparentReports.variables.agent.id}`
+          : null;
+  const simplificationError = archiveCandidate.error ?? convertCandidate.error ?? reparentReports.error ?? null;
+  const simplificationErrorMessage = simplificationError instanceof Error
+    ? simplificationError.message
+    : simplificationError
+      ? String(simplificationError)
+      : null;
+
   if (!selectedCompanyId) {
     return <EmptyState icon={Bot} message="Select a company to view agents." />;
   }
@@ -724,6 +922,12 @@ export function Agents() {
   const filteredAccountability = accountability ? filterAccountability(accountability, tab, showTerminated) : null;
   const filteredNavigationCount = filteredNavigation ? navigationCount(filteredNavigation) : 0;
   const filteredAccountabilityCount = filteredAccountability ? accountabilityCount(filteredAccountability) : 0;
+  const archivedCandidateIds = useMemo(
+    () => new Set(simplificationReport?.candidates
+      .filter((candidate) => candidate.classification === "archive")
+      .map((candidate) => candidate.agent.id) ?? []),
+    [simplificationReport],
+  );
 
   function updateLayout(next: AgentLayoutMode) {
     if (!selectedCompanyId) return;
@@ -827,12 +1031,14 @@ export function Agents() {
       ) : null}
       {effectiveView === "tree" && (layout === "accountability" ? filteredAccountability : filteredNavigation) ? (
         <p className="text-xs text-muted-foreground">
-          {(layout === "accountability" ? filteredAccountabilityCount : filteredNavigationCount)} agent
-          {(layout === "accountability" ? filteredAccountabilityCount : filteredNavigationCount) !== 1 ? "s" : ""} in {layout} layout
+          {layout === "accountability" && accountability
+            ? `${accountability.counts.activeContinuityOwners} active owners, ${accountability.counts.totalConfiguredAgents} configured, ${accountability.counts.simplificationCandidates} simplification candidates`
+            : `${filteredNavigationCount} agent${filteredNavigationCount !== 1 ? "s" : ""} in ${layout} layout`}
         </p>
       ) : null}
 
       {error ? <p className="text-sm text-destructive">{error.message}</p> : null}
+      {simplificationErrorMessage ? <p className="text-sm text-destructive">{simplificationErrorMessage}</p> : null}
 
       {agents && agents.length === 0 ? (
         <EmptyState
@@ -900,6 +1106,26 @@ export function Agents() {
 
       {effectiveView === "tree" && layout === "accountability" && filteredAccountability && filteredAccountabilityCount > 0 ? (
         <div className="space-y-6">
+          <AccountabilitySummaryCard accountability={accountability ?? filteredAccountability} />
+          {simplificationReport ? (
+            <OrgSimplificationPanel
+              report={simplificationReport}
+              pendingAction={pendingSimplificationAction}
+              onArchive={(candidate) => {
+                if (!window.confirm(`Archive ${candidate.agent.name}? This will terminate the agent but keep audit history.`)) return;
+                archiveCandidate.mutate(candidate);
+              }}
+              onConvert={(candidate) => {
+                if (!window.confirm(`Convert ${candidate.agent.name} to shared-service lead?`)) return;
+                convertCandidate.mutate(candidate);
+              }}
+              onReparentReports={(candidate) => {
+                if (!candidate.suggestedTargetAgentId || !candidate.suggestedTargetName) return;
+                if (!window.confirm(`Reparent reports from ${candidate.agent.name} to ${candidate.suggestedTargetName}?`)) return;
+                reparentReports.mutate(candidate);
+              }}
+            />
+          ) : null}
           {filteredAccountability.executiveOffice.length > 0 ? (
             <section className="space-y-3">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
@@ -946,10 +1172,25 @@ export function Agents() {
               </div>
               <MemberBlock
                 label="Needs scope"
-                members={filteredAccountability.unassigned}
+                members={filteredAccountability.unassigned.filter((member) => !archivedCandidateIds.has(member.id))}
                 agentMap={agentMap}
                 liveRunByAgent={liveRunByAgent}
               />
+              {filteredAccountability.unassigned.some((member) => archivedCandidateIds.has(member.id)) ? (
+                <details className="rounded-xl border border-border/70 bg-card/40 p-4">
+                  <summary className="cursor-pointer text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                    Legacy / inactive ({filteredAccountability.unassigned.filter((member) => archivedCandidateIds.has(member.id)).length})
+                  </summary>
+                  <div className="mt-3">
+                    <MemberBlock
+                      label="Compatibility only"
+                      members={filteredAccountability.unassigned.filter((member) => archivedCandidateIds.has(member.id))}
+                      agentMap={agentMap}
+                      liveRunByAgent={liveRunByAgent}
+                    />
+                  </div>
+                </details>
+              ) : null}
             </section>
           ) : null}
         </div>

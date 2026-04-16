@@ -18,6 +18,7 @@ export const queryKeys = {
     hierarchy: (companyId: string) => ["agents", companyId, "hierarchy"] as const,
     operatingHierarchy: (companyId: string) => ["agents", companyId, "operating-hierarchy"] as const,
     accountability: (companyId: string) => ["agents", companyId, "accountability"] as const,
+    orgSimplification: (companyId: string) => ["agents", companyId, "org-simplification"] as const,
     navigation: (companyId: string, layout: "department" | "project") =>
       ["agents", companyId, "navigation", layout] as const,
     detail: (id: string) => ["agents", "detail", id] as const,

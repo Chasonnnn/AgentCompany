@@ -261,6 +261,15 @@ const dashboard: DashboardSummary = {
     running: 0,
     paused: 0,
     error: 1,
+    composition: {
+      totalConfiguredAgents: 2,
+      activeContinuityOwners: 1,
+      activeGovernanceLeads: 1,
+      activeSharedServiceAgents: 0,
+      legacyAgents: 0,
+      inactiveAgents: 0,
+      simplificationCandidates: 0,
+    },
   },
   tasks: {
     open: 1,

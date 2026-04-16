@@ -1,6 +1,7 @@
 import type {
   Agent,
   CompanyAgentAccountability,
+  CompanyOrgSimplificationReport,
   AgentDetail,
   AgentNavigationLayout,
   CompanyAgentHierarchy,
@@ -17,6 +18,7 @@ import type {
   HeartbeatRun,
   Approval,
   AgentConfigRevision,
+  OrgSimplificationActionResult,
 } from "@paperclipai/shared";
 import { isUuidLike, normalizeAgentUrlKey } from "@paperclipai/shared";
 import { ApiError, api } from "./client";
@@ -89,6 +91,23 @@ export const agentsApi = {
     api.get<CompanyOperatingHierarchy>(`/companies/${companyId}/operating-hierarchy`),
   accountability: (companyId: string) =>
     api.get<CompanyAgentAccountability>(`/companies/${companyId}/agent-accountability`),
+  orgSimplification: (companyId: string) =>
+    api.get<CompanyOrgSimplificationReport>(`/companies/${companyId}/org-simplification`),
+  archiveForSimplification: (
+    companyId: string,
+    data: { agentIds: string[]; reason?: string | null },
+  ) => api.post<OrgSimplificationActionResult>(`/companies/${companyId}/org-simplification/archive`, data),
+  reparentReportsForSimplification: (
+    companyId: string,
+    data: { fromAgentIds: string[]; targetAgentId: string; reason?: string | null },
+  ) => api.post<OrgSimplificationActionResult>(`/companies/${companyId}/org-simplification/reparent-reports`, data),
+  convertToSharedServiceForSimplification: (
+    companyId: string,
+    data: { agentIds: string[]; reason?: string | null },
+  ) => api.post<OrgSimplificationActionResult>(
+    `/companies/${companyId}/org-simplification/convert-shared-service`,
+    data,
+  ),
   navigation: (companyId: string, layout: AgentNavigationLayout = "department") =>
     api.get<CompanyAgentNavigation>(`/companies/${companyId}/agent-navigation?layout=${encodeURIComponent(layout)}`),
   listConfigurations: (companyId: string) =>

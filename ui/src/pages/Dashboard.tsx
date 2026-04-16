@@ -233,14 +233,14 @@ export function Dashboard() {
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-1 sm:gap-2">
             <MetricCard
               icon={Bot}
-              value={data.agents.active + data.agents.running + data.agents.paused + data.agents.error}
-              label="Agents Enabled"
+              value={data.agents.composition.activeContinuityOwners}
+              label="Active Owners"
               to="/agents"
               description={
                 <span>
-                  {data.agents.running} running{", "}
-                  {data.agents.paused} paused{", "}
-                  {data.agents.error} errors
+                  {data.agents.composition.totalConfiguredAgents} configured{", "}
+                  {data.agents.composition.activeGovernanceLeads} governance{", "}
+                  {data.agents.composition.activeSharedServiceAgents} shared service
                 </span>
               }
             />
@@ -289,16 +289,16 @@ export function Dashboard() {
               <div>
                 <h3 className="text-sm font-semibold">Execution health</h3>
                 <p className="text-xs text-muted-foreground">
-                  Continuity owners, blocked starts, findings, returns, and pending handoffs.
+                  Active lanes, blocked starts, findings, returns, handoffs, and simplification pressure.
                 </p>
               </div>
               <Link to="/issues" className="text-xs text-muted-foreground underline underline-offset-2">
                 Open issues
               </Link>
             </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Owners</div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Lanes</div>
                 <div className="mt-1 text-2xl font-semibold">{data.executionHealth.activeContinuityOwners}</div>
               </div>
               <div>
@@ -316,6 +316,13 @@ export function Dashboard() {
               <div>
                 <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Handoffs</div>
                 <div className="mt-1 text-2xl font-semibold">{data.executionHealth.handoffPending}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Lean Ops</div>
+                <div className="mt-1 text-2xl font-semibold">{data.agents.composition.simplificationCandidates}</div>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {data.agents.composition.legacyAgents} legacy, {data.agents.composition.inactiveAgents} inactive
+                </div>
               </div>
             </div>
           </div>
