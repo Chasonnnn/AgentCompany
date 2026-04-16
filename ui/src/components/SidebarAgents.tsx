@@ -964,7 +964,7 @@ function AccountabilityContent({
       {accountability.executiveOffice.length > 0 ? (
         <HierarchyFolder
           label="Executive Office"
-          count={accountability.executiveOffice.length}
+          count={accountability.counts.activeGovernanceLeads}
           autoOpen={hasActiveMember(accountability.executiveOffice, activeAgentId)}
           {...accordionFolderControl("executive-office", topLevelOpenKey, setTopLevelOpenKey)}
         >
@@ -982,7 +982,7 @@ function AccountabilityContent({
       {accountability.projects.length > 0 ? (
         <HierarchyFolder
           label="Projects"
-          count={accountability.projects.reduce((sum, project) => sum + countAccountabilityProject(project), 0)}
+          count={accountability.counts.activeContinuityOwners}
           autoOpen={accountability.projects.some((project) => accountabilityProjectHasActiveMember(project, activeAgentId))}
           {...accordionFolderControl("projects", topLevelOpenKey, setTopLevelOpenKey)}
         >
@@ -1004,7 +1004,7 @@ function AccountabilityContent({
       {accountability.sharedServices.length > 0 ? (
         <HierarchyFolder
           label="Shared Services"
-          count={accountability.sharedServices.reduce((sum, department) => sum + countOperatingDepartment(department), 0)}
+          count={accountability.counts.activeSharedServiceAgents}
           autoOpen={accountability.sharedServices.some((department) => operatingDepartmentHasActiveMember(department, activeAgentId))}
           {...accordionFolderControl("shared-services", topLevelOpenKey, setTopLevelOpenKey)}
         >

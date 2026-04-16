@@ -621,11 +621,11 @@ function AccountabilitySummaryCard({
             Lean default
           </div>
           <div className="text-lg font-semibold">
-            {counts.activeContinuityOwners} active lanes, {counts.totalConfiguredAgents} configured agents
+            {counts.activeContinuityOwners} active lanes, {counts.totalConfiguredAgents} configured total
           </div>
         </div>
         <div className="text-xs text-muted-foreground">
-          Recommended steady state: 8-12 agents after initial expansion.
+          Single-project/internal target: seed 4 live roles, expand to 6 only when new lanes become real.
         </div>
       </div>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -1032,7 +1032,7 @@ export function Agents() {
       {effectiveView === "tree" && (layout === "accountability" ? filteredAccountability : filteredNavigation) ? (
         <p className="text-xs text-muted-foreground">
           {layout === "accountability" && accountability
-            ? `${accountability.counts.activeContinuityOwners} active owners, ${accountability.counts.totalConfiguredAgents} configured, ${accountability.counts.simplificationCandidates} simplification candidates`
+            ? `${accountability.counts.activeContinuityOwners} active lanes, ${accountability.counts.simplificationCandidates} simplification candidates, ${accountability.counts.totalConfiguredAgents} configured total`
             : `${filteredNavigationCount} agent${filteredNavigationCount !== 1 ? "s" : ""} in ${layout} layout`}
         </p>
       ) : null}
