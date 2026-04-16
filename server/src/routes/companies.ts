@@ -17,6 +17,7 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
+  agentTemplateService,
   budgetService,
   companyPortabilityService,
   companyService,
@@ -26,11 +27,13 @@ import {
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
+import { loadDefaultAgentTemplatePack } from "../services/default-agent-templates.js";
 
 export function companyRoutes(db: Db, storage?: StorageService) {
   const router = Router();
   const svc = companyService(db);
   const agents = agentService(db);
+  const templates = agentTemplateService(db);
   const portability = companyPortabilityService(db, storage);
   const access = accessService(db);
   const budgets = budgetService(db);
@@ -293,6 +296,9 @@ export function companyRoutes(db: Db, storage?: StorageService) {
         req.actor.userId ?? "board",
       );
     }
+    await templates.importPack(company.id, await loadDefaultAgentTemplatePack(), {
+      createdByUserId: req.actor.userId ?? "local-board",
+    });
     res.status(201).json(company);
   });
 

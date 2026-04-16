@@ -31,6 +31,10 @@ const mockCompanyPortabilityService = vi.hoisted(() => ({
   importBundle: vi.fn(),
 }));
 
+const mockAgentTemplateService = vi.hoisted(() => ({
+  importPack: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockFeedbackService = vi.hoisted(() => ({
   listIssueVotesForUser: vi.fn(),
@@ -46,6 +50,7 @@ function registerServiceMocks() {
     budgetService: () => mockBudgetService,
     companyPortabilityService: () => mockCompanyPortabilityService,
     companyService: () => mockCompanyService,
+    agentTemplateService: () => mockAgentTemplateService,
     feedbackService: () => mockFeedbackService,
     logActivity: mockLogActivity,
   }));

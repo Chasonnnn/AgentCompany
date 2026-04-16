@@ -26,6 +26,9 @@ function registerRouteMocks() {
     budgetService: () => ({
       upsertPolicy: vi.fn(),
     }),
+    agentTemplateService: () => ({
+      importPack: vi.fn(),
+    }),
     agentService: () => ({
       getById: vi.fn(),
     }),

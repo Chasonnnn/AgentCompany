@@ -250,7 +250,7 @@ Wave 4 default UX rules:
 - raw issue documents remain available as artifacts, but they are no longer the default first view
 - org/accountability surfaces must group by responsibility and continuity ownership rather than implying a baton-passing relay chain
 - legacy relay archetypes remain loadable and editable, but default role pickers and onboarding flows should prefer governance, shared-service, and shared-state execution roles
-- the recommended default company shape is lean: roughly 8-12 configured agents after initial expansion, sized by active execution lanes rather than a full department tree
+- the recommended default company shape is lean: for a single-project internal company, start around 4 live agents and expand toward 6 only when additional execution lanes become real; larger companies should still size the org by active execution lanes rather than a full department tree
 - dashboard and accountability payloads should lead with execution-relevant counts rather than raw org breadth alone
 
 ## 7.8 `heartbeat_runs`
