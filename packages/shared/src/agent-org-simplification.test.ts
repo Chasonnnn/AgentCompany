@@ -10,8 +10,8 @@ describe("org simplification schemas", () => {
       companyId: "11111111-1111-1111-1111-111111111111",
       generatedAt: "2026-04-15T12:00:00.000Z",
       recommendedSteadyStateAgents: {
-        min: 8,
-        max: 12,
+        min: 4,
+        max: 6,
       },
       counts: {
         totalConfiguredAgents: 14,
@@ -67,8 +67,8 @@ describe("org simplification schemas", () => {
         companyId: "11111111-1111-1111-1111-111111111111",
         generatedAt: "2026-04-15T12:00:00.000Z",
         recommendedSteadyStateAgents: {
-          min: 8,
-          max: 12,
+          min: 4,
+          max: 6,
         },
         counts: {
           totalConfiguredAgents: 9,

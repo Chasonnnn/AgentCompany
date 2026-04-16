@@ -1455,8 +1455,8 @@ export function agentService(db: Db) {
       companyId,
       generatedAt: new Date().toISOString(),
       recommendedSteadyStateAgents: {
-        min: 8,
-        max: 12,
+        min: 4,
+        max: 6,
       },
       counts,
       candidates,
