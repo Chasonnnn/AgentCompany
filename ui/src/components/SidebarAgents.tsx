@@ -222,9 +222,20 @@ function accountabilityProjectHasActiveMember(project: AccountabilityProjectNode
 }
 
 function countAccountabilityProjectMembers(project: AccountabilityProjectNode) {
-  return countMembers(project.leadership)
-    + countMembers(project.continuityOwners)
-    + countMembers(project.sharedServices);
+  return flattenAccountabilityProjectMembers(project).length;
+}
+
+function flattenAccountabilityProjectMembers(project: AccountabilityProjectNode): AgentHierarchyMemberSummary[] {
+  const members: AgentHierarchyMemberSummary[] = [];
+  const seen = new Set<string>();
+  for (const group of [project.leadership, project.continuityOwners, project.sharedServices]) {
+    for (const member of group) {
+      if (seen.has(member.id)) continue;
+      seen.add(member.id);
+      members.push(member);
+    }
+  }
+  return members;
 }
 
 function useSingleOpenBranch(activeKey: string | null) {
@@ -408,15 +419,8 @@ function AccountabilityProjectSection({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const activeBranchKey = hasActiveMember(project.leadership, activeAgentId)
-    ? "leadership"
-    : hasActiveMember(project.continuityOwners, activeAgentId)
-      ? "continuity-owners"
-      : hasActiveMember(project.sharedServices, activeAgentId)
-        ? "shared-services"
-        : null;
-  const { openKey, setOpenKey } = useSingleOpenBranch(activeBranchKey);
-  if (project.leadership.length === 0 && project.continuityOwners.length === 0 && project.sharedServices.length === 0) {
+  const members = flattenAccountabilityProjectMembers(project);
+  if (members.length === 0) {
     return null;
   }
 
@@ -429,37 +433,13 @@ function AccountabilityProjectSection({
       open={open}
       onOpenChange={onOpenChange}
     >
-      <MemberSection
-        label="Leadership"
-        members={project.leadership}
+      <MemberList
+        members={members}
         agentMap={agentMap}
         liveCountByAgent={liveCountByAgent}
         activeAgentId={activeAgentId}
         activeTab={activeTab}
-        parentDepth={depth}
-        {...accordionFolderControl("leadership", openKey, setOpenKey)}
-      />
-      <MemberSection
-        label="Continuity Owners"
-        members={project.continuityOwners}
-        agentMap={agentMap}
-        liveCountByAgent={liveCountByAgent}
-        activeAgentId={activeAgentId}
-        activeTab={activeTab}
-        parentDepth={depth}
-        defaultOpen={false}
-        {...accordionFolderControl("continuity-owners", openKey, setOpenKey)}
-      />
-      <MemberSection
-        label="Shared Services"
-        members={project.sharedServices}
-        agentMap={agentMap}
-        liveCountByAgent={liveCountByAgent}
-        activeAgentId={activeAgentId}
-        activeTab={activeTab}
-        parentDepth={depth}
-        defaultOpen={false}
-        {...accordionFolderControl("shared-services", openKey, setOpenKey)}
+        depth={depth + 1}
       />
     </HierarchyFolder>
   );
@@ -569,26 +549,18 @@ function AccountabilityContent({
         </HierarchyFolder>
       ) : null}
 
-      {accountability.projects.length > 0 ? (
-        <HierarchyFolder
-          label="Projects"
-          count={accountability.projects.reduce((sum, project) => sum + countAccountabilityProjectMembers(project), 0)}
-          autoOpen={accountability.projects.some((project) => accountabilityProjectHasActiveMember(project, activeAgentId))}
-        >
-          {accountability.projects.map((project) => (
-            <AccountabilityProjectSection
-              key={project.projectId ?? project.projectName}
-              project={project}
-              agentMap={agentMap}
-              liveCountByAgent={liveCountByAgent}
-              activeAgentId={activeAgentId}
-              activeTab={activeTab}
-              depth={1}
-              {...accordionFolderControl(project.projectId ?? project.projectName, projectOpenKey, setProjectOpenKey)}
-            />
-          ))}
-        </HierarchyFolder>
-      ) : null}
+      {accountability.projects.map((project) => (
+        <AccountabilityProjectSection
+          key={project.projectId ?? project.projectName}
+          project={project}
+          agentMap={agentMap}
+          liveCountByAgent={liveCountByAgent}
+          activeAgentId={activeAgentId}
+          activeTab={activeTab}
+          depth={0}
+          {...accordionFolderControl(project.projectId ?? project.projectName, projectOpenKey, setProjectOpenKey)}
+        />
+      ))}
 
       {accountability.sharedServices.length > 0 ? (
         <HierarchyFolder

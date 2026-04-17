@@ -141,6 +141,13 @@ function createAccountability(): CompanyAgentAccountability {
     orgLevel: "director",
     operatingClass: "project_leadership",
   });
+  const backendOwner = createMember({
+    id: "backend-owner",
+    name: "Backend/API Continuity Owner",
+    urlKey: "backend-api-continuity-owner",
+    role: "engineer",
+    orgLevel: "staff",
+  });
 
   return {
     companyId: "company-1",
@@ -163,7 +170,14 @@ function createAccountability(): CompanyAgentAccountability {
         executiveSponsor: ceo,
         portfolioDirector: null,
         leadership: [techLead],
-        continuityOwners: [],
+        continuityOwners: [{
+          ...backendOwner,
+          activeIssueCount: 0,
+          blockedContinuityIssueCount: 0,
+          openReviewFindingsCount: 0,
+          returnedBranchCount: 0,
+          issues: [],
+        }],
         sharedServices: [],
         issueCounts: {
           active: 1,
@@ -215,6 +229,13 @@ describe("SidebarAgents", () => {
         role: "engineer",
         orgLevel: "director",
       }),
+      createAgent({
+        id: "backend-owner",
+        name: "Backend/API Continuity Owner",
+        urlKey: "backend-api-continuity-owner",
+        role: "engineer",
+        orgLevel: "staff",
+      }),
     ]);
     mockAgentsApi.accountability.mockResolvedValue(createAccountability());
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
@@ -224,7 +245,7 @@ describe("SidebarAgents", () => {
     document.body.innerHTML = "";
   });
 
-  it("uses accountability navigation and shows live role counts instead of legacy department totals", async () => {
+  it("uses accountability navigation and renders each project as a direct folder", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -246,20 +267,12 @@ describe("SidebarAgents", () => {
     expect(mockAgentsApi.accountability).toHaveBeenCalledWith("company-1");
     expect(mockAgentsApi.navigation).not.toHaveBeenCalled();
 
-    const projectsButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Projects"));
-    expect(projectsButton?.textContent).toContain("1");
-    expect(container.textContent).not.toContain("Departments");
-    expect(container.textContent).not.toContain("Technical Project Lead");
-
-    await act(async () => {
-      projectsButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-
     const onboardingButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Onboarding"));
-    expect(onboardingButton).not.toBeUndefined();
+    expect(onboardingButton?.textContent).toContain("2");
+    expect(container.textContent).not.toContain("Departments");
+    expect(container.textContent).not.toContain("Projects");
+    expect(container.textContent).not.toContain("Technical Project Lead");
 
     await act(async () => {
       onboardingButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -267,6 +280,7 @@ describe("SidebarAgents", () => {
     await flush();
 
     expect(container.textContent).toContain("Technical Project Lead");
+    expect(container.textContent).toContain("Backend/API Continuity Owner");
 
     act(() => root.unmount());
   });

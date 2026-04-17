@@ -2353,6 +2353,22 @@ export function agentService(db: Db) {
         };
       }>();
 
+      const createContinuityOwnerBucket = (agent: NormalizedAgentRow) => ({
+        agent,
+        activeIssueCount: 0,
+        blockedContinuityIssueCount: 0,
+        openReviewFindingsCount: 0,
+        returnedBranchCount: 0,
+        issues: [] as Array<{
+          issueId: string;
+          identifier: string | null;
+          title: string;
+          status: string;
+          continuityStatus: string | null;
+          continuityHealth: string | null;
+        }>,
+      });
+
       const ensureProjectNode = (projectId: string | null) => {
         const key = projectId ?? "__unscoped__";
         const existing = projectNodes.get(key);
@@ -2384,6 +2400,17 @@ export function agentService(db: Db) {
         return created;
       };
 
+      for (const [projectId, pod] of projectPods.entries()) {
+        const node = ensureProjectNode(projectId);
+        node.leadership = dedupeById([...node.leadership, ...pod.leadership]);
+        node.sharedServices = dedupeById([...node.sharedServices, ...pod.consultants]);
+        for (const worker of dedupeById(pod.workers)) {
+          if (!node.continuityOwners.has(worker.id)) {
+            node.continuityOwners.set(worker.id, createContinuityOwnerBucket(worker));
+          }
+        }
+      }
+
       for (const row of issueRows) {
         const summary = buildIssueContinuitySummary({
           continuityState: row.continuityState,
@@ -2409,14 +2436,7 @@ export function agentService(db: Db) {
         if (!row.assigneeAgentId) continue;
         const agent = byId.get(row.assigneeAgentId);
         if (!agent) continue;
-        const ownerBucket = node.continuityOwners.get(agent.id) ?? {
-          agent,
-          activeIssueCount: 0,
-          blockedContinuityIssueCount: 0,
-          openReviewFindingsCount: 0,
-          returnedBranchCount: 0,
-          issues: [],
-        };
+        const ownerBucket = node.continuityOwners.get(agent.id) ?? createContinuityOwnerBucket(agent);
         ownerBucket.activeIssueCount += 1;
         if (summary?.health && summary.health !== "healthy") ownerBucket.blockedContinuityIssueCount += 1;
         if (summary?.openReviewFindings) ownerBucket.openReviewFindingsCount += 1;
