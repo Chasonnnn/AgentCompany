@@ -1,5 +1,13 @@
 export const type = "claude_local";
 export const label = "Claude Code (local)";
+export const DEFAULT_CLAUDE_LOCAL_EFFORT = "xhigh";
+export const CLAUDE_LOCAL_EFFORT_LEVELS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
 
 export const models = [
   { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
@@ -18,7 +26,7 @@ Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file injected at runtime
 - model (string, optional): Claude model id
-- effort (string, optional): reasoning effort passed via --effort (low|medium|high)
+- effort (string, optional): reasoning effort passed via --effort (low|medium|high|xhigh|max)
 - chrome (boolean, optional): pass --chrome when running Claude
 - promptTemplate (string, optional): run prompt template
 - maxTurnsPerRun (number, optional): max turns for one run
