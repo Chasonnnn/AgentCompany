@@ -71,6 +71,7 @@ More detailed task structure TBD.
 6. **The org chart decides accountability; the issue thread decides how the work thinks.** Governance flows through companies, reporting lines, approvals, budgets, and escalations. Deep technical execution keeps continuity inside one issue thread with durable issue docs.
 
 7. **Continuity lives in artifacts, not chat memory.** Long-running work stays coherent through issue-local specs, plans, runbooks, progress logs, test plans, and handoffs.
+8. **Planning and decision questions are first-class.** Issues begin in planning, and important agent-to-board questions are captured as structured Paperclip artifacts before any formal approval is needed.
 
 ## User Flow (Dream Scenario)
 
@@ -170,3 +171,5 @@ Wave 3 makes that model feel complete rather than merely valid. Review return no
 Wave 4 makes shared-state execution the default Paperclip experience instead of an advanced continuity feature. Issue continuity becomes the primary execution surface across issue detail, issue creation, lists, inbox, and dashboard. Org surfaces shift from an execution tree to an accountability map, and relay-style archetypes remain supported but are soft-deprecated in default onboarding and creation flows.
 
 Lean company shape now becomes the only recommended default. Paperclip should size a company by active execution lanes, not by a theatrical department map. A healthy default steady state is usually 1-2 executive sponsors, 1-3 project or execution leads, 4-6 continuity owners, and optional shared-service leads only when justified. Executive sponsors stay in the governance plane by default; they sponsor prioritization, budget, and cross-project decisions, but project-scoped execution should normally route through a single Project Lead and then to the correct continuity owner.
+
+Native provider planning and ask-user features are useful, but they are accelerators, not the product contract. Paperclip owns the planning and decision-question model across Codex, Claude, and other adapters. If an adapter can translate a Paperclip planning run or decision question into a provider-native UX, that is an optimization; the persisted source of truth remains the Paperclip issue docs and decision-question artifacts.

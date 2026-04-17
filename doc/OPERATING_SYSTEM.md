@@ -29,6 +29,8 @@ Paperclip coordination is intentionally split into a small number of channels:
   Durable artifact channel. Plans, specs, risks, runbooks, and handoffs live here.
 - `conference rooms`
   Invitation-based coordination channel. They gather cross-functional discussion, room questions, and can later produce a formal decision request.
+- `issue decision questions`
+  Lightweight agent-to-board question artifact for planning or execution blockers. These are distinct from approvals and only escalate into approvals when governed signoff is actually needed.
 - `approvals`
   Governed decision artifact. A decision request is not a decision until it is represented as an approval outcome.
 - `shared_service_engagements`
@@ -235,11 +237,14 @@ Paperclip uses three default issue working-set tiers:
 - `handoff` is the required ownership-transfer artifact
 - `review-findings` is the durable reviewer return artifact; review comments and packets may point to it, but they do not replace it
 - `branch-return` is the required branch-owner return artifact before any parent merge preview or merge confirmation
+- planning is a pre-execution continuity phase; all new issues begin in planning and only move into execution when the required docs exist, blocking decision questions are resolved, and continuity health is clean enough to proceed
+- blocking decision questions pause planning or execution without overloading approvals; answering a question wakes the requesting agent with the structured answer context
 - the server owns a persisted continuity snapshot for tier, status, health, spec state, required docs, and unresolved branches; UI hints are never the source of truth once that state exists
 - execution starts must fail explicitly when required continuity docs are missing or handoff state is invalid
 - continuity scaffolding happens only through explicit continuity actions such as prepare, handoff, spec thaw, and branch creation; heartbeat execution must not silently create docs
 - remediation is explicit and actor-scoped: stale progress, invalid handoffs, open findings, and returned branches must surface as server-derived actions, not client heuristics
 - real-run continuity eval traces may be captured nightly beside seeded evals, but they remain informational and read-only until the signal is stable
+- provider-native planning or ask-user features are optional accelerators only; the Paperclip issue docs and decision-question artifacts remain the persisted source of truth across adapters
 
 Runbook precedence:
 

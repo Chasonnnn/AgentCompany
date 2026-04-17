@@ -228,10 +228,44 @@ Invariants:
 - `in_progress` requires assignee
 - terminal states: `done | cancelled`
 - `continuity_state` is server-owned orchestration state for execution continuity; it stores tier, status, health, required/missing docs, spec state, branch role/status, unresolved branches, and continuity timestamps, but it never duplicates owner identity
+- new issues enter planning first and do not start execution until planning readiness is satisfied
 - the continuity owner remains the current assignee once execution is active
 - spec thaw remains approval-backed; continuity state reflects the approval outcome rather than replacing it
 - the default issue creation path selects `normal` continuity unless the caller explicitly chooses another tier
 - issue list and dashboard payloads should project compact continuity health so operators can act without opening every issue
+
+Planning-first rules:
+
+- execution cannot start while required planning docs are missing
+- blocking decision questions pause planning or execution until answered, dismissed, or escalated into an approval
+- issue documents remain the canonical planning substrate; any repo-side mirrors are generated from issue docs and are secondary copies only
+
+## 7.6a `issue_decision_questions`
+
+- `id` uuid pk
+- `company_id` uuid fk not null
+- `issue_id` uuid fk `issues.id` not null
+- `target` enum: `board`
+- `requested_by_agent_id` uuid fk `agents.id` null
+- `requested_by_user_id` uuid fk `users.id` null
+- `status` enum: `open | answered | dismissed | escalated_to_approval`
+- `blocking` boolean not null default true
+- `title` text not null
+- `question` text not null
+- `why_blocked` text null
+- `recommended_options` jsonb not null default `[]`
+- `suggested_default` text null
+- `answer` jsonb null
+- `answered_by_user_id` uuid fk `users.id` null
+- `answered_at` timestamptz null
+- `linked_approval_id` uuid fk `approvals.id` null
+
+Invariants:
+
+- V1 answering authority is board-only
+- questions are lighter-weight than approvals and may exist without formal signoff
+- promotion to `request_board_approval` preserves issue linkage and continuity wake behavior
+- answering or dismissing a question wakes the requesting agent with structured context
 
 ## 7.7 `issue_comments`
 
@@ -271,6 +305,10 @@ For issue-backed execution, `context_snapshot` must capture continuity resume me
 - `continuityBundleHash`
 - referenced issue/project document revision ids
 - `continuityTier`
+- `continuityStatus`
+- `paperclipPlanningMode`
+- open/blocking decision-question counts
+- current decision-question summary when a run is waiting on or resuming from a board answer
 - `specState`
 - unresolved branch ids
 
@@ -689,6 +727,11 @@ All endpoints are under `/api` and return JSON.
 - `POST /issues/:issueId/continuity/branches/:branchIssueId/return`
 - `GET /issues/:issueId/continuity/branches/:branchIssueId/merge-preview`
 - `POST /issues/:issueId/continuity/branches/:branchIssueId/merge`
+- `GET /issues/:issueId/questions`
+- `POST /issues/:issueId/questions`
+- `POST /questions/:questionId/answer`
+- `POST /questions/:questionId/dismiss`
+- `POST /questions/:questionId/escalate-approval`
 - `GET /issues/:issueId/comments`
 - `POST /companies/:companyId/issues/:issueId/attachments` (multipart upload)
 - `GET /issues/:issueId/attachments`
@@ -707,6 +750,10 @@ Continuity orchestration rules:
 - `branches` creates child-issue branch work; branch state lives in parent/child continuity state rather than separate workflow tables
 - branch owners return through a typed `branch-return` artifact
 - parent continuity owners preview a structured merge bundle and explicitly confirm which parent updates to apply; merge assist never mutates parent continuity automatically
+- `questions` create structured agent-to-board decision questions without forcing a formal approval up front
+- answering a blocking question unblocks planning or execution only after continuity is recomputed cleanly
+- escalating a question creates or links a board approval rather than overloading the question artifact with governed signoff semantics
+- provider-native plan or ask-user primitives may be used by adapters as optional accelerators, but the persisted source of truth remains Paperclip issue docs and question artifacts
 
 ### 10.4.1 Atomic Checkout Contract
 
@@ -779,6 +826,7 @@ Dashboard payload must include:
 - open/in-progress/blocked/done issue counts
 - month-to-date spend and budget utilization
 - pending approvals count
+- open/blocking decision-question counts and a recent board question queue distinct from approvals
 
 ## 10.10 Error Semantics
 
