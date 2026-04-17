@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, CompanyAgentNavigation, OperatingHierarchyAgentSummary } from "@paperclipai/shared";
+import type { Agent, CompanyAgentAccountability, OperatingHierarchyAgentSummary } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarAgents } from "./SidebarAgents";
 
@@ -124,7 +124,7 @@ function createMember(overrides: Partial<OperatingHierarchyAgentSummary> = {}): 
   } as OperatingHierarchyAgentSummary;
 }
 
-function createNavigation(): CompanyAgentNavigation {
+function createAccountability(): CompanyAgentAccountability {
   const ceo = createMember({
     id: "ceo",
     name: "CEO",
@@ -133,28 +133,49 @@ function createNavigation(): CompanyAgentNavigation {
     orgLevel: "executive",
     departmentKey: "executive",
   });
-  const engineer = createMember({
-    id: "engineer-1",
-    name: "Engineer",
-    urlKey: "engineer",
+  const techLead = createMember({
+    id: "tech-lead",
+    name: "Technical Project Lead",
+    urlKey: "technical-project-lead",
     role: "engineer",
-    departmentKey: "engineering",
+    orgLevel: "director",
+    operatingClass: "project_leadership",
   });
 
   return {
-    layout: "department",
-    executives: [ceo],
-    departments: [
+    companyId: "company-1",
+    generatedAt: "2026-04-16T10:00:00.000Z",
+    counts: {
+      totalConfiguredAgents: 4,
+      activeContinuityOwners: 2,
+      activeGovernanceLeads: 1,
+      activeSharedServiceAgents: 0,
+      legacyAgents: 0,
+      inactiveAgents: 0,
+      simplificationCandidates: 0,
+    },
+    executiveOffice: [ceo],
+    projects: [
       {
-        key: "engineering",
-        name: "Engineering",
-        leaders: [engineer],
-        clusters: [],
-        projects: [],
+        projectId: "project-1",
+        projectName: "Onboarding",
+        color: null,
+        executiveSponsor: ceo,
+        portfolioDirector: null,
+        leadership: [techLead],
+        continuityOwners: [],
+        sharedServices: [],
+        issueCounts: {
+          active: 1,
+          blockedMissingDocs: 0,
+          staleProgress: 0,
+          invalidHandoff: 0,
+          openReviewFindings: 0,
+          returnedBranches: 0,
+          handoffPending: 0,
+        },
       },
     ],
-    portfolioClusters: [],
-    projectPods: [],
     sharedServices: [],
     unassigned: [],
   };
@@ -188,13 +209,14 @@ describe("SidebarAgents", () => {
         departmentKey: "executive",
       }),
       createAgent({
-        id: "engineer-1",
-        name: "Engineer",
-        urlKey: "engineer",
+        id: "tech-lead",
+        name: "Technical Project Lead",
+        urlKey: "technical-project-lead",
         role: "engineer",
+        orgLevel: "director",
       }),
     ]);
-    mockAgentsApi.navigation.mockResolvedValue(createNavigation());
+    mockAgentsApi.accountability.mockResolvedValue(createAccountability());
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
   });
 
@@ -202,7 +224,7 @@ describe("SidebarAgents", () => {
     document.body.innerHTML = "";
   });
 
-  it("uses department navigation only and allows expanding departments while executives is auto-open", async () => {
+  it("uses accountability navigation and shows live role counts instead of legacy department totals", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -221,33 +243,30 @@ describe("SidebarAgents", () => {
     await flush();
     await flush();
 
-    expect(mockAgentsApi.navigation).toHaveBeenCalledWith("company-1", "department");
-    expect(mockAgentsApi.accountability).not.toHaveBeenCalled();
+    expect(mockAgentsApi.accountability).toHaveBeenCalledWith("company-1");
+    expect(mockAgentsApi.navigation).not.toHaveBeenCalled();
 
-    const buttonLabels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent?.trim() ?? "");
-    expect(buttonLabels).not.toContain("Accountability");
-    expect(buttonLabels).not.toContain("Project");
-
-    const departmentsButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Departments"));
-    expect(departmentsButton?.textContent).toContain("1");
-    expect(container.textContent).not.toContain("Engineer");
+    const projectsButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Projects"));
+    expect(projectsButton?.textContent).toContain("1");
+    expect(container.textContent).not.toContain("Departments");
+    expect(container.textContent).not.toContain("Technical Project Lead");
 
     await act(async () => {
-      departmentsButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      projectsButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flush();
 
-    const engineeringButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Engineering"));
-    expect(engineeringButton).not.toBeUndefined();
+    const onboardingButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Onboarding"));
+    expect(onboardingButton).not.toBeUndefined();
 
     await act(async () => {
-      engineeringButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      onboardingButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flush();
 
-    expect(container.textContent).toContain("Engineer");
+    expect(container.textContent).toContain("Technical Project Lead");
 
     act(() => root.unmount());
   });

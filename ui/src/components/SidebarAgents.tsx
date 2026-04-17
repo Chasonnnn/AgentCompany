@@ -3,13 +3,12 @@ import { NavLink, useLocation } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, FolderTree, Plus } from "lucide-react";
 import type {
+  AccountabilityProjectNode,
   Agent,
   AgentHierarchyMemberSummary,
-  AgentNavigationClusterNode,
-  AgentNavigationDepartmentNode,
-  AgentNavigationProjectNode,
-  AgentNavigationTeamNode,
-  CompanyAgentNavigation,
+  CompanyAgentAccountability,
+  OperatingHierarchyDepartmentSummary,
+  OperatingHierarchyProjectSummary,
 } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -188,49 +187,44 @@ function countMembers(members: AgentHierarchyMemberSummary[]) {
   return members.length;
 }
 
-function teamHasActiveMember(team: AgentNavigationTeamNode, activeAgentId: string | null) {
-  return hasActiveMember(team.leaders, activeAgentId) || hasActiveMember(team.workers, activeAgentId);
+function operatingProjectHasActiveMember(
+  project: Pick<OperatingHierarchyProjectSummary, "leadership" | "workers" | "consultants">,
+  activeAgentId: string | null,
+) {
+  return hasActiveMember(project.leadership, activeAgentId)
+    || hasActiveMember(project.workers, activeAgentId)
+    || hasActiveMember(project.consultants, activeAgentId);
 }
 
-function countTeam(team: AgentNavigationTeamNode) {
-  return countMembers(team.leaders) + countMembers(team.workers);
+function countOperatingProject(project: Pick<OperatingHierarchyProjectSummary, "leadership" | "workers" | "consultants">) {
+  return countMembers(project.leadership)
+    + countMembers(project.workers)
+    + countMembers(project.consultants);
 }
 
-function projectHasActiveMember(project: AgentNavigationProjectNode, activeAgentId: string | null) {
-  return hasActiveMember(project.leaders, activeAgentId)
-    || project.teams.some((team) => teamHasActiveMember(team, activeAgentId))
-    || hasActiveMember(project.workers, activeAgentId);
+function countSharedServiceDepartment(department: OperatingHierarchyDepartmentSummary) {
+  return countMembers(department.leaders)
+    + department.projects.reduce((sum, project) => sum + countOperatingProject(project), 0);
 }
 
-function countProject(project: AgentNavigationProjectNode) {
-  return countMembers(project.leaders)
-    + project.teams.reduce((sum, team) => sum + countTeam(team), 0)
-    + countMembers(project.workers);
-}
-
-function clusterHasActiveMember(cluster: AgentNavigationClusterNode, activeAgentId: string | null) {
-  return (cluster.portfolioDirector ? isActiveMember(cluster.portfolioDirector, activeAgentId) : false)
-    || cluster.projects.some((project) => projectHasActiveMember(project, activeAgentId));
-}
-
-function countCluster(cluster: AgentNavigationClusterNode) {
-  return (cluster.portfolioDirector ? 1 : 0)
-    + cluster.projects.reduce((sum, project) => sum + countProject(project), 0);
-}
-
-function departmentHasActiveMember(
-  department: AgentNavigationDepartmentNode,
+function sharedServiceDepartmentHasActiveMember(
+  department: OperatingHierarchyDepartmentSummary,
   activeAgentId: string | null,
 ) {
   return hasActiveMember(department.leaders, activeAgentId)
-    || (department.clusters ?? []).some((cluster) => clusterHasActiveMember(cluster, activeAgentId))
-    || department.projects.some((project) => projectHasActiveMember(project, activeAgentId));
+    || department.projects.some((project) => operatingProjectHasActiveMember(project, activeAgentId));
 }
 
-function countDepartment(department: AgentNavigationDepartmentNode) {
-  return countMembers(department.leaders)
-    + (department.clusters ?? []).reduce((sum, cluster) => sum + countCluster(cluster), 0)
-    + department.projects.reduce((sum, project) => sum + countProject(project), 0);
+function accountabilityProjectHasActiveMember(project: AccountabilityProjectNode, activeAgentId: string | null) {
+  return hasActiveMember(project.leadership, activeAgentId)
+    || hasActiveMember(project.continuityOwners, activeAgentId)
+    || hasActiveMember(project.sharedServices, activeAgentId);
+}
+
+function countAccountabilityProjectMembers(project: AccountabilityProjectNode) {
+  return countMembers(project.leadership)
+    + countMembers(project.continuityOwners)
+    + countMembers(project.sharedServices);
 }
 
 function useSingleOpenBranch(activeKey: string | null) {
@@ -318,68 +312,7 @@ function MemberSection({
   );
 }
 
-function TeamSection({
-  team,
-  agentMap,
-  liveCountByAgent,
-  activeAgentId,
-  activeTab,
-  depth,
-  open,
-  onOpenChange,
-}: {
-  team: AgentNavigationTeamNode;
-  agentMap: Map<string, Agent>;
-  liveCountByAgent: Map<string, number>;
-  activeAgentId: string | null;
-  activeTab: string | null;
-  depth: number;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-}) {
-  const activeBranchKey = hasActiveMember(team.leaders, activeAgentId)
-    ? "leads"
-    : hasActiveMember(team.workers, activeAgentId)
-      ? "workers"
-      : null;
-  const { openKey, setOpenKey } = useSingleOpenBranch(activeBranchKey);
-  if (team.leaders.length === 0 && team.workers.length === 0) return null;
-  return (
-    <HierarchyFolder
-      label={team.label}
-      count={countTeam(team)}
-      depth={depth}
-      defaultOpen={false}
-      autoOpen={teamHasActiveMember(team, activeAgentId)}
-      open={open}
-      onOpenChange={onOpenChange}
-    >
-      <MemberSection
-        label="Leads"
-        members={team.leaders}
-        agentMap={agentMap}
-        liveCountByAgent={liveCountByAgent}
-        activeAgentId={activeAgentId}
-        activeTab={activeTab}
-        parentDepth={depth}
-        {...accordionFolderControl("leads", openKey, setOpenKey)}
-      />
-      <MemberSection
-        label="Workers"
-        members={team.workers}
-        agentMap={agentMap}
-        liveCountByAgent={liveCountByAgent}
-        activeAgentId={activeAgentId}
-        activeTab={activeTab}
-        parentDepth={depth}
-        defaultOpen={false}
-        {...accordionFolderControl("workers", openKey, setOpenKey)}
-      />
-    </HierarchyFolder>
-  );
-}
-
-function ProjectSection({
+function OperatingProjectSection({
   project,
   agentMap,
   liveCountByAgent,
@@ -389,7 +322,7 @@ function ProjectSection({
   open,
   onOpenChange,
 }: {
-  project: AgentNavigationProjectNode;
+  project: OperatingHierarchyProjectSummary;
   agentMap: Map<string, Agent>;
   liveCountByAgent: Map<string, number>;
   activeAgentId: string | null;
@@ -398,31 +331,31 @@ function ProjectSection({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const activeTeam = project.teams.find((team) => teamHasActiveMember(team, activeAgentId));
-  const activeBranchKey = hasActiveMember(project.leaders, activeAgentId)
+  const activeBranchKey = hasActiveMember(project.leadership, activeAgentId)
     ? "leadership"
-    : activeTeam
-      ? `team:${activeTeam.key}`
-      : hasActiveMember(project.workers, activeAgentId)
-        ? "workers"
+    : hasActiveMember(project.workers, activeAgentId)
+      ? "workers"
+      : hasActiveMember(project.consultants, activeAgentId)
+        ? "shared-services"
         : null;
   const { openKey, setOpenKey } = useSingleOpenBranch(activeBranchKey);
-  if (project.leaders.length === 0 && project.teams.length === 0 && project.workers.length === 0) {
+  if (project.leadership.length === 0 && project.workers.length === 0 && project.consultants.length === 0) {
     return null;
   }
 
   return (
     <HierarchyFolder
       label={project.projectName}
-      count={countProject(project)}
+      count={countOperatingProject(project)}
       depth={depth}
-      autoOpen={projectHasActiveMember(project, activeAgentId)}
+      defaultOpen={false}
+      autoOpen={operatingProjectHasActiveMember(project, activeAgentId)}
       open={open}
       onOpenChange={onOpenChange}
     >
       <MemberSection
         label="Leadership"
-        members={project.leaders}
+        members={project.leadership}
         agentMap={agentMap}
         liveCountByAgent={liveCountByAgent}
         activeAgentId={activeAgentId}
@@ -430,18 +363,6 @@ function ProjectSection({
         parentDepth={depth}
         {...accordionFolderControl("leadership", openKey, setOpenKey)}
       />
-      {project.teams.map((team) => (
-        <TeamSection
-          key={`${project.projectId}:${team.key}`}
-          team={team}
-          agentMap={agentMap}
-          liveCountByAgent={liveCountByAgent}
-          activeAgentId={activeAgentId}
-          activeTab={activeTab}
-          depth={depth + 1}
-          {...accordionFolderControl(`team:${team.key}`, openKey, setOpenKey)}
-        />
-      ))}
       <MemberSection
         label="Workers"
         members={project.workers}
@@ -453,12 +374,23 @@ function ProjectSection({
         defaultOpen={false}
         {...accordionFolderControl("workers", openKey, setOpenKey)}
       />
+      <MemberSection
+        label="Shared Services"
+        members={project.consultants}
+        agentMap={agentMap}
+        liveCountByAgent={liveCountByAgent}
+        activeAgentId={activeAgentId}
+        activeTab={activeTab}
+        parentDepth={depth}
+        defaultOpen={false}
+        {...accordionFolderControl("shared-services", openKey, setOpenKey)}
+      />
     </HierarchyFolder>
   );
 }
 
-function ClusterSection({
-  cluster,
+function AccountabilityProjectSection({
+  project,
   agentMap,
   liveCountByAgent,
   activeAgentId,
@@ -467,7 +399,7 @@ function ClusterSection({
   open,
   onOpenChange,
 }: {
-  cluster: AgentNavigationClusterNode;
+  project: AccountabilityProjectNode;
   agentMap: Map<string, Agent>;
   liveCountByAgent: Map<string, number>;
   activeAgentId: string | null;
@@ -476,47 +408,117 @@ function ClusterSection({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const activeProject = cluster.projects.find((project) => projectHasActiveMember(project, activeAgentId));
-  const activeBranchKey = cluster.portfolioDirector && isActiveMember(cluster.portfolioDirector, activeAgentId)
-    ? "portfolio-director"
-    : activeProject
-      ? `project:${activeProject.projectId}`
-      : null;
+  const activeBranchKey = hasActiveMember(project.leadership, activeAgentId)
+    ? "leadership"
+    : hasActiveMember(project.continuityOwners, activeAgentId)
+      ? "continuity-owners"
+      : hasActiveMember(project.sharedServices, activeAgentId)
+        ? "shared-services"
+        : null;
   const { openKey, setOpenKey } = useSingleOpenBranch(activeBranchKey);
-  if ((cluster.portfolioDirector == null) && cluster.projects.length === 0) {
+  if (project.leadership.length === 0 && project.continuityOwners.length === 0 && project.sharedServices.length === 0) {
     return null;
   }
 
   return (
     <HierarchyFolder
-      label={cluster.name}
-      count={countCluster(cluster)}
+      label={project.projectName}
+      count={countAccountabilityProjectMembers(project)}
       depth={depth}
-      autoOpen={clusterHasActiveMember(cluster, activeAgentId)}
+      autoOpen={accountabilityProjectHasActiveMember(project, activeAgentId)}
       open={open}
       onOpenChange={onOpenChange}
     >
-      {cluster.portfolioDirector ? (
-        <MemberSection
-          label="Portfolio Director"
-          members={[cluster.portfolioDirector]}
-          agentMap={agentMap}
-          liveCountByAgent={liveCountByAgent}
-          activeAgentId={activeAgentId}
-          activeTab={activeTab}
-          parentDepth={depth}
-          {...accordionFolderControl("portfolio-director", openKey, setOpenKey)}
-        />
-      ) : null}
-      {cluster.projects.map((project) => (
-        <ProjectSection
-          key={`${cluster.clusterId}:${project.projectId}`}
+      <MemberSection
+        label="Leadership"
+        members={project.leadership}
+        agentMap={agentMap}
+        liveCountByAgent={liveCountByAgent}
+        activeAgentId={activeAgentId}
+        activeTab={activeTab}
+        parentDepth={depth}
+        {...accordionFolderControl("leadership", openKey, setOpenKey)}
+      />
+      <MemberSection
+        label="Continuity Owners"
+        members={project.continuityOwners}
+        agentMap={agentMap}
+        liveCountByAgent={liveCountByAgent}
+        activeAgentId={activeAgentId}
+        activeTab={activeTab}
+        parentDepth={depth}
+        defaultOpen={false}
+        {...accordionFolderControl("continuity-owners", openKey, setOpenKey)}
+      />
+      <MemberSection
+        label="Shared Services"
+        members={project.sharedServices}
+        agentMap={agentMap}
+        liveCountByAgent={liveCountByAgent}
+        activeAgentId={activeAgentId}
+        activeTab={activeTab}
+        parentDepth={depth}
+        defaultOpen={false}
+        {...accordionFolderControl("shared-services", openKey, setOpenKey)}
+      />
+    </HierarchyFolder>
+  );
+}
+
+function SharedServiceDepartmentSection({
+  department,
+  agentMap,
+  liveCountByAgent,
+  activeAgentId,
+  activeTab,
+  open,
+  onOpenChange,
+}: {
+  department: OperatingHierarchyDepartmentSummary;
+  agentMap: Map<string, Agent>;
+  liveCountByAgent: Map<string, number>;
+  activeAgentId: string | null;
+  activeTab: string | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const activeProject = department.projects.find((project) => operatingProjectHasActiveMember(project, activeAgentId));
+  const activeBranchKey = hasActiveMember(department.leaders, activeAgentId)
+    ? "leadership"
+    : activeProject
+      ? `project:${activeProject.projectId}`
+      : null;
+  const { openKey, setOpenKey } = useSingleOpenBranch(activeBranchKey);
+  if (department.leaders.length === 0 && department.projects.length === 0) return null;
+
+  return (
+    <HierarchyFolder
+      label={department.name}
+      count={countSharedServiceDepartment(department)}
+      depth={1}
+      autoOpen={sharedServiceDepartmentHasActiveMember(department, activeAgentId)}
+      open={open}
+      onOpenChange={onOpenChange}
+    >
+      <MemberSection
+        label="Leadership"
+        members={department.leaders}
+        agentMap={agentMap}
+        liveCountByAgent={liveCountByAgent}
+        activeAgentId={activeAgentId}
+        activeTab={activeTab}
+        parentDepth={1}
+        {...accordionFolderControl("leadership", openKey, setOpenKey)}
+      />
+      {department.projects.map((project) => (
+        <OperatingProjectSection
+          key={`${department.key}:${project.projectId}`}
           project={project}
           agentMap={agentMap}
           liveCountByAgent={liveCountByAgent}
           activeAgentId={activeAgentId}
           activeTab={activeTab}
-          depth={depth + 1}
+          depth={2}
           {...accordionFolderControl(`project:${project.projectId}`, openKey, setOpenKey)}
         />
       ))}
@@ -524,125 +526,40 @@ function ClusterSection({
   );
 }
 
-function DepartmentSection({
-  department,
-  agentMap,
-  liveCountByAgent,
-  activeAgentId,
-  activeTab,
-  depth,
-  open,
-  onOpenChange,
-}: {
-  department: AgentNavigationDepartmentNode;
-  agentMap: Map<string, Agent>;
-  liveCountByAgent: Map<string, number>;
-  activeAgentId: string | null;
-  activeTab: string | null;
-  depth: number;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-}) {
-  const clusters = department.clusters ?? [];
-  const hasClusterTree = clusters.length > 0;
-  const activeCluster = clusters.find((cluster) => clusterHasActiveMember(cluster, activeAgentId));
-  const activeProject = !activeCluster
-    ? department.projects.find((project) => projectHasActiveMember(project, activeAgentId))
-    : null;
-  const activeBranchKey = hasActiveMember(department.leaders, activeAgentId)
-    ? "leads"
-    : activeCluster
-      ? `cluster:${activeCluster.clusterId}`
-      : activeProject
-        ? `project:${activeProject.projectId}`
-        : null;
-  const { openKey, setOpenKey } = useSingleOpenBranch(activeBranchKey);
-  if (department.leaders.length === 0 && clusters.length === 0 && department.projects.length === 0) return null;
-
-  return (
-    <HierarchyFolder
-      label={department.name}
-      count={countDepartment(department)}
-      depth={depth}
-      autoOpen={departmentHasActiveMember(department, activeAgentId)}
-      open={open}
-      onOpenChange={onOpenChange}
-    >
-      <MemberSection
-        label="Leads"
-        members={department.leaders}
-        agentMap={agentMap}
-        liveCountByAgent={liveCountByAgent}
-        activeAgentId={activeAgentId}
-        activeTab={activeTab}
-        parentDepth={depth}
-        {...accordionFolderControl("leads", openKey, setOpenKey)}
-      />
-      {hasClusterTree
-        ? clusters.map((cluster) => (
-            <ClusterSection
-              key={`${department.key}:${cluster.clusterId}`}
-              cluster={cluster}
-              agentMap={agentMap}
-              liveCountByAgent={liveCountByAgent}
-              activeAgentId={activeAgentId}
-              activeTab={activeTab}
-              depth={depth + 1}
-              {...accordionFolderControl(`cluster:${cluster.clusterId}`, openKey, setOpenKey)}
-            />
-          ))
-        : department.projects.map((project) => (
-            <ProjectSection
-              key={`${department.key}:${project.projectId}`}
-              project={project}
-              agentMap={agentMap}
-              liveCountByAgent={liveCountByAgent}
-              activeAgentId={activeAgentId}
-              activeTab={activeTab}
-              depth={depth + 1}
-              {...accordionFolderControl(`project:${project.projectId}`, openKey, setOpenKey)}
-            />
-          ))}
-    </HierarchyFolder>
-  );
-}
-
-function NavigationContent({
-  navigation,
+function AccountabilityContent({
+  accountability,
   agentMap,
   liveCountByAgent,
   activeAgentId,
   activeTab,
 }: {
-  navigation: CompanyAgentNavigation;
+  accountability: CompanyAgentAccountability;
   agentMap: Map<string, Agent>;
   liveCountByAgent: Map<string, number>;
   activeAgentId: string | null;
   activeTab: string | null;
 }) {
-  const activeDepartment = navigation.departments.find((department) =>
-    departmentHasActiveMember(department, activeAgentId),
+  const activeProject = accountability.projects.find((project) =>
+    accountabilityProjectHasActiveMember(project, activeAgentId),
   );
-  const activeSharedService = navigation.sharedServices.find((department) =>
-    departmentHasActiveMember(department, activeAgentId),
+  const activeSharedService = accountability.sharedServices.find((department) =>
+    sharedServiceDepartmentHasActiveMember(department, activeAgentId),
   );
-  const activeDepartmentKey = activeDepartment ? `${activeDepartment.key}:${activeDepartment.name}` : null;
-  const { openKey: departmentOpenKey, setOpenKey: setDepartmentOpenKey } = useSingleOpenBranch(activeDepartmentKey);
-
+  const activeProjectKey = activeProject ? activeProject.projectId ?? activeProject.projectName : null;
+  const { openKey: projectOpenKey, setOpenKey: setProjectOpenKey } = useSingleOpenBranch(activeProjectKey);
   const activeSharedServiceKey = activeSharedService ? `${activeSharedService.key}:${activeSharedService.name}` : null;
   const { openKey: sharedServiceOpenKey, setOpenKey: setSharedServiceOpenKey } = useSingleOpenBranch(activeSharedServiceKey);
 
   return (
     <div className="mt-0.5 flex flex-col gap-1">
-      {navigation.executives.length > 0 ? (
+      {accountability.executiveOffice.length > 0 ? (
         <HierarchyFolder
-          key={`executives:${hasActiveMember(navigation.executives, activeAgentId) ? activeAgentId ?? "active" : "idle"}`}
-          label="Executives"
-          count={navigation.executives.length}
-          autoOpen={hasActiveMember(navigation.executives, activeAgentId)}
+          label="Executive Office"
+          count={accountability.executiveOffice.length}
+          autoOpen={hasActiveMember(accountability.executiveOffice, activeAgentId)}
         >
           <MemberList
-            members={navigation.executives}
+            members={accountability.executiveOffice}
             agentMap={agentMap}
             liveCountByAgent={liveCountByAgent}
             activeAgentId={activeAgentId}
@@ -652,61 +569,57 @@ function NavigationContent({
         </HierarchyFolder>
       ) : null}
 
-      {navigation.departments.length > 0 ? (
+      {accountability.projects.length > 0 ? (
         <HierarchyFolder
-          key={`departments:${activeDepartmentKey ?? "idle"}`}
-          label="Departments"
-          count={navigation.departments.reduce((sum, department) => sum + countDepartment(department), 0)}
-          autoOpen={navigation.departments.some((department) => departmentHasActiveMember(department, activeAgentId))}
+          label="Projects"
+          count={accountability.projects.reduce((sum, project) => sum + countAccountabilityProjectMembers(project), 0)}
+          autoOpen={accountability.projects.some((project) => accountabilityProjectHasActiveMember(project, activeAgentId))}
         >
-          {navigation.departments.map((department) => (
-            <DepartmentSection
-              key={`${department.key}:${department.name}`}
-              department={department}
+          {accountability.projects.map((project) => (
+            <AccountabilityProjectSection
+              key={project.projectId ?? project.projectName}
+              project={project}
               agentMap={agentMap}
               liveCountByAgent={liveCountByAgent}
               activeAgentId={activeAgentId}
               activeTab={activeTab}
               depth={1}
-              {...accordionFolderControl(`${department.key}:${department.name}`, departmentOpenKey, setDepartmentOpenKey)}
+              {...accordionFolderControl(project.projectId ?? project.projectName, projectOpenKey, setProjectOpenKey)}
             />
           ))}
         </HierarchyFolder>
       ) : null}
 
-      {navigation.sharedServices.length > 0 ? (
+      {accountability.sharedServices.length > 0 ? (
         <HierarchyFolder
-          key={`shared-services:${activeSharedServiceKey ?? "idle"}`}
           label="Shared Services"
-          count={navigation.sharedServices.reduce((sum, department) => sum + countDepartment(department), 0)}
+          count={accountability.sharedServices.reduce((sum, department) => sum + countSharedServiceDepartment(department), 0)}
           defaultOpen={false}
-          autoOpen={navigation.sharedServices.some((department) => departmentHasActiveMember(department, activeAgentId))}
+          autoOpen={accountability.sharedServices.some((department) => sharedServiceDepartmentHasActiveMember(department, activeAgentId))}
         >
-          {navigation.sharedServices.map((department) => (
-            <DepartmentSection
+          {accountability.sharedServices.map((department) => (
+            <SharedServiceDepartmentSection
               key={`${department.key}:${department.name}`}
               department={department}
               agentMap={agentMap}
               liveCountByAgent={liveCountByAgent}
               activeAgentId={activeAgentId}
               activeTab={activeTab}
-              depth={1}
               {...accordionFolderControl(`${department.key}:${department.name}`, sharedServiceOpenKey, setSharedServiceOpenKey)}
             />
           ))}
         </HierarchyFolder>
       ) : null}
 
-      {navigation.unassigned.length > 0 ? (
+      {accountability.unassigned.length > 0 ? (
         <HierarchyFolder
-          key={`unassigned:${hasActiveMember(navigation.unassigned, activeAgentId) ? activeAgentId ?? "active" : "idle"}`}
           label="Unassigned"
-          count={navigation.unassigned.length}
+          count={accountability.unassigned.length}
           defaultOpen={false}
-          autoOpen={hasActiveMember(navigation.unassigned, activeAgentId)}
+          autoOpen={hasActiveMember(accountability.unassigned, activeAgentId)}
         >
           <MemberList
-            members={navigation.unassigned}
+            members={accountability.unassigned}
             agentMap={agentMap}
             liveCountByAgent={liveCountByAgent}
             activeAgentId={activeAgentId}
@@ -730,9 +643,9 @@ export function SidebarAgents() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
-  const { data: navigation } = useQuery({
-    queryKey: queryKeys.agents.navigation(selectedCompanyId!, "department"),
-    queryFn: () => agentsApi.navigation(selectedCompanyId!, "department"),
+  const { data: accountability } = useQuery({
+    queryKey: queryKeys.agents.accountability(selectedCompanyId!),
+    queryFn: () => agentsApi.accountability(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
   const { data: liveRuns } = useQuery({
@@ -793,9 +706,9 @@ export function SidebarAgents() {
       </div>
 
       <CollapsibleContent>
-        {navigation ? (
-          <NavigationContent
-            navigation={navigation}
+        {accountability ? (
+          <AccountabilityContent
+            accountability={accountability}
             agentMap={agentMap}
             liveCountByAgent={liveCountByAgent}
             activeAgentId={activeAgentId}
