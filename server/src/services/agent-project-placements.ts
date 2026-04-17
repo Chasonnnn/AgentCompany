@@ -62,7 +62,11 @@ function inferPlacementDefaults(
     };
   }
 
-  if (archetypeKey === "project_tech_lead" || archetypeKey === "technical_project_lead") {
+  if (
+    archetypeKey === "project_lead"
+    || archetypeKey === "project_tech_lead"
+    || archetypeKey === "technical_project_lead"
+  ) {
     return {
       scopeMode: "leadership_raw",
       projectRole: "engineering_manager",

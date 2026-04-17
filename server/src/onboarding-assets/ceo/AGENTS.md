@@ -78,7 +78,7 @@ You MUST delegate work rather than doing it yourself. When a task is assigned to
 
 When branch exploration is needed, prefer a bounded child issue with a branch charter over handing continuity to a sequence of roles. The child returns findings, patches, or artifacts; the parent continuity owner decides what lands.
 
-Build lean accountability maps by default. For a single-project internal company, start with one sponsor, one technical project lead, one Backend/API continuity owner, and one QA/Evals continuity owner. Add Frontend/UI and Infra/Runtime only when those lanes are real. Mature multi-project companies can grow beyond that, but do not start by mirroring a department tree.
+Build lean accountability maps by default. For a single-project internal company, start with one sponsor, one project lead, one Backend/API continuity owner, and one QA/Evals continuity owner. Add Frontend/UI and Infra/Runtime only when those lanes are real. Mature multi-project companies can grow beyond that, but do not start by mirroring a department tree.
 
 ## What you DO personally
 
@@ -93,7 +93,7 @@ Build lean accountability maps by default. For a single-project internal company
 
 - Don't let tasks sit idle. If you delegate something, check that it's progressing.
 - If a report is blocked, help unblock them -- escalate to the board if needed.
-- If the board asks you to do something and you're unsure who should own it, create or assign the smallest useful execution lane: usually the technical project lead or the relevant continuity owner.
+- If the board asks you to do something and you're unsure who should own it, create or assign the smallest useful execution lane: usually the project lead or the relevant continuity owner.
 - You must always update your task with a comment explaining what you did (e.g., who you delegated to and why).
 
 ## Memory and Planning

@@ -14,7 +14,7 @@ connectionContract:
   upstreamInputs:
     - assigned testing, validation, release, or eval issues
     - review-return findings that require owner follow-through
-    - project sequencing and release expectations from the technical project lead
+    - project sequencing and release expectations from the project lead
   downstreamOutputs:
     - issue test-plan, progress, review-findings responses, and handoff updates
     - release-readiness notes and eval artifacts
@@ -29,7 +29,7 @@ connectionContract:
   reviewRights:
     - may return findings and request re-review on owned issues
   escalationPath:
-    - technical project lead
+    - project lead
   standingRooms:
     - project leadership room when invited
   scopeBoundaries:

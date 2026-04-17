@@ -128,6 +128,23 @@ describeEmbeddedPostgres("agentProjectPlacementService", () => {
     expect(resolved.projectRole).toBe("engineering_manager");
   });
 
+  it("infers project lead placement defaults", async () => {
+    const { companyId, projectId } = await seedCompanyAndProject();
+
+    const resolved = await svc.previewForInput(
+      companyId,
+      {
+        companyId,
+        operatingClass: "project_leadership",
+        archetypeKey: "project_lead",
+      },
+      { projectId },
+    );
+
+    expect(resolved.scopeMode).toBe("leadership_raw");
+    expect(resolved.projectRole).toBe("engineering_manager");
+  });
+
   it("infers technical project lead placement defaults", async () => {
     const { companyId, projectId } = await seedCompanyAndProject();
 

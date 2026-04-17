@@ -135,8 +135,8 @@ function createAccountability(): CompanyAgentAccountability {
   });
   const techLead = createMember({
     id: "tech-lead",
-    name: "Technical Project Lead",
-    urlKey: "technical-project-lead",
+    name: "Project Lead",
+    urlKey: "project-lead",
     role: "engineer",
     orgLevel: "director",
     operatingClass: "project_leadership",
@@ -169,6 +169,7 @@ function createAccountability(): CompanyAgentAccountability {
         color: null,
         executiveSponsor: ceo,
         portfolioDirector: null,
+        projectLead: techLead,
         leadership: [techLead],
         continuityOwners: [{
           ...backendOwner,
@@ -178,6 +179,7 @@ function createAccountability(): CompanyAgentAccountability {
           returnedBranchCount: 0,
           issues: [],
         }],
+        executiveIssueOwners: [],
         sharedServices: [],
         issueCounts: {
           active: 1,
@@ -224,8 +226,8 @@ describe("SidebarAgents", () => {
       }),
       createAgent({
         id: "tech-lead",
-        name: "Technical Project Lead",
-        urlKey: "technical-project-lead",
+        name: "Project Lead",
+        urlKey: "project-lead",
         role: "engineer",
         orgLevel: "director",
       }),
@@ -272,15 +274,17 @@ describe("SidebarAgents", () => {
     expect(onboardingButton?.textContent).toContain("2");
     expect(container.textContent).not.toContain("Departments");
     expect(container.textContent).not.toContain("Projects");
-    expect(container.textContent).not.toContain("Technical Project Lead");
+    expect(container.textContent).not.toContain("Project Lead");
 
     await act(async () => {
       onboardingButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flush();
 
-    expect(container.textContent).toContain("Technical Project Lead");
+    expect(container.textContent).toContain("Project Lead");
     expect(container.textContent).toContain("Backend/API Continuity Owner");
+    expect(container.textContent).toContain("Sponsor: CEO");
+    expect(container.querySelectorAll('a[href="/agents/ceo"]').length).toBe(1);
 
     act(() => root.unmount());
   });

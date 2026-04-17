@@ -19,7 +19,7 @@ describe("loadDefaultAgentTemplatePack", () => {
         "growth-specialist.md",
       ]),
     );
-    expect(pack.files["technical-project-lead.md"]).toContain("Technical Project Lead");
+    expect(pack.files["technical-project-lead.md"]).toContain("Project Lead");
     expect(pack.files["audit-reviewer.md"]).toContain("inactive until engaged");
   });
 });

@@ -44,10 +44,18 @@ function AccountabilityProject({
 }: {
   project: AccountabilityProjectNode;
 }) {
+  const projectLeadMembers = project.projectLead ? [project.projectLead] : [];
+  const fallbackLeadershipMembers = project.projectLead ? [] : project.leadership;
+
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-foreground">{project.projectName}</h2>
+        {project.executiveSponsor ? (
+          <span className="text-xs text-muted-foreground">
+            Sponsor: {project.executiveSponsor.name}
+          </span>
+        ) : null}
         {project.issueCounts.blockedMissingDocs > 0 ? (
           <span className="text-xs text-amber-600 dark:text-amber-400">
             {project.issueCounts.blockedMissingDocs} missing docs
@@ -64,7 +72,14 @@ function AccountabilityProject({
           </span>
         ) : null}
       </div>
-      <MemberList label="Project Leadership" members={project.leadership} />
+      {project.executiveIssueOwners.length > 0 ? (
+        <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          Executive-owned execution issues: {project.executiveIssueOwners.map((owner) => owner.name).join(", ")}. Hand
+          off to Project Lead or the correct continuity owner.
+        </div>
+      ) : null}
+      <MemberList label="Project Lead" members={projectLeadMembers} />
+      <MemberList label="Project Leadership" members={fallbackLeadershipMembers} />
       <MemberList label="Continuity Owners" members={project.continuityOwners} />
       <MemberList label="Shared Services" members={project.sharedServices} />
     </section>

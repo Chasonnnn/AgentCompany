@@ -304,8 +304,10 @@ export const accountabilityProjectNodeSchema = z.object({
   color: z.string().nullable(),
   executiveSponsor: operatingHierarchyAgentSummarySchema.nullable(),
   portfolioDirector: operatingHierarchyAgentSummarySchema.nullable(),
+  projectLead: operatingHierarchyAgentSummarySchema.nullable(),
   leadership: z.array(operatingHierarchyAgentSummarySchema),
   continuityOwners: z.array(accountabilityAgentSummarySchema),
+  executiveIssueOwners: z.array(accountabilityAgentSummarySchema),
   sharedServices: z.array(operatingHierarchyAgentSummarySchema),
   issueCounts: z.object({
     active: z.number().int().nonnegative(),

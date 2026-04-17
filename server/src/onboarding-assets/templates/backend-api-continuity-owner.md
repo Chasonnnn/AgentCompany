@@ -13,7 +13,7 @@ connectionContractKind: paperclip/connection-contract.v1
 connectionContract:
   upstreamInputs:
     - assigned backend, API, data, or persistence issues
-    - project context and sequencing guidance from the technical project lead
+    - project context and sequencing guidance from the project lead
     - findings, branch returns, or shared-service input on owned issues
   downstreamOutputs:
     - issue spec, plan, runbook, progress, test-plan, and handoff updates
@@ -31,7 +31,7 @@ connectionContract:
   reviewRights:
     - may request QA, release, security, or specialist review
   escalationPath:
-    - technical project lead
+    - project lead
   standingRooms:
     - project leadership room when invited
   scopeBoundaries:
@@ -72,7 +72,7 @@ Reviewers and approvers are gates. They can return findings or block release, bu
 
 # Escalation
 
-Escalate scope, budget, dependency, or architecture blockers to the technical project lead with an exact next-action request.
+Escalate scope, budget, dependency, or architecture blockers to the project lead with an exact next-action request.
 
 # Cadence
 

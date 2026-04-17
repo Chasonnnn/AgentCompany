@@ -203,6 +203,9 @@ interface ProjectPodGroup {
   projectId: string;
   projectName: string;
   color: string | null;
+  projectLead: NormalizedAgentRow | null;
+  projectLeadPriority: number | null;
+  projectLeadAmbiguous: boolean;
   leadership: NormalizedAgentRow[];
   workers: NormalizedAgentRow[];
   consultants: NormalizedAgentRow[];
@@ -259,6 +262,45 @@ interface SimplificationSignalRow {
   activeSharedServiceEngagementCount: number;
   activeGateCount: number;
   executionModel: ReturnType<typeof inferAgentExecutionModel>;
+}
+
+function normalizeArchetypeKey(value: string | null | undefined) {
+  const trimmed = value?.trim().toLowerCase() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function projectLeadPriority(input: {
+  scopeMode: string;
+  projectRole: string | null | undefined;
+  archetypeKey: string | null | undefined;
+}) {
+  if (input.scopeMode !== "leadership_raw") return null;
+  const archetypeKey = normalizeArchetypeKey(input.archetypeKey);
+  if (archetypeKey === "project_lead") return 500;
+  if (archetypeKey === "technical_project_lead" || archetypeKey === "project_tech_lead") return 450;
+  if (input.projectRole === "product_manager") return 400;
+  if (input.projectRole === "engineering_manager") return 350;
+  if (input.projectRole === "director") return 250;
+  if (input.projectRole === "functional_lead") return 200;
+  return null;
+}
+
+function resolveProjectLeadCandidate(
+  candidates: Array<{ agent: NormalizedAgentRow; priority: number }>,
+): { agent: NormalizedAgentRow | null; ambiguous: boolean } {
+  if (candidates.length === 0) {
+    return { agent: null, ambiguous: false };
+  }
+  const sorted = [...candidates].sort(
+    (left, right) => right.priority - left.priority || left.agent.name.localeCompare(right.agent.name),
+  );
+  const best = sorted[0] ?? null;
+  if (!best) return { agent: null, ambiguous: false };
+  const equallyRanked = sorted.filter((candidate) => candidate.priority === best.priority);
+  if (equallyRanked.length > 1) {
+    return { agent: null, ambiguous: true };
+  }
+  return { agent: best.agent, ambiguous: false };
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -997,6 +1039,9 @@ export function agentService(db: Db) {
         projectId: scopeRow.projectId,
         projectName: scopeRow.projectName,
         color: scopeRow.projectColor,
+        projectLead: null,
+        projectLeadPriority: null,
+        projectLeadAmbiguous: false,
         leadership: [],
         workers: [],
         consultants: [],
@@ -1008,6 +1053,21 @@ export function agentService(db: Db) {
         group.consultants.push(agent);
       } else {
         group.leadership.push(agent);
+        const priority = projectLeadPriority({
+          scopeMode: scopeRow.scope.scopeMode,
+          projectRole: scopeRow.scope.projectRole,
+          archetypeKey: agent.archetypeKey,
+        });
+        if (priority != null) {
+          if (group.projectLeadPriority == null || priority > group.projectLeadPriority) {
+            group.projectLead = agent;
+            group.projectLeadPriority = priority;
+            group.projectLeadAmbiguous = false;
+          } else if (priority === group.projectLeadPriority && group.projectLead?.id !== agent.id) {
+            group.projectLead = null;
+            group.projectLeadAmbiguous = true;
+          }
+        }
       }
 
       groups.set(scopeRow.projectId, group);
@@ -2325,8 +2385,24 @@ export function agentService(db: Db) {
         color: string | null;
         executiveSponsor: NormalizedAgentRow | null;
         portfolioDirector: NormalizedAgentRow | null;
+        projectLead: NormalizedAgentRow | null;
         leadership: NormalizedAgentRow[];
         continuityOwners: Map<string, {
+          agent: NormalizedAgentRow;
+          activeIssueCount: number;
+          blockedContinuityIssueCount: number;
+          openReviewFindingsCount: number;
+          returnedBranchCount: number;
+          issues: Array<{
+            issueId: string;
+            identifier: string | null;
+            title: string;
+            status: string;
+            continuityStatus: string | null;
+            continuityHealth: string | null;
+          }>;
+        }>;
+        executiveIssueOwners: Map<string, {
           agent: NormalizedAgentRow;
           activeIssueCount: number;
           blockedContinuityIssueCount: number;
@@ -2353,7 +2429,7 @@ export function agentService(db: Db) {
         };
       }>();
 
-      const createContinuityOwnerBucket = (agent: NormalizedAgentRow) => ({
+      const createIssueOwnerBucket = (agent: NormalizedAgentRow) => ({
         agent,
         activeIssueCount: 0,
         blockedContinuityIssueCount: 0,
@@ -2383,8 +2459,10 @@ export function agentService(db: Db) {
           color: projectRow?.color ?? pod?.color ?? null,
           executiveSponsor: cluster?.executiveSponsor ?? null,
           portfolioDirector: cluster?.portfolioDirector ?? null,
+          projectLead: pod?.projectLead ?? null,
           leadership: pod ? dedupeById(pod.leadership) : [],
           continuityOwners: new Map(),
+          executiveIssueOwners: new Map(),
           sharedServices: pod ? dedupeById(pod.consultants) : [],
           issueCounts: {
             active: 0,
@@ -2402,11 +2480,12 @@ export function agentService(db: Db) {
 
       for (const [projectId, pod] of projectPods.entries()) {
         const node = ensureProjectNode(projectId);
+        node.projectLead = pod.projectLead ?? node.projectLead;
         node.leadership = dedupeById([...node.leadership, ...pod.leadership]);
         node.sharedServices = dedupeById([...node.sharedServices, ...pod.consultants]);
         for (const worker of dedupeById(pod.workers)) {
           if (!node.continuityOwners.has(worker.id)) {
-            node.continuityOwners.set(worker.id, createContinuityOwnerBucket(worker));
+            node.continuityOwners.set(worker.id, createIssueOwnerBucket(worker));
           }
         }
       }
@@ -2436,7 +2515,27 @@ export function agentService(db: Db) {
         if (!row.assigneeAgentId) continue;
         const agent = byId.get(row.assigneeAgentId);
         if (!agent) continue;
-        const ownerBucket = node.continuityOwners.get(agent.id) ?? createContinuityOwnerBucket(agent);
+        if (agent.operatingClass === "executive") {
+          const ownerBucket = node.executiveIssueOwners.get(agent.id) ?? createIssueOwnerBucket(agent);
+          ownerBucket.activeIssueCount += 1;
+          if (summary?.health && summary.health !== "healthy") ownerBucket.blockedContinuityIssueCount += 1;
+          if (summary?.openReviewFindings) ownerBucket.openReviewFindingsCount += 1;
+          ownerBucket.returnedBranchCount += summary?.returnedBranchCount ?? 0;
+          ownerBucket.issues.push({
+            issueId: row.id,
+            identifier: row.identifier ?? null,
+            title: row.title,
+            status: row.status,
+            continuityStatus: summary?.status ?? null,
+            continuityHealth: summary?.health ?? null,
+          });
+          node.executiveIssueOwners.set(agent.id, ownerBucket);
+          continue;
+        }
+        if (node.projectLead?.id === agent.id) {
+          continue;
+        }
+        const ownerBucket = node.continuityOwners.get(agent.id) ?? createIssueOwnerBucket(agent);
         ownerBucket.activeIssueCount += 1;
         if (summary?.health && summary.health !== "healthy") ownerBucket.blockedContinuityIssueCount += 1;
         if (summary?.openReviewFindings) ownerBucket.openReviewFindingsCount += 1;
@@ -2460,8 +2559,19 @@ export function agentService(db: Db) {
           color: node.color,
           executiveSponsor: node.executiveSponsor ? toOperatingSummary(node.executiveSponsor) : null,
           portfolioDirector: node.portfolioDirector ? toOperatingSummary(node.portfolioDirector) : null,
+          projectLead: node.projectLead ? toOperatingSummary(node.projectLead) : null,
           leadership: sortOperatingAgents(node.leadership).map(toOperatingSummary),
           continuityOwners: Array.from(node.continuityOwners.values())
+            .sort((left, right) => left.agent.name.localeCompare(right.agent.name))
+            .map((owner) => ({
+              ...toOperatingSummary(owner.agent),
+              activeIssueCount: owner.activeIssueCount,
+              blockedContinuityIssueCount: owner.blockedContinuityIssueCount,
+              openReviewFindingsCount: owner.openReviewFindingsCount,
+              returnedBranchCount: owner.returnedBranchCount,
+              issues: owner.issues.sort((left, right) => left.title.localeCompare(right.title)),
+            })),
+          executiveIssueOwners: Array.from(node.executiveIssueOwners.values())
             .sort((left, right) => left.agent.name.localeCompare(right.agent.name))
             .map((owner) => ({
               ...toOperatingSummary(owner.agent),
@@ -2709,6 +2819,46 @@ export function agentService(db: Db) {
         currentId = mgr.reportsTo ?? null;
       }
       return chain;
+    },
+
+    resolvePrimaryProjectLeadForProject: async (companyId: string, projectId: string) => {
+      const now = new Date();
+      const rows = await db
+        .select({
+          scope: agentProjectScopes,
+          agent: agents,
+        })
+        .from(agentProjectScopes)
+        .innerJoin(
+          agents,
+          and(
+            eq(agentProjectScopes.agentId, agents.id),
+            eq(agentProjectScopes.companyId, agents.companyId),
+          ),
+        )
+        .where(
+          and(
+            eq(agentProjectScopes.companyId, companyId),
+            eq(agentProjectScopes.projectId, projectId),
+            or(isNull(agentProjectScopes.activeTo), gt(agentProjectScopes.activeTo, now)),
+            ne(agents.status, "terminated"),
+          ),
+        );
+
+      const candidates = rows
+        .map((row) => {
+          const agent = normalizeAgentRow(row.agent);
+          const priority = projectLeadPriority({
+            scopeMode: row.scope.scopeMode,
+            projectRole: row.scope.projectRole,
+            archetypeKey: agent.archetypeKey,
+          });
+          if (priority == null) return null;
+          return { agent, priority };
+        })
+        .filter((candidate): candidate is { agent: NormalizedAgentRow; priority: number } => candidate != null);
+
+      return resolveProjectLeadCandidate(candidates);
     },
 
     runningForAgent: (agentId: string) =>

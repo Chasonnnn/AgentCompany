@@ -292,8 +292,10 @@ export interface AccountabilityProjectNode {
   color: string | null;
   executiveSponsor: OperatingHierarchyAgentSummary | null;
   portfolioDirector: OperatingHierarchyAgentSummary | null;
+  projectLead: OperatingHierarchyAgentSummary | null;
   leadership: OperatingHierarchyAgentSummary[];
   continuityOwners: AccountabilityAgentSummary[];
+  executiveIssueOwners: AccountabilityAgentSummary[];
   sharedServices: OperatingHierarchyAgentSummary[];
   issueCounts: {
     active: number;

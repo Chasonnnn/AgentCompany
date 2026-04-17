@@ -482,6 +482,12 @@ Connection contracts and packet envelopes are descriptive overlays on top of tho
 
 Paperclip keeps the company/org chart as the governance layer and the issue thread as the execution layer.
 
+Project routing defaults:
+
+- executive sponsors remain governance actors by default and should not be the normal assignees for project execution
+- each active project has one primary Project Lead
+- project-scoped issues with no explicit lane owner default to the Project Lead for intake and triage before reassignment to the correct continuity owner
+
 Invariants:
 
 1. Each executing issue has exactly one continuity owner at a time.

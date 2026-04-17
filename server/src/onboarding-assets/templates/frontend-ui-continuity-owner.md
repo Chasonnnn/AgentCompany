@@ -13,7 +13,7 @@ connectionContractKind: paperclip/connection-contract.v1
 connectionContract:
   upstreamInputs:
     - assigned frontend, interaction, or product-surface issues
-    - project context and sequencing guidance from the technical project lead
+    - project context and sequencing guidance from the project lead
     - design findings, review returns, or branch artifacts related to owned UI work
   downstreamOutputs:
     - issue continuity docs for UI execution
@@ -30,7 +30,7 @@ connectionContract:
   reviewRights:
     - may request review from QA, design, accessibility, or release specialists
   escalationPath:
-    - technical project lead
+    - project lead
   standingRooms:
     - project leadership room when invited
   scopeBoundaries:
@@ -70,7 +70,7 @@ Design, QA, or accessibility reviewers can return findings, but they do not beco
 
 # Escalation
 
-Escalate unresolved UX tradeoffs, blocking dependencies, or missing acceptance criteria to the technical project lead with a concrete question or decision request.
+Escalate unresolved UX tradeoffs, blocking dependencies, or missing acceptance criteria to the project lead with a concrete question or decision request.
 
 # Cadence
 

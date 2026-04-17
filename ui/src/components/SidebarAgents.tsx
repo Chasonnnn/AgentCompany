@@ -216,9 +216,8 @@ function sharedServiceDepartmentHasActiveMember(
 }
 
 function accountabilityProjectHasActiveMember(project: AccountabilityProjectNode, activeAgentId: string | null) {
-  return hasActiveMember(project.leadership, activeAgentId)
-    || hasActiveMember(project.continuityOwners, activeAgentId)
-    || hasActiveMember(project.sharedServices, activeAgentId);
+  const primaryMembers = flattenAccountabilityProjectMembers(project);
+  return hasActiveMember(primaryMembers, activeAgentId);
 }
 
 function countAccountabilityProjectMembers(project: AccountabilityProjectNode) {
@@ -228,7 +227,9 @@ function countAccountabilityProjectMembers(project: AccountabilityProjectNode) {
 function flattenAccountabilityProjectMembers(project: AccountabilityProjectNode): AgentHierarchyMemberSummary[] {
   const members: AgentHierarchyMemberSummary[] = [];
   const seen = new Set<string>();
-  for (const group of [project.leadership, project.continuityOwners, project.sharedServices]) {
+  const primaryLead = project.projectLead ? [project.projectLead] : [];
+  const fallbackLeadership = project.projectLead ? [] : project.leadership;
+  for (const group of [primaryLead, fallbackLeadership, project.continuityOwners, project.sharedServices]) {
     for (const member of group) {
       if (seen.has(member.id)) continue;
       seen.add(member.id);
@@ -420,7 +421,7 @@ function AccountabilityProjectSection({
   onOpenChange?: (open: boolean) => void;
 }) {
   const members = flattenAccountabilityProjectMembers(project);
-  if (members.length === 0) {
+  if (members.length === 0 && project.executiveIssueOwners.length === 0) {
     return null;
   }
 
@@ -433,14 +434,34 @@ function AccountabilityProjectSection({
       open={open}
       onOpenChange={onOpenChange}
     >
-      <MemberList
-        members={members}
-        agentMap={agentMap}
-        liveCountByAgent={liveCountByAgent}
-        activeAgentId={activeAgentId}
-        activeTab={activeTab}
-        depth={depth + 1}
-      />
+      {project.executiveSponsor ? (
+        <div
+          className="px-3 py-1 text-[11px] text-muted-foreground/80"
+          style={{ paddingLeft: 12 + (depth + 1) * 16 }}
+        >
+          Sponsor: <span className="text-foreground/80">{project.executiveSponsor.name}</span>
+        </div>
+      ) : null}
+      {project.executiveIssueOwners.length > 0 ? (
+        <div
+          className="px-3 py-1.5 text-[11px] text-amber-600 dark:text-amber-400"
+          style={{ paddingLeft: 12 + (depth + 1) * 16 }}
+        >
+          Executive-owned execution issue{project.executiveIssueOwners.length === 1 ? "" : "s"}:{" "}
+          {project.executiveIssueOwners.map((owner) => owner.name).join(", ")}. Hand off to Project Lead or the right
+          lane owner.
+        </div>
+      ) : null}
+      {members.length > 0 ? (
+        <MemberList
+          members={members}
+          agentMap={agentMap}
+          liveCountByAgent={liveCountByAgent}
+          activeAgentId={activeAgentId}
+          activeTab={activeTab}
+          depth={depth + 1}
+        />
+      ) : null}
     </HierarchyFolder>
   );
 }

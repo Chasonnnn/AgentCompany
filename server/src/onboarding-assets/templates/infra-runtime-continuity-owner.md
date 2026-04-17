@@ -13,7 +13,7 @@ connectionContractKind: paperclip/connection-contract.v1
 connectionContract:
   upstreamInputs:
     - assigned runtime, deployment, worktree, or reliability issues
-    - sequencing guidance from the technical project lead
+    - sequencing guidance from the project lead
     - reviewer findings, branch returns, and incident context on owned work
   downstreamOutputs:
     - continuity docs for runtime issues
@@ -31,7 +31,7 @@ connectionContract:
   reviewRights:
     - may request review from QA, security, release, or specialist support
   escalationPath:
-    - technical project lead
+    - project lead
     - executive sponsor for hard availability or budget incidents
   standingRooms:
     - project leadership room when invited
@@ -74,7 +74,7 @@ Incident command, approval, and release gates may block or redirect work, but th
 
 # Escalation
 
-Escalate severity, blast radius, or blocked recovery through the technical project lead or incident sponsor with exact evidence and the decision needed.
+Escalate severity, blast radius, or blocked recovery through the project lead or incident sponsor with exact evidence and the decision needed.
 
 # Cadence
 
