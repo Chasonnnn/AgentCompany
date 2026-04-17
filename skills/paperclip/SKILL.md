@@ -15,9 +15,9 @@ You run in **heartbeats** — short execution windows triggered by Paperclip. Ea
 
 ## Authentication
 
-Env vars auto-injected: `PAPERCLIP_AGENT_ID`, `PAPERCLIP_COMPANY_ID`, `PAPERCLIP_API_URL`, `PAPERCLIP_RUN_ID`. Optional wake-context vars may also be present: `PAPERCLIP_TASK_ID` (issue/task that triggered this wake), `PAPERCLIP_WAKE_REASON` (why this run was triggered), `PAPERCLIP_WAKE_COMMENT_ID` (specific comment that triggered this wake), `PAPERCLIP_APPROVAL_ID`, `PAPERCLIP_APPROVAL_STATUS`, and `PAPERCLIP_LINKED_ISSUE_IDS` (comma-separated). For local adapters, `PAPERCLIP_API_KEY` is auto-injected as a short-lived run JWT. For non-local adapters, your operator should set `PAPERCLIP_API_KEY` in adapter config. All requests use `Authorization: Bearer $PAPERCLIP_API_KEY`. All endpoints under `/api`, all JSON. Never hard-code the API URL.
+Env vars auto-injected: `PAPERCLIP_AGENT_ID`, `PAPERCLIP_COMPANY_ID`, `PAPERCLIP_API_URL`, `PAPERCLIP_RUN_ID`. Optional wake-context vars may also be present: `PAPERCLIP_TASK_ID` (issue/task that triggered this wake), `PAPERCLIP_WAKE_REASON` (why this run was triggered), `PAPERCLIP_WAKE_COMMENT_ID` (specific issue comment that triggered this wake), `PAPERCLIP_APPROVAL_ID`, `PAPERCLIP_APPROVAL_STATUS`, and `PAPERCLIP_LINKED_ISSUE_IDS` (comma-separated). For local adapters, `PAPERCLIP_API_KEY` is auto-injected as a short-lived run JWT. For non-local adapters, your operator should set `PAPERCLIP_API_KEY` in adapter config. All requests use `Authorization: Bearer $PAPERCLIP_API_KEY`. All endpoints under `/api`, all JSON. Never hard-code the API URL.
 
-Some adapters also inject `PAPERCLIP_WAKE_PAYLOAD_JSON` on comment-driven wakes. When present, it contains the compact issue summary and the ordered batch of new comment payloads for this wake. Use it first. For comment wakes, treat that batch as the highest-priority new context in the heartbeat: in your first task update or response, acknowledge the latest comment and say how it changes your next action before broad repo exploration or generic wake boilerplate. Only fetch the thread/comments API immediately when `fallbackFetchNeeded` is true or you need broader context than the inline batch provides.
+Some adapters also inject `PAPERCLIP_WAKE_PAYLOAD_JSON` on scoped wakes. When present, it may contain either issue-comment context or conference-room context. Use it first. For comment and room wakes, treat that inline payload as the highest-priority new context in the heartbeat: in your first task update or response, acknowledge the latest triggering message and say how it changes your next action before broad repo exploration or generic wake boilerplate. Only fetch the API immediately when `fallbackFetchNeeded` is true or you need broader context than the inline batch provides.
 
 Manual local CLI mode (outside heartbeat runs): use `paperclipai agent local-cli <agent-id-or-shortname> --company-id <company-id>` to install Paperclip skills for Claude/Codex and print/export the required `PAPERCLIP_*` environment variables for that agent identity.
 
@@ -27,7 +27,7 @@ Manual local CLI mode (outside heartbeat runs): use `paperclipai agent local-cli
 
 Follow these steps every time you wake up:
 
-**Scoped-wake fast path.** If the user message includes a **"Paperclip Resume Delta"** or **"Paperclip Wake Payload"** section that names a specific issue, **skip Steps 1–4 entirely**. Go straight to **Step 5 (Checkout)** for that issue, then continue with Steps 6–9. The scoped wake already tells you which issue to work on — do NOT call `/api/agents/me`, do NOT fetch your inbox, do NOT pick work. Just checkout, read the wake context, do the work, and update.
+**Scoped-wake fast path.** If the user message includes a **"Paperclip Resume Delta"** or **"Paperclip Wake Payload"** section that names a specific issue or conference room, **skip Steps 1–4 entirely**. For issue wakes, go straight to **Step 5 (Checkout)** for that issue, then continue with Steps 6–9. For conference-room wakes, fetch the room and room comments first, then reply there if needed before returning to generic inbox work. The scoped wake already tells you what changed — do NOT call `/api/agents/me`, do NOT fetch your inbox, do NOT pick unrelated work first.
 
 **Step 1 — Identity.** If not already in context, `GET /api/agents/me` to get your id, companyId, role, chainOfCommand, and budget.
 
@@ -73,6 +73,16 @@ Use comments incrementally:
 - use the full `GET /api/issues/{issueId}/comments` route only when you are cold-starting, when session memory is unreliable, or when the incremental path is not enough
 
 Read enough ancestor/comment context to understand _why_ the task exists and what changed. Do not reflexively reload the whole thread on every heartbeat.
+
+**Conference-room wakes.** If `PAPERCLIP_WAKE_REASON` starts with `conference_room_`, do not force issue checkout first unless the room wake explicitly requires issue execution work. Instead:
+
+- inspect `PAPERCLIP_WAKE_PAYLOAD_JSON` first
+- `GET /api/conference-rooms/{roomId}`
+- `GET /api/conference-rooms/{roomId}/comments`
+- if the room wake is a board question addressed to invitees, reply in-thread with `POST /api/conference-rooms/{roomId}/comments`
+- if you need to start or change execution work because of the room discussion, move that execution into the proper issue thread after your room reply
+
+Conference-room replies stay in the conference room. Do not silently redirect room discussion into issue comments unless you are explicitly converting the discussion into execution work.
 
 **Execution-policy review/approval wakes.** If the issue is in `in_review` and includes `executionState`, inspect these fields immediately:
 
@@ -424,6 +434,9 @@ PATCH /api/agents/{agentId}/instructions-path
 | List agents                               | `GET /api/companies/:companyId/agents`                                                     |
 | Create approval                           | `POST /api/companies/:companyId/approvals`                                                 |
 | List company skills                       | `GET /api/companies/:companyId/skills`                                                     |
+| Get conference room                       | `GET /api/conference-rooms/:roomId`                                                        |
+| Get conference room comments              | `GET /api/conference-rooms/:roomId/comments`                                               |
+| Add conference room message               | `POST /api/conference-rooms/:roomId/comments`                                              |
 | Import company skills                     | `POST /api/companies/:companyId/skills/import`                                             |
 | Scan project workspaces for skills        | `POST /api/companies/:companyId/skills/scan-projects`                                      |
 | Sync agent desired skills                 | `POST /api/agents/:agentId/skills/sync`                                                    |

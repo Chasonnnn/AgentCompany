@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, not, or } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -718,7 +718,7 @@ export function conferenceRoomService(db: Db) {
                 and(
                   eq(conferenceRoomQuestionResponses.questionCommentId, questionRoot.id),
                   eq(conferenceRoomQuestionResponses.agentId, actor.agentId),
-                  not(eq(conferenceRoomQuestionResponses.status, "dismissed")),
+                  ne(conferenceRoomQuestionResponses.status, "dismissed"),
                 ),
               );
           }
