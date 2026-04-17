@@ -400,7 +400,10 @@ export function ConferenceRoomDetail() {
           </div>
         </section>
 
-        <section className="rounded-xl border border-border/70 bg-card/60 p-4">
+        <section
+          data-testid="conference-room-discussion"
+          className="rounded-xl border border-border/70 bg-card/60 p-4 lg:sticky lg:top-4 lg:flex lg:max-h-[calc(100vh-2rem)] lg:min-h-0 lg:flex-col lg:overflow-hidden"
+        >
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">Discussion</h2>
             {room.status === "open" ? (
@@ -408,7 +411,10 @@ export function ConferenceRoomDetail() {
             ) : null}
           </div>
 
-          <div className="mt-3 space-y-3">
+          <div
+            data-testid="conference-room-discussion-scroll"
+            className="mt-3 space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1"
+          >
             {comments.length === 0 ? (
               <p className="text-sm text-muted-foreground">No conference-room messages yet.</p>
             ) : (

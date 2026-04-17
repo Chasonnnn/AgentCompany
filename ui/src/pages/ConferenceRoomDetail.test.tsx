@@ -425,4 +425,31 @@ describe("ConferenceRoomDetail", () => {
       root.unmount();
     });
   });
+
+  it("keeps the discussion panel bounded with an internal desktop scroll region", async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ConferenceRoomDetail />
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitForAssertion(() => {
+      const discussionPanel = container.querySelector('[data-testid="conference-room-discussion"]');
+      const scrollRegion = container.querySelector('[data-testid="conference-room-discussion-scroll"]');
+
+      expect(discussionPanel).not.toBeNull();
+      expect(scrollRegion).not.toBeNull();
+      expect(String(discussionPanel?.getAttribute("class"))).toContain("lg:max-h-[calc(100vh-2rem)]");
+      expect(String(discussionPanel?.getAttribute("class"))).toContain("lg:overflow-hidden");
+      expect(String(scrollRegion?.getAttribute("class"))).toContain("lg:flex-1");
+      expect(String(scrollRegion?.getAttribute("class"))).toContain("lg:overflow-y-auto");
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
 });
