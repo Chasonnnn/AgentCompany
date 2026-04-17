@@ -60,12 +60,15 @@ async function createApp() {
 
 describe("company routes malformed issue path guard", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.resetModules();
     vi.unmock("../services/index.js");
     registerRouteMocks();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unmock("../services/index.js");
   });
 

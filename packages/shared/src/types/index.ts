@@ -123,6 +123,22 @@ export type {
 } from "./shared-service-engagement.js";
 export type { AssetImage } from "./asset.js";
 export type {
+  AccessUserProfile,
+  CompanyMemberRecord,
+  CompanyMembersResponse,
+  Invite,
+  InviteState,
+  CompanyInviteRecord,
+  CompanyInviteListResponse,
+  JoinRequest,
+  JoinRequestInviteSummary,
+  JoinRequestRecord,
+  InstanceUserRoleGrant,
+  AdminUserDirectoryEntry,
+  UserCompanyAccessEntry,
+  UserCompanyAccessResponse,
+} from "./access.js";
+export type {
   Project,
   ProjectCodebase,
   ProjectCodebaseOrigin,
@@ -304,9 +320,6 @@ export type { InboxDismissal } from "./inbox-dismissal.js";
 export type {
   CompanyMembership,
   PrincipalPermissionGrant,
-  Invite,
-  JoinRequest,
-  InstanceUserRoleGrant,
 } from "./access.js";
 export type { QuotaWindow, ProviderQuotaResult } from "./quota.js";
 export type {

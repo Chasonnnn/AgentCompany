@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAccessService = vi.hoisted(() => ({
   isInstanceAdmin: vi.fn(),
@@ -62,9 +62,15 @@ function createApp(actor: any) {
 
 describe("access skill routes", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.resetModules();
     vi.resetAllMocks();
     registerServiceMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("lists every bundled Paperclip skill in the public skill index", async () => {

@@ -33,6 +33,7 @@ import { sidebarBadgeRoutes } from "./routes/sidebar-badges.js";
 import { inboxDismissalRoutes } from "./routes/inbox-dismissals.js";
 import { instanceSettingsRoutes } from "./routes/instance-settings.js";
 import { llmRoutes } from "./routes/llms.js";
+import { authRoutes } from "./routes/auth.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
@@ -157,23 +158,7 @@ export async function createApp(
       resolveSession: opts.resolveSession,
     }),
   );
-  app.get("/api/auth/get-session", (req, res) => {
-    if (req.actor.type !== "board" || !req.actor.userId) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    res.json({
-      session: {
-        id: `paperclip:${req.actor.source}:${req.actor.userId}`,
-        userId: req.actor.userId,
-      },
-      user: {
-        id: req.actor.userId,
-        email: null,
-        name: req.actor.source === "local_implicit" ? "Local Board" : null,
-      },
-    });
-  });
+  app.use("/api/auth", authRoutes(db));
   // Rate-limit auth endpoints to slow down brute-force and credential-stuffing attacks.
   // Spec §16: "rate limit auth and key-management endpoints".
   const authRateLimit = rateLimitMiddleware({ maxRequests: 20, windowMs: 60_000 });

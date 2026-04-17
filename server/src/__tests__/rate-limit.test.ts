@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { rateLimitMiddleware } from "../middleware/rate-limit.js";
@@ -19,7 +19,12 @@ function sendFromIp(app: express.Express, ip = DEFAULT_TEST_IP) {
 }
 
 describe("rateLimitMiddleware", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
