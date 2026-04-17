@@ -129,11 +129,17 @@ export function ConferenceRoomDetail() {
       group.push(comment);
       children.set(comment.parentCommentId, group);
     }
+    for (const group of children.values()) {
+      group.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    }
     return children;
   }, [comments]);
 
   const topLevelComments = useMemo(
-    () => comments.filter((comment) => !comment.parentCommentId),
+    () =>
+      comments
+        .filter((comment) => !comment.parentCommentId)
+        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()),
     [comments],
   );
 
@@ -220,8 +226,16 @@ export function ConferenceRoomDetail() {
     const canReply = roomOpen;
 
     return (
-      <div key={comment.id} className={depth > 0 ? "ml-4 border-l border-border/60 pl-4" : ""}>
-        <div className="rounded-lg border border-border/60 bg-background/80 p-3">
+      <div
+        key={comment.id}
+        data-testid={`conference-room-thread-${comment.id}`}
+        className="space-y-3"
+      >
+        <div
+          data-testid={`conference-room-comment-${comment.id}`}
+          data-thread-depth={depth}
+          className="rounded-lg border border-border/60 bg-background/80 p-3"
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium">{authorLabel(comment, agentMap)}</span>
@@ -298,7 +312,10 @@ export function ConferenceRoomDetail() {
         </div>
 
         {childComments.length > 0 ? (
-          <div className="mt-3 space-y-3">
+          <div
+            data-testid={`conference-room-replies-${comment.id}`}
+            className="ml-5 space-y-3 border-l-2 border-border/70 pl-4"
+          >
             {childComments.map((child) => renderCommentThread(child, depth + 1))}
           </div>
         ) : null}

@@ -202,6 +202,38 @@ function createComments(): ConferenceRoomComment[] {
   ];
 }
 
+function createNoteThreadComments(): ConferenceRoomComment[] {
+  const baseTime = new Date("2026-04-17T12:06:17.000Z");
+  return [
+    {
+      id: "comment-note-parent",
+      companyId: "company-1",
+      conferenceRoomId: "room-1",
+      parentCommentId: null,
+      authorAgentId: null,
+      authorUserId: "user-1",
+      body: "Top-level board note for thread rendering.",
+      messageType: "note",
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      responses: [],
+    },
+    {
+      id: "comment-note-reply",
+      companyId: "company-1",
+      conferenceRoomId: "room-1",
+      parentCommentId: "comment-note-parent",
+      authorAgentId: "agent-2",
+      authorUserId: null,
+      body: "Nested reply that should stay visibly attached to the parent note.",
+      messageType: "note",
+      createdAt: new Date(baseTime.getTime() + 60_000),
+      updatedAt: new Date(baseTime.getTime() + 60_000),
+      responses: [],
+    },
+  ];
+}
+
 function createAgents(): Agent[] {
   return [
     { id: "agent-1", companyId: "company-1", name: "Technical Project Lead" } as Agent,
@@ -218,6 +250,12 @@ function createIssues(): Issue[] {
 async function flush() {
   await act(async () => {
     await Promise.resolve();
+  });
+}
+
+async function flushFrame() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 
@@ -239,6 +277,7 @@ async function waitForAssertion(assertion: () => void, attempts = 20) {
     } catch (error) {
       lastError = error;
       await flush();
+      await flushFrame();
     }
   }
   throw lastError;
@@ -427,6 +466,42 @@ describe("ConferenceRoomDetail", () => {
         messageType: "note",
         parentCommentId: "comment-question",
       });
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("renders note replies inside the parent thread container instead of flattening them into the main stream", async () => {
+    mockConferenceRoomsApi.listComments.mockResolvedValue(createNoteThreadComments());
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ConferenceRoomDetail />
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitForAssertion(() => {
+      const parentThread = container.querySelector('[data-testid="conference-room-thread-comment-note-parent"]');
+      const repliesRail = container.querySelector('[data-testid="conference-room-replies-comment-note-parent"]');
+      const replyThread = container.querySelector('[data-testid="conference-room-thread-comment-note-reply"]');
+      const replyComment = container.querySelector('[data-testid="conference-room-comment-comment-note-reply"]');
+      const discussionScroll = container.querySelector('[data-testid="conference-room-discussion-scroll"]');
+
+      expect(parentThread).not.toBeNull();
+      expect(repliesRail).not.toBeNull();
+      expect(replyThread).not.toBeNull();
+      expect(replyComment).not.toBeNull();
+      expect(parentThread?.contains(replyThread)).toBe(true);
+      expect(repliesRail?.contains(replyThread)).toBe(true);
+      expect(discussionScroll?.children).toHaveLength(1);
+      expect(String(repliesRail?.getAttribute("class"))).toContain("border-l-2");
+      expect(container.textContent).toContain("Top-level board note for thread rendering.");
+      expect(container.textContent).toContain("Nested reply that should stay visibly attached to the parent note.");
     });
 
     await act(async () => {
