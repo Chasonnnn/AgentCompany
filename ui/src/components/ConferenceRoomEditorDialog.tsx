@@ -3,6 +3,7 @@ import {
   CONFERENCE_ROOM_KINDS,
   getConferenceRoomKindDescriptor,
   type CompanyOperatingHierarchy,
+  type OperatingHierarchyAgentSummary,
   type ConferenceRoom,
   type Issue,
 } from "@paperclipai/shared";
@@ -13,6 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { collectExecutiveIds, collectLeaderIds, conferenceRoomLeadershipBulkGroups } from "../lib/conference-rooms";
+
+function uniqueAgents(agents: OperatingHierarchyAgentSummary[]) {
+  return Array.from(new Map(agents.map((agent) => [agent.id, agent])).values());
+}
 
 type ConferenceRoomDraft = {
   title: string;
@@ -77,7 +82,45 @@ export function ConferenceRoomEditorDialog({
 
   const leaderIds = useMemo(() => collectLeaderIds(hierarchy), [hierarchy]);
   const executiveIds = useMemo(() => collectExecutiveIds(hierarchy), [hierarchy]);
+  const allAgentIds = useMemo(
+    () =>
+      uniqueAgents([
+        ...hierarchy.executiveOffice,
+        ...hierarchy.projectPods.flatMap((project) => [...project.leadership, ...project.workers, ...project.consultants]),
+        ...hierarchy.sharedServices.flatMap((department) => [
+          ...department.leaders,
+          ...department.projects.flatMap((project) => [...project.leadership, ...project.workers, ...project.consultants]),
+        ]),
+        ...hierarchy.unassigned,
+      ]).map((agent) => agent.id),
+    [hierarchy],
+  );
   const bulkGroups = useMemo(() => conferenceRoomLeadershipBulkGroups(hierarchy), [hierarchy]);
+  const projectTeamGroups = useMemo(
+    () =>
+      hierarchy.projectPods
+        .map((project) => ({
+          projectId: project.projectId,
+          name: project.projectName,
+          members: uniqueAgents([...project.leadership, ...project.workers, ...project.consultants]),
+        }))
+        .filter((project) => project.members.length > 0),
+    [hierarchy],
+  );
+  const sharedServiceGroups = useMemo(
+    () =>
+      hierarchy.sharedServices
+        .map((department) => ({
+          key: department.key,
+          name: department.name,
+          members: uniqueAgents([
+            ...department.leaders,
+            ...department.projects.flatMap((project) => [...project.leadership, ...project.workers, ...project.consultants]),
+          ]),
+        }))
+        .filter((department) => department.members.length > 0),
+    [hierarchy],
+  );
   const clusterLeadershipGroups = useMemo(
     () =>
       (hierarchy.portfolioClusters ?? [])
@@ -131,7 +174,7 @@ export function ConferenceRoomEditorDialog({
         <DialogHeader>
           <DialogTitle>{room ? "Edit conference room" : "Open conference room"}</DialogTitle>
           <DialogDescription>
-            Define the room, optionally link issues, and invite executives, project leadership, or shared-service leads.
+            Define the room, optionally link issues, and invite the agents who should participate in the discussion.
           </DialogDescription>
         </DialogHeader>
 
@@ -225,7 +268,15 @@ export function ConferenceRoomEditorDialog({
 
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-medium">Invite leaders</p>
+              <p className="text-sm font-medium">Invite participants</p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setDraft((current) => ({ ...current, participantAgentIds: allAgentIds }))}
+              >
+                All agents
+              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -287,51 +338,53 @@ export function ConferenceRoomEditorDialog({
                           <span className="text-sm">{leader.name}</span>
                         </label>
                       ))}
+                  </div>
+                ))
+                : projectTeamGroups.map((project) => (
+                    <div key={project.projectId} className="space-y-2 rounded-xl border border-border/60 p-3">
+                      <p className="text-sm font-medium">{project.name}</p>
+                      {project.members.map((member) => (
+                        <label key={member.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
+                          <Checkbox
+                            checked={draft.participantAgentIds.includes(member.id)}
+                            onCheckedChange={(next) => toggleParticipant(member.id, next === true)}
+                          />
+                          <span className="text-sm">{member.name}</span>
+                        </label>
+                      ))}
                     </div>
-                  ))
-                : hierarchy.projectPods.map((project) =>
-                    project.leadership.length > 0 ? (
-                      <div key={project.projectId} className="space-y-2 rounded-xl border border-border/60 p-3">
-                        <p className="text-sm font-medium">{project.projectName}</p>
-                        {project.leadership.map((leader) => (
-                          <label key={leader.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
-                            <Checkbox
-                              checked={draft.participantAgentIds.includes(leader.id)}
-                              onCheckedChange={(next) => toggleParticipant(leader.id, next === true)}
-                            />
-                            <span className="text-sm">{leader.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    ) : null,
-                  )}
+                  ))}
             </div>
 
-            {hierarchy.sharedServices.length > 0 ? (
-              <div className="space-y-2 rounded-xl border border-border/60 p-3">
-                <p className="text-sm font-medium">Shared Service Leads</p>
-                {hierarchy.sharedServices.flatMap((department) => department.leaders).map((leader) => (
-                  <label key={leader.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
-                    <Checkbox
-                      checked={draft.participantAgentIds.includes(leader.id)}
-                      onCheckedChange={(next) => toggleParticipant(leader.id, next === true)}
-                    />
-                    <span className="text-sm">{leader.name}</span>
-                  </label>
+            {sharedServiceGroups.length > 0 ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                {sharedServiceGroups.map((department) => (
+                  <div key={department.key} className="space-y-2 rounded-xl border border-border/60 p-3">
+                    <p className="text-sm font-medium">{department.name}</p>
+                    {department.members.map((member) => (
+                      <label key={member.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
+                        <Checkbox
+                          checked={draft.participantAgentIds.includes(member.id)}
+                          onCheckedChange={(next) => toggleParticipant(member.id, next === true)}
+                        />
+                        <span className="text-sm">{member.name}</span>
+                      </label>
+                    ))}
+                  </div>
                 ))}
               </div>
             ) : null}
 
             {hierarchy.unassigned.length > 0 ? (
               <div className="space-y-2 rounded-xl border border-border/60 p-3">
-                <p className="text-sm font-medium">Unassigned leaders</p>
-                {hierarchy.unassigned.map((leader) => (
-                  <label key={leader.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
+                <p className="text-sm font-medium">Unassigned agents</p>
+                {hierarchy.unassigned.map((agent) => (
+                  <label key={agent.id} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2">
                     <Checkbox
-                      checked={draft.participantAgentIds.includes(leader.id)}
-                      onCheckedChange={(next) => toggleParticipant(leader.id, next === true)}
+                      checked={draft.participantAgentIds.includes(agent.id)}
+                      onCheckedChange={(next) => toggleParticipant(agent.id, next === true)}
                     />
-                    <span className="text-sm">{leader.name}</span>
+                    <span className="text-sm">{agent.name}</span>
                   </label>
                 ))}
               </div>

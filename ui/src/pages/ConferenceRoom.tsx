@@ -99,7 +99,7 @@ export function ConferenceRoom() {
             <h1 className="text-base font-semibold">Conference Room</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Open company-level conference rooms anytime, optionally link issues, and escalate formal board decisions from inside the room.
+            Open company-level conference rooms anytime, invite the agents who should participate, and escalate formal board decisions from inside the room.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
@@ -177,7 +177,7 @@ export function ConferenceRoom() {
                 <div className="grid grid-cols-3 gap-2 text-right text-xs text-muted-foreground">
                   <div>
                     <div className="font-medium text-foreground">{room.participants.length}</div>
-                    <div>leaders</div>
+                    <div>participants</div>
                   </div>
                   <div>
                     <div className="font-medium text-foreground">{room.decisions.length}</div>

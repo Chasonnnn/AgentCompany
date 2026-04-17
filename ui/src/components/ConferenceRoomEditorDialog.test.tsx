@@ -72,6 +72,8 @@ describe("ConferenceRoomEditorDialog", () => {
 
     expect(container.textContent).toContain("Open conference room");
     expect(container.textContent).toContain("Linked issues");
+    expect(container.textContent).toContain("Invite participants");
+    expect(container.textContent).toContain("All agents");
 
     await act(async () => {
       root.unmount();

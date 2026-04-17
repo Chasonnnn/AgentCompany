@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MessageSquareShare, PencilLine, ShieldCheck } from "lucide-react";
-import { getConferenceRoomKindDescriptor, type Agent } from "@paperclipai/shared";
+import { MessageSquareReply, MessageSquareShare, PencilLine, ShieldCheck } from "lucide-react";
+import {
+  getConferenceRoomKindDescriptor,
+  type ConferenceRoomComment,
+  type ConferenceRoomMessageType,
+  type Agent,
+} from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { conferenceRoomsApi } from "../api/conferenceRooms";
 import { issuesApi } from "../api/issues";
@@ -19,6 +24,30 @@ import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { issueUrl } from "../lib/utils";
 
+function authorLabel(comment: ConferenceRoomComment, agentMap: Map<string, Agent>) {
+  if (!comment.authorAgentId) return "Board";
+  return agentMap.get(comment.authorAgentId)?.name ?? comment.authorAgentId;
+}
+
+function responseTone(status: string) {
+  if (status === "replied") return "text-emerald-300 border-emerald-500/30 bg-emerald-500/10";
+  if (status === "dismissed") return "text-muted-foreground border-border/60 bg-background/60";
+  return "text-amber-200 border-amber-500/30 bg-amber-500/10";
+}
+
+function questionSummary(comment: ConferenceRoomComment) {
+  const pending = comment.responses.filter((response) => response.status === "pending").length;
+  const replied = comment.responses.filter((response) => response.status === "replied").length;
+  const dismissed = comment.responses.filter((response) => response.status === "dismissed").length;
+  return { pending, replied, dismissed };
+}
+
+function replyPlaceholder(type: ConferenceRoomMessageType, replying: boolean) {
+  if (replying) return "Reply in thread.";
+  if (type === "question") return "Ask a question that each invited agent should answer in thread.";
+  return "Add context, direction, or a new room message.";
+}
+
 export function ConferenceRoomDetail() {
   const { roomId } = useParams<{ roomId: string }>();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -28,6 +57,8 @@ export function ConferenceRoomDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
   const [commentBody, setCommentBody] = useState("");
+  const [commentType, setCommentType] = useState<ConferenceRoomMessageType>("note");
+  const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const [decisionDraft, setDecisionDraft] = useState({
     title: "",
     summary: "",
@@ -41,6 +72,7 @@ export function ConferenceRoomDetail() {
     queryKey: roomId ? queryKeys.conferenceRooms.detail(roomId) : ["conference-rooms", "detail", "missing"],
     queryFn: () => conferenceRoomsApi.get(roomId!),
     enabled: !!roomId,
+    refetchInterval: (query) => (query.state.data?.status === "open" ? 3_000 : false),
   });
 
   const room = roomQuery.data ?? null;
@@ -52,11 +84,14 @@ export function ConferenceRoomDetail() {
     ]);
   }, [room, setBreadcrumbs]);
 
-  const { data: comments } = useQuery({
+  const commentsQuery = useQuery({
     queryKey: roomId ? queryKeys.conferenceRooms.comments(roomId) : ["conference-rooms", "comments", "missing"],
     queryFn: () => conferenceRoomsApi.listComments(roomId!),
     enabled: !!roomId,
+    refetchInterval: room?.status === "open" ? 3_000 : false,
   });
+
+  const comments = commentsQuery.data ?? [];
 
   const { data: agents } = useQuery({
     queryKey: room ? queryKeys.agents.list(room.companyId) : ["agents", "room", "missing"],
@@ -78,6 +113,30 @@ export function ConferenceRoomDetail() {
 
   const agentMap = useMemo(() => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents]);
 
+  const commentsById = useMemo(
+    () => new Map(comments.map((comment) => [comment.id, comment])),
+    [comments],
+  );
+
+  const childCommentsByParentId = useMemo(() => {
+    const children = new Map<string, ConferenceRoomComment[]>();
+    for (const comment of comments) {
+      if (!comment.parentCommentId) continue;
+      const group = children.get(comment.parentCommentId) ?? [];
+      group.push(comment);
+      children.set(comment.parentCommentId, group);
+    }
+    return children;
+  }, [comments]);
+
+  const topLevelComments = useMemo(
+    () => comments.filter((comment) => !comment.parentCommentId),
+    [comments],
+  );
+
+  const replyTarget = replyToCommentId ? commentsById.get(replyToCommentId) ?? null : null;
+  const roomOpen = room?.status === "open";
+
   const updateRoom = useMutation({
     mutationFn: (data: Parameters<typeof conferenceRoomsApi.update>[1]) =>
       conferenceRoomsApi.update(roomId!, data),
@@ -98,11 +157,25 @@ export function ConferenceRoomDetail() {
   });
 
   const addComment = useMutation({
-    mutationFn: () => conferenceRoomsApi.addComment(roomId!, commentBody.trim()),
+    mutationFn: () =>
+      conferenceRoomsApi.addComment(roomId!, {
+        body: commentBody.trim(),
+        messageType: replyToCommentId ? "note" : commentType,
+        ...(replyToCommentId ? { parentCommentId: replyToCommentId } : {}),
+      }),
     onSuccess: () => {
       setCommentBody("");
+      setCommentType("note");
+      setReplyToCommentId(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.conferenceRooms.comments(roomId!) });
       queryClient.invalidateQueries({ queryKey: queryKeys.conferenceRooms.detail(roomId!) });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Post failed",
+        body: error instanceof Error ? error.message : "Unable to post conference-room message",
+        tone: "error",
+      });
     },
   });
 
@@ -136,6 +209,81 @@ export function ConferenceRoomDetail() {
       });
     },
   });
+
+  function renderCommentThread(comment: ConferenceRoomComment, depth = 0) {
+    const childComments = childCommentsByParentId.get(comment.id) ?? [];
+    const summary = questionSummary(comment);
+    const isQuestion = comment.messageType === "question";
+    const canReply = roomOpen;
+
+    return (
+      <div key={comment.id} className={depth > 0 ? "ml-4 border-l border-border/60 pl-4" : ""}>
+        <div className="rounded-lg border border-border/60 bg-background/80 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">{authorLabel(comment, agentMap)}</span>
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
+                  isQuestion
+                    ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                    : "border-border/60 bg-background/70 text-muted-foreground"
+                }`}
+              >
+                {comment.messageType}
+              </span>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {new Date(comment.createdAt).toLocaleString()}
+            </span>
+          </div>
+
+          <div className="mt-2">
+            <PacketMarkdownBody markdown={comment.body} className="text-sm leading-6" />
+          </div>
+
+          {comment.responses.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span>{summary.pending} pending</span>
+                <span>{summary.replied} replied</span>
+                {summary.dismissed > 0 ? <span>{summary.dismissed} dismissed</span> : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {comment.responses.map((response) => (
+                  <span
+                    key={`${comment.id}:${response.agentId}`}
+                    className={`rounded-full border px-2 py-1 text-[11px] ${responseTone(response.status)}`}
+                  >
+                    {(agentMap.get(response.agentId)?.name ?? response.agentId)} - {response.status}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {canReply ? (
+            <div className="mt-3 flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setReplyToCommentId(comment.id)}
+              >
+                <MessageSquareReply className="mr-1.5 h-3.5 w-3.5" />
+                Reply
+              </Button>
+            </div>
+          ) : null}
+        </div>
+
+        {childComments.length > 0 ? (
+          <div className="mt-3 space-y-3">
+            {childComments.map((child) => renderCommentThread(child, depth + 1))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   if (roomQuery.isLoading) {
     return <PageSkeleton variant="approvals" />;
@@ -215,7 +363,7 @@ export function ConferenceRoomDetail() {
             <h2 className="text-sm font-semibold">Participants</h2>
             <div className="mt-3 flex flex-wrap gap-2">
               {room.participants.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No invited leaders.</p>
+                <p className="text-sm text-muted-foreground">No invited participants.</p>
               ) : (
                 room.participants.map((participant) => (
                   <span key={participant.id} className="rounded-full border border-border/60 bg-background/80 px-3 py-1.5 text-sm">
@@ -253,47 +401,102 @@ export function ConferenceRoomDetail() {
         </section>
 
         <section className="rounded-xl border border-border/70 bg-card/60 p-4">
-          <h2 className="text-sm font-semibold">Discussion</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold">Discussion</h2>
+            {room.status === "open" ? (
+              <span className="text-xs text-muted-foreground">Auto-refreshing</span>
+            ) : null}
+          </div>
+
           <div className="mt-3 space-y-3">
-            {(comments ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">No conference-room comments yet.</p>
+            {comments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No conference-room messages yet.</p>
             ) : (
-              comments?.map((comment) => (
-                <div key={comment.id} className="rounded-lg border border-border/60 bg-background/80 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-medium">
-                      {comment.authorAgentId
-                        ? agentMap.get(comment.authorAgentId)?.name ?? comment.authorAgentId
-                        : "Board"}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(comment.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <PacketMarkdownBody markdown={comment.body} className="text-sm leading-6" />
-                  </div>
-                </div>
-              ))
+              topLevelComments.map((comment) => renderCommentThread(comment))
             )}
           </div>
 
-          <div className="mt-4 space-y-2">
-            <Label htmlFor="conference-room-comment">Add comment</Label>
+          <div className="mt-4 space-y-3 border-t border-border/60 pt-4">
+            <div className="space-y-2">
+              <Label htmlFor="conference-room-comment">
+                {replyTarget ? "Reply in thread" : "New room message"}
+              </Label>
+
+              {replyTarget ? (
+                <div className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium">
+                      Replying to {authorLabel(replyTarget, agentMap)} ({replyTarget.messageType})
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setReplyToCommentId(null);
+                        setCommentType("note");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {replyTarget.body.replace(/\s+/g, " ").slice(0, 180)}
+                    {replyTarget.body.length > 180 ? "..." : ""}
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={commentType === "note" ? "default" : "outline"}
+                    onClick={() => setCommentType("note")}
+                    disabled={!roomOpen}
+                  >
+                    Note
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={commentType === "question" ? "default" : "outline"}
+                    onClick={() => setCommentType("question")}
+                    disabled={!roomOpen}
+                  >
+                    Question
+                  </Button>
+                </div>
+              )}
+            </div>
+
             <Textarea
               id="conference-room-comment"
               value={commentBody}
               onChange={(event) => setCommentBody(event.target.value)}
-              placeholder="Add context, questions, or guidance."
+              placeholder={replyPlaceholder(commentType, Boolean(replyTarget))}
+              disabled={!roomOpen}
             />
+
             <div className="flex justify-end">
               <Button
                 onClick={() => void addComment.mutateAsync()}
-                disabled={!commentBody.trim() || addComment.isPending}
+                disabled={!roomOpen || !commentBody.trim() || addComment.isPending}
               >
-                {addComment.isPending ? "Posting..." : "Post comment"}
+                {addComment.isPending
+                  ? "Posting..."
+                  : replyTarget
+                    ? "Post reply"
+                    : commentType === "question"
+                      ? "Post question"
+                      : "Post message"}
               </Button>
             </div>
+
+            {!roomOpen ? (
+              <p className="text-xs text-muted-foreground">
+                Closed or archived rooms keep the thread visible but do not accept new messages.
+              </p>
+            ) : null}
           </div>
         </section>
       </div>
