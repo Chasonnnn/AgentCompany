@@ -143,6 +143,7 @@ Recent V1 schema additions include:
   - `conference_rooms`
   - `conference_room_participants`
   - `conference_room_comments`
+  - `conference_room_question_responses`
   - `conference_room_issue_links`
   - `conference_room_approvals`
 
@@ -156,6 +157,10 @@ Current collaboration-model support also includes:
   - `audit_release`
 - legacy rooms remain `NULL` and should render as generic/legacy rooms
 - new rooms default to `project_leadership`
+- conference-room participation is invitation-based rather than leader-only
+- conference-room comments support threading via `parent_comment_id`
+- top-level board questions use `message_type = question`; other room messages use `note`
+- per-question reply state is tracked in `conference_room_question_responses`
 - packet comments remain string bodies in storage; packet awareness is parser/renderer behavior, not a separate table
 
 These changes are applied through Drizzle migrations and are backfilled automatically for existing local databases when the app starts or when you run `pnpm db:migrate`.

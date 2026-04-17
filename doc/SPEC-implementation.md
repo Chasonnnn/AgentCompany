@@ -37,7 +37,7 @@ These decisions close open questions from `SPEC.md` for V1.
 | Board | Single human board operator per deployment |
 | Org graph | Strict tree (`reports_to` nullable root); no multi-manager reporting |
 | Visibility | Full visibility to board and all agents in same company |
-| Communication | Issues/comments are the default execution channel; documents, conference rooms, approvals, and shared-service engagements carry durable artifacts, leadership coordination, governed decisions, and consulting |
+| Communication | Issues/comments are the default execution channel; documents, conference rooms, approvals, and shared-service engagements carry durable artifacts, invitation-based coordination, governed decisions, and consulting |
 | Task ownership | Single assignee; atomic checkout required for `in_progress` transition |
 | Recovery | No automatic reassignment; work recovery stays manual/explicit |
 | Agent adapters | Built-in `process` and `http` adapters |
@@ -339,17 +339,39 @@ Invariants:
 - `invited_by_agent_id` uuid fk `agents.id` null
 - `created_at` timestamptz not null
 
-Invariant: participants must be leader-tier agents (`executive` or `director`).
+Invariant: participation is invitation-based. Any invited in-company agent may access the room.
 
 ## 7.13 `conference_room_comments`
 
 - `id` uuid pk
 - `company_id` uuid fk not null
 - `conference_room_id` uuid fk `conference_rooms.id` not null
+- `parent_comment_id` uuid fk `conference_room_comments.id` null
 - `author_user_id` uuid fk `users.id` null
 - `author_agent_id` uuid fk `agents.id` null
+- `message_type` enum: `note | question`
 - `body` text not null
 - `created_at` timestamptz not null
+
+Rules:
+
+- `question` is allowed only on top-level board-authored messages
+- threaded replies attach via `parent_comment_id`
+- top-level agent notes may fan out room wakes to the other invited agents
+
+### `conference_room_question_responses`
+
+- `id` uuid pk
+- `company_id` uuid fk not null
+- `conference_room_id` uuid fk `conference_rooms.id` not null
+- `question_comment_id` uuid fk `conference_room_comments.id` not null
+- `agent_id` uuid fk `agents.id` not null
+- `status` enum: `pending | replied | dismissed`
+- `replied_comment_id` uuid fk `conference_room_comments.id` null
+- `created_at` timestamptz not null
+- `updated_at` timestamptz not null
+
+Invariant: each top-level board question has at most one response-tracking row per invited agent.
 
 ## 7.14 `conference_room_issue_links`
 
@@ -409,6 +431,8 @@ Operational policy:
 - `conference_rooms(company_id, status, updated_at desc)`
 - `conference_room_participants(conference_room_id, agent_id)` unique
 - `conference_room_comments(conference_room_id, created_at desc)`
+- `conference_room_comments(conference_room_id, parent_comment_id)`
+- `conference_room_question_responses(conference_room_id, status)`
 - `conference_room_issue_links(conference_room_id, issue_id)` unique
 - `conference_room_approvals(conference_room_id, approval_id)` unique
 - `activity_log(company_id, created_at desc)`
@@ -472,7 +496,7 @@ Paperclip phase 1 standardizes coordination without adding a second workflow eng
 
 - issues and issue comments are the default execution channel
 - documents are the durable artifact channel
-- conference rooms are the leadership coordination channel
+- conference rooms are the invitation-based coordination channel
 - approvals are the governed decision artifact
 - shared-service engagements are the only sanctioned dotted-line consulting path
 
@@ -729,6 +753,12 @@ Server behavior:
 - `GET /issues/:issueId/conference-rooms`
 - `POST /issues/:issueId/conference-rooms`
 
+`POST /conference-rooms/:id/comments` accepts:
+
+- `body`
+- `parentCommentId?`
+- `messageType?: note | question`
+
 ## 10.8 Cost and Budgets
 
 - `POST /companies/:companyId/cost-events`
@@ -928,7 +958,7 @@ Required UX behaviors:
 
 - global company selector
 - hierarchical agent navigation grouped by executives, departments, directors, and staff
-- company-level conference rooms with manual leader bulk-invite actions
+- company-level conference rooms with manual participant bulk-invite actions
 - quick actions: pause/resume agent, create task, approve/reject request
 - conflict toasts on atomic checkout failure
 - no silent background failures; every failed run visible in UI

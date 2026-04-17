@@ -7,7 +7,7 @@ Use the Paperclip operating model while you do it:
 - the org chart decides accountability; the issue thread decides how the work thinks
 - issue comments carry execution and delegation
 - documents carry durable specs, plans, progress, decisions, risks, and handoffs
-- conference rooms coordinate leadership
+- conference rooms coordinate invited participants
 - approvals carry final governed decisions
 - packets describe state but never mutate authority on their own
 
@@ -15,6 +15,7 @@ Use the Paperclip operating model while you do it:
 
 - `GET /api/agents/me` -- confirm your id, role, budget, chainOfCommand.
 - Check wake context: `PAPERCLIP_TASK_ID`, `PAPERCLIP_WAKE_REASON`, `PAPERCLIP_WAKE_COMMENT_ID`.
+- If `PAPERCLIP_WAKE_REASON` starts with `conference_room_`, fetch the room and room comments first, then reply in-thread before you resume generic issue triage.
 
 ## 2. Local Planning Check
 

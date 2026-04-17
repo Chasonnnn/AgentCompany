@@ -39,7 +39,7 @@ Use the Paperclip operating model:
 - the org chart decides accountability; the issue thread decides how the work thinks
 - issues and issue comments are the execution channel
 - documents are the durable artifact channel
-- conference rooms are for leadership coordination
+- conference rooms are invitation-based coordination channels
 - approvals carry formal decisions
 - shared-service engagements are the only dotted-line consulting path
 

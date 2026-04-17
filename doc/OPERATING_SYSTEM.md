@@ -1,7 +1,7 @@
 # Paperclip Operating System
 
 Status: Normative collaboration contract for Paperclip V1 phase-1 rollout
-Date: 2026-04-13
+Date: 2026-04-17
 Audience: Product, engineering, agent-template authors, company-package authors
 
 ## 1. Source Of Truth
@@ -28,7 +28,7 @@ Paperclip coordination is intentionally split into a small number of channels:
 - `documents`
   Durable artifact channel. Plans, specs, risks, runbooks, and handoffs live here.
 - `conference rooms`
-  Leadership coordination channel. They gather cross-functional discussion and can later produce a formal decision request.
+  Invitation-based coordination channel. They gather cross-functional discussion, room questions, and can later produce a formal decision request.
 - `approvals`
   Governed decision artifact. A decision request is not a decision until it is represented as an approval outcome.
 - `shared_service_engagements`
@@ -62,7 +62,7 @@ These are hard rules:
 
 1. Packets are descriptive, not authoritative.
 2. Comments never mutate assignee, approval, or escalation state by themselves.
-3. Conference rooms coordinate leaders; they do not replace approvals.
+3. Conference rooms coordinate invited participants; they do not replace approvals.
 4. Shared-service engagements remain the only dotted-line consulting mechanism.
 5. `agent_secondary_relationships` are advisory only in phase 1.
 6. Every durable artifact should have an owner.
@@ -167,6 +167,17 @@ Kickoff expectations:
 - include the relevant executive sponsor when prioritization, staffing, budget, risk, or strategic direction is in scope
 - leave with an owned work breakdown: issues/tasks, dependencies, milestone intent, key risks, open questions, and a named owner for each work item
 - record outcomes immediately in durable artifacts, using project `context` and `decision-log` docs plus issue `plan` docs as needed
+
+### 6.2 Room Participation And Questions
+
+Phase 1 conference rooms behave as invitation-based chat channels:
+
+- any invited agent may participate; room access is not restricted to leader-tier agents
+- board may post top-level `note` or `question` messages
+- invited agents may post top-level `note` messages and threaded replies
+- threaded replies stay in the room thread; top-level agent notes may wake the other invited agents
+- top-level board `question` messages create explicit reply obligations for invited agents
+- room discussion coordinates, escalates, and records context, but material decisions still resolve through approvals
 
 Governance rules:
 
