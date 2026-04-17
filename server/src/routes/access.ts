@@ -104,31 +104,6 @@ function buildCliAuthApprovalPath(challengeId: string, token: string) {
   return `/cli-auth/${challengeId}?token=${encodeURIComponent(token)}`;
 }
 
-function readSkillMarkdown(skillName: string): string | null {
-  const normalized = skillName.trim().toLowerCase();
-  if (
-    normalized !== "paperclip" &&
-    normalized !== "paperclip-create-agent" &&
-    normalized !== "paperclip-create-plugin" &&
-    normalized !== "para-memory-files"
-  )
-    return null;
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    path.resolve(moduleDir, "../../skills", normalized, "SKILL.md"), // published: dist/routes/ -> <pkg>/skills/
-    path.resolve(process.cwd(), "skills", normalized, "SKILL.md"), // cwd (e.g. monorepo root)
-    path.resolve(moduleDir, "../../../skills", normalized, "SKILL.md") // dev: src/routes/ -> repo root/skills/
-  ];
-  for (const skillPath of candidates) {
-    try {
-      return fs.readFileSync(skillPath, "utf8");
-    } catch {
-      // Continue to next candidate.
-    }
-  }
-  return null;
-}
-
 /** Resolve the Paperclip repo skills directory (built-in / managed skills). */
 function resolvePaperclipSkillsDir(): string | null {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -143,6 +118,51 @@ function resolvePaperclipSkillsDir(): string | null {
     } catch { /* skip */ }
   }
   return null;
+}
+
+interface BundledPaperclipSkill {
+  name: string;
+  path: string;
+  skillPath: string;
+}
+
+function listBundledPaperclipSkills(): BundledPaperclipSkill[] {
+  const paperclipSkillsDir = resolvePaperclipSkillsDir();
+  if (!paperclipSkillsDir) return [];
+
+  const skills: BundledPaperclipSkill[] = [];
+  try {
+    for (const entry of fs.readdirSync(paperclipSkillsDir, { withFileTypes: true })) {
+      if ((!entry.isDirectory() && !entry.isSymbolicLink()) || entry.name.startsWith(".")) continue;
+      const skillPath = path.join(paperclipSkillsDir, entry.name, "SKILL.md");
+      try {
+        if (!fs.statSync(skillPath).isFile()) continue;
+      } catch {
+        continue;
+      }
+      skills.push({
+        name: entry.name,
+        path: `/api/skills/${entry.name}`,
+        skillPath,
+      });
+    }
+  } catch {
+    return [];
+  }
+
+  skills.sort((left, right) => left.name.localeCompare(right.name));
+  return skills;
+}
+
+function readSkillMarkdown(skillName: string): string | null {
+  const normalized = skillName.trim().toLowerCase();
+  const skill = listBundledPaperclipSkills().find((entry) => entry.name === normalized);
+  if (!skill) return null;
+  try {
+    return fs.readFileSync(skill.skillPath, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 /** Parse YAML frontmatter from a SKILL.md file to extract the description. */
@@ -1915,17 +1935,7 @@ export function accessRoutes(
   router.get("/skills/index", (req, res) => {
     assertAuthenticated(req);
     res.json({
-      skills: [
-        { name: "paperclip", path: "/api/skills/paperclip" },
-        {
-          name: "para-memory-files",
-          path: "/api/skills/para-memory-files"
-        },
-        {
-          name: "paperclip-create-agent",
-          path: "/api/skills/paperclip-create-agent"
-        }
-      ]
+      skills: listBundledPaperclipSkills().map(({ name, path }) => ({ name, path })),
     });
   });
 
