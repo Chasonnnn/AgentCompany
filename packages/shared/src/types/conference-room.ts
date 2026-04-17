@@ -48,6 +48,9 @@ export interface ConferenceRoomQuestionResponse {
   agentId: string;
   status: ConferenceRoomQuestionResponseStatus;
   repliedCommentId: string | null;
+  latestWakeStatus?: string | null;
+  latestWakeError?: string | null;
+  latestWakeRequestedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

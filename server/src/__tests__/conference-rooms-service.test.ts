@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
+  agentWakeupRequests,
   agents,
   companies,
   conferenceRoomApprovals,
@@ -84,6 +85,7 @@ describeEmbeddedPostgres("conferenceRoomService", () => {
 
   afterEach(async () => {
     await db.delete(conferenceRoomApprovals);
+    await db.delete(agentWakeupRequests);
     await db.delete(conferenceRoomQuestionResponses);
     await db.delete(conferenceRoomComments);
     await db.delete(conferenceRoomIssueLinks);
@@ -268,6 +270,50 @@ describeEmbeddedPostgres("conferenceRoomService", () => {
     expect(byAgentId.get(agentTwoId)?.status).toBe("pending");
     expect(byAgentId.get(agentTwoId)?.repliedCommentId).toBeNull();
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("hydrates the latest room wake failure alongside pending question responses", async () => {
+    const companyId = await seedCompany();
+    const agentOneId = await seedAgent(companyId, { name: "Technical Project Lead" });
+    const agentTwoId = await seedAgent(companyId, { name: "CEO" });
+    const room = await createRoom(companyId, [agentOneId, agentTwoId]);
+    const question = await svc.addComment(room.id, {
+      body: "Please reply in-thread.",
+      messageType: "question",
+    }, boardActor);
+
+    await db.insert(agentWakeupRequests).values({
+      companyId,
+      agentId: agentOneId,
+      source: "automation",
+      triggerDetail: "system",
+      reason: "conference_room_question",
+      payload: {
+        conferenceRoomId: room.id,
+        conferenceRoomCommentId: question.id,
+        messageType: "question",
+      },
+      status: "failed",
+      error: "Your access token could not be refreshed. Please log out and sign in again.",
+    });
+
+    const comments = await svc.listComments(room.id);
+    const hydratedQuestion = comments.find((comment) => comment.id === question.id);
+
+    expect(hydratedQuestion?.responses.find((response) => response.agentId === agentOneId)).toEqual(
+      expect.objectContaining({
+        status: "pending",
+        latestWakeStatus: "failed",
+        latestWakeError: "Your access token could not be refreshed. Please log out and sign in again.",
+      }),
+    );
+    expect(hydratedQuestion?.responses.find((response) => response.agentId === agentTwoId)).toEqual(
+      expect.objectContaining({
+        status: "pending",
+        latestWakeStatus: null,
+        latestWakeError: null,
+      }),
+    );
   });
 
   it("wakes the other invited agents when an agent posts a new top-level note", async () => {

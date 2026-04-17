@@ -39,7 +39,10 @@ function questionSummary(comment: ConferenceRoomComment) {
   const pending = comment.responses.filter((response) => response.status === "pending").length;
   const replied = comment.responses.filter((response) => response.status === "replied").length;
   const dismissed = comment.responses.filter((response) => response.status === "dismissed").length;
-  return { pending, replied, dismissed };
+  const wakeFailures = comment.responses.filter(
+    (response) => response.status === "pending" && response.latestWakeStatus === "failed",
+  ).length;
+  return { pending, replied, dismissed, wakeFailures };
 }
 
 function replyPlaceholder(type: ConferenceRoomMessageType, replying: boolean) {
@@ -247,16 +250,34 @@ export function ConferenceRoomDetail() {
                 <span>{summary.pending} pending</span>
                 <span>{summary.replied} replied</span>
                 {summary.dismissed > 0 ? <span>{summary.dismissed} dismissed</span> : null}
+                {summary.wakeFailures > 0 ? <span>{summary.wakeFailures} wake failure{summary.wakeFailures === 1 ? "" : "s"}</span> : null}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {comment.responses.map((response) => (
-                  <span
-                    key={`${comment.id}:${response.agentId}`}
-                    className={`rounded-full border px-2 py-1 text-[11px] ${responseTone(response.status)}`}
-                  >
-                    {(agentMap.get(response.agentId)?.name ?? response.agentId)} - {response.status}
-                  </span>
-                ))}
+              <div className="space-y-2">
+                {comment.responses.map((response) => {
+                  const showWakeFailure = response.status === "pending" && response.latestWakeStatus === "failed";
+                  return (
+                    <div
+                      key={`${comment.id}:${response.agentId}`}
+                      className="rounded-lg border border-border/60 bg-background/70 px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full border px-2 py-1 text-[11px] ${responseTone(response.status)}`}>
+                          {(agentMap.get(response.agentId)?.name ?? response.agentId)} - {response.status}
+                        </span>
+                        {showWakeFailure ? (
+                          <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-200">
+                            wake failed
+                          </span>
+                        ) : null}
+                      </div>
+                      {showWakeFailure && response.latestWakeError ? (
+                        <p className="mt-2 text-[11px] leading-5 text-rose-200/90">
+                          {response.latestWakeError}
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : null}

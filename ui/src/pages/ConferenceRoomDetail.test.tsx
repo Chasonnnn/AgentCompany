@@ -164,6 +164,9 @@ function createComments(): ConferenceRoomComment[] {
           agentId: "agent-1",
           status: "pending",
           repliedCommentId: null,
+          latestWakeStatus: "failed",
+          latestWakeError: "Your access token could not be refreshed. Please log out and sign in again.",
+          latestWakeRequestedAt: baseTime,
           createdAt: baseTime,
           updatedAt: baseTime,
         },
@@ -175,6 +178,9 @@ function createComments(): ConferenceRoomComment[] {
           agentId: "agent-2",
           status: "replied",
           repliedCommentId: "comment-reply",
+          latestWakeStatus: null,
+          latestWakeError: null,
+          latestWakeRequestedAt: null,
           createdAt: baseTime,
           updatedAt: new Date(baseTime.getTime() + 30_000),
         },
@@ -316,6 +322,8 @@ describe("ConferenceRoomDetail", () => {
       expect(container.textContent).toContain("Onboarding Meeting");
       expect(container.textContent).toContain("1 pending");
       expect(container.textContent).toContain("1 replied");
+      expect(container.textContent).toContain("1 wake failure");
+      expect(container.textContent).toContain("Your access token could not be refreshed. Please log out and sign in again.");
       expect(container.textContent).not.toContain("The audit looks good from engineering.");
     });
 

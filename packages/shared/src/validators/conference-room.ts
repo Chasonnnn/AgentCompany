@@ -124,6 +124,9 @@ export const conferenceRoomQuestionResponseSchema = z.object({
   agentId: z.string().uuid(),
   status: conferenceRoomQuestionResponseStatusSchema,
   repliedCommentId: z.string().uuid().nullable(),
+  latestWakeStatus: z.string().min(1).nullable().optional(),
+  latestWakeError: z.string().min(1).nullable().optional(),
+  latestWakeRequestedAt: z.coerce.date().nullable().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 }).strict() satisfies z.ZodType<ConferenceRoomQuestionResponse>;

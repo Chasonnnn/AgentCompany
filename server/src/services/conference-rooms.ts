@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
+  agentWakeupRequests,
   agents,
   approvals,
   conferenceRoomApprovals,
@@ -121,17 +122,62 @@ export function conferenceRoomService(db: Db) {
 
   async function hydrateComments(rows: typeof conferenceRoomComments.$inferSelect[]): Promise<ConferenceRoomComment[]> {
     if (rows.length === 0) return [];
+    const companyId = rows[0]?.companyId ?? null;
     const commentIds = rows.map((row) => row.id);
     const responseRows = await db
       .select()
       .from(conferenceRoomQuestionResponses)
       .where(inArray(conferenceRoomQuestionResponses.questionCommentId, commentIds))
       .orderBy(conferenceRoomQuestionResponses.createdAt);
+    const responseAgentIds = Array.from(new Set(responseRows.map((response) => response.agentId)));
+    const latestWakeByResponseKey = new Map<string, {
+      status: string;
+      error: string | null;
+      requestedAt: Date;
+    }>();
+
+    if (companyId && responseAgentIds.length > 0) {
+      const wakeRows = await db
+        .select({
+          agentId: agentWakeupRequests.agentId,
+          status: agentWakeupRequests.status,
+          error: agentWakeupRequests.error,
+          requestedAt: agentWakeupRequests.requestedAt,
+          questionCommentId: sql<string | null>`${agentWakeupRequests.payload} ->> 'conferenceRoomCommentId'`.as("questionCommentId"),
+        })
+        .from(agentWakeupRequests)
+        .where(
+          and(
+            eq(agentWakeupRequests.companyId, companyId),
+            eq(agentWakeupRequests.reason, "conference_room_question"),
+            inArray(agentWakeupRequests.agentId, responseAgentIds),
+          ),
+        )
+        .orderBy(desc(agentWakeupRequests.requestedAt));
+
+      const commentIdSet = new Set(commentIds);
+      for (const wakeRow of wakeRows) {
+        if (!wakeRow.questionCommentId || !commentIdSet.has(wakeRow.questionCommentId)) continue;
+        const key = `${wakeRow.questionCommentId}:${wakeRow.agentId}`;
+        if (latestWakeByResponseKey.has(key)) continue;
+        latestWakeByResponseKey.set(key, {
+          status: wakeRow.status,
+          error: wakeRow.error,
+          requestedAt: wakeRow.requestedAt,
+        });
+      }
+    }
 
     const responsesByComment = new Map<string, ConferenceRoomQuestionResponse[]>();
     for (const response of responseRows) {
       const group = responsesByComment.get(response.questionCommentId) ?? [];
-      group.push({ ...response });
+      const latestWake = latestWakeByResponseKey.get(`${response.questionCommentId}:${response.agentId}`);
+      group.push({
+        ...response,
+        latestWakeStatus: latestWake?.status ?? null,
+        latestWakeError: latestWake?.error ?? null,
+        latestWakeRequestedAt: latestWake?.requestedAt ?? null,
+      });
       responsesByComment.set(response.questionCommentId, group);
     }
 
