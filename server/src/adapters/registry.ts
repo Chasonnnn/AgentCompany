@@ -152,6 +152,7 @@ const geminiLocalAdapter: ServerAdapterModule = {
   supportsInstructionsBundle: true,
   instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: true,
+  nativeDecisionQuestions: true,
   agentConfigurationDoc: geminiAgentConfigurationDoc,
 };
 

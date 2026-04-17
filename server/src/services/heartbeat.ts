@@ -55,6 +55,7 @@ import {
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
 import { issueContinuityService } from "./issue-continuity.js";
+import { issueDecisionQuestionService } from "./issue-decision-questions.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import { isProcessGroupAlive, terminateLocalService } from "./local-service-supervisor.js";
@@ -966,6 +967,75 @@ async function buildPaperclipWakePayload(input: {
     | null;
 }) {
   const executionStage = parseObject(input.contextSnapshot.executionStage);
+  const planningMode = input.contextSnapshot.paperclipPlanningMode === true;
+  const continuityStatus = readNonEmptyString(input.contextSnapshot.continuityStatus);
+  const openDecisionQuestionCount = Math.max(0, Number(input.contextSnapshot.openDecisionQuestionCount ?? 0) || 0);
+  const blockingDecisionQuestionCount = Math.max(0, Number(input.contextSnapshot.blockingDecisionQuestionCount ?? 0) || 0);
+  const decisionQuestionId = readNonEmptyString(input.contextSnapshot.decisionQuestionId);
+  const decisionQuestionList = Array.isArray(input.contextSnapshot.paperclipDecisionQuestions)
+    ? input.contextSnapshot.paperclipDecisionQuestions
+        .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+    : [];
+  const matchedDecisionQuestion =
+    (decisionQuestionId
+      ? decisionQuestionList.find((entry) => readNonEmptyString(entry.id) === decisionQuestionId)
+      : null) ??
+    decisionQuestionList.find((entry) => readNonEmptyString(entry.status) === "open" && entry.blocking === true) ??
+    null;
+  const decisionQuestion = matchedDecisionQuestion
+    ? {
+        id: readNonEmptyString(matchedDecisionQuestion.id),
+        status: readNonEmptyString(matchedDecisionQuestion.status),
+        blocking: matchedDecisionQuestion.blocking === true,
+        title: readNonEmptyString(matchedDecisionQuestion.title),
+        question: readNonEmptyString(matchedDecisionQuestion.question),
+        whyBlocked: readNonEmptyString(matchedDecisionQuestion.whyBlocked),
+        suggestedDefault: readNonEmptyString(matchedDecisionQuestion.suggestedDefault),
+        linkedApprovalId: readNonEmptyString(matchedDecisionQuestion.linkedApprovalId),
+        recommendedOptions: Array.isArray(matchedDecisionQuestion.recommendedOptions)
+          ? matchedDecisionQuestion.recommendedOptions
+              .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+              .map((entry) => ({
+                key: readNonEmptyString(entry.key) ?? "",
+                label: readNonEmptyString(entry.label) ?? "",
+                ...(readNonEmptyString(entry.description) ? { description: readNonEmptyString(entry.description) } : {}),
+              }))
+              .filter((entry) => entry.key.length > 0 && entry.label.length > 0)
+          : [],
+        answer:
+          typeof matchedDecisionQuestion.answer === "object" &&
+          matchedDecisionQuestion.answer !== null &&
+          !Array.isArray(matchedDecisionQuestion.answer)
+            ? {
+                answer: readNonEmptyString((matchedDecisionQuestion.answer as Record<string, unknown>).answer) ?? "",
+                selectedOptionKey: readNonEmptyString((matchedDecisionQuestion.answer as Record<string, unknown>).selectedOptionKey),
+                note: readNonEmptyString((matchedDecisionQuestion.answer as Record<string, unknown>).note),
+              }
+            : null,
+      }
+    : decisionQuestionId
+      ? {
+          id: decisionQuestionId,
+          status: readNonEmptyString(input.contextSnapshot.decisionQuestionStatus),
+          blocking: blockingDecisionQuestionCount > 0,
+          title: null,
+          question: null,
+          whyBlocked: null,
+          suggestedDefault: null,
+          linkedApprovalId: readNonEmptyString(input.contextSnapshot.linkedApprovalId),
+          recommendedOptions: [],
+          answer:
+            typeof input.contextSnapshot.decisionQuestionAnswer === "object" &&
+            input.contextSnapshot.decisionQuestionAnswer !== null &&
+            !Array.isArray(input.contextSnapshot.decisionQuestionAnswer)
+              ? {
+                  answer: readNonEmptyString((input.contextSnapshot.decisionQuestionAnswer as Record<string, unknown>).answer) ?? "",
+                  selectedOptionKey: readNonEmptyString((input.contextSnapshot.decisionQuestionAnswer as Record<string, unknown>).selectedOptionKey),
+                  note: readNonEmptyString((input.contextSnapshot.decisionQuestionAnswer as Record<string, unknown>).note),
+                }
+              : null,
+        }
+      : null;
   const commentIds = extractWakeCommentIds(input.contextSnapshot);
   const issueId = readNonEmptyString(input.contextSnapshot.issueId);
   const conferenceRoomId = readNonEmptyString(input.contextSnapshot.conferenceRoomId);
@@ -1179,6 +1249,11 @@ async function buildPaperclipWakePayload(input: {
           priority: issueSummary.priority,
         }
       : null,
+    planningMode,
+    continuityStatus,
+    openDecisionQuestionCount,
+    blockingDecisionQuestionCount,
+    decisionQuestion,
     checkedOutByHarness: input.contextSnapshot[PAPERCLIP_HARNESS_CHECKOUT_KEY] === true,
     executionStage: Object.keys(executionStage).length > 0 ? executionStage : null,
     commentIds,
@@ -1415,6 +1490,7 @@ export function heartbeatService(db: Db) {
   const companySkills = companySkillService(db);
   const issuesSvc = issueService(db);
   const issueContinuitySvc = issueContinuityService(db);
+  const decisionQuestionsSvc = issueDecisionQuestionService(db);
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
   const activeRunExecutions = new Set<string>();
@@ -2918,6 +2994,7 @@ export function heartbeatService(db: Db) {
     if (
       issueId &&
       issueContext &&
+      issueContext.continuityState?.status !== "planning" &&
       shouldAutoCheckoutIssueForWake({
         contextSnapshot: context,
         issueStatus: issueContext.status,
@@ -2936,11 +3013,17 @@ export function heartbeatService(db: Db) {
     }
     if (issueContext?.continuityState) {
       const invalidContinuity =
-        issueContext.continuityState.missingDocumentKeys.length > 0 ||
-        issueContext.continuityState.health === "invalid_handoff";
+        issueContext.continuityState.health === "invalid_handoff" ||
+        issueContext.continuityState.status === "awaiting_decision" ||
+        (
+          issueContext.continuityState.missingDocumentKeys.length > 0 &&
+          issueContext.continuityState.status !== "planning"
+        );
       if (invalidContinuity) {
         throw conflict(
-          issueContext.continuityState.health === "invalid_handoff"
+          issueContext.continuityState.status === "awaiting_decision"
+            ? "Issue planning or execution is waiting on a blocking decision question"
+            : issueContext.continuityState.health === "invalid_handoff"
             ? "Issue continuity is invalid: complete a valid handoff before starting execution"
             : `Issue continuity is missing required docs: ${issueContext.continuityState.missingDocumentKeys.join(", ")}`,
         );
@@ -2955,8 +3038,24 @@ export function heartbeatService(db: Db) {
       context.continuityBundleHash = issueContext.continuityBundle.bundleHash;
       context.continuityRevisionIds = continuityRevisionIds;
       context.continuityTier = issueContext.continuityState.tier;
+      context.continuityStatus = issueContext.continuityState.status;
       context.specState = issueContext.continuityState.specState;
       context.unresolvedBranchIssueIds = issueContext.continuityState.unresolvedBranchIssueIds;
+      context.openDecisionQuestionCount = issueContext.continuityState.openDecisionQuestionCount ?? 0;
+      context.blockingDecisionQuestionCount = issueContext.continuityState.blockingDecisionQuestionCount ?? 0;
+      context.paperclipPlanningMode = issueContext.continuityState.status === "planning";
+      context.paperclipDecisionQuestions = issueContext.continuityBundle.decisionQuestions.map((question) => ({
+        id: question.id,
+        status: question.status,
+        blocking: question.blocking,
+        title: question.title,
+        question: question.question,
+        whyBlocked: question.whyBlocked,
+        recommendedOptions: question.recommendedOptions,
+        suggestedDefault: question.suggestedDefault,
+        answer: question.answer,
+        linkedApprovalId: question.linkedApprovalId,
+      }));
       if (continuityChanged) {
         context.forceFreshSession = true;
         context.continuityInvalidated = true;
@@ -3609,6 +3708,47 @@ export function heartbeatService(db: Db) {
             );
           }
         }
+      }
+      if (issueId && adapterResult.question?.prompt?.trim()) {
+        const suggestedOptions = Array.isArray(adapterResult.question.choices)
+          ? adapterResult.question.choices
+              .map((choice) => ({
+                key: typeof choice.key === "string" ? choice.key.trim() : "",
+                label: typeof choice.label === "string" ? choice.label.trim() : "",
+                ...(typeof choice.description === "string" && choice.description.trim()
+                  ? { description: choice.description.trim() }
+                  : {}),
+              }))
+              .filter((choice) => choice.key && choice.label)
+          : [];
+        const createdQuestion = await decisionQuestionsSvc.create(
+          issueId,
+          {
+            title:
+              adapterResult.question.prompt.trim().split(/\r?\n/, 1)[0]?.slice(0, 120) ||
+              "Agent decision question",
+            question: adapterResult.question.prompt.trim(),
+            whyBlocked: "The adapter asked for a structured decision before continuing.",
+            blocking: true,
+            recommendedOptions: suggestedOptions,
+            suggestedDefault: suggestedOptions[0]?.key ?? null,
+          },
+          { agentId: agent.id, userId: null, runId: run.id },
+        );
+        context.decisionQuestionId = createdQuestion.question?.id ?? null;
+        context.decisionQuestionStatus = createdQuestion.question?.status ?? "open";
+        context.decisionQuestionSource = "adapter.native_question";
+        await db
+          .update(heartbeatRuns)
+          .set({
+            contextSnapshot: context,
+            updatedAt: new Date(),
+          })
+          .where(eq(heartbeatRuns.id, run.id));
+        await onLog(
+          "stdout",
+          `[paperclip] Captured a blocking decision question for board review: ${adapterResult.question.prompt.trim()}\n`,
+        );
       }
       const nextSessionState = resolveNextSessionState({
         codec: sessionCodec,

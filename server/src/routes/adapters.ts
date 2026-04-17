@@ -64,6 +64,8 @@ interface AdapterCapabilities {
   supportsSkills: boolean;
   supportsLocalAgentJwt: boolean;
   requiresMaterializedRuntimeSkills: boolean;
+  nativePlanningMode: boolean;
+  nativeDecisionQuestions: boolean;
 }
 
 interface AdapterInfo {
@@ -117,6 +119,8 @@ function buildAdapterCapabilities(adapter: ServerAdapterModule): AdapterCapabili
     supportsSkills: Boolean(adapter.listSkills || adapter.syncSkills),
     supportsLocalAgentJwt: adapter.supportsLocalAgentJwt ?? false,
     requiresMaterializedRuntimeSkills: adapter.requiresMaterializedRuntimeSkills ?? false,
+    nativePlanningMode: adapter.nativePlanningMode ?? false,
+    nativeDecisionQuestions: adapter.nativeDecisionQuestions ?? false,
   };
 }
 

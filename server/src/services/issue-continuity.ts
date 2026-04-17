@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { issueExecutionDecisions, issues } from "@paperclipai/db";
+import { issueDecisionQuestions, issueExecutionDecisions, issues } from "@paperclipai/db";
 import {
   ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
   ISSUE_BRANCH_CHARTER_KIND,
@@ -15,6 +15,7 @@ import {
   handoffIssueContinuitySchema,
   handoffCancelIssueContinuitySchema,
   handoffRepairIssueContinuitySchema,
+  issueDecisionQuestionSchema,
   issueContinuityBundleSchema,
   issueContinuityRemediationSchema,
   issueContinuityStateSchema,
@@ -40,6 +41,7 @@ import {
   type IssueContinuityHealth,
   type IssueContinuityRemediationAction,
   type IssueContinuityRemediation,
+  type IssueDecisionQuestion,
   type IssueContinuityState,
   type IssueContinuityStatus,
   type IssueContinuityTier,
@@ -253,12 +255,16 @@ export function issueContinuityService(db: Db) {
 
   async function getContinuityMaterial(issueId: string) {
     const issue = await getIssueOrThrow(issueId);
-    const [issueDocs, projectContext, projectRunbook, linkedApprovals, childRows] = await Promise.all([
+    const [issueDocs, projectContext, projectRunbook, linkedApprovals, childRows, questionRows] = await Promise.all([
       docsSvc.listIssueDocuments(issue.id),
       issue.projectId ? docsSvc.getProjectDocumentByKey(issue.projectId, "context") : Promise.resolve(null),
       issue.projectId ? docsSvc.getProjectDocumentByKey(issue.projectId, "runbook") : Promise.resolve(null),
       issueApprovalsSvc.listApprovalsForIssue(issue.id),
       getChildBranchRows(issue),
+      db
+        .select()
+        .from(issueDecisionQuestions)
+        .where(and(eq(issueDecisionQuestions.companyId, issue.companyId), eq(issueDecisionQuestions.issueId, issue.id))),
     ]);
     return {
       issue,
@@ -268,6 +274,11 @@ export function issueContinuityService(db: Db) {
       projectRunbook,
       linkedApprovals,
       childRows,
+      decisionQuestions: questionRows.map((row) => issueDecisionQuestionSchema.parse({
+        ...row,
+        recommendedOptions: Array.isArray(row.recommendedOptions) ? row.recommendedOptions : [],
+        answer: row.answer ?? null,
+      })),
     };
   }
 
@@ -276,6 +287,7 @@ export function issueContinuityService(db: Db) {
     issueDocsByKey: Map<string, ContinuityDocumentRow>;
     linkedApprovals: LinkedApprovalSummary[];
     childRows: Array<{ id: string; status: string; continuityState: Record<string, unknown> | null }>;
+    decisionQuestions: IssueDecisionQuestion[];
     preparedTier?: IssueContinuityTier | null;
     lastPreparedAt?: string | null;
     forceBranchStatus?: IssueBranchStatus | null;
@@ -305,6 +317,8 @@ export function issueContinuityService(db: Db) {
     const returnedBranchIssueIds = childStates
       .filter((row) => row.continuityState?.branchRole === "branch" && row.continuityState.branchStatus === "returned")
       .map((row) => row.id);
+    const openDecisionQuestions = input.decisionQuestions.filter((question) => question.status === "open");
+    const blockingDecisionQuestions = openDecisionQuestions.filter((question) => question.blocking);
     const tier = chooseContinuityTier({
       issue: input.issue,
       existingState,
@@ -347,6 +361,14 @@ export function issueContinuityService(db: Db) {
             .filter((value): value is string => Boolean(value))
             .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null
     ) ?? existingState?.lastBranchReturnAt ?? null;
+    const lastDecisionQuestionAt = input.decisionQuestions
+      .map((question) => toIsoString(question.createdAt))
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? existingState?.lastDecisionQuestionAt ?? null;
+    const lastDecisionAnswerAt = input.decisionQuestions
+      .map((question) => toIsoString(question.answeredAt))
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? existingState?.lastDecisionAnswerAt ?? null;
     const progressAfterHandoff =
       (timestampMs(progressDoc?.updatedAt) ?? 0) > (timestampMs(handoffDoc?.updatedAt) ?? Number.POSITIVE_INFINITY);
     const handoffTargetMatchesOwner =
@@ -420,16 +442,22 @@ export function issueContinuityService(db: Db) {
     let status: IssueContinuityStatus = input.forceStatus ?? existingState?.status ?? "draft";
     if (input.forceStatus) {
       status = input.forceStatus;
-    } else if (missingDocumentKeys.length > 0) {
-      status = "blocked_missing_docs";
     } else if (existingState?.status === "handoff_pending" && parsedHandoff && handoffTargetMatchesOwner && !progressAfterHandoff) {
       status = "handoff_pending";
+    } else if (blockingDecisionQuestions.length > 0) {
+      status = "awaiting_decision";
     } else if (isContinuityExecuting(input.issue)) {
       status = "active";
-    } else if ((input.lastPreparedAt ?? existingState?.lastPreparedAt) && missingDocumentKeys.length === 0) {
+    } else if (missingDocumentKeys.length > 0) {
+      status = "planning";
+    } else if (
+      (input.lastPreparedAt ?? existingState?.lastPreparedAt)
+      || input.issueDocsByKey.has("spec")
+      || input.issueDocsByKey.has("plan")
+    ) {
       status = "ready";
     } else {
-      status = "draft";
+      status = "planning";
     }
 
     return issueContinuityStateSchema.parse({
@@ -446,6 +474,10 @@ export function issueContinuityService(db: Db) {
       unresolvedBranchIssueIds,
       returnedBranchIssueIds,
       openReviewFindingsRevisionId,
+      openDecisionQuestionCount: openDecisionQuestions.length,
+      blockingDecisionQuestionCount: blockingDecisionQuestions.length,
+      lastDecisionQuestionAt,
+      lastDecisionAnswerAt,
       lastProgressAt,
       lastHandoffAt,
       lastReviewFindingsAt,
@@ -477,6 +509,7 @@ export function issueContinuityService(db: Db) {
       issueDocsByKey: material.issueDocsByKey,
       linkedApprovals: material.linkedApprovals,
       childRows: material.childRows,
+      decisionQuestions: material.decisionQuestions,
       preparedTier: overrides?.tier ?? null,
       lastPreparedAt: overrides?.lastPreparedAt ?? null,
       forceBranchStatus: overrides?.forceBranchStatus ?? null,
@@ -494,8 +527,10 @@ export function issueContinuityService(db: Db) {
       issueDocsByKey: material.issueDocsByKey,
       linkedApprovals: material.linkedApprovals,
       childRows: material.childRows,
+      decisionQuestions: material.decisionQuestions,
     });
 
+    const decisionQuestions = material.decisionQuestions;
     const issueDocuments = {
       spec: continuityDocumentSnapshot(material.issueDocsByKey.get("spec") ?? null),
       plan: continuityDocumentSnapshot(material.issueDocsByKey.get("plan") ?? null),
@@ -529,6 +564,7 @@ export function issueContinuityService(db: Db) {
       bundleHash: "",
       continuityState,
       executionState: parseIssueExecutionState(material.issue.executionState ?? null),
+      decisionQuestions,
       issueDocuments,
       projectDocuments,
       referencedRevisionIds,
@@ -537,6 +573,7 @@ export function issueContinuityService(db: Db) {
       .update(JSON.stringify({
         continuityState,
         executionState: bundleInput.executionState,
+        decisionQuestions,
         issueDocuments,
         projectDocuments,
         referencedRevisionIds,

@@ -12,6 +12,7 @@ export { documentService, extractLegacyPlanBody } from "./documents.js";
 export { projectService } from "./projects.js";
 export { issueService, type IssueFilters } from "./issues.js";
 export { issueContinuityService } from "./issue-continuity.js";
+export { issueDecisionQuestionService } from "./issue-decision-questions.js";
 export { issueApprovalService } from "./issue-approvals.js";
 export { conferenceRoomService } from "./conference-rooms.js";
 export { sharedServiceEngagementService } from "./shared-service-engagements.js";

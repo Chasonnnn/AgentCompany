@@ -27,6 +27,8 @@ export function buildIssueContinuitySummary(input: {
       (executionState.currentStageType === "review" || executionState.currentStageType === "approval") &&
       executionState.currentParticipant != null,
     openReviewFindings: Boolean(continuityState.openReviewFindingsRevisionId),
+    openDecisionQuestions: continuityState.openDecisionQuestionCount ?? 0,
+    blockingDecisionQuestions: continuityState.blockingDecisionQuestionCount ?? 0,
     returnedBranchCount: continuityState.returnedBranchIssueIds?.length ?? 0,
   };
 }

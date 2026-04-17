@@ -6,7 +6,10 @@ import type { Db } from "@paperclipai/db";
 import { issueExecutionDecisions } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
+  answerIssueDecisionQuestionSchema,
+  createIssueDecisionQuestionSchema,
   createIssueContinuityBranchSchema,
+  dismissIssueDecisionQuestionSchema,
   ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
   createIssueAttachmentMetadataSchema,
   createIssueWorkProductSchema,
@@ -35,6 +38,7 @@ import {
   handoffRepairIssueContinuitySchema,
   handoffCancelIssueContinuitySchema,
   handoffIssueContinuitySchema,
+  escalateIssueDecisionQuestionSchema,
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
@@ -46,7 +50,6 @@ import { trackAgentTaskCompleted } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
-import * as serviceRegistry from "../services/index.js";
 import {
   accessService,
   agentService,
@@ -56,6 +59,7 @@ import {
   heartbeatService,
   instanceSettingsService,
   issueApprovalService,
+  issueContinuityService,
   issueService,
   documentService,
   logActivity as baseLogActivity,
@@ -63,6 +67,7 @@ import {
   routineService,
   workProductService,
 } from "../services/index.js";
+import { issueDecisionQuestionService } from "../services/issue-decision-questions.js";
 import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -100,6 +105,7 @@ type IssueRouteDeps = {
   accessService: ReturnType<typeof accessService>;
   agentService: ReturnType<typeof agentService>;
   issueContinuityService: ReturnType<typeof createFallbackIssueContinuityService>;
+  issueDecisionQuestionService: ReturnType<typeof issueDecisionQuestionService>;
   documentService: ReturnType<typeof documentService>;
   executionWorkspaceService: ReturnType<typeof executionWorkspaceService>;
   feedbackService: ReturnType<typeof feedbackService>;
@@ -194,6 +200,35 @@ function createFallbackIssueContinuityService() {
     }),
   };
 }
+
+function createFallbackIssueDecisionQuestionService() {
+  return {
+    listForIssue: async () => [],
+    listOpenForCompany: async () => [],
+    create: async () => ({
+      question: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    answer: async () => ({
+      question: null,
+      continuityState: null,
+      continuityBundle: null,
+      shouldEscalateToApproval: false,
+    }),
+    dismiss: async () => ({
+      question: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    escalateToApproval: async () => ({
+      question: null,
+      approvalId: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+  };
+}
 type ExecutionStageWakeContext = {
   wakeRole: "reviewer" | "approver" | "executor";
   stageId: string | null;
@@ -260,6 +295,25 @@ function withIssueContinuitySummary<T extends { continuityState?: unknown; execu
     ...issue,
     continuitySummary: buildIssueContinuitySummary(issue),
   };
+}
+
+function describeExecutionReadinessBlock(input: {
+  status?: string | null;
+  health?: string | null;
+  missingDocumentKeys?: string[] | null;
+  blockingDecisionQuestionCount?: number | null;
+} | null) {
+  if (!input) return "Issue continuity has not been prepared yet";
+  if (input.status === "awaiting_decision" || (input.blockingDecisionQuestionCount ?? 0) > 0) {
+    return "Issue planning is waiting on a blocking decision question";
+  }
+  if (input.health === "invalid_handoff") {
+    return "Issue continuity is invalid: repair the pending handoff before starting execution";
+  }
+  if ((input.missingDocumentKeys?.length ?? 0) > 0) {
+    return `Issue planning is incomplete: missing required docs ${input.missingDocumentKeys?.join(", ")}`;
+  }
+  return null;
 }
 
 function issueActorPrincipal(req: Request): ParsedExecutionState["currentParticipant"] | null {
@@ -489,9 +543,13 @@ export function issueRoutes(
   const goalsSvc = opts?.services?.goalService ?? goalService(db);
   const issueApprovalsSvc = opts?.services?.issueApprovalService ?? issueApprovalService(db);
   const continuitySvc = opts?.services?.issueContinuityService
-    ?? (serviceRegistry.issueContinuityService
-      ? serviceRegistry.issueContinuityService(db)
+    ?? (typeof issueContinuityService === "function"
+      ? issueContinuityService(db)
       : createFallbackIssueContinuityService());
+  const decisionQuestionsSvc = opts?.services?.issueDecisionQuestionService
+    ?? (typeof issueDecisionQuestionService === "function"
+      ? issueDecisionQuestionService(db)
+      : createFallbackIssueDecisionQuestionService());
   const executionWorkspacesSvc =
     opts?.services?.executionWorkspaceService ?? executionWorkspaceService(db);
   const workProductsSvc = opts?.services?.workProductService ?? workProductService(db);
@@ -936,6 +994,48 @@ export function issueRoutes(
     }));
   });
 
+  router.get("/issues/:id/questions", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    res.json(await decisionQuestionsSvc.listForIssue(issue.id));
+  });
+
+  router.post("/issues/:id/questions", validate(createIssueDecisionQuestionSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const actor = getActorInfo(req);
+    const result = await decisionQuestionsSvc.create(issue.id, req.body, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+    });
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.question_created",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        questionId: result.question?.id ?? null,
+        blocking: req.body.blocking === true,
+        title: req.body.title,
+      },
+    });
+    res.status(201).json(result);
+  });
+
   router.post("/issues/:id/continuity/prepare", validate(prepareIssueContinuitySchema), async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
@@ -1222,6 +1322,195 @@ export function issueRoutes(
       }));
     },
   );
+
+  router.post("/questions/:questionId/answer", validate(answerIssueDecisionQuestionSchema), async (req, res) => {
+    const questionId = req.params.questionId as string;
+    if (req.actor.type !== "board" || !req.actor.userId) {
+      res.status(403).json({ error: "Board user context required" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const answered = await decisionQuestionsSvc.answer(questionId, req.body, { userId: req.actor.userId });
+    if (!answered.question) {
+      res.status(404).json({ error: "Decision question not found" });
+      return;
+    }
+    let question = answered.question;
+    let response: typeof answered | Awaited<ReturnType<typeof decisionQuestionsSvc.escalateToApproval>> = answered;
+    let approvalId: string | null = null;
+    const issue = await svc.getById(question.issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    if (answered.shouldEscalateToApproval) {
+      const escalated = await decisionQuestionsSvc.escalateToApproval(questionId, {}, { userId: req.actor.userId });
+      if (!escalated.question) {
+        res.status(404).json({ error: "Decision question not found" });
+        return;
+      }
+      question = escalated.question;
+      approvalId = escalated.approvalId;
+      response = escalated;
+    }
+
+    if (question.requestedByAgentId) {
+      void heartbeat.wakeup(question.requestedByAgentId, {
+        source: "assignment",
+        triggerDetail: "system",
+        reason: approvalId ? "decision_question_escalated" : "decision_question_answered",
+        payload: {
+          issueId: issue.id,
+          questionId: question.id,
+          answer: question.answer,
+          ...(approvalId ? { approvalId } : {}),
+        },
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        contextSnapshot: {
+          issueId: issue.id,
+          decisionQuestionId: question.id,
+          decisionQuestionStatus: question.status,
+          decisionQuestionAnswer: question.answer,
+          ...(approvalId ? { linkedApprovalId: approvalId } : {}),
+          source: approvalId ? "issue.question.escalate" : "issue.question.answer",
+        },
+      }).catch((err) => logger.warn({ err, questionId }, "failed to wake requesting agent after decision answer"));
+    }
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: approvalId ? "issue.question_escalated_to_approval" : "issue.question_answered",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        questionId: question.id,
+        selectedOptionKey: question.answer?.selectedOptionKey ?? null,
+        ...(approvalId ? { approvalId } : {}),
+      },
+    });
+
+    res.json(response);
+  });
+
+  router.post("/questions/:questionId/dismiss", validate(dismissIssueDecisionQuestionSchema), async (req, res) => {
+    const questionId = req.params.questionId as string;
+    if (req.actor.type !== "board" || !req.actor.userId) {
+      res.status(403).json({ error: "Board user context required" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const result = await decisionQuestionsSvc.dismiss(questionId, req.body, { userId: req.actor.userId });
+    if (!result.question) {
+      res.status(404).json({ error: "Decision question not found" });
+      return;
+    }
+    const issue = await svc.getById(result.question.issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    if (result.question.requestedByAgentId) {
+      void heartbeat.wakeup(result.question.requestedByAgentId, {
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "decision_question_dismissed",
+        payload: {
+          issueId: issue.id,
+          questionId: result.question.id,
+        },
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        contextSnapshot: {
+          issueId: issue.id,
+          decisionQuestionId: result.question.id,
+          decisionQuestionStatus: result.question.status,
+          source: "issue.question.dismiss",
+        },
+      }).catch((err) => logger.warn({ err, questionId }, "failed to wake requesting agent after decision dismissal"));
+    }
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.question_dismissed",
+      entityType: "issue",
+      entityId: issue.id,
+      details: { questionId: result.question.id },
+    });
+
+    res.json(result);
+  });
+
+  router.post("/questions/:questionId/escalate-approval", validate(escalateIssueDecisionQuestionSchema), async (req, res) => {
+    const questionId = req.params.questionId as string;
+    if (req.actor.type !== "board" || !req.actor.userId) {
+      res.status(403).json({ error: "Board user context required" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const result = await decisionQuestionsSvc.escalateToApproval(questionId, req.body, { userId: req.actor.userId });
+    if (!result.question) {
+      res.status(404).json({ error: "Decision question not found" });
+      return;
+    }
+    const issue = await svc.getById(result.question.issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    if (result.question.requestedByAgentId) {
+      void heartbeat.wakeup(result.question.requestedByAgentId, {
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "decision_question_escalated",
+        payload: {
+          issueId: issue.id,
+          questionId: result.question.id,
+          approvalId: result.approvalId,
+        },
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        contextSnapshot: {
+          issueId: issue.id,
+          decisionQuestionId: result.question.id,
+          decisionQuestionStatus: result.question.status,
+          linkedApprovalId: result.approvalId,
+          source: "issue.question.escalate_approval",
+        },
+      }).catch((err) => logger.warn({ err, questionId }, "failed to wake requesting agent after decision escalation"));
+    }
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.question_escalated_to_approval",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        questionId: result.question.id,
+        approvalId: result.approvalId,
+      },
+    });
+
+    res.json(result);
+  });
 
   router.get("/issues/:id/heartbeat-context", async (req, res) => {
     const id = req.params.id as string;
@@ -2085,6 +2374,19 @@ export function issueRoutes(
     }
     Object.assign(updateFields, transition.patch);
 
+    const nextRequestedStatus =
+      typeof updateFields.status === "string"
+        ? updateFields.status
+        : existing.status;
+    if (nextRequestedStatus === "in_progress" && existing.status !== "in_progress") {
+      const continuityState = await continuitySvc.recomputeIssueContinuityState(existing.id);
+      const executionBlock = describeExecutionReadinessBlock(continuityState);
+      if (executionBlock) {
+        res.status(409).json({ error: executionBlock });
+        return;
+      }
+    }
+
     const nextAssigneeAgentId =
       updateFields.assigneeAgentId === undefined ? existing.assigneeAgentId : (updateFields.assigneeAgentId as string | null);
     const nextAssigneeUserId =
@@ -2677,6 +2979,13 @@ export function issueRoutes(
     const closedExecutionWorkspace = await getClosedIssueExecutionWorkspace(issue);
     if (closedExecutionWorkspace) {
       respondClosedIssueExecutionWorkspace(res, closedExecutionWorkspace);
+      return;
+    }
+
+    const preCheckoutContinuity = await continuitySvc.recomputeIssueContinuityState(issue.id);
+    const executionBlock = describeExecutionReadinessBlock(preCheckoutContinuity);
+    if (executionBlock) {
+      res.status(409).json({ error: executionBlock });
       return;
     }
 

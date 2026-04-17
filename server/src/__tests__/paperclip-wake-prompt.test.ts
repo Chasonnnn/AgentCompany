@@ -66,4 +66,61 @@ describe("Paperclip room wake prompts", () => {
     expect(prompt).toContain("Technical Project Lead: pending");
     expect(prompt).not.toContain("issue below. Do not switch");
   });
+
+  it("renders planning and answered decision question guidance for issue wakes", () => {
+    const payload = {
+      reason: "decision_question_answered",
+      issue: {
+        id: "issue-1",
+        identifier: "AIW-12",
+        title: "Audit the architecture",
+        status: "todo",
+        priority: "high",
+      },
+      planningMode: true,
+      continuityStatus: "planning",
+      openDecisionQuestionCount: 1,
+      blockingDecisionQuestionCount: 0,
+      decisionQuestion: {
+        id: "question-1",
+        status: "answered",
+        blocking: true,
+        title: "Pick the first audit slice",
+        question: "Should the audit start with runtime or governance?",
+        whyBlocked: "The plan shape changes depending on the first slice.",
+        suggestedDefault: "runtime",
+        linkedApprovalId: null,
+        recommendedOptions: [
+          { key: "runtime", label: "Runtime" },
+          { key: "governance", label: "Governance" },
+        ],
+        answer: {
+          answer: "Start with runtime hardening first.",
+          selectedOptionKey: "runtime",
+          note: "The biggest execution risk is there.",
+        },
+      },
+      checkedOutByHarness: false,
+      executionStage: null,
+      commentIds: [],
+      latestCommentId: null,
+      comments: [],
+      requestedCount: 0,
+      includedCount: 0,
+      missingCount: 0,
+      truncated: false,
+      fallbackFetchNeeded: false,
+      conferenceRoom: null,
+      conferenceRoomMessage: null,
+      conferenceRoomThread: [],
+      conferenceRoomPendingResponses: [],
+    };
+
+    const prompt = renderPaperclipWakePrompt(payload);
+
+    expect(prompt).toContain("planning mode: yes");
+    expect(prompt).toContain("Decision question context:");
+    expect(prompt).toContain("board answer: Start with runtime hardening first.");
+    expect(prompt).toContain("The board answered your decision question.");
+  });
 });

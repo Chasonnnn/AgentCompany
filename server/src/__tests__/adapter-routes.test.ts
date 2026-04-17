@@ -90,6 +90,8 @@ describe("adapter routes", () => {
       expect(typeof adapter.capabilities.supportsSkills).toBe("boolean");
       expect(typeof adapter.capabilities.supportsLocalAgentJwt).toBe("boolean");
       expect(typeof adapter.capabilities.requiresMaterializedRuntimeSkills).toBe("boolean");
+      expect(typeof adapter.capabilities.nativePlanningMode).toBe("boolean");
+      expect(typeof adapter.capabilities.nativeDecisionQuestions).toBe("boolean");
     }
   });
 
@@ -108,6 +110,8 @@ describe("adapter routes", () => {
       supportsSkills: true,
       supportsLocalAgentJwt: true,
       requiresMaterializedRuntimeSkills: false,
+      nativePlanningMode: false,
+      nativeDecisionQuestions: false,
     });
 
     // process adapter should have no local capabilities
@@ -118,6 +122,8 @@ describe("adapter routes", () => {
       supportsSkills: false,
       supportsLocalAgentJwt: false,
       requiresMaterializedRuntimeSkills: false,
+      nativePlanningMode: false,
+      nativeDecisionQuestions: false,
     });
 
     // cursor adapter should require materialized runtime skills
@@ -125,6 +131,10 @@ describe("adapter routes", () => {
     expect(cursorAdapter).toBeDefined();
     expect(cursorAdapter.capabilities.requiresMaterializedRuntimeSkills).toBe(true);
     expect(cursorAdapter.capabilities.supportsInstructionsBundle).toBe(true);
+
+    const geminiAdapter = res.body.find((a: any) => a.type === "gemini_local");
+    expect(geminiAdapter).toBeDefined();
+    expect(geminiAdapter.capabilities.nativeDecisionQuestions).toBe(true);
   });
 
   it("GET /api/adapters derives supportsSkills from listSkills/syncSkills presence", async () => {

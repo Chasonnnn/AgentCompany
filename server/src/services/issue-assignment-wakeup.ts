@@ -24,9 +24,12 @@ export interface IssueAssignmentWakeupDeps {
 
 export function isIssueWakeBlockedByContinuity(continuityState?: IssueContinuityWakeState | null) {
   if (!continuityState) return false;
+  if (continuityState.status === "planning") {
+    return continuityState.health === "invalid_handoff";
+  }
   return (
-    continuityState.health === "missing_required_docs" ||
     continuityState.health === "invalid_handoff" ||
+    continuityState.status === "awaiting_decision" ||
     continuityState.status === "blocked_missing_docs" ||
     continuityState.status === "handoff_pending"
   );

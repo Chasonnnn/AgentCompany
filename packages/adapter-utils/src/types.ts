@@ -361,6 +361,18 @@ export interface ServerAdapterModule {
    * rather than reading config.paperclipRuntimeSkills.
    */
   requiresMaterializedRuntimeSkills?: boolean;
+
+  /**
+   * Adapter can expose a provider-native planning flow. Paperclip still owns
+   * the persisted issue planning contract.
+   */
+  nativePlanningMode?: boolean;
+
+  /**
+   * Adapter can expose a provider-native ask-user / decision-question flow.
+   * Paperclip still persists the question artifact as the source of truth.
+   */
+  nativeDecisionQuestions?: boolean;
 }
 
 // ---------------------------------------------------------------------------

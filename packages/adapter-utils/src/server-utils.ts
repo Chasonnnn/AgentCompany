@@ -446,9 +446,39 @@ type PaperclipWakeConferenceRoomPendingResponse = {
   repliedCommentId: string | null;
 };
 
+type PaperclipWakeDecisionOption = {
+  key: string;
+  label: string;
+  description?: string;
+};
+
+type PaperclipWakeDecisionAnswer = {
+  answer: string;
+  selectedOptionKey: string | null;
+  note: string | null;
+};
+
+type PaperclipWakeDecisionQuestion = {
+  id: string | null;
+  status: string | null;
+  blocking: boolean;
+  title: string | null;
+  question: string | null;
+  whyBlocked: string | null;
+  suggestedDefault: string | null;
+  linkedApprovalId: string | null;
+  recommendedOptions: PaperclipWakeDecisionOption[];
+  answer: PaperclipWakeDecisionAnswer | null;
+};
+
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
+  planningMode: boolean;
+  continuityStatus: string | null;
+  openDecisionQuestionCount: number;
+  blockingDecisionQuestionCount: number;
+  decisionQuestion: PaperclipWakeDecisionQuestion | null;
   checkedOutByHarness: boolean;
   executionStage: PaperclipWakeExecutionStage | null;
   commentIds: string[];
@@ -556,6 +586,56 @@ function normalizePaperclipWakeConferenceRoomPendingResponse(
   };
 }
 
+function normalizePaperclipWakeDecisionQuestion(value: unknown): PaperclipWakeDecisionQuestion | null {
+  const question = parseObject(value);
+  const answer = parseObject(question.answer);
+  const recommendedOptions = Array.isArray(question.recommendedOptions)
+    ? question.recommendedOptions
+        .map((entry) => {
+          const option = parseObject(entry);
+          const key = asString(option.key, "").trim();
+          const label = asString(option.label, "").trim();
+          const description = asString(option.description, "").trim();
+          if (!key || !label) return null;
+          return {
+            key,
+            label,
+            ...(description ? { description } : {}),
+          };
+        })
+        .filter((entry): entry is PaperclipWakeDecisionOption => Boolean(entry))
+    : [];
+  const normalizedAnswer =
+    Object.keys(answer).length === 0 && !asString(question.answer, "").trim()
+      ? null
+      : {
+          answer: asString(answer.answer, asString(question.answer, "")).trim(),
+          selectedOptionKey: asString(answer.selectedOptionKey, "").trim() || null,
+          note: asString(answer.note, "").trim() || null,
+        };
+  const id = asString(question.id, "").trim() || null;
+  const status = asString(question.status, "").trim() || null;
+  const title = asString(question.title, "").trim() || null;
+  const prompt = asString(question.question, "").trim() || null;
+  if (!id && !status && !title && !prompt && !normalizedAnswer) return null;
+  return {
+    id,
+    status,
+    blocking: asBoolean(question.blocking, false),
+    title,
+    question: prompt,
+    whyBlocked: asString(question.whyBlocked, "").trim() || null,
+    suggestedDefault: asString(question.suggestedDefault, "").trim() || null,
+    linkedApprovalId: asString(question.linkedApprovalId, "").trim() || null,
+    recommendedOptions,
+    answer: normalizedAnswer && normalizedAnswer.answer
+      ? normalizedAnswer
+      : normalizedAnswer?.selectedOptionKey || normalizedAnswer?.note
+        ? normalizedAnswer
+        : null,
+  };
+}
+
 function normalizePaperclipWakeExecutionPrincipal(value: unknown): PaperclipWakeExecutionPrincipal | null {
   const principal = parseObject(value);
   const typeRaw = asString(principal.type, "").trim().toLowerCase();
@@ -642,6 +722,11 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
   return {
     reason: asString(payload.reason, "").trim() || null,
     issue: normalizePaperclipWakeIssue(payload.issue),
+    planningMode: asBoolean(payload.planningMode, false),
+    continuityStatus: asString(payload.continuityStatus, "").trim() || null,
+    openDecisionQuestionCount: asNumber(payload.openDecisionQuestionCount, 0),
+    blockingDecisionQuestionCount: asNumber(payload.blockingDecisionQuestionCount, 0),
+    decisionQuestion: normalizePaperclipWakeDecisionQuestion(payload.decisionQuestion),
     checkedOutByHarness: asBoolean(payload.checkedOutByHarness, false),
     executionStage,
     commentIds,
@@ -819,7 +904,19 @@ export function renderPaperclipWakePrompt(
     lines.push(`- issue status: ${normalized.issue.status}`);
   }
   if (normalized.issue?.priority) {
-    lines.push(`- issue priority: ${normalized.issue.priority}`);
+      lines.push(`- issue priority: ${normalized.issue.priority}`);
+  }
+  if (normalized.continuityStatus) {
+    lines.push(`- continuity status: ${normalized.continuityStatus}`);
+  }
+  if (normalized.planningMode) {
+    lines.push("- planning mode: yes");
+  }
+  if (normalized.openDecisionQuestionCount > 0 || normalized.blockingDecisionQuestionCount > 0) {
+    lines.push(
+      `- open decision questions: ${normalized.openDecisionQuestionCount}`,
+      `- blocking decision questions: ${normalized.blockingDecisionQuestionCount}`,
+    );
   }
   if (normalized.checkedOutByHarness) {
     lines.push("- checkout: already claimed by the harness for this run");
@@ -834,6 +931,72 @@ export function renderPaperclipWakePrompt(
       "The harness already checked out this issue for the current run.",
       "Do not call the checkout endpoint again unless you intentionally switch away and later need to reclaim the issue.",
     );
+  }
+
+  if (normalized.decisionQuestion) {
+    const question = normalized.decisionQuestion;
+    lines.push(
+      "",
+      "Decision question context:",
+      `- title: ${question.title ?? "untitled"}`,
+      `- status: ${question.status ?? "unknown"}`,
+      `- blocking: ${question.blocking ? "yes" : "no"}`,
+    );
+    if (question.question) {
+      lines.push(`- question: ${question.question}`);
+    }
+    if (question.whyBlocked) {
+      lines.push(`- why blocked: ${question.whyBlocked}`);
+    }
+    if (question.recommendedOptions.length > 0) {
+      lines.push(
+        "- recommended options:",
+        ...question.recommendedOptions.map((option) =>
+          `  - ${option.key}: ${option.label}${option.description ? ` — ${option.description}` : ""}`),
+      );
+    }
+    if (question.suggestedDefault) {
+      lines.push(`- suggested default: ${question.suggestedDefault}`);
+    }
+    if (question.answer) {
+      lines.push(
+        `- board answer: ${question.answer.answer || "provided"}`,
+        `- selected option: ${question.answer.selectedOptionKey ?? "none"}`,
+      );
+      if (question.answer.note) {
+        lines.push(`- answer note: ${question.answer.note}`);
+      }
+    }
+    if (question.linkedApprovalId) {
+      lines.push(`- linked approval: ${question.linkedApprovalId}`);
+    }
+
+    lines.push("");
+    if (normalized.reason === "decision_question_answered") {
+      lines.push(
+        "The board answered your decision question.",
+        "Use the recorded answer as the new source of truth and continue the issue from that decision.",
+        "",
+      );
+    } else if (normalized.reason === "decision_question_dismissed") {
+      lines.push(
+        "The board dismissed your decision question.",
+        "Continue using your best judgment unless another blocker remains.",
+        "",
+      );
+    } else if (normalized.reason === "decision_question_escalated") {
+      lines.push(
+        "This decision question has been promoted to a formal approval.",
+        "Treat the linked approval as the governed decision path before proceeding on any blocked work.",
+        "",
+      );
+    } else if (question.blocking && question.status === "open") {
+      lines.push(
+        "A blocking decision question is open for this issue.",
+        "Do not continue blocked execution work until the board answers or dismisses it.",
+        "",
+      );
+    }
   }
 
   if (executionStage) {
