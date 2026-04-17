@@ -27,7 +27,10 @@ import { listUIAdapters } from "../adapters";
 import { useDisabledAdaptersSync } from "../adapters/use-disabled-adapters";
 import { useAdapterCapabilities } from "../adapters/use-adapter-capabilities";
 import { getAdapterDisplay } from "../adapters/adapter-display-registry";
-import { defaultCreateValues } from "./agent-config-defaults";
+import {
+  createCreateValuesForAdapterType,
+  defaultCreateValues,
+} from "./agent-config-defaults";
 import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
 import {
   buildOnboardingIssuePayload,
@@ -316,8 +319,7 @@ export function OnboardingWizard() {
   function buildAdapterConfig(): Record<string, unknown> {
     const adapter = getUIAdapter(adapterType);
     const config = adapter.buildAdapterConfig({
-      ...defaultCreateValues,
-      adapterType,
+      ...createCreateValuesForAdapterType(adapterType),
       model:
         adapterType === "codex_local"
           ? model || DEFAULT_CODEX_LOCAL_MODEL

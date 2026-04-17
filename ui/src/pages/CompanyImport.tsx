@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { Field, adapterLabels } from "../components/agent-config-primitives";
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
-import { defaultCreateValues } from "../components/agent-config-defaults";
+import { createCreateValuesForAdapterType } from "../components/agent-config-defaults";
 import { getUIAdapter, listUIAdapters } from "../adapters";
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
 import {
@@ -558,7 +558,7 @@ function AdapterPickerList({
           {agents.map((agent) => {
             const selectedType = adapterOverrides[agent.slug] ?? agent.adapterType;
             const isExpanded = expandedSlugs.has(agent.slug);
-            const vals = configValues[agent.slug] ?? { ...defaultCreateValues, adapterType: selectedType };
+            const vals = configValues[agent.slug] ?? createCreateValuesForAdapterType(selectedType);
 
             return (
               <div key={agent.slug}>
@@ -1043,7 +1043,10 @@ export function CompanyImport() {
   function handleAdapterConfigChange(slug: string, patch: Partial<CreateConfigValues>) {
     setAdapterConfigValues((prev) => ({
       ...prev,
-      [slug]: { ...(prev[slug] ?? { ...defaultCreateValues, adapterType: adapterOverrides[slug] ?? "claude_local" }), ...patch },
+      [slug]: {
+        ...(prev[slug] ?? createCreateValuesForAdapterType(adapterOverrides[slug] ?? "claude_local")),
+        ...patch,
+      },
     }));
   }
 

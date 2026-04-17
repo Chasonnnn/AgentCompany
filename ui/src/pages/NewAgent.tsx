@@ -23,40 +23,12 @@ import { Shield } from "lucide-react";
 import { cn, agentUrl } from "../lib/utils";
 import { roleLabels } from "../components/agent-config-primitives";
 import { AgentConfigForm, type CreateConfigValues } from "../components/AgentConfigForm";
-import { defaultCreateValues } from "../components/agent-config-defaults";
+import { createCreateValuesForAdapterType } from "../components/agent-config-defaults";
 import { getUIAdapter, listUIAdapters } from "../adapters";
 import { useDisabledAdaptersSync } from "../adapters/use-disabled-adapters";
 import { isValidAdapterType } from "../adapters/metadata";
 import { ReportsToPicker } from "../components/ReportsToPicker";
 import { buildNewAgentRuntimeConfig } from "../lib/new-agent-runtime-config";
-import {
-  defaultCodexLocalFastModeForModel,
-  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL,
-} from "@paperclipai/adapter-codex-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
-
-function createValuesForAdapterType(
-  adapterType: CreateConfigValues["adapterType"],
-): CreateConfigValues {
-  const { adapterType: _discard, ...defaults } = defaultCreateValues;
-  const nextValues: CreateConfigValues = { ...defaults, adapterType };
-  if (adapterType === "codex_local") {
-    nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
-    nextValues.fastMode =
-      defaultCodexLocalFastModeForModel(DEFAULT_CODEX_LOCAL_MODEL);
-    nextValues.dangerouslyBypassSandbox =
-      DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
-  } else if (adapterType === "gemini_local") {
-    nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
-  } else if (adapterType === "cursor") {
-    nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
-  } else if (adapterType === "opencode_local") {
-    nextValues.model = "";
-  }
-  return nextValues;
-}
 
 const DEFAULT_VISIBLE_ROLES = AGENT_ROLES.filter(
   (candidate) => !["cto", "cmo", "cfo", "coo", "pm"].includes(candidate),
@@ -77,7 +49,9 @@ export function NewAgent() {
   const [orgLevel, setOrgLevel] = useState<(typeof AGENT_ORG_LEVELS)[number]>("staff");
   const [departmentKey, setDepartmentKey] = useState<(typeof AGENT_DEPARTMENT_KEYS)[number]>("general");
   const [departmentName, setDepartmentName] = useState("");
-  const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
+  const [configValues, setConfigValues] = useState<CreateConfigValues>(
+    createCreateValuesForAdapterType(),
+  );
   const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
   const [roleOpen, setRoleOpen] = useState(false);
   const [showLegacyRoles, setShowLegacyRoles] = useState(false);
@@ -133,7 +107,7 @@ export function NewAgent() {
     if (!isValidAdapterType(requested)) return;
     setConfigValues((prev) => {
       if (prev.adapterType === requested) return prev;
-      return createValuesForAdapterType(requested as CreateConfigValues["adapterType"]);
+      return createCreateValuesForAdapterType(requested as CreateConfigValues["adapterType"]);
     });
   }, [presetAdapterType]);
 
