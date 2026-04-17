@@ -207,7 +207,7 @@ export function NewAgent() {
     });
   }
 
-  const availableSkills = (companySkills ?? []).filter((skill) => !skill.key.startsWith("paperclipai/paperclip/"));
+  const availableSkills = companySkills ?? [];
   const visibleRoles = showLegacyRoles ? AGENT_ROLES : DEFAULT_VISIBLE_ROLES;
 
   function toggleSkill(key: string, checked: boolean) {
@@ -353,12 +353,12 @@ export function NewAgent() {
             <div>
               <h2 className="text-sm font-medium">Company skills</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Optional skills from the company library. Built-in Paperclip runtime skills are added automatically.
+                Skills from the company library. Bundled Paperclip runtime skills remain available automatically.
               </p>
             </div>
             {availableSkills.length === 0 ? (
               <div className="space-y-2 text-xs text-muted-foreground">
-                <p>No optional company skills installed yet.</p>
+                <p>No company skills installed yet.</p>
                 <Link
                   to="/skills"
                   className="inline-flex items-center gap-1 text-foreground underline-offset-4 no-underline hover:underline"
