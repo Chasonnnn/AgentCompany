@@ -1,4 +1,5 @@
 import { index, pgTable, timestamp, uniqueIndex, uuid, text } from "drizzle-orm/pg-core";
+import type { ConferenceRoomQuestionResponseStatus } from "@paperclipai/shared";
 import { agents } from "./agents.js";
 import { companies } from "./companies.js";
 import { conferenceRoomComments } from "./conference_room_comments.js";
@@ -14,7 +15,7 @@ export const conferenceRoomQuestionResponses = pgTable(
       .notNull()
       .references(() => conferenceRoomComments.id, { onDelete: "cascade" }),
     agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
-    status: text("status").notNull().default("pending"),
+    status: text("status").$type<ConferenceRoomQuestionResponseStatus>().notNull().default("pending"),
     repliedCommentId: uuid("replied_comment_id").references(() => conferenceRoomComments.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

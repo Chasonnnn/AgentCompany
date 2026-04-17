@@ -698,7 +698,7 @@ export function conferenceRoomService(db: Db) {
                 conferenceRoomId: roomId,
                 questionCommentId: inserted.id,
                 agentId,
-                status: "pending",
+                status: "pending" as const,
                 repliedCommentId: null,
                 updatedAt: now,
               })),

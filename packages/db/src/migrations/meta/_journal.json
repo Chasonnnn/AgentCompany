@@ -435,6 +435,13 @@
       "when": 1776199827541,
       "tag": "0061_real_famine",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1776402954958,
+      "tag": "0062_worried_talisman",
+      "breakpoints": true
     }
   ]
 }
