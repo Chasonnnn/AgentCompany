@@ -727,7 +727,7 @@ export function NewIssueDialog() {
       status,
       priority: priority || "medium",
       continuityTier: "normal",
-      prepareContinuity: true,
+      prepareContinuity: false,
       ...(selectedAssigneeAgentId ? { assigneeAgentId: selectedAssigneeAgentId } : {}),
       ...(selectedAssigneeUserId ? { assigneeUserId: selectedAssigneeUserId } : {}),
       ...(newIssueDefaults.parentId ? { parentId: newIssueDefaults.parentId } : {}),

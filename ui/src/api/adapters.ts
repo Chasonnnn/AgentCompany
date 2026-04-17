@@ -9,6 +9,8 @@ export interface AdapterCapabilities {
   supportsSkills: boolean;
   supportsLocalAgentJwt: boolean;
   requiresMaterializedRuntimeSkills: boolean;
+  nativePlanningMode: boolean;
+  nativeDecisionQuestions: boolean;
 }
 
 export interface AdapterInfo {

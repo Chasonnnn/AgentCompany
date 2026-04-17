@@ -283,6 +283,11 @@ const dashboard: DashboardSummary = {
     monthUtilizationPercent: 90,
   },
   pendingApprovals: 1,
+  decisionQuestions: {
+    open: 0,
+    blocking: 0,
+    recent: [],
+  },
   executionHealth: {
     activeContinuityOwners: 0,
     blockedMissingDocs: 0,

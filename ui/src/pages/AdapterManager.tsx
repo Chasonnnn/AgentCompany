@@ -618,6 +618,8 @@ export function AdapterManager() {
                     supportsSkills: false,
                     supportsLocalAgentJwt: false,
                     requiresMaterializedRuntimeSkills: false,
+                    nativePlanningMode: false,
+                    nativeDecisionQuestions: false,
                   },
                 }}
                 canRemove={false}

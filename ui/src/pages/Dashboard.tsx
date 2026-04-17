@@ -20,7 +20,7 @@ import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
-import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
+import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle, MessageCircleQuestion } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -325,6 +325,57 @@ export function Dashboard() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="rounded-lg border border-border/70 bg-card/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <MessageCircleQuestion className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                <div>
+                  <h3 className="text-sm font-semibold">Decision questions</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Board-only question queue, separate from formal approvals.
+                  </p>
+                </div>
+              </div>
+              <div className="text-right text-xs text-muted-foreground">
+                <div>{data.decisionQuestions.open} open</div>
+                <div>{data.decisionQuestions.blocking} blocking</div>
+              </div>
+            </div>
+
+            {data.decisionQuestions.recent.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {data.decisionQuestions.recent.map((question) => (
+                  <Link
+                    key={question.id}
+                    to={`/issues/${question.issueIdentifier ?? question.issueId}`}
+                    className="block rounded-md border border-border/70 bg-background/50 px-3 py-2 no-underline transition-colors hover:bg-accent/40"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-medium">{question.title}</span>
+                          <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                            {question.blocking ? "blocking" : "non-blocking"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {question.issueIdentifier ?? question.issueId.slice(0, 8)} · {question.issueTitle}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-[11px] text-muted-foreground">
+                        {timeAgo(question.createdAt)}
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-3 rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                No open decision questions.
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

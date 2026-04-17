@@ -76,6 +76,18 @@ function splitLines(value: string) {
     .filter(Boolean);
 }
 
+function parseDecisionOptions(value: string) {
+  return splitLines(value).map((line, index) => {
+    const [labelPart, descriptionPart] = line.split("::");
+    const label = labelPart.trim();
+    return {
+      key: `option_${index + 1}`,
+      label,
+      description: descriptionPart?.trim() || null,
+    };
+  });
+}
+
 function SectionCard({
   title,
   subtitle,
@@ -179,6 +191,19 @@ export function IssueContinuityPanel({
   const [branchReturnQuestions, setBranchReturnQuestions] = useState("");
   const [branchReturnEvidence, setBranchReturnEvidence] = useState("");
   const [branchReturnArtifacts, setBranchReturnArtifacts] = useState("");
+  const [showQuestionForm, setShowQuestionForm] = useState(false);
+  const [questionTitle, setQuestionTitle] = useState("");
+  const [questionBody, setQuestionBody] = useState("");
+  const [questionWhyBlocked, setQuestionWhyBlocked] = useState("");
+  const [questionOptions, setQuestionOptions] = useState("");
+  const [questionSuggestedDefault, setQuestionSuggestedDefault] = useState("");
+  const [questionBlocking, setQuestionBlocking] = useState(true);
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
+  const [questionAnswer, setQuestionAnswer] = useState("");
+  const [questionAnswerNote, setQuestionAnswerNote] = useState("");
+  const [questionAnswerOptionKey, setQuestionAnswerOptionKey] = useState("");
+  const [questionDismissNote, setQuestionDismissNote] = useState("");
+  const [questionEscalationSummary, setQuestionEscalationSummary] = useState("");
   const [selectedMergeBranchId, setSelectedMergeBranchId] = useState<string | null>(null);
   const [selectedMergeKeys, setSelectedMergeKeys] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +230,7 @@ export function IssueContinuityPanel({
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.id) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issue.id) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.continuity(issue.id) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.questions(issue.id) }),
       issue.parentId
         ? queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.parentId) })
         : Promise.resolve(),
@@ -451,6 +477,86 @@ export function IssueContinuityPanel({
     onError: (err) => setError(err instanceof Error ? err.message : "Failed to merge branch return"),
   });
 
+  const createQuestionMutation = useMutation({
+    mutationFn: () =>
+      issuesApi.createQuestion(issue.id, {
+        title: questionTitle.trim(),
+        question: questionBody.trim(),
+        whyBlocked: questionWhyBlocked.trim() || null,
+        blocking: questionBlocking,
+        recommendedOptions: parseDecisionOptions(questionOptions),
+        suggestedDefault: questionSuggestedDefault.trim() || null,
+      }),
+    onSuccess: async () => {
+      setError(null);
+      setShowQuestionForm(false);
+      setQuestionTitle("");
+      setQuestionBody("");
+      setQuestionWhyBlocked("");
+      setQuestionOptions("");
+      setQuestionSuggestedDefault("");
+      setQuestionBlocking(true);
+      await invalidate();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed to create decision question"),
+  });
+
+  const answerQuestionMutation = useMutation({
+    mutationFn: (questionId: string) =>
+      issuesApi.answerQuestion(questionId, {
+        selectedOptionKey: questionAnswerOptionKey || null,
+        answer: questionAnswer.trim(),
+        note: questionAnswerNote.trim() || null,
+      }),
+    onSuccess: async () => {
+      setError(null);
+      setActiveQuestionId(null);
+      setQuestionAnswer("");
+      setQuestionAnswerNote("");
+      setQuestionAnswerOptionKey("");
+      setQuestionDismissNote("");
+      setQuestionEscalationSummary("");
+      await invalidate();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed to answer decision question"),
+  });
+
+  const dismissQuestionMutation = useMutation({
+    mutationFn: (questionId: string) =>
+      issuesApi.dismissQuestion(questionId, {
+        note: questionDismissNote.trim() || null,
+      }),
+    onSuccess: async () => {
+      setError(null);
+      setActiveQuestionId(null);
+      setQuestionAnswer("");
+      setQuestionAnswerNote("");
+      setQuestionAnswerOptionKey("");
+      setQuestionDismissNote("");
+      setQuestionEscalationSummary("");
+      await invalidate();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed to dismiss decision question"),
+  });
+
+  const escalateQuestionMutation = useMutation({
+    mutationFn: (questionId: string) =>
+      issuesApi.escalateQuestionApproval(questionId, {
+        summary: questionEscalationSummary.trim() || null,
+      }),
+    onSuccess: async () => {
+      setError(null);
+      setActiveQuestionId(null);
+      setQuestionAnswer("");
+      setQuestionAnswerNote("");
+      setQuestionAnswerOptionKey("");
+      setQuestionDismissNote("");
+      setQuestionEscalationSummary("");
+      await invalidate();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed to escalate decision question"),
+  });
+
   const state = continuity?.continuityState ?? issue.continuityState ?? null;
   const bundle = continuity?.continuityBundle ?? null;
   const remediation = continuity?.remediation ?? null;
@@ -466,9 +572,20 @@ export function IssueContinuityPanel({
   const branchReturnDoc = bundle?.issueDocuments["branch-return"]?.body
     ? parseIssueBranchReturnMarkdown(bundle.issueDocuments["branch-return"].body)
     : null;
+  const decisionQuestions = bundle?.decisionQuestions ?? [];
+  const openDecisionQuestions = decisionQuestions.filter((question) => question.status === "open");
+  const answeredDecisionQuestions = decisionQuestions.filter((question) => question.status === "answered");
+  const activeDecisionQuestion = activeQuestionId
+    ? decisionQuestions.find((question) => question.id === activeQuestionId) ?? null
+    : null;
   const returnedBranches = (state?.returnedBranchIssueIds ?? [])
     .map((branchId) => childIssuesById.get(branchId))
     .filter((branch): branch is Issue => Boolean(branch));
+  const readyToExecute =
+    state?.status === "ready" &&
+    state.health === "healthy" &&
+    (state.blockingDecisionQuestionCount ?? 0) === 0 &&
+    state.missingDocumentKeys.length === 0;
 
   if (!state) {
     return (
@@ -509,6 +626,9 @@ export function IssueContinuityPanel({
             <span className="rounded-full border border-border px-2 py-0.5 text-[11px] capitalize">
               {state.health.replaceAll("_", " ")}
             </span>
+            <span className="rounded-full border border-border px-2 py-0.5 text-[11px]">
+              {readyToExecute ? "Ready to execute" : "Planning required"}
+            </span>
           </div>
           <p className="text-xs text-muted-foreground">
             Owner: {actorLabel({ assigneeAgentId: issue.assigneeAgentId, assigneeUserId: issue.assigneeUserId, agentsById })}
@@ -534,6 +654,9 @@ export function IssueContinuityPanel({
           </Button>
           <Button size="sm" variant="outline" onClick={() => setShowBranchForm((value) => !value)}>
             Create branch issue
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setShowQuestionForm((value) => !value)}>
+            Ask decision
           </Button>
           <Button size="sm" variant="outline" onClick={() => setShowHandoffForm((value) => !value)}>
             Start handoff
@@ -568,6 +691,15 @@ export function IssueContinuityPanel({
           <span className="font-medium text-foreground">Last branch return:</span>{" "}
           {state.lastBranchReturnAt ? relativeTime(state.lastBranchReturnAt) : "none"}
         </div>
+        <div>
+          <span className="font-medium text-foreground">Open decisions:</span>{" "}
+          {state.openDecisionQuestionCount ?? 0}
+          {state.blockingDecisionQuestionCount ? ` (${state.blockingDecisionQuestionCount} blocking)` : ""}
+        </div>
+        <div>
+          <span className="font-medium text-foreground">Last answered decision:</span>{" "}
+          {state.lastDecisionAnswerAt ? relativeTime(state.lastDecisionAnswerAt) : "none"}
+        </div>
       </div>
 
       {state.healthReason || (state.healthDetails?.length ?? 0) > 0 ? (
@@ -580,6 +712,168 @@ export function IssueContinuityPanel({
               <li key={detail}>{detail}</li>
             ))}
           </ul>
+        </SectionCard>
+      ) : null}
+
+      <SectionCard
+        title="Planning readiness"
+        subtitle="Execution starts after planning docs exist, blocking decisions are resolved, and continuity health is clean."
+      >
+        <div className="grid gap-2 text-xs md:grid-cols-2">
+          <div>
+            <span className="font-medium text-foreground">Ready gate:</span> {readyToExecute ? "open" : "blocked"}
+          </div>
+          <div>
+            <span className="font-medium text-foreground">Planning status:</span> {state.status.replaceAll("_", " ")}
+          </div>
+          <div>
+            <span className="font-medium text-foreground">Required docs present:</span>{" "}
+            {state.missingDocumentKeys.length === 0 ? "yes" : "no"}
+          </div>
+          <div>
+            <span className="font-medium text-foreground">Blocking decisions:</span>{" "}
+            {state.blockingDecisionQuestionCount ?? 0}
+          </div>
+        </div>
+      </SectionCard>
+
+      {showQuestionForm ? (
+        <SectionCard title="Ask a decision question" subtitle="Use a typed question artifact when the board needs to unblock planning or execution.">
+          <div className="grid gap-2 md:grid-cols-2">
+            <Input value={questionTitle} onChange={(event) => setQuestionTitle(event.target.value)} placeholder="Question title" className="md:col-span-2" />
+            <Textarea value={questionBody} onChange={(event) => setQuestionBody(event.target.value)} placeholder="Question for the board" className="md:col-span-2" />
+            <Textarea value={questionWhyBlocked} onChange={(event) => setQuestionWhyBlocked(event.target.value)} placeholder="Why this blocks progress" className="md:col-span-2" />
+            <Textarea value={questionOptions} onChange={(event) => setQuestionOptions(event.target.value)} placeholder={"Recommended options, one per line\nOption A::When to choose it"} className="md:col-span-2" />
+            <Input value={questionSuggestedDefault} onChange={(event) => setQuestionSuggestedDefault(event.target.value)} placeholder="Suggested default recommendation" className="md:col-span-2" />
+            <Label className="md:col-span-2 flex items-center gap-2 text-xs">
+              <Checkbox checked={questionBlocking} onCheckedChange={(value) => setQuestionBlocking(Boolean(value))} />
+              Block progress until answered
+            </Label>
+            <div className="md:col-span-2 flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => createQuestionMutation.mutate()}
+                disabled={createQuestionMutation.isPending || !questionTitle.trim() || !questionBody.trim()}
+              >
+                {createQuestionMutation.isPending ? "Asking…" : "Create question"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setShowQuestionForm(false)}>Cancel</Button>
+            </div>
+          </div>
+        </SectionCard>
+      ) : null}
+
+      {openDecisionQuestions.length > 0 ? (
+        <SectionCard title="Open decision questions" subtitle="Blocking questions pause work until the board answers or dismisses them.">
+          <div className="space-y-2">
+            {openDecisionQuestions.map((question) => (
+              <div key={question.id} className="rounded-md border border-border/70 bg-background/80 p-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-xs font-medium text-foreground">{question.title}</div>
+                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase">
+                    {question.blocking ? "blocking" : "non-blocking"}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">{question.question}</p>
+                {question.whyBlocked ? (
+                  <p className="text-xs">
+                    <span className="font-medium text-foreground">Why blocked:</span> {question.whyBlocked}
+                  </p>
+                ) : null}
+                {question.recommendedOptions.length > 0 ? (
+                  <ul className="space-y-1 text-xs text-muted-foreground">
+                    {question.recommendedOptions.map((option) => (
+                      <li key={option.key}>
+                        <span className="font-medium text-foreground">{option.label}</span>
+                        {option.description ? ` — ${option.description}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => {
+                    setActiveQuestionId(question.id);
+                    setQuestionAnswer("");
+                    setQuestionAnswerNote("");
+                    setQuestionAnswerOptionKey(question.recommendedOptions[0]?.key ?? "");
+                    setQuestionDismissNote("");
+                    setQuestionEscalationSummary("");
+                  }}>
+                    Answer / dismiss
+                  </Button>
+                </div>
+                {activeDecisionQuestion?.id === question.id ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {question.recommendedOptions.length > 0 ? (
+                      <select
+                        value={questionAnswerOptionKey}
+                        onChange={(event) => setQuestionAnswerOptionKey(event.target.value)}
+                        className="h-9 rounded-md border border-border bg-background px-2 text-sm md:col-span-2"
+                      >
+                        <option value="">No option selected</option>
+                        {question.recommendedOptions.map((option) => (
+                          <option key={option.key} value={option.key}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                    <Textarea value={questionAnswer} onChange={(event) => setQuestionAnswer(event.target.value)} placeholder="Structured answer" className="md:col-span-2" />
+                    <Textarea value={questionAnswerNote} onChange={(event) => setQuestionAnswerNote(event.target.value)} placeholder="Optional note" className="md:col-span-2" />
+                    <Textarea value={questionDismissNote} onChange={(event) => setQuestionDismissNote(event.target.value)} placeholder="Dismissal note (optional)" className="md:col-span-2" />
+                    <Textarea value={questionEscalationSummary} onChange={(event) => setQuestionEscalationSummary(event.target.value)} placeholder="Approval escalation summary (optional)" className="md:col-span-2" />
+                    <div className="md:col-span-2 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => answerQuestionMutation.mutate(question.id)}
+                        disabled={answerQuestionMutation.isPending || !questionAnswer.trim()}
+                      >
+                        {answerQuestionMutation.isPending ? "Saving…" : "Answer"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => dismissQuestionMutation.mutate(question.id)}
+                        disabled={dismissQuestionMutation.isPending}
+                      >
+                        {dismissQuestionMutation.isPending ? "Dismissing…" : "Dismiss"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => escalateQuestionMutation.mutate(question.id)}
+                        disabled={escalateQuestionMutation.isPending}
+                      >
+                        {escalateQuestionMutation.isPending ? "Escalating…" : "Escalate to approval"}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setActiveQuestionId(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      ) : null}
+
+      {answeredDecisionQuestions.length > 0 ? (
+        <SectionCard title="Answered decisions" subtitle="Recent board answers persisted as decision artifacts.">
+          <div className="space-y-2 text-xs">
+            {answeredDecisionQuestions.map((question) => (
+              <div key={question.id} className="rounded-md border border-border/70 bg-background/80 p-3 space-y-1">
+                <div className="font-medium text-foreground">{question.title}</div>
+                <p className="text-muted-foreground">{question.question}</p>
+                <p>
+                  <span className="font-medium text-foreground">Answer:</span> {question.answer?.answer ?? "none"}
+                </p>
+                <p className="text-muted-foreground">
+                  {question.answeredAt ? `Answered ${relativeTime(question.answeredAt)}` : "Answered"}
+                </p>
+              </div>
+            ))}
+          </div>
         </SectionCard>
       ) : null}
 

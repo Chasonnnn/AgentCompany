@@ -21,6 +21,19 @@ export interface DashboardSummary {
     monthUtilizationPercent: number;
   };
   pendingApprovals: number;
+  decisionQuestions: {
+    open: number;
+    blocking: number;
+    recent: Array<{
+      id: string;
+      issueId: string;
+      issueIdentifier: string | null;
+      issueTitle: string;
+      title: string;
+      blocking: boolean;
+      createdAt: string;
+    }>;
+  };
   executionHealth: {
     activeContinuityOwners: number;
     blockedMissingDocs: number;

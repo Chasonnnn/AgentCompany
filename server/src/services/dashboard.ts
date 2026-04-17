@@ -1,6 +1,6 @@
 import { and, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, approvals, companies, costEvents, issues } from "@paperclipai/db";
+import { agents, approvals, companies, costEvents, issueDecisionQuestions, issues } from "@paperclipai/db";
 import type { DashboardSummary } from "@paperclipai/shared";
 import { notFound } from "../errors.js";
 import { agentService } from "./agents.js";
@@ -32,7 +32,14 @@ export function dashboardService(db: Db) {
         .where(eq(issues.companyId, companyId))
         .groupBy(issues.status);
 
-      const [pendingApprovals, continuityRows, simplificationReport] = await Promise.all([
+      const [
+        pendingApprovals,
+        continuityRows,
+        simplificationReport,
+        openDecisionQuestionCount,
+        blockingDecisionQuestionCount,
+        openDecisionQuestionRows,
+      ] = await Promise.all([
         db
           .select({ count: sql<number>`count(*)` })
           .from(approvals)
@@ -48,6 +55,37 @@ export function dashboardService(db: Db) {
           .from(issues)
           .where(and(eq(issues.companyId, companyId), sql`${issues.hiddenAt} is null`, sql`${issues.status} <> 'done'`, sql`${issues.status} <> 'cancelled'`)),
         agentSvc.orgSimplificationForCompany(companyId),
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(issueDecisionQuestions)
+          .where(and(eq(issueDecisionQuestions.companyId, companyId), eq(issueDecisionQuestions.status, "open")))
+          .then((rows) => Number(rows[0]?.count ?? 0)),
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(issueDecisionQuestions)
+          .where(
+            and(
+              eq(issueDecisionQuestions.companyId, companyId),
+              eq(issueDecisionQuestions.status, "open"),
+              eq(issueDecisionQuestions.blocking, true),
+            ),
+          )
+          .then((rows) => Number(rows[0]?.count ?? 0)),
+        db
+          .select({
+            id: issueDecisionQuestions.id,
+            issueId: issueDecisionQuestions.issueId,
+            title: issueDecisionQuestions.title,
+            blocking: issueDecisionQuestions.blocking,
+            createdAt: issueDecisionQuestions.createdAt,
+            issueIdentifier: issues.identifier,
+            issueTitle: issues.title,
+          })
+          .from(issueDecisionQuestions)
+          .innerJoin(issues, eq(issueDecisionQuestions.issueId, issues.id))
+          .where(and(eq(issueDecisionQuestions.companyId, companyId), eq(issueDecisionQuestions.status, "open")))
+          .orderBy(sql`${issueDecisionQuestions.createdAt} desc`)
+          .limit(8),
       ]);
 
       const agentCounts: DashboardSummary["agents"] = {
@@ -162,6 +200,19 @@ export function dashboardService(db: Db) {
           monthUtilizationPercent: Number(utilization.toFixed(2)),
         },
         pendingApprovals,
+        decisionQuestions: {
+          open: openDecisionQuestionCount,
+          blocking: blockingDecisionQuestionCount,
+          recent: openDecisionQuestionRows.map((row) => ({
+            id: row.id,
+            issueId: row.issueId,
+            issueIdentifier: row.issueIdentifier ?? null,
+            issueTitle: row.issueTitle,
+            title: row.title,
+            blocking: row.blocking,
+            createdAt: row.createdAt.toISOString(),
+          })),
+        },
         executionHealth,
         budgets: {
           activeIncidents: budgetOverview.activeIncidents.length,

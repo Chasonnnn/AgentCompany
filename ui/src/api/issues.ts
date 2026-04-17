@@ -5,6 +5,7 @@ import type {
   IssueBranchMergePreview,
   IssueBranchReturnDocument,
   IssueContinuityRemediation,
+  IssueDecisionQuestion,
   FeedbackTargetType,
   FeedbackTrace,
   FeedbackVote,
@@ -85,6 +86,65 @@ export const issuesApi = {
   deleteLabel: (id: string) => api.delete<IssueLabel>(`/labels/${id}`),
   get: (id: string) => api.get<Issue>(`/issues/${id}`),
   getContinuity: (id: string) => api.get<IssueContinuityResponse>(`/issues/${id}/continuity`),
+  listQuestions: (id: string) => api.get<IssueDecisionQuestion[]>(`/issues/${id}/questions`),
+  createQuestion: (
+    id: string,
+    data: {
+      title: string;
+      question: string;
+      whyBlocked?: string | null;
+      blocking?: boolean;
+      recommendedOptions?: Array<{
+        key: string;
+        label: string;
+        description?: string | null;
+      }>;
+      suggestedDefault?: string | null;
+      linkedApprovalId?: string | null;
+    },
+  ) =>
+    api.post<{
+      question: IssueDecisionQuestion;
+      continuityState: IssueContinuityState;
+      continuityBundle: IssueContinuityBundle;
+    }>(`/issues/${id}/questions`, data),
+  answerQuestion: (
+    questionId: string,
+    data: {
+      selectedOptionKey?: string | null;
+      answer: string;
+      note?: string | null;
+      escalateToApproval?: boolean;
+    },
+  ) =>
+    api.post<{
+      question: IssueDecisionQuestion;
+      continuityState: IssueContinuityState;
+      continuityBundle: IssueContinuityBundle;
+      shouldEscalateToApproval?: boolean;
+    }>(`/questions/${questionId}/answer`, data),
+  dismissQuestion: (questionId: string, data: { note?: string | null }) =>
+    api.post<{
+      question: IssueDecisionQuestion;
+      continuityState: IssueContinuityState;
+      continuityBundle: IssueContinuityBundle;
+    }>(`/questions/${questionId}/dismiss`, data),
+  escalateQuestionApproval: (
+    questionId: string,
+    data: {
+      summary?: string | null;
+      recommendedAction?: string | null;
+      nextActionOnApproval?: string | null;
+      risks?: string[];
+      proposedComment?: string | null;
+    },
+  ) =>
+    api.post<{
+      question: IssueDecisionQuestion;
+      approvalId: string;
+      continuityState: IssueContinuityState;
+      continuityBundle: IssueContinuityBundle;
+    }>(`/questions/${questionId}/escalate-approval`, data),
   markRead: (id: string) => api.post<{ id: string; lastReadAt: Date }>(`/issues/${id}/read`, {}),
   markUnread: (id: string) => api.delete<{ id: string; removed: boolean }>(`/issues/${id}/read`),
   archiveFromInbox: (id: string) =>
