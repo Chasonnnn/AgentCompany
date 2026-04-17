@@ -15,6 +15,7 @@ import path from "node:path";
 import { parseCodexJsonl } from "./parse.js";
 import { codexHomeDir, readCodexAuthInfo } from "./quota.js";
 import { buildCodexExecArgs } from "./codex-args.js";
+import { prepareManagedCodexHome, resolveManagedCodexHomeDir } from "./codex-home.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -46,6 +47,25 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
   const clean = raw.replace(/\s+/g, " ").trim();
   const max = 240;
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+function isCodexRefreshFailure(text: string): boolean {
+  return /(?:access token could not be refreshed|please log out and sign in again|token_expired|could not validate your token|could not parse your authentication token)/i.test(
+    text,
+  );
+}
+
+async function resolveProbeCodexHome(
+  companyId: string,
+  env: Record<string, string>,
+): Promise<string | undefined> {
+  if (isNonEmpty(env.CODEX_HOME)) {
+    return path.resolve(env.CODEX_HOME);
+  }
+  const mergedEnv = { ...process.env, ...env };
+  return prepareManagedCodexHome(mergedEnv, async () => {}, companyId).catch(() =>
+    resolveManagedCodexHomeDir(mergedEnv, companyId),
+  );
 }
 
 async function readCodexLoginStatus(
@@ -81,7 +101,7 @@ async function readCodexLoginStatus(
 }
 
 const CODEX_AUTH_REQUIRED_RE =
-  /(?:not\s+logged\s+in|login\s+required|authentication\s+required|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|openai[_\s-]?api[_\s-]?key|api[_\s-]?key.*required|please\s+run\s+`?codex\s+login`?)/i;
+  /(?:not\s+logged\s+in|login\s+required|authentication\s+required|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|openai[_\s-]?api[_\s-]?key|api[_\s-]?key.*required|please\s+run\s+`?codex\s+login`?|access token could not be refreshed|please log out and sign in again)/i;
 
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
@@ -112,7 +132,12 @@ export async function testEnvironment(
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
-  const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
+  const probeEnv = { ...env };
+  const effectiveCodexHome = await resolveProbeCodexHome(ctx.companyId, probeEnv);
+  if (effectiveCodexHome) {
+    probeEnv.CODEX_HOME = effectiveCodexHome;
+  }
+  const runtimeEnv = ensurePathInEnv({ ...process.env, ...probeEnv });
   try {
     await ensureCommandResolvable(command, cwd, runtimeEnv);
     checks.push({
@@ -140,8 +165,8 @@ export async function testEnvironment(
       detail: `Detected in ${source}.`,
     });
   } else {
-    const codexHome = isNonEmpty(env.CODEX_HOME) ? env.CODEX_HOME : undefined;
-    const loginStatus = await readCodexLoginStatus(command, cwd, env).catch(() => null);
+    const codexHome = isNonEmpty(probeEnv.CODEX_HOME) ? probeEnv.CODEX_HOME : undefined;
+    const loginStatus = await readCodexLoginStatus(command, cwd, probeEnv).catch(() => null);
     const codexAuth =
       loginStatus?.loggedIn === false
         ? null
@@ -150,7 +175,7 @@ export async function testEnvironment(
       checks.push({
         code: "codex_native_auth_present",
         level: "info",
-        message: "Codex is authenticated via its own auth configuration.",
+        message: "Saved Codex auth configuration was detected.",
         detail:
           codexAuth?.email
             ? `Logged in as ${codexAuth.email}.`
@@ -197,7 +222,7 @@ export async function testEnvironment(
         args,
         {
           cwd,
-          env,
+          env: probeEnv,
           timeoutSec: 45,
           graceSec: 5,
           stdin: "Respond with hello.",
@@ -232,12 +257,18 @@ export async function testEnvironment(
               }),
         });
       } else if (CODEX_AUTH_REQUIRED_RE.test(authEvidence)) {
+        const hasSavedAuth = checks.some((check) => check.code === "codex_native_auth_present");
+        const staleSavedAuth = hasSavedAuth && isCodexRefreshFailure(authEvidence);
         checks.push({
-          code: "codex_hello_probe_auth_required",
+          code: staleSavedAuth ? "codex_hello_probe_auth_stale" : "codex_hello_probe_auth_required",
           level: "warn",
-          message: "Codex CLI is installed, but authentication is not ready.",
+          message: staleSavedAuth
+            ? "Saved Codex auth was detected, but `codex exec` could not refresh it."
+            : "Codex CLI is installed, but authentication is not ready.",
           ...(detail ? { detail } : {}),
-          hint: "Configure OPENAI_API_KEY in adapter env/shell or run `codex login`, then retry the probe.",
+          hint: staleSavedAuth
+            ? "Run `codex logout` and `codex login` to refresh the saved session, or set OPENAI_API_KEY in adapter env/shell, then retry the probe."
+            : "Configure OPENAI_API_KEY in adapter env/shell or run `codex login`, then retry the probe.",
         });
       } else {
         checks.push({

@@ -152,6 +152,134 @@ describe("codex_local environment diagnostics", () => {
     }
   });
 
+  it("surfaces stale saved auth when `codex exec` cannot refresh the session", async () => {
+    const root = path.join(
+      os.tmpdir(),
+      `paperclip-codex-stale-auth-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const binDir = path.join(root, "bin");
+    const cwd = path.join(root, "workspace");
+    const fakeCodex = path.join(binDir, "codex");
+    const script = [
+      "#!/bin/sh",
+      "if [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then",
+      "  echo 'Logged in using ChatGPT'",
+      "  exit 0",
+      "fi",
+      "if [ \"$1\" = \"exec\" ]; then",
+      "  echo '{\"type\":\"error\",\"message\":\"Your access token could not be refreshed. Please log out and sign in again.\"}'",
+      "  echo '{\"type\":\"turn.failed\",\"error\":{\"message\":\"Your access token could not be refreshed. Please log out and sign in again.\"}}'",
+      "  exit 1",
+      "fi",
+      "echo \"unexpected args: $*\" >&2",
+      "exit 1",
+      "",
+    ].join("\n");
+
+    try {
+      await fs.mkdir(binDir, { recursive: true });
+      await fs.writeFile(fakeCodex, script, "utf8");
+      await fs.chmod(fakeCodex, 0o755);
+
+      const result = await testEnvironment({
+        companyId: "company-1",
+        adapterType: "codex_local",
+        config: {
+          command: "codex",
+          cwd,
+          env: {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+        },
+      });
+
+      expect(result.status).toBe("warn");
+      expect(result.checks.some((check) => check.code === "codex_native_auth_present")).toBe(true);
+      expect(
+        result.checks.some((check) => check.code === "codex_hello_probe_auth_stale"),
+      ).toBe(true);
+      expect(
+        result.checks.some(
+          (check) =>
+            check.hint ===
+            "Run `codex logout` and `codex login` to refresh the saved session, or set OPENAI_API_KEY in adapter env/shell, then retry the probe.",
+        ),
+      ).toBe(true);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("probes the Paperclip-managed CODEX_HOME by default", async () => {
+    const root = path.join(
+      os.tmpdir(),
+      `paperclip-codex-managed-home-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const binDir = path.join(root, "bin");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const paperclipHome = path.join(root, "paperclip-home");
+    const cwd = path.join(root, "workspace");
+    const capturePath = path.join(root, "capture.txt");
+    const fakeCodex = path.join(binDir, "codex");
+    const expectedManagedHome = path.join(
+      paperclipHome,
+      "instances",
+      "default",
+      "companies",
+      "company-1",
+      "codex-home",
+    );
+    const script = [
+      "#!/bin/sh",
+      "if [ -n \"$PAPERCLIP_TEST_CAPTURE_PATH\" ]; then",
+      "  printf '%s' \"$CODEX_HOME\" > \"$PAPERCLIP_TEST_CAPTURE_PATH\"",
+      "fi",
+      "if [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then",
+      "  echo 'Logged in using ChatGPT'",
+      "  exit 0",
+      "fi",
+      "if [ \"$1\" = \"exec\" ]; then",
+      "  echo '{\"type\":\"thread.started\",\"thread_id\":\"test-thread\"}'",
+      "  echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"hello\"}}'",
+      "  echo '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"cached_input_tokens\":0,\"output_tokens\":1}}'",
+      "  exit 0",
+      "fi",
+      "echo \"unexpected args: $*\" >&2",
+      "exit 1",
+      "",
+    ].join("\n");
+
+    try {
+      await fs.mkdir(binDir, { recursive: true });
+      await fs.mkdir(sharedCodexHome, { recursive: true });
+      await fs.writeFile(path.join(sharedCodexHome, "auth.json"), JSON.stringify({ accessToken: "fake-token" }));
+      await fs.writeFile(fakeCodex, script, "utf8");
+      await fs.chmod(fakeCodex, 0o755);
+
+      vi.stubEnv("HOME", root);
+      vi.stubEnv("PAPERCLIP_HOME", paperclipHome);
+      vi.stubEnv("CODEX_HOME", sharedCodexHome);
+
+      const result = await testEnvironment({
+        companyId: "company-1",
+        adapterType: "codex_local",
+        config: {
+          command: "codex",
+          cwd,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+        },
+      });
+
+      expect(result.checks.some((check) => check.code === "codex_hello_probe_passed")).toBe(true);
+      expect(await fs.readFile(capturePath, "utf8")).toBe(expectedManagedHome);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   itWindows("runs the hello probe when Codex is available via a Windows .cmd wrapper", async () => {
     const root = path.join(
       os.tmpdir(),
