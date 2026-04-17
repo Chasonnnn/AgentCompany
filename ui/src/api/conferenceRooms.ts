@@ -1,5 +1,6 @@
 import type {
   Approval,
+  AddConferenceRoomComment,
   ConferenceRoom,
   ConferenceRoomComment,
   CreateConferenceRoom,
@@ -16,8 +17,8 @@ export const conferenceRoomsApi = {
   update: (roomId: string, data: UpdateConferenceRoom) =>
     api.patch<ConferenceRoom>(`/conference-rooms/${roomId}`, data),
   listComments: (roomId: string) => api.get<ConferenceRoomComment[]>(`/conference-rooms/${roomId}/comments`),
-  addComment: (roomId: string, body: string) =>
-    api.post<ConferenceRoomComment>(`/conference-rooms/${roomId}/comments`, { body }),
+  addComment: (roomId: string, data: AddConferenceRoomComment) =>
+    api.post<ConferenceRoomComment>(`/conference-rooms/${roomId}/comments`, data),
   requestBoardDecision: (roomId: string, data: RequestConferenceRoomDecision) =>
     api.post<Approval>(`/conference-rooms/${roomId}/request-board-decision`, data),
   listForIssue: (issueId: string) => api.get<ConferenceRoom[]>(`/issues/${issueId}/conference-rooms`),

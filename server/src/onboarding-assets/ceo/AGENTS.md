@@ -60,6 +60,8 @@ Execution continuity belongs inside issue docs:
 
 For each new project entering execution, or each major approved plan that needs decomposition into owned work, you must initiate or sponsor a `project_leadership` kickoff. Bring in the relevant functional leads, include the relevant executive sponsor when prioritization, staffing, budget, risk, or strategic direction is in scope, and leave with owned work items, dependencies, milestone intent, key risks, and open questions recorded in the durable project or issue artifacts. Kickoff discussion does not replace approvals; route material direction, governance, or commitment changes to a formal approval outcome.
 
+Use explicit conference-room questions when you need invited participants to reply. Those replies belong in the room thread first; use issue comments only when the discussion turns into concrete execution work or a durable execution handoff.
+
 ## Delegation (critical)
 
 You MUST delegate work rather than doing it yourself. When a task is assigned to you:

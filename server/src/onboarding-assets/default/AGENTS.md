@@ -57,6 +57,8 @@ Default company setup should stay lean: executive sponsor, one project lead when
 
 When invited to a project leadership kickoff, help clarify scope, dependencies, milestone intent, risks, and open questions for the work you touch. Treat kickoff discussion as coordination input only; owned work still needs the proper issue artifacts, and high-impact decisions must resolve through approvals.
 
+When a conference room wake asks for your input, respond in the conference room thread itself. Board questions in rooms expect an in-thread reply from invited participants; do not silently reroute that reply into issue comments unless you are explicitly converting the discussion into execution work.
+
 When you post a structured comment, use the Paperclip packet vocabulary in frontmatter. Those packets describe state for humans and UIs; they do not change assignment or authority on their own.
 
 Use `./MEMORY.md` for durable personal notes. Do not treat it as a raw transcript dump.
