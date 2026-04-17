@@ -5,6 +5,8 @@ import {
   ISSUE_CONTINUITY_HEALTHS,
   ISSUE_CONTINUITY_STATUSES,
   ISSUE_CONTINUITY_TIERS,
+  ISSUE_DECISION_QUESTION_STATUSES,
+  ISSUE_DECISION_QUESTION_TARGETS,
   ISSUE_EXECUTION_DECISION_OUTCOMES,
   ISSUE_EXECUTION_POLICY_MODES,
   ISSUE_EXECUTION_STAGE_TYPES,
@@ -125,6 +127,42 @@ export const issueSpecStateSchema = z.enum(ISSUE_SPEC_STATES);
 export const issueBranchRoleSchema = z.enum(ISSUE_BRANCH_ROLES);
 export const issueBranchStatusSchema = z.enum(ISSUE_BRANCH_STATUSES);
 export const issueContinuityHealthSchema = z.enum(ISSUE_CONTINUITY_HEALTHS);
+export const issueDecisionQuestionStatusSchema = z.enum(ISSUE_DECISION_QUESTION_STATUSES);
+export const issueDecisionQuestionTargetSchema = z.enum(ISSUE_DECISION_QUESTION_TARGETS);
+
+export const issueDecisionOptionSchema = z.object({
+  key: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  description: z.string().trim().min(1).optional().nullable(),
+});
+
+export const issueDecisionAnswerSchema = z.object({
+  selectedOptionKey: z.string().trim().min(1).optional().nullable(),
+  answer: z.string().trim().min(1),
+  note: z.string().trim().min(1).optional().nullable(),
+});
+
+export const issueDecisionQuestionSchema = z.object({
+  id: z.string().uuid(),
+  companyId: z.string().uuid(),
+  issueId: z.string().uuid(),
+  target: issueDecisionQuestionTargetSchema,
+  requestedByAgentId: z.string().uuid().nullable(),
+  requestedByUserId: z.string().nullable(),
+  status: issueDecisionQuestionStatusSchema,
+  blocking: z.boolean(),
+  title: z.string().trim().min(1),
+  question: z.string().trim().min(1),
+  whyBlocked: z.string().trim().min(1).nullable(),
+  recommendedOptions: z.array(issueDecisionOptionSchema).default([]),
+  suggestedDefault: z.string().trim().min(1).nullable(),
+  answer: issueDecisionAnswerSchema.nullable(),
+  answeredByUserId: z.string().nullable(),
+  answeredAt: z.coerce.date().nullable(),
+  linkedApprovalId: z.string().uuid().nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
 
 export const issueContinuityStateSchema = z.object({
   tier: issueContinuityTierSchema,
@@ -140,6 +178,10 @@ export const issueContinuityStateSchema = z.object({
   unresolvedBranchIssueIds: z.array(z.string().uuid()).default([]),
   returnedBranchIssueIds: z.array(z.string().uuid()).default([]),
   openReviewFindingsRevisionId: z.string().uuid().nullable().optional(),
+  openDecisionQuestionCount: z.number().int().nonnegative().optional().default(0),
+  blockingDecisionQuestionCount: z.number().int().nonnegative().optional().default(0),
+  lastDecisionQuestionAt: z.string().datetime().nullable().optional(),
+  lastDecisionAnswerAt: z.string().datetime().nullable().optional(),
   lastProgressAt: z.string().datetime().nullable(),
   lastHandoffAt: z.string().datetime().nullable(),
   lastReviewFindingsAt: z.string().datetime().nullable().optional(),
@@ -164,6 +206,7 @@ export const issueContinuityBundleSchema = z.object({
   bundleHash: z.string().min(1),
   continuityState: issueContinuityStateSchema.nullable(),
   executionState: issueExecutionStateSchema.nullable(),
+  decisionQuestions: z.array(issueDecisionQuestionSchema).default([]),
   issueDocuments: z.object({
     spec: issueContinuityDocumentSnapshotSchema.nullable(),
     plan: issueContinuityDocumentSnapshotSchema.nullable(),
@@ -189,7 +232,38 @@ export const issueContinuitySummarySchema = z.object({
   missingDocumentCount: z.number().int().nonnegative(),
   activeGatePresent: z.boolean(),
   openReviewFindings: z.boolean(),
+  openDecisionQuestions: z.number().int().nonnegative(),
+  blockingDecisionQuestions: z.number().int().nonnegative(),
   returnedBranchCount: z.number().int().nonnegative(),
+});
+
+export const createIssueDecisionQuestionSchema = z.object({
+  title: z.string().trim().min(1),
+  question: z.string().trim().min(1),
+  whyBlocked: z.string().trim().min(1).optional().nullable(),
+  blocking: z.boolean().optional().default(true),
+  recommendedOptions: z.array(issueDecisionOptionSchema).default([]),
+  suggestedDefault: z.string().trim().min(1).optional().nullable(),
+  linkedApprovalId: z.string().uuid().optional().nullable(),
+});
+
+export const answerIssueDecisionQuestionSchema = z.object({
+  selectedOptionKey: z.string().trim().min(1).optional().nullable(),
+  answer: z.string().trim().min(1),
+  note: z.string().trim().min(1).optional().nullable(),
+  escalateToApproval: z.boolean().optional().default(false),
+});
+
+export const dismissIssueDecisionQuestionSchema = z.object({
+  note: z.string().trim().min(1).optional().nullable(),
+});
+
+export const escalateIssueDecisionQuestionSchema = z.object({
+  summary: z.string().trim().min(1).optional().nullable(),
+  recommendedAction: z.string().trim().min(1).optional().nullable(),
+  nextActionOnApproval: z.string().trim().min(1).optional().nullable(),
+  risks: z.array(z.string().trim().min(1)).optional(),
+  proposedComment: z.string().trim().min(1).optional().nullable(),
 });
 
 export const issueContinuityRemediationActionSchema = z.object({
@@ -447,6 +521,10 @@ export type ProgressCheckpointIssueContinuity = z.infer<typeof progressCheckpoin
 export type HandoffRepairIssueContinuity = z.infer<typeof handoffRepairIssueContinuitySchema>;
 export type HandoffCancelIssueContinuity = z.infer<typeof handoffCancelIssueContinuitySchema>;
 export type RequestIssueSpecThaw = z.infer<typeof requestIssueSpecThawSchema>;
+export type CreateIssueDecisionQuestion = z.infer<typeof createIssueDecisionQuestionSchema>;
+export type AnswerIssueDecisionQuestion = z.infer<typeof answerIssueDecisionQuestionSchema>;
+export type DismissIssueDecisionQuestion = z.infer<typeof dismissIssueDecisionQuestionSchema>;
+export type EscalateIssueDecisionQuestion = z.infer<typeof escalateIssueDecisionQuestionSchema>;
 export type CreateIssueContinuityBranch = z.infer<typeof createIssueContinuityBranchSchema>;
 export type ReturnIssueContinuityBranch = z.infer<typeof returnIssueContinuityBranchSchema>;
 export type MergeIssueContinuityBranch = z.infer<typeof mergeIssueContinuityBranchSchema>;

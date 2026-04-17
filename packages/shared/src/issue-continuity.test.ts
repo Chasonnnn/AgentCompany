@@ -19,8 +19,12 @@ describe("issue continuity schemas", () => {
       healthDetails: [],
       returnedBranchIssueIds: [],
       openReviewFindingsRevisionId: null,
+      openDecisionQuestionCount: 0,
+      blockingDecisionQuestionCount: 0,
       lastProgressAt: "2026-04-14T12:00:00.000Z",
       lastHandoffAt: null,
+      lastDecisionQuestionAt: null,
+      lastDecisionAnswerAt: null,
       lastReviewFindingsAt: null,
       lastReviewReturnAt: null,
       lastBranchReturnAt: null,
@@ -44,8 +48,12 @@ describe("issue continuity schemas", () => {
       healthDetails: [],
       returnedBranchIssueIds: [],
       openReviewFindingsRevisionId: null,
+      openDecisionQuestionCount: 0,
+      blockingDecisionQuestionCount: 0,
       lastProgressAt: "2026-04-14T12:00:00.000Z",
       lastHandoffAt: null,
+      lastDecisionQuestionAt: null,
+      lastDecisionAnswerAt: null,
       lastReviewFindingsAt: null,
       lastReviewReturnAt: null,
       lastBranchReturnAt: null,
@@ -72,8 +80,12 @@ describe("issue continuity schemas", () => {
         unresolvedBranchIssueIds: [],
         returnedBranchIssueIds: [],
         openReviewFindingsRevisionId: null,
+        openDecisionQuestionCount: 1,
+        blockingDecisionQuestionCount: 1,
         lastProgressAt: "2026-04-14T12:00:00.000Z",
         lastHandoffAt: null,
+        lastDecisionQuestionAt: "2026-04-14T11:45:00.000Z",
+        lastDecisionAnswerAt: null,
         lastReviewFindingsAt: null,
         lastReviewReturnAt: null,
         lastBranchReturnAt: null,
@@ -109,6 +121,35 @@ describe("issue continuity schemas", () => {
         context: null,
         runbook: null,
       },
+      decisionQuestions: [
+        {
+          id: "66666666-6666-4666-8666-666666666666",
+          companyId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          issueId: "33333333-3333-4333-8333-333333333333",
+          target: "board",
+          requestedByAgentId: "77777777-7777-4777-8777-777777777777",
+          requestedByUserId: null,
+          status: "open",
+          blocking: true,
+          title: "Choose rollout path",
+          question: "Should we do a dark launch first?",
+          whyBlocked: "Release sequencing changes test and runbook scope.",
+          recommendedOptions: [
+            {
+              key: "dark_launch",
+              label: "Dark launch",
+              description: "Ship behind a flag first.",
+            },
+          ],
+          suggestedDefault: "dark_launch",
+          answer: null,
+          answeredByUserId: null,
+          answeredAt: null,
+          linkedApprovalId: null,
+          createdAt: "2026-04-14T11:45:00.000Z",
+          updatedAt: "2026-04-14T11:45:00.000Z",
+        },
+      ],
       referencedRevisionIds: {
         spec: "44444444-4444-4444-8444-444444444444",
         plan: null,
@@ -126,5 +167,6 @@ describe("issue continuity schemas", () => {
     expect(parsed.bundleHash).toBe("bundle-123");
     expect(parsed.issueDocuments.progress?.latestRevisionNumber).toBe(2);
     expect(parsed.continuityState?.status).toBe("ready");
+    expect(parsed.decisionQuestions).toHaveLength(1);
   });
 });

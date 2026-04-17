@@ -366,6 +366,8 @@ export type IssueContinuityTier = (typeof ISSUE_CONTINUITY_TIERS)[number];
 
 export const ISSUE_CONTINUITY_STATUSES = [
   "draft",
+  "planning",
+  "awaiting_decision",
   "ready",
   "active",
   "blocked_missing_docs",
@@ -389,6 +391,17 @@ export const ISSUE_CONTINUITY_HEALTHS = [
   "invalid_handoff",
 ] as const;
 export type IssueContinuityHealth = (typeof ISSUE_CONTINUITY_HEALTHS)[number];
+
+export const ISSUE_DECISION_QUESTION_STATUSES = [
+  "open",
+  "answered",
+  "dismissed",
+  "escalated_to_approval",
+] as const;
+export type IssueDecisionQuestionStatus = (typeof ISSUE_DECISION_QUESTION_STATUSES)[number];
+
+export const ISSUE_DECISION_QUESTION_TARGETS = ["board"] as const;
+export type IssueDecisionQuestionTarget = (typeof ISSUE_DECISION_QUESTION_TARGETS)[number];
 
 export const SECRET_PROVIDERS = [
   "local_encrypted",

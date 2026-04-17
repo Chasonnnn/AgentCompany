@@ -4,6 +4,8 @@ import type {
   IssueContinuityHealth,
   IssueContinuityStatus,
   IssueContinuityTier,
+  IssueDecisionQuestionStatus,
+  IssueDecisionQuestionTarget,
   IssueExecutionDecisionOutcome,
   IssueExecutionPolicyMode,
   IssueExecutionStageType,
@@ -179,6 +181,40 @@ export interface IssueExecutionDecision {
   updatedAt: Date;
 }
 
+export interface IssueDecisionOption {
+  key: string;
+  label: string;
+  description?: string | null;
+}
+
+export interface IssueDecisionAnswer {
+  selectedOptionKey?: string | null;
+  answer: string;
+  note?: string | null;
+}
+
+export interface IssueDecisionQuestion {
+  id: string;
+  companyId: string;
+  issueId: string;
+  target: IssueDecisionQuestionTarget;
+  requestedByAgentId: string | null;
+  requestedByUserId: string | null;
+  status: IssueDecisionQuestionStatus;
+  blocking: boolean;
+  title: string;
+  question: string;
+  whyBlocked: string | null;
+  recommendedOptions: IssueDecisionOption[];
+  suggestedDefault: string | null;
+  answer: IssueDecisionAnswer | null;
+  answeredByUserId: string | null;
+  answeredAt: Date | null;
+  linkedApprovalId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface IssueContinuityState {
   tier: IssueContinuityTier;
   status: IssueContinuityStatus;
@@ -193,6 +229,10 @@ export interface IssueContinuityState {
   unresolvedBranchIssueIds: string[];
   returnedBranchIssueIds?: string[];
   openReviewFindingsRevisionId?: string | null;
+  openDecisionQuestionCount?: number;
+  blockingDecisionQuestionCount?: number;
+  lastDecisionQuestionAt?: string | null;
+  lastDecisionAnswerAt?: string | null;
   lastProgressAt: string | null;
   lastHandoffAt: string | null;
   lastReviewFindingsAt?: string | null;
@@ -217,6 +257,7 @@ export interface IssueContinuityBundle {
   bundleHash: string;
   continuityState: IssueContinuityState | null;
   executionState: IssueExecutionState | null;
+  decisionQuestions: IssueDecisionQuestion[];
   issueDocuments: {
     spec: IssueContinuityDocumentSnapshot | null;
     plan: IssueContinuityDocumentSnapshot | null;
@@ -242,6 +283,8 @@ export interface IssueContinuitySummary {
   missingDocumentCount: number;
   activeGatePresent: boolean;
   openReviewFindings: boolean;
+  openDecisionQuestions: number;
+  blockingDecisionQuestions: number;
   returnedBranchCount: number;
 }
 
