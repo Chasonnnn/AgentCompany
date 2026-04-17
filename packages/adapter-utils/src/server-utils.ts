@@ -415,6 +415,37 @@ type PaperclipWakeComment = {
   authorId: string | null;
 };
 
+type PaperclipWakeConferenceRoomIssue = {
+  id: string | null;
+  identifier: string | null;
+  title: string | null;
+};
+
+type PaperclipWakeConferenceRoom = {
+  id: string | null;
+  title: string | null;
+  kind: string | null;
+  status: string | null;
+  linkedIssues: PaperclipWakeConferenceRoomIssue[];
+};
+
+type PaperclipWakeConferenceRoomMessage = {
+  id: string | null;
+  parentCommentId: string | null;
+  messageType: string | null;
+  body: string;
+  createdAt: string | null;
+  authorType: string | null;
+  authorId: string | null;
+};
+
+type PaperclipWakeConferenceRoomPendingResponse = {
+  agentId: string | null;
+  agentName: string | null;
+  status: string | null;
+  repliedCommentId: string | null;
+};
+
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
@@ -428,6 +459,10 @@ type PaperclipWakePayload = {
   missingCount: number;
   truncated: boolean;
   fallbackFetchNeeded: boolean;
+  conferenceRoom: PaperclipWakeConferenceRoom | null;
+  conferenceRoomMessage: PaperclipWakeConferenceRoomMessage | null;
+  conferenceRoomThread: PaperclipWakeConferenceRoomMessage[];
+  conferenceRoomPendingResponses: PaperclipWakeConferenceRoomPendingResponse[];
 };
 
 function normalizePaperclipWakeIssue(value: unknown): PaperclipWakeIssue | null {
@@ -460,6 +495,64 @@ function normalizePaperclipWakeComment(value: unknown): PaperclipWakeComment | n
     createdAt: asString(comment.createdAt, "").trim() || null,
     authorType: asString(author.type, "").trim() || null,
     authorId: asString(author.id, "").trim() || null,
+  };
+}
+
+function normalizePaperclipWakeConferenceRoomIssue(value: unknown): PaperclipWakeConferenceRoomIssue | null {
+  const issue = parseObject(value);
+  const id = asString(issue.id, "").trim() || null;
+  const identifier = asString(issue.identifier, "").trim() || null;
+  const title = asString(issue.title, "").trim() || null;
+  if (!id && !identifier && !title) return null;
+  return { id, identifier, title };
+}
+
+function normalizePaperclipWakeConferenceRoom(value: unknown): PaperclipWakeConferenceRoom | null {
+  const room = parseObject(value);
+  const linkedIssues = Array.isArray(room.linkedIssues)
+    ? room.linkedIssues
+        .map((entry) => normalizePaperclipWakeConferenceRoomIssue(entry))
+        .filter((entry): entry is PaperclipWakeConferenceRoomIssue => Boolean(entry))
+    : [];
+  const id = asString(room.id, "").trim() || null;
+  const title = asString(room.title, "").trim() || null;
+  const kind = asString(room.kind, "").trim() || null;
+  const status = asString(room.status, "").trim() || null;
+  if (!id && !title) return null;
+  return { id, title, kind, status, linkedIssues };
+}
+
+function normalizePaperclipWakeConferenceRoomMessage(value: unknown): PaperclipWakeConferenceRoomMessage | null {
+  const message = parseObject(value);
+  const author = parseObject(message.author);
+  const body = asString(message.body, "");
+  if (!body.trim()) return null;
+  return {
+    id: asString(message.id, "").trim() || null,
+    parentCommentId: asString(message.parentCommentId, "").trim() || null,
+    messageType: asString(message.messageType, "").trim() || null,
+    body,
+    createdAt: asString(message.createdAt, "").trim() || null,
+    authorType: asString(author.type, "").trim() || null,
+    authorId: asString(author.id, "").trim() || null,
+  };
+}
+
+function normalizePaperclipWakeConferenceRoomPendingResponse(
+  value: unknown,
+): PaperclipWakeConferenceRoomPendingResponse | null {
+  const response = parseObject(value);
+  const agent = parseObject(response.agent);
+  const agentId = asString(agent.id, "").trim() || null;
+  const agentName = asString(agent.name, "").trim() || null;
+  const status = asString(response.status, "").trim() || null;
+  const repliedCommentId = asString(response.repliedCommentId, "").trim() || null;
+  if (!agentId && !agentName && !status) return null;
+  return {
+    agentId,
+    agentName,
+    status,
+    repliedCommentId,
   };
 }
 
@@ -521,8 +614,28 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
         .map((entry) => entry.trim())
     : [];
   const executionStage = normalizePaperclipWakeExecutionStage(payload.executionStage);
+  const conferenceRoom = normalizePaperclipWakeConferenceRoom(payload.conferenceRoom);
+  const conferenceRoomMessage = normalizePaperclipWakeConferenceRoomMessage(payload.conferenceRoomMessage);
+  const conferenceRoomThread = Array.isArray(payload.conferenceRoomThread)
+    ? payload.conferenceRoomThread
+        .map((entry) => normalizePaperclipWakeConferenceRoomMessage(entry))
+        .filter((entry): entry is PaperclipWakeConferenceRoomMessage => Boolean(entry))
+    : [];
+  const conferenceRoomPendingResponses = Array.isArray(payload.conferenceRoomPendingResponses)
+    ? payload.conferenceRoomPendingResponses
+        .map((entry) => normalizePaperclipWakeConferenceRoomPendingResponse(entry))
+        .filter((entry): entry is PaperclipWakeConferenceRoomPendingResponse => Boolean(entry))
+    : [];
 
-  if (comments.length === 0 && commentIds.length === 0 && !executionStage && !normalizePaperclipWakeIssue(payload.issue)) {
+  if (
+    comments.length === 0 &&
+    commentIds.length === 0 &&
+    !executionStage &&
+    !normalizePaperclipWakeIssue(payload.issue) &&
+    !conferenceRoom &&
+    !conferenceRoomMessage &&
+    conferenceRoomThread.length === 0
+  ) {
     return null;
   }
 
@@ -539,6 +652,10 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     missingCount: asNumber(commentWindow.missingCount, 0),
     truncated: asBoolean(payload.truncated, false),
     fallbackFetchNeeded: asBoolean(payload.fallbackFetchNeeded, false),
+    conferenceRoom,
+    conferenceRoomMessage,
+    conferenceRoomThread,
+    conferenceRoomPendingResponses,
   };
 }
 
@@ -561,6 +678,111 @@ export function renderPaperclipWakePrompt(
     if (principal.type === "agent") return principal.agentId ? `agent ${principal.agentId}` : "agent";
     return principal.userId ? `user ${principal.userId}` : "user";
   };
+
+  if (normalized.conferenceRoom) {
+    const room = normalized.conferenceRoom;
+    const thread = normalized.conferenceRoomThread;
+    const triggerMessage = normalized.conferenceRoomMessage;
+    const lines = resumedSession
+      ? [
+          "## Paperclip Resume Delta",
+          "",
+          "You are resuming an existing Paperclip session.",
+          "This heartbeat is scoped to the conference room below. Handle this room wake before returning to generic inbox work.",
+          "Use the inline room payload first before refetching the room thread.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- conference room: ${room.title ?? room.id ?? "unknown"} (${room.id ?? "unknown"})`,
+          `- linked issues: ${room.linkedIssues.length}`,
+          `- trigger message: ${triggerMessage?.id ?? "none"}`,
+          `- pending room responses: ${normalized.conferenceRoomPendingResponses.filter((entry) => entry.status === "pending").length}`,
+        ]
+      : [
+          "## Paperclip Wake Payload",
+          "",
+          "Treat this wake payload as the highest-priority change for the current heartbeat.",
+          "This heartbeat is scoped to the conference room below. Handle this room wake before returning to generic inbox work.",
+          "For room questions, reply in the conference room thread instead of forcing issue checkout first.",
+          "Use the inline room payload first before refetching the room thread.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- conference room: ${room.title ?? room.id ?? "unknown"} (${room.id ?? "unknown"})`,
+          `- linked issues: ${room.linkedIssues.length}`,
+          `- trigger message: ${triggerMessage?.id ?? "none"}`,
+          `- pending room responses: ${normalized.conferenceRoomPendingResponses.filter((entry) => entry.status === "pending").length}`,
+        ];
+
+    if (room.kind) {
+      lines.push(`- room kind: ${room.kind}`);
+    }
+    if (room.status) {
+      lines.push(`- room status: ${room.status}`);
+    }
+    if (room.linkedIssues.length > 0) {
+      lines.push(
+        "- linked issues:",
+        ...room.linkedIssues.map((issue, index) =>
+          `  ${index + 1}. ${issue.identifier ?? issue.id ?? "unknown"}${issue.title ? ` ${issue.title}` : ""}`),
+      );
+    }
+
+    lines.push("");
+    if (normalized.reason === "conference_room_question") {
+      lines.push(
+        "An invited board question is awaiting your in-thread response.",
+        "Post your reply back into the conference room thread after you have the needed context.",
+      );
+    } else if (normalized.reason === "conference_room_message") {
+      lines.push(
+        "Another invited agent posted a new top-level room message.",
+        "Read it, decide whether you need to respond in-thread, and keep the room conversation moving.",
+      );
+    } else if (normalized.reason === "conference_room_invite") {
+      lines.push(
+        "You were invited into this conference room.",
+        "Read the room context before deciding whether a reply is needed.",
+      );
+    }
+
+    if (triggerMessage) {
+      const authorLabel = triggerMessage.authorId
+        ? `${triggerMessage.authorType ?? "unknown"} ${triggerMessage.authorId}`
+        : triggerMessage.authorType ?? "unknown";
+      lines.push(
+        "",
+        "Triggering room message:",
+        `- id: ${triggerMessage.id ?? "unknown"}`,
+        `- type: ${triggerMessage.messageType ?? "note"}`,
+        `- author: ${authorLabel}`,
+        `- created at: ${triggerMessage.createdAt ?? "unknown"}`,
+        triggerMessage.body,
+      );
+    }
+
+    if (thread.length > 0) {
+      lines.push("", "Conference room thread context:");
+      for (const [index, message] of thread.entries()) {
+        const authorLabel = message.authorId
+          ? `${message.authorType ?? "unknown"} ${message.authorId}`
+          : message.authorType ?? "unknown";
+        lines.push(
+          `${index + 1}. message ${message.id ?? "unknown"} (${message.messageType ?? "note"}) at ${message.createdAt ?? "unknown"} by ${authorLabel}`,
+          message.body,
+        );
+      }
+    }
+
+    if (normalized.conferenceRoomPendingResponses.length > 0) {
+      lines.push("", "Room response state:");
+      for (const response of normalized.conferenceRoomPendingResponses) {
+        lines.push(
+          `- ${response.agentName ?? response.agentId ?? "unknown"}: ${response.status ?? "unknown"}${response.repliedCommentId ? ` (reply ${response.repliedCommentId})` : ""}`,
+        );
+      }
+    }
+
+    return lines.join("\n");
+  }
 
   const lines = resumedSession
       ? [

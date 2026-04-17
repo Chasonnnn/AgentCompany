@@ -147,6 +147,7 @@ export type {
   ConferenceRoomDecisionSummary,
   ConferenceRoomIssueLinkSummary,
   ConferenceRoomParticipant,
+  ConferenceRoomQuestionResponse,
 } from "./conference-room.js";
 export type {
   ExecutionWorkspace,

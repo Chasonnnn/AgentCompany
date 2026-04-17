@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, not, or } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -7,13 +7,17 @@ import {
   conferenceRoomComments,
   conferenceRoomIssueLinks,
   conferenceRoomParticipants,
+  conferenceRoomQuestionResponses,
   conferenceRooms,
   issueApprovals,
   issues,
 } from "@paperclipai/db";
 import type {
+  AddConferenceRoomComment,
   ConferenceRoom,
   ConferenceRoomComment,
+  ConferenceRoomMessageType,
+  ConferenceRoomQuestionResponse,
   RequestBoardApprovalPayload,
   RequestConferenceRoomDecision,
   UpdateConferenceRoom,
@@ -31,6 +35,8 @@ type ActorInfo = {
   agentId?: string | null;
   runId?: string | null;
 };
+
+const ROOM_TASK_KEY_PREFIX = "conference-room:";
 
 function readTrimmed(value: unknown) {
   if (typeof value !== "string") return null;
@@ -83,7 +89,7 @@ export function conferenceRoomService(db: Db) {
     return rows;
   }
 
-  async function assertLeaderParticipants(companyId: string, participantAgentIds: string[]) {
+  async function assertParticipants(companyId: string, participantAgentIds: string[]) {
     if (participantAgentIds.length === 0) return [];
     const uniqueAgentIds = Array.from(new Set(participantAgentIds));
     const rows = await db
@@ -100,15 +106,70 @@ export function conferenceRoomService(db: Db) {
       if (row.status === "terminated") {
         throw unprocessable("Terminated agents cannot be invited");
       }
-      if (
-        row.operatingClass !== "executive" &&
-        row.operatingClass !== "project_leadership" &&
-        row.operatingClass !== "shared_service_lead"
-      ) {
-        throw unprocessable("Conference rooms only allow executive, project leadership, or shared-service lead participants");
-      }
     }
     return rows;
+  }
+
+  async function linkedIssueIdsForRoom(roomId: string) {
+    return (
+      await db
+        .select({ issueId: conferenceRoomIssueLinks.issueId })
+        .from(conferenceRoomIssueLinks)
+        .where(eq(conferenceRoomIssueLinks.conferenceRoomId, roomId))
+    ).map((row) => row.issueId);
+  }
+
+  async function hydrateComments(rows: typeof conferenceRoomComments.$inferSelect[]): Promise<ConferenceRoomComment[]> {
+    if (rows.length === 0) return [];
+    const commentIds = rows.map((row) => row.id);
+    const responseRows = await db
+      .select()
+      .from(conferenceRoomQuestionResponses)
+      .where(inArray(conferenceRoomQuestionResponses.questionCommentId, commentIds))
+      .orderBy(conferenceRoomQuestionResponses.createdAt);
+
+    const responsesByComment = new Map<string, ConferenceRoomQuestionResponse[]>();
+    for (const response of responseRows) {
+      const group = responsesByComment.get(response.questionCommentId) ?? [];
+      group.push({ ...response });
+      responsesByComment.set(response.questionCommentId, group);
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      responses: responsesByComment.get(row.id) ?? [],
+    }));
+  }
+
+  async function getCommentById(commentId: string) {
+    const row = await db
+      .select()
+      .from(conferenceRoomComments)
+      .where(eq(conferenceRoomComments.id, commentId))
+      .then((result) => result[0] ?? null);
+    if (!row) return null;
+    const [comment] = await hydrateComments([row]);
+    return comment ?? null;
+  }
+
+  async function resolveQuestionThreadRoot(commentId: string) {
+    const visited = new Set<string>();
+    let current = await db
+      .select()
+      .from(conferenceRoomComments)
+      .where(eq(conferenceRoomComments.id, commentId))
+      .then((rows) => rows[0] ?? null);
+    while (current) {
+      if (current.messageType === "question" && !current.parentCommentId) return current;
+      if (!current.parentCommentId || visited.has(current.parentCommentId)) break;
+      visited.add(current.parentCommentId);
+      current = await db
+        .select()
+        .from(conferenceRoomComments)
+        .where(eq(conferenceRoomComments.id, current.parentCommentId))
+        .then((rows) => rows[0] ?? null);
+    }
+    return null;
   }
 
   async function hydrateRooms(rows: typeof conferenceRooms.$inferSelect[]): Promise<ConferenceRoom[]> {
@@ -214,20 +275,36 @@ export function conferenceRoomService(db: Db) {
     })) as ConferenceRoom[];
   }
 
-  async function wakeParticipants(
-    roomId: string,
-    companyId: string,
-    agentIds: string[],
-    actor: ActorInfo,
-    issueIds: string[],
-    title: string,
-  ) {
+  async function wakeRoomParticipants(input: {
+    roomId: string;
+    companyId: string;
+    agentIds: string[];
+    actor: ActorInfo;
+    issueIds: string[];
+    title: string;
+    reason: "conference_room_invite" | "conference_room_question" | "conference_room_message";
+    commentId?: string | null;
+    messageType?: ConferenceRoomMessageType | null;
+    source: "conference_room.invite" | "conference_room.question" | "conference_room.message";
+  }) {
+    const {
+      roomId,
+      companyId,
+      agentIds,
+      actor,
+      issueIds,
+      title,
+      reason,
+      commentId,
+      messageType,
+      source,
+    } = input;
     for (const agentId of agentIds) {
       try {
         await heartbeat.wakeup(agentId, {
           source: "automation",
           triggerDetail: "system",
-          reason: "conference_room_invite",
+          reason,
           requestedByActorType: actor.actorType,
           requestedByActorId: actor.actorId,
           payload: {
@@ -235,15 +312,19 @@ export function conferenceRoomService(db: Db) {
             companyId,
             issueIds,
             title,
+            ...(commentId ? { conferenceRoomCommentId: commentId } : {}),
+            ...(messageType ? { messageType } : {}),
           },
           contextSnapshot: {
-            source: "conference_room.invite",
+            source,
+            taskKey: `${ROOM_TASK_KEY_PREFIX}${roomId}`,
             conferenceRoomId: roomId,
             issueIds,
+            ...(commentId ? { conferenceRoomCommentId: commentId } : {}),
           },
         });
       } catch {
-        // Room creation/update should not fail because an invite wakeup could not be queued.
+        // Room activity should not fail because an agent wakeup could not be queued.
       }
     }
   }
@@ -319,7 +400,7 @@ export function conferenceRoomService(db: Db) {
 
     create: async (companyId: string, input: CreateConferenceRoom, actor: ActorInfo) => {
       const issuesForRoom = await assertIssueIds(companyId, input.issueIds);
-      const participants = await assertLeaderParticipants(companyId, input.participantAgentIds);
+      const participants = await assertParticipants(companyId, input.participantAgentIds);
       const now = new Date();
 
       const created = await db.transaction(async (tx) => {
@@ -386,14 +467,16 @@ export function conferenceRoomService(db: Db) {
         return room;
       });
 
-      await wakeParticipants(
-        created.id,
+      await wakeRoomParticipants({
+        roomId: created.id,
         companyId,
-        participants.map((participant) => participant.id),
+        agentIds: participants.map((participant) => participant.id),
         actor,
-        issuesForRoom.map((issue) => issue.id),
-        created.title,
-      );
+        issueIds: issuesForRoom.map((issue) => issue.id),
+        title: created.title,
+        reason: "conference_room_invite",
+        source: "conference_room.invite",
+      });
 
       const [room] = await hydrateRooms([created]);
       return room ?? null;
@@ -407,7 +490,7 @@ export function conferenceRoomService(db: Db) {
         ? (await assertIssueIds(existing.companyId, input.issueIds)).map((issue) => issue.id)
         : null;
       const nextParticipants = input.participantAgentIds !== undefined
-        ? await assertLeaderParticipants(existing.companyId, input.participantAgentIds)
+        ? await assertParticipants(existing.companyId, input.participantAgentIds)
         : null;
       const now = new Date();
 
@@ -416,6 +499,7 @@ export function conferenceRoomService(db: Db) {
         .from(conferenceRoomParticipants)
         .where(eq(conferenceRoomParticipants.conferenceRoomId, roomId));
       const previousParticipantIds = new Set(previousParticipants.map((row) => row.agentId));
+      const nextParticipantIds = nextParticipants ? new Set(nextParticipants.map((participant) => participant.id)) : null;
 
       const updated = await db.transaction(async (tx) => {
         const room = await tx
@@ -463,6 +547,40 @@ export function conferenceRoomService(db: Db) {
               })),
             );
           }
+
+          const removedParticipantIds = previousParticipants
+            .map((participant) => participant.agentId)
+            .filter((agentId) => !nextParticipantIds?.has(agentId));
+          if (removedParticipantIds.length > 0) {
+            await tx
+              .update(conferenceRoomQuestionResponses)
+              .set({
+                status: "dismissed",
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(conferenceRoomQuestionResponses.conferenceRoomId, roomId),
+                  inArray(conferenceRoomQuestionResponses.agentId, removedParticipantIds),
+                  eq(conferenceRoomQuestionResponses.status, "pending"),
+                ),
+              );
+          }
+        }
+
+        if (input.status === "closed" || input.status === "archived") {
+          await tx
+            .update(conferenceRoomQuestionResponses)
+            .set({
+              status: "dismissed",
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(conferenceRoomQuestionResponses.conferenceRoomId, roomId),
+                eq(conferenceRoomQuestionResponses.status, "pending"),
+              ),
+            );
         }
 
         await logActivity(tx as unknown as Db, {
@@ -492,13 +610,17 @@ export function conferenceRoomService(db: Db) {
         : [];
 
       if (participantIdsToWake.length > 0) {
-        const linkedIssueIds = nextIssueIds ?? (
-          await db
-            .select({ issueId: conferenceRoomIssueLinks.issueId })
-            .from(conferenceRoomIssueLinks)
-            .where(eq(conferenceRoomIssueLinks.conferenceRoomId, roomId))
-        ).map((row) => row.issueId);
-        await wakeParticipants(roomId, updated.companyId, participantIdsToWake, actor, linkedIssueIds, updated.title);
+        const linkedIssueIds = nextIssueIds ?? await linkedIssueIdsForRoom(roomId);
+        await wakeRoomParticipants({
+          roomId,
+          companyId: updated.companyId,
+          agentIds: participantIdsToWake,
+          actor,
+          issueIds: linkedIssueIds,
+          title: updated.title,
+          reason: "conference_room_invite",
+          source: "conference_room.invite",
+        });
       }
 
       const [room] = await hydrateRooms([updated]);
@@ -511,28 +633,99 @@ export function conferenceRoomService(db: Db) {
         .from(conferenceRoomComments)
         .where(eq(conferenceRoomComments.conferenceRoomId, roomId))
         .orderBy(conferenceRoomComments.createdAt)
-        .then((rows) => rows.map((row) => ({ ...row }))),
+        .then((rows) => hydrateComments(rows)),
 
-    addComment: async (roomId: string, body: string, actor: ActorInfo) => {
+    addComment: async (roomId: string, input: AddConferenceRoomComment, actor: ActorInfo) => {
       const room = await getRoomRow(roomId);
       if (!room) throw notFound("Conference room not found");
-      const comment = await db
-        .insert(conferenceRoomComments)
-        .values({
-          companyId: room.companyId,
-          conferenceRoomId: roomId,
-          authorAgentId: actor.agentId ?? null,
-          authorUserId: actor.actorType === "user" ? actor.actorId : null,
-          body,
-        })
-        .returning()
-        .then((rows) => rows[0] ?? null);
-      if (!comment) throw unprocessable("Unable to add conference room comment");
+      const messageType = input.messageType ?? "note";
+      let parentComment: typeof conferenceRoomComments.$inferSelect | null = null;
+      if (input.parentCommentId) {
+        parentComment = await db
+          .select()
+          .from(conferenceRoomComments)
+          .where(
+            and(
+              eq(conferenceRoomComments.id, input.parentCommentId),
+              eq(conferenceRoomComments.conferenceRoomId, roomId),
+            ),
+          )
+          .then((rows) => rows[0] ?? null);
+        if (!parentComment) throw notFound("Parent comment not found");
+      }
+      if (messageType === "question" && actor.actorType !== "user") {
+        throw unprocessable("Only board users can post conference room questions");
+      }
+      if (messageType === "question" && parentComment) {
+        throw unprocessable("Conference room questions must be top-level messages");
+      }
 
-      await db
-        .update(conferenceRooms)
-        .set({ updatedAt: new Date() })
-        .where(eq(conferenceRooms.id, roomId));
+      const participantIds = (
+        await db
+          .select({ agentId: conferenceRoomParticipants.agentId })
+          .from(conferenceRoomParticipants)
+          .where(eq(conferenceRoomParticipants.conferenceRoomId, roomId))
+      ).map((participant) => participant.agentId);
+      const issueIds = await linkedIssueIdsForRoom(roomId);
+      const now = new Date();
+
+      const comment = await db.transaction(async (tx) => {
+        const inserted = await tx
+          .insert(conferenceRoomComments)
+          .values({
+            companyId: room.companyId,
+            conferenceRoomId: roomId,
+            parentCommentId: parentComment?.id ?? null,
+            authorAgentId: actor.agentId ?? null,
+            authorUserId: actor.actorType === "user" ? actor.actorId : null,
+            messageType,
+            body: input.body,
+          })
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (!inserted) throw unprocessable("Unable to add conference room comment");
+
+        await tx
+          .update(conferenceRooms)
+          .set({ updatedAt: now })
+          .where(eq(conferenceRooms.id, roomId));
+
+        if (messageType === "question") {
+          if (participantIds.length > 0) {
+            await tx.insert(conferenceRoomQuestionResponses).values(
+              participantIds.map((agentId) => ({
+                companyId: room.companyId,
+                conferenceRoomId: roomId,
+                questionCommentId: inserted.id,
+                agentId,
+                status: "pending",
+                repliedCommentId: null,
+                updatedAt: now,
+              })),
+            );
+          }
+        } else if (actor.agentId && parentComment) {
+          const questionRoot = await resolveQuestionThreadRoot(parentComment.id);
+          if (questionRoot) {
+            await tx
+              .update(conferenceRoomQuestionResponses)
+              .set({
+                status: "replied",
+                repliedCommentId: inserted.id,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(conferenceRoomQuestionResponses.questionCommentId, questionRoot.id),
+                  eq(conferenceRoomQuestionResponses.agentId, actor.agentId),
+                  not(eq(conferenceRoomQuestionResponses.status, "dismissed")),
+                ),
+              );
+          }
+        }
+
+        return inserted;
+      });
 
       await logActivity(db, {
         companyId: room.companyId,
@@ -543,10 +736,47 @@ export function conferenceRoomService(db: Db) {
         action: "conference_room.comment_added",
         entityType: "conference_room",
         entityId: roomId,
-        details: {},
+        details: {
+          messageType,
+          parentCommentId: parentComment?.id ?? null,
+        },
       });
 
-      return comment;
+      if (messageType === "question") {
+        await wakeRoomParticipants({
+          roomId,
+          companyId: room.companyId,
+          agentIds: participantIds,
+          actor,
+          issueIds,
+          title: room.title,
+          reason: "conference_room_question",
+          commentId: comment.id,
+          messageType,
+          source: "conference_room.question",
+        });
+      } else if (!parentComment && actor.agentId) {
+        const otherParticipantIds = participantIds.filter((agentId) => agentId !== actor.agentId);
+        if (otherParticipantIds.length > 0) {
+          await wakeRoomParticipants({
+            roomId,
+            companyId: room.companyId,
+            agentIds: otherParticipantIds,
+            actor,
+            issueIds,
+            title: room.title,
+            reason: "conference_room_message",
+            commentId: comment.id,
+            messageType,
+            source: "conference_room.message",
+          });
+        }
+      }
+
+      return (await getCommentById(comment.id)) ?? {
+        ...comment,
+        responses: [],
+      };
     },
 
     requestBoardDecision: async (roomId: string, input: RequestConferenceRoomDecision, actor: ActorInfo) => {

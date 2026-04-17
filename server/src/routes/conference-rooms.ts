@@ -86,7 +86,7 @@ export function conferenceRoomRoutes(db: Db) {
   router.post("/conference-rooms/:id/comments", validate(addConferenceRoomCommentSchema), async (req, res) => {
     const room = await assertRoomAccess(req, req.params.id as string);
     const actor = getActorInfo(req);
-    const comment = await rooms.addComment(room.id, req.body.body.trim(), {
+    const comment = await rooms.addComment(room.id, req.body, {
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId ?? null,

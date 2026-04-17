@@ -1,4 +1,10 @@
-import type { ApprovalStatus, ConferenceRoomKind, ConferenceRoomStatus } from "../constants.js";
+import type {
+  ApprovalStatus,
+  ConferenceRoomKind,
+  ConferenceRoomMessageType,
+  ConferenceRoomQuestionResponseStatus,
+  ConferenceRoomStatus,
+} from "../constants.js";
 
 export interface ConferenceRoomIssueLinkSummary {
   issueId: string;
@@ -24,9 +30,24 @@ export interface ConferenceRoomComment {
   id: string;
   companyId: string;
   conferenceRoomId: string;
+  parentCommentId: string | null;
   authorAgentId: string | null;
   authorUserId: string | null;
+  messageType: ConferenceRoomMessageType;
   body: string;
+  responses: ConferenceRoomQuestionResponse[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ConferenceRoomQuestionResponse {
+  id: string;
+  companyId: string;
+  conferenceRoomId: string;
+  questionCommentId: string;
+  agentId: string;
+  status: ConferenceRoomQuestionResponseStatus;
+  repliedCommentId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -206,10 +206,13 @@ export {
 
 export {
   conferenceRoomStatusSchema,
+  conferenceRoomMessageTypeSchema,
+  conferenceRoomQuestionResponseStatusSchema,
   createConferenceRoomSchema,
   updateConferenceRoomSchema,
   addConferenceRoomCommentSchema,
   requestConferenceRoomDecisionSchema,
+  conferenceRoomQuestionResponseSchema,
   conferenceRoomParticipantSchema,
   conferenceRoomCommentSchema,
   conferenceRoomIssueLinkSummarySchema,

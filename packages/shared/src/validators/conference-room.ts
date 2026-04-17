@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { CONFERENCE_ROOM_STATUSES } from "../constants.js";
+import {
+  CONFERENCE_ROOM_MESSAGE_TYPES,
+  CONFERENCE_ROOM_QUESTION_RESPONSE_STATUSES,
+  CONFERENCE_ROOM_STATUSES,
+} from "../constants.js";
 import { conferenceRoomKindSchema } from "./operating-model.js";
 import type {
   ConferenceRoom,
@@ -7,6 +11,7 @@ import type {
   ConferenceRoomDecisionSummary,
   ConferenceRoomIssueLinkSummary,
   ConferenceRoomParticipant,
+  ConferenceRoomQuestionResponse,
 } from "../types/conference-room.js";
 
 function normalizeOptionalText(value: string | null | undefined): string | null | undefined {
@@ -28,6 +33,8 @@ function normalizeIdList(value: string[] | undefined) {
 }
 
 export const conferenceRoomStatusSchema = z.enum(CONFERENCE_ROOM_STATUSES);
+export const conferenceRoomMessageTypeSchema = z.enum(CONFERENCE_ROOM_MESSAGE_TYPES);
+export const conferenceRoomQuestionResponseStatusSchema = z.enum(CONFERENCE_ROOM_QUESTION_RESPONSE_STATUSES);
 
 export const createConferenceRoomSchema = z.object({
   title: z.string().trim().min(1),
@@ -71,7 +78,13 @@ export type UpdateConferenceRoom = z.infer<typeof updateConferenceRoomSchema>;
 
 export const addConferenceRoomCommentSchema = z.object({
   body: z.string().trim().min(1),
-});
+  parentCommentId: z.string().uuid().nullable().optional(),
+  messageType: conferenceRoomMessageTypeSchema.optional(),
+}).transform((value) => ({
+  body: value.body.trim(),
+  ...(value.parentCommentId !== undefined ? { parentCommentId: value.parentCommentId ?? null } : {}),
+  ...(value.messageType !== undefined ? { messageType: value.messageType } : {}),
+}));
 
 export type AddConferenceRoomComment = z.infer<typeof addConferenceRoomCommentSchema>;
 
@@ -103,6 +116,18 @@ export const requestConferenceRoomDecisionSchema = z.object({
 
 export type RequestConferenceRoomDecision = z.infer<typeof requestConferenceRoomDecisionSchema>;
 
+export const conferenceRoomQuestionResponseSchema = z.object({
+  id: z.string().uuid(),
+  companyId: z.string().uuid(),
+  conferenceRoomId: z.string().uuid(),
+  questionCommentId: z.string().uuid(),
+  agentId: z.string().uuid(),
+  status: conferenceRoomQuestionResponseStatusSchema,
+  repliedCommentId: z.string().uuid().nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+}).strict() satisfies z.ZodType<ConferenceRoomQuestionResponse>;
+
 export const conferenceRoomParticipantSchema = z.object({
   id: z.string().uuid(),
   companyId: z.string().uuid(),
@@ -118,9 +143,12 @@ export const conferenceRoomCommentSchema = z.object({
   id: z.string().uuid(),
   companyId: z.string().uuid(),
   conferenceRoomId: z.string().uuid(),
+  parentCommentId: z.string().uuid().nullable(),
   authorAgentId: z.string().uuid().nullable(),
   authorUserId: z.string().nullable(),
+  messageType: conferenceRoomMessageTypeSchema,
   body: z.string().min(1),
+  responses: z.array(conferenceRoomQuestionResponseSchema),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 }).strict() satisfies z.ZodType<ConferenceRoomComment>;

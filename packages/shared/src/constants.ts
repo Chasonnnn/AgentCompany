@@ -331,6 +331,12 @@ export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 export const CONFERENCE_ROOM_STATUSES = ["open", "closed", "archived"] as const;
 export type ConferenceRoomStatus = (typeof CONFERENCE_ROOM_STATUSES)[number];
 
+export const CONFERENCE_ROOM_MESSAGE_TYPES = ["note", "question"] as const;
+export type ConferenceRoomMessageType = (typeof CONFERENCE_ROOM_MESSAGE_TYPES)[number];
+
+export const CONFERENCE_ROOM_QUESTION_RESPONSE_STATUSES = ["pending", "replied", "dismissed"] as const;
+export type ConferenceRoomQuestionResponseStatus = (typeof CONFERENCE_ROOM_QUESTION_RESPONSE_STATUSES)[number];
+
 export const CONFERENCE_ROOM_KINDS = [
   "executive_staff",
   "project_leadership",

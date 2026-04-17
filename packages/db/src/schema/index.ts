@@ -58,6 +58,7 @@ export { approvalComments } from "./approval_comments.js";
 export { conferenceRooms } from "./conference_rooms.js";
 export { conferenceRoomParticipants } from "./conference_room_participants.js";
 export { conferenceRoomComments } from "./conference_room_comments.js";
+export { conferenceRoomQuestionResponses } from "./conference_room_question_responses.js";
 export { conferenceRoomIssueLinks } from "./conference_room_issue_links.js";
 export { conferenceRoomApprovals } from "./conference_room_approvals.js";
 export { sharedServiceEngagements } from "./shared_service_engagements.js";
