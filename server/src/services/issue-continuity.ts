@@ -913,7 +913,11 @@ export function issueContinuityService(db: Db) {
       const issue = await getIssueOrThrow(issueId);
       const initialState = await recomputeIssueContinuityState(issueId, { tier: parsed.tier ?? null });
       for (const key of initialState.missingDocumentKeys) {
-        const body = buildIssueDocumentTemplate(key);
+        const body = buildIssueDocumentTemplate(key, {
+          title: issue.title,
+          description: issue.description ?? null,
+          tier: parsed.tier ?? initialState.tier,
+        });
         if (!body) continue;
         await upsertScaffoldedIssueDocument({
           issueId,

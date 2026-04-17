@@ -330,6 +330,24 @@ describe("operating model schemas", () => {
     expect(buildIssueDocumentTemplate("branch-return")).toContain("paperclip/issue-branch-return.v1");
   });
 
+  it("injects issue context into scaffolded continuity templates", () => {
+    const spec = buildIssueDocumentTemplate("spec", {
+      title: "Audit the architecture",
+      description: "Check whether the shared-state execution model is enterprise ready.",
+      tier: "normal",
+    });
+    const progress = buildIssueDocumentTemplate("progress", {
+      title: "Audit the architecture",
+      description: "Check whether the shared-state execution model is enterprise ready.",
+    });
+
+    expect(spec).toContain("Audit the architecture");
+    expect(spec).toContain("enterprise ready");
+    expect(spec).toContain("Continuity tier: `normal`");
+    expect(progress).toContain("Issue created: Audit the architecture");
+    expect(progress).toContain("enterprise ready");
+  });
+
   it("accepts nullable room kinds through the shared enum schema", () => {
     expect(conferenceRoomKindSchema.parse("project_leadership")).toBe("project_leadership");
     expect(() => conferenceRoomKindSchema.parse("legacy_room")).toThrow();

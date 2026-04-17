@@ -73,7 +73,11 @@ import {
   normalizeContentType,
   SVG_CONTENT_TYPE,
 } from "../attachment-types.js";
-import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import {
+  isIssueWakeBlockedByContinuity,
+  queueIssueAssignmentWakeup,
+  shouldWakeAssignedAgentForIssue,
+} from "../services/issue-assignment-wakeup.js";
 import {
   applyIssueExecutionPolicyTransition,
   normalizeIssueExecutionPolicy,
@@ -1900,22 +1904,37 @@ export function issueRoutes(
   router.post("/companies/:companyId/issues", validate(createIssueSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    if (req.body.assigneeAgentId || req.body.assigneeUserId) {
+    const hasExplicitAssignee = !!(req.body.assigneeAgentId || req.body.assigneeUserId);
+    if (hasExplicitAssignee) {
       await assertCanAssignTasks(req, companyId);
     }
 
     const actor = getActorInfo(req);
     const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
-    const { continuityTier, ...createInput } = req.body;
+    const { continuityTier, prepareContinuity, ...createInput } = req.body;
+    let defaultAssigneeAgentId = typeof req.body.assigneeAgentId === "string" ? req.body.assigneeAgentId : null;
+    if (!defaultAssigneeAgentId && !req.body.assigneeUserId && req.body.projectId) {
+      const resolvedProjectLead = await agentsSvc.resolvePrimaryProjectLeadForProject(companyId, req.body.projectId);
+      defaultAssigneeAgentId = resolvedProjectLead.agent?.id ?? null;
+    }
     const issue = await svc.create(companyId, {
       ...createInput,
+      assigneeAgentId: defaultAssigneeAgentId,
       executionPolicy,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
-    const continuityState = await continuitySvc.recomputeIssueContinuityState(issue.id, {
+    let continuityState = await continuitySvc.recomputeIssueContinuityState(issue.id, {
       tier: continuityTier ?? "normal",
     });
+    if (prepareContinuity) {
+      const prepared = await continuitySvc.prepare(issue.id, { tier: continuityTier ?? "normal" }, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      });
+      continuityState = prepared.continuityState;
+    }
 
     await logActivity(db, {
       companyId,
@@ -1936,6 +1955,7 @@ export function issueRoutes(
     void queueIssueAssignmentWakeup({
       heartbeat,
       issue,
+      continuityState,
       reason: "issue_assigned",
       mutation: "create",
       contextSource: "issue.create",
@@ -2357,6 +2377,7 @@ export function issueRoutes(
     }
     const assigneeChanged =
       issue.assigneeAgentId !== existing.assigneeAgentId || issue.assigneeUserId !== existing.assigneeUserId;
+    const blockCurrentIssueWakeups = isIssueWakeBlockedByContinuity(continuityState);
     const statusChangedFromBacklog =
       existing.status === "backlog" &&
       issue.status !== "backlog" &&
@@ -2408,7 +2429,11 @@ export function issueRoutes(
 
       if (executionStageWakeup) {
         addWakeup(executionStageWakeup.agentId, executionStageWakeup.wakeup);
-      } else if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
+      } else if (
+        assigneeChanged &&
+        issue.assigneeAgentId &&
+        shouldWakeAssignedAgentForIssue({ issue, continuityState })
+      ) {
         addWakeup(issue.assigneeAgentId, {
           source: "assignment",
           triggerDetail: "system",
@@ -2436,7 +2461,7 @@ export function issueRoutes(
         });
       }
 
-      if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId) {
+      if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId && !blockCurrentIssueWakeups) {
         addWakeup(issue.assigneeAgentId, {
           source: "automation",
           triggerDetail: "system",
@@ -2462,7 +2487,7 @@ export function issueRoutes(
         const selfComment = actorIsAgent && actor.actorId === assigneeId;
         const skipAssigneeCommentWake = selfComment || isClosed;
 
-        if (assigneeId && !assigneeChanged && !skipAssigneeCommentWake) {
+        if (assigneeId && !assigneeChanged && !skipAssigneeCommentWake && !blockCurrentIssueWakeups) {
           addWakeup(assigneeId, {
             source: "automation",
             triggerDetail: "system",
@@ -2497,6 +2522,7 @@ export function issueRoutes(
         }
 
         for (const mentionedId of mentionedIds) {
+          if (blockCurrentIssueWakeups) continue;
           if (actor.actorType === "agent" && actor.actorId === mentionedId) continue;
           addWakeup(mentionedId, {
             source: "automation",
@@ -2657,6 +2683,7 @@ export function issueRoutes(
     const checkoutRunId = requireAgentRunId(req, res);
     if (req.actor.type === "agent" && !checkoutRunId) return;
     const updated = await svc.checkout(id, req.body.agentId, req.body.expectedStatuses, checkoutRunId);
+    const continuityState = await continuitySvc.recomputeIssueContinuityState(updated.id);
     const actor = getActorInfo(req);
 
     await logActivity(db, {
@@ -2677,7 +2704,8 @@ export function issueRoutes(
         actorAgentId: req.actor.type === "agent" ? req.actor.agentId ?? null : null,
         checkoutAgentId: req.body.agentId,
         checkoutRunId,
-      })
+      }) &&
+      shouldWakeAssignedAgentForIssue({ issue: updated, continuityState })
     ) {
       void heartbeat
         .wakeup(req.body.agentId, {

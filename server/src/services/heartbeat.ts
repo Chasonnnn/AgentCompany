@@ -10,6 +10,10 @@ import {
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
+  conferenceRoomComments,
+  conferenceRoomIssueLinks,
+  conferenceRoomQuestionResponses,
+  conferenceRooms,
   heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
@@ -964,6 +968,8 @@ async function buildPaperclipWakePayload(input: {
   const executionStage = parseObject(input.contextSnapshot.executionStage);
   const commentIds = extractWakeCommentIds(input.contextSnapshot);
   const issueId = readNonEmptyString(input.contextSnapshot.issueId);
+  const conferenceRoomId = readNonEmptyString(input.contextSnapshot.conferenceRoomId);
+  const conferenceRoomCommentId = readNonEmptyString(input.contextSnapshot.conferenceRoomCommentId);
   const issueSummary =
     input.issueSummary ??
     (issueId
@@ -979,7 +985,124 @@ async function buildPaperclipWakePayload(input: {
           .where(and(eq(issues.id, issueId), eq(issues.companyId, input.companyId)))
           .then((rows) => rows[0] ?? null)
       : null);
-  if (commentIds.length === 0 && Object.keys(executionStage).length === 0 && !issueSummary) return null;
+  const conferenceRoom =
+    conferenceRoomId == null
+      ? null
+      : await input.db
+          .select({
+            id: conferenceRooms.id,
+            title: conferenceRooms.title,
+            kind: conferenceRooms.kind,
+            status: conferenceRooms.status,
+          })
+          .from(conferenceRooms)
+          .where(and(eq(conferenceRooms.id, conferenceRoomId), eq(conferenceRooms.companyId, input.companyId)))
+          .then((rows) => rows[0] ?? null);
+  const conferenceRoomLinkedIssues =
+    conferenceRoomId == null
+      ? []
+      : await input.db
+          .select({
+            id: issues.id,
+            identifier: issues.identifier,
+            title: issues.title,
+          })
+          .from(conferenceRoomIssueLinks)
+          .innerJoin(issues, eq(conferenceRoomIssueLinks.issueId, issues.id))
+          .where(
+            and(
+              eq(conferenceRoomIssueLinks.companyId, input.companyId),
+              eq(conferenceRoomIssueLinks.conferenceRoomId, conferenceRoomId),
+            ),
+          );
+  const conferenceRoomMessage =
+    conferenceRoomCommentId == null
+      ? null
+      : await input.db
+          .select({
+            id: conferenceRoomComments.id,
+            parentCommentId: conferenceRoomComments.parentCommentId,
+            messageType: conferenceRoomComments.messageType,
+            body: conferenceRoomComments.body,
+            authorAgentId: conferenceRoomComments.authorAgentId,
+            authorUserId: conferenceRoomComments.authorUserId,
+            createdAt: conferenceRoomComments.createdAt,
+          })
+          .from(conferenceRoomComments)
+          .where(
+            and(
+              eq(conferenceRoomComments.companyId, input.companyId),
+              eq(conferenceRoomComments.id, conferenceRoomCommentId),
+            ),
+          )
+          .then((rows) => rows[0] ?? null);
+  const conferenceRoomThreadRows: Array<{
+    id: string;
+    parentCommentId: string | null;
+    messageType: string;
+    body: string;
+    authorAgentId: string | null;
+    authorUserId: string | null;
+    createdAt: Date;
+  }> = [];
+  if (conferenceRoomMessage) {
+    let cursor: typeof conferenceRoomMessage | null = conferenceRoomMessage;
+    const visited = new Set<string>();
+    while (cursor && !visited.has(cursor.id)) {
+      visited.add(cursor.id);
+      conferenceRoomThreadRows.push(cursor);
+      if (!cursor.parentCommentId) break;
+      cursor = await input.db
+        .select({
+          id: conferenceRoomComments.id,
+          parentCommentId: conferenceRoomComments.parentCommentId,
+          messageType: conferenceRoomComments.messageType,
+          body: conferenceRoomComments.body,
+          authorAgentId: conferenceRoomComments.authorAgentId,
+          authorUserId: conferenceRoomComments.authorUserId,
+          createdAt: conferenceRoomComments.createdAt,
+        })
+        .from(conferenceRoomComments)
+        .where(
+          and(
+            eq(conferenceRoomComments.companyId, input.companyId),
+            eq(conferenceRoomComments.id, cursor.parentCommentId),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+    }
+    conferenceRoomThreadRows.reverse();
+  }
+  const conferenceRoomQuestionRoot =
+    conferenceRoomThreadRows.find((row) => row.messageType === "question" && row.parentCommentId == null) ?? null;
+  const conferenceRoomPendingResponses =
+    conferenceRoomQuestionRoot == null
+      ? []
+      : await input.db
+          .select({
+            agentId: conferenceRoomQuestionResponses.agentId,
+            agentName: agents.name,
+            status: conferenceRoomQuestionResponses.status,
+            repliedCommentId: conferenceRoomQuestionResponses.repliedCommentId,
+          })
+          .from(conferenceRoomQuestionResponses)
+          .innerJoin(agents, eq(conferenceRoomQuestionResponses.agentId, agents.id))
+          .where(
+            and(
+              eq(conferenceRoomQuestionResponses.companyId, input.companyId),
+              eq(conferenceRoomQuestionResponses.questionCommentId, conferenceRoomQuestionRoot.id),
+            ),
+          )
+          .orderBy(agents.name);
+  if (
+    commentIds.length === 0 &&
+    Object.keys(executionStage).length === 0 &&
+    !issueSummary &&
+    !conferenceRoom &&
+    !conferenceRoomMessage
+  ) {
+    return null;
+  }
 
   const commentRows =
     commentIds.length === 0
@@ -1068,6 +1191,53 @@ async function buildPaperclipWakePayload(input: {
     },
     truncated,
     fallbackFetchNeeded: truncated || missingCommentCount > 0,
+    conferenceRoom: conferenceRoom
+      ? {
+          id: conferenceRoom.id,
+          title: conferenceRoom.title,
+          kind: conferenceRoom.kind,
+          status: conferenceRoom.status,
+          linkedIssues: conferenceRoomLinkedIssues.map((linkedIssue) => ({
+            id: linkedIssue.id,
+            identifier: linkedIssue.identifier,
+            title: linkedIssue.title,
+          })),
+        }
+      : null,
+    conferenceRoomMessage: conferenceRoomMessage
+      ? {
+          id: conferenceRoomMessage.id,
+          parentCommentId: conferenceRoomMessage.parentCommentId,
+          messageType: conferenceRoomMessage.messageType,
+          body: conferenceRoomMessage.body,
+          createdAt: conferenceRoomMessage.createdAt.toISOString(),
+          author: conferenceRoomMessage.authorAgentId
+            ? { type: "agent", id: conferenceRoomMessage.authorAgentId }
+            : conferenceRoomMessage.authorUserId
+              ? { type: "user", id: conferenceRoomMessage.authorUserId }
+              : { type: "system", id: null },
+        }
+      : null,
+    conferenceRoomThread: conferenceRoomThreadRows.map((message) => ({
+      id: message.id,
+      parentCommentId: message.parentCommentId,
+      messageType: message.messageType,
+      body: message.body,
+      createdAt: message.createdAt.toISOString(),
+      author: message.authorAgentId
+        ? { type: "agent", id: message.authorAgentId }
+        : message.authorUserId
+          ? { type: "user", id: message.authorUserId }
+          : { type: "system", id: null },
+    })),
+    conferenceRoomPendingResponses: conferenceRoomPendingResponses.map((response) => ({
+      agent: {
+        id: response.agentId,
+        name: response.agentName,
+      },
+      status: response.status,
+      repliedCommentId: response.repliedCommentId,
+    })),
   };
 }
 

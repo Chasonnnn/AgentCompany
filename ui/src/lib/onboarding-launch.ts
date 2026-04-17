@@ -49,5 +49,7 @@ export function buildOnboardingIssuePayload(input: {
     projectId: input.projectId,
     ...(input.goalId ? { goalId: input.goalId } : {}),
     status: "todo" as const,
+    continuityTier: "normal" as const,
+    prepareContinuity: true,
   };
 }

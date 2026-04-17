@@ -2,6 +2,10 @@ import { logger } from "../middleware/logger.js";
 
 type WakeupTriggerDetail = "manual" | "ping" | "callback" | "system";
 type WakeupSource = "timer" | "assignment" | "on_demand" | "automation";
+type IssueContinuityWakeState = {
+  status?: string | null;
+  health?: string | null;
+};
 
 export interface IssueAssignmentWakeupDeps {
   wakeup: (
@@ -18,9 +22,28 @@ export interface IssueAssignmentWakeupDeps {
   ) => Promise<unknown>;
 }
 
+export function isIssueWakeBlockedByContinuity(continuityState?: IssueContinuityWakeState | null) {
+  if (!continuityState) return false;
+  return (
+    continuityState.health === "missing_required_docs" ||
+    continuityState.health === "invalid_handoff" ||
+    continuityState.status === "blocked_missing_docs" ||
+    continuityState.status === "handoff_pending"
+  );
+}
+
+export function shouldWakeAssignedAgentForIssue(input: {
+  issue: { assigneeAgentId: string | null; status: string };
+  continuityState?: IssueContinuityWakeState | null;
+}) {
+  if (!input.issue.assigneeAgentId || input.issue.status === "backlog") return false;
+  return !isIssueWakeBlockedByContinuity(input.continuityState ?? null);
+}
+
 export function queueIssueAssignmentWakeup(input: {
   heartbeat: IssueAssignmentWakeupDeps;
   issue: { id: string; assigneeAgentId: string | null; status: string };
+  continuityState?: IssueContinuityWakeState | null;
   reason: string;
   mutation: string;
   contextSource: string;
@@ -28,10 +51,12 @@ export function queueIssueAssignmentWakeup(input: {
   requestedByActorId?: string | null;
   rethrowOnError?: boolean;
 }) {
-  if (!input.issue.assigneeAgentId || input.issue.status === "backlog") return;
+  if (!shouldWakeAssignedAgentForIssue({ issue: input.issue, continuityState: input.continuityState })) return;
+  const assigneeAgentId = input.issue.assigneeAgentId;
+  if (!assigneeAgentId) return;
 
   return input.heartbeat
-    .wakeup(input.issue.assigneeAgentId, {
+    .wakeup(assigneeAgentId, {
       source: "assignment",
       triggerDetail: "system",
       reason: input.reason,

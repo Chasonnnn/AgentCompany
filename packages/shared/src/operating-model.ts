@@ -170,94 +170,115 @@ export function getIssueContinuityTierRequirements(tier: IssueContinuityTier): s
   return [...ISSUE_CONTINUITY_TIER_REQUIREMENTS[tier]];
 }
 
-export function buildIssueDocumentTemplate(key: string): string | null {
+export function buildIssueDocumentTemplate(
+  key: string,
+  context?: {
+    title?: string | null;
+    description?: string | null;
+    tier?: IssueContinuityTier | null;
+  },
+): string | null {
+  const title = context?.title?.trim() ?? "";
+  const description = context?.description?.trim() ?? "";
+  const tier = context?.tier ?? null;
+  const taskLine = title ? `- ${title}` : "- State the concrete outcome this issue needs to produce.";
+  const descriptionLine = description
+    ? `- ${description}`
+    : "- Explain why this work matters now and what changes when it is done.";
+  const tierLine = tier
+    ? `- Continuity tier: \`${tier}\``
+    : "- Note whether this should stay tiny, normal, or long-running.";
   switch (key) {
     case "spec":
       return [
         "## Goal",
         "",
-        "-",
+        taskLine,
+        descriptionLine,
         "",
         "## Interfaces",
         "",
-        "-",
+        "- List the documents, APIs, services, routes, or operators this issue must touch.",
         "",
         "## Constraints",
         "",
-        "-",
+        tierLine,
+        "- Record any scope, governance, runtime, or compatibility constraints that must not be violated.",
         "",
         "## Acceptance",
         "",
-        "-",
+        "- Describe the observable outcome that proves the issue is done.",
+        "- Include the verification that should pass before handoff or closeout.",
       ].join("\n");
     case "plan":
       return [
         "## Steps",
         "",
-        "1. ",
-        "2. ",
-        "3. ",
+        "1. Review the current issue, code, and runtime evidence before changing anything.",
+        "2. Make the smallest concrete change that moves the issue toward acceptance.",
+        "3. Verify the result, update progress, and capture any follow-up work.",
         "",
         "## Risks",
         "",
-        "-",
+        "- Note the most likely way this issue could drift, regress, or require escalation.",
       ].join("\n");
     case "runbook":
       return [
         "## Operating Notes",
         "",
-        "-",
+        "- Record issue-local instructions that matter on every resume.",
         "",
         "## Overrides",
         "",
-        "-",
+        "- Note any project runbook rules this issue intentionally overrides.",
         "",
         "## Resume Checklist",
         "",
-        "-",
+        "- Read spec, plan, and progress before taking action.",
+        "- Confirm the next action is still correct before continuing.",
       ].join("\n");
     case "progress":
       return [
         "---",
         `kind: ${ISSUE_PROGRESS_DOCUMENT_KIND}`,
-        'summary: "Current state at a glance"',
-        'currentState: "What is true right now"',
-        'nextAction: "The exact next action"',
+        `summary: ${JSON.stringify(title ? `Issue created: ${title}` : "Issue created. Replace with the current execution summary.")}`,
+        `currentState: ${JSON.stringify(description || "Continuity docs were scaffolded and the issue is ready for the first real checkpoint.")}`,
+        'nextAction: "Read the spec and plan, then replace this scaffold with the first concrete execution step."',
         "knownPitfalls:",
-        '  - "Pitfall or trap to avoid"',
+        '  - "Do not let comments become the source of truth; keep continuity in the issue docs."',
         "openQuestions:",
-        '  - "Open question, if any"',
+        '  - "What is the first concrete slice of work that should happen on this issue?"',
         "evidence:",
-        '  - "Link, test, commit, or artifact"',
+        '  - "Link the first code path, doc, run, or artifact you inspect."',
         "checkpoints:",
         "  - at: 2026-04-14T00:00:00Z",
         "    completed:",
-        '      - "Completed item"',
-        '    currentState: "Checkpoint state"',
+        '      - "Replace this example with the first real completed step."',
+        '    currentState: "Describe what is true after that step."',
         "    knownPitfalls:",
-        '      - "Observed pitfall"',
-        '    nextAction: "Next move from this checkpoint"',
+        '      - "Record any trap you discovered while working."',
+        '    nextAction: "State the exact next move from this checkpoint."',
         "    openQuestions:",
-        '      - "Question to resolve"',
+        '      - "Question to resolve before or during the next move."',
         "    evidence:",
-        '      - "Artifact or proof"',
+        '      - "Artifact, test, commit, or proof from this checkpoint."',
         "---",
         "",
-        "Add any freeform notes below the structured snapshot if needed.",
+        "Replace the scaffolded snapshot quickly. Keep the structured fields current and use freeform notes only for supporting detail.",
       ].join("\n");
     case "test-plan":
       return [
         "## Coverage",
         "",
-        "-",
+        "- List the user-visible behavior, runtime path, or document contract this issue must validate.",
         "",
         "## Checks",
         "",
-        "-",
+        "- Name the concrete tests, manual checks, or smoke paths to run before closeout.",
         "",
         "## Risks Not Covered",
         "",
-        "-",
+        "- Be explicit about what will remain unverified after this issue ships.",
       ].join("\n");
     case "handoff":
       return [

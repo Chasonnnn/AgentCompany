@@ -15,6 +15,7 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { buildExecutionPolicy } from "../lib/issue-execution-policy";
 import { useToast } from "../context/ToastContext";
+import { claudeIssueThinkingEffortOptions } from "./agent-config-defaults";
 import {
   assigneeValueFromSelection,
   currentUserAssigneeOption,
@@ -94,12 +95,7 @@ const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "op
 const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 
 const ISSUE_THINKING_EFFORT_OPTIONS = {
-  claude_local: [
-    { value: "", label: "Default" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-  ],
+  claude_local: claudeIssueThinkingEffortOptions,
   codex_local: [
     { value: "", label: "Default" },
     { value: "minimal", label: "Minimal" },
@@ -730,6 +726,8 @@ export function NewIssueDialog() {
       description: description.trim() || undefined,
       status,
       priority: priority || "medium",
+      continuityTier: "normal",
+      prepareContinuity: true,
       ...(selectedAssigneeAgentId ? { assigneeAgentId: selectedAssigneeAgentId } : {}),
       ...(selectedAssigneeUserId ? { assigneeUserId: selectedAssigneeUserId } : {}),
       ...(newIssueDefaults.parentId ? { parentId: newIssueDefaults.parentId } : {}),

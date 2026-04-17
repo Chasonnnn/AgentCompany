@@ -24,6 +24,10 @@ const mockHeartbeatService = vi.hoisted(() => ({
   cancelRun: vi.fn(async () => null),
 }));
 
+const mockContinuityService = vi.hoisted(() => ({
+  recomputeIssueContinuityState: vi.fn(),
+}));
+
 vi.mock("../services/index.js", () => ({
   accessService: () => ({
     canUser: vi.fn(async () => true),
@@ -51,23 +55,7 @@ vi.mock("../services/index.js", () => ({
     listCompanyIds: vi.fn(async () => ["company-1"]),
   }),
   issueApprovalService: () => ({}),
-  issueContinuityService: () => ({
-    recomputeIssueContinuityState: vi.fn(async () => ({
-      tier: "normal",
-      status: "draft",
-      health: "healthy",
-      requiredDocumentKeys: [],
-      missingDocumentKeys: [],
-      specState: "editable",
-      branchRole: "none",
-      branchStatus: "none",
-      unresolvedBranchIssueIds: [],
-      lastProgressAt: null,
-      lastHandoffAt: null,
-      lastPreparedAt: null,
-      lastBundleHash: null,
-    })),
-  }),
+  issueContinuityService: () => mockContinuityService,
   issueService: () => mockIssueService,
   logActivity: vi.fn(async () => undefined),
   projectService: () => ({}),
@@ -119,6 +107,28 @@ function makeIssue(overrides: Record<string, unknown> = {}) {
 describe("issue update comment wakeups", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockContinuityService.recomputeIssueContinuityState.mockResolvedValue({
+      tier: "normal",
+      status: "draft",
+      health: "healthy",
+      healthReason: null,
+      healthDetails: [],
+      requiredDocumentKeys: [],
+      missingDocumentKeys: [],
+      specState: "editable",
+      branchRole: "none",
+      branchStatus: "none",
+      unresolvedBranchIssueIds: [],
+      returnedBranchIssueIds: [],
+      openReviewFindingsRevisionId: null,
+      lastProgressAt: null,
+      lastHandoffAt: null,
+      lastReviewFindingsAt: null,
+      lastReviewReturnAt: null,
+      lastBranchReturnAt: null,
+      lastPreparedAt: null,
+      lastBundleHash: null,
+    });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
@@ -215,5 +225,54 @@ describe("issue update comment wakeups", () => {
         }),
       }),
     );
+  });
+
+  it("does not wake the assignee when continuity is blocked by missing docs", async () => {
+    mockContinuityService.recomputeIssueContinuityState.mockResolvedValue({
+      tier: "normal",
+      status: "blocked_missing_docs",
+      health: "missing_required_docs",
+      healthReason: "missing_required_docs",
+      healthDetails: ["Missing required docs: spec, plan, progress, test-plan"],
+      requiredDocumentKeys: ["spec", "plan", "progress", "test-plan"],
+      missingDocumentKeys: ["spec", "plan", "progress", "test-plan"],
+      specState: "editable",
+      branchRole: "none",
+      branchStatus: "none",
+      unresolvedBranchIssueIds: [],
+      returnedBranchIssueIds: [],
+      openReviewFindingsRevisionId: null,
+      lastProgressAt: null,
+      lastHandoffAt: null,
+      lastReviewFindingsAt: null,
+      lastReviewReturnAt: null,
+      lastBranchReturnAt: null,
+      lastPreparedAt: null,
+      lastBundleHash: null,
+    });
+    const existing = makeIssue();
+    const updated = makeIssue({
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      assigneeUserId: null,
+    });
+    mockIssueService.getById.mockResolvedValue(existing);
+    mockIssueService.update.mockResolvedValue(updated);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-3",
+      issueId: existing.id,
+      companyId: existing.companyId,
+      body: "write the whole thing",
+    });
+
+    const res = await request(createApp())
+      .patch(`/api/issues/${existing.id}`)
+      .send({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        assigneeUserId: null,
+        comment: "write the whole thing",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 });
