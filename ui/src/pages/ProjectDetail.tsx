@@ -6,16 +6,21 @@ import {
   PROJECT_RESERVED_DOCUMENT_KEYS,
   getReservedProjectDocumentDescriptor,
   isUuidLike,
+  type BudgetOverview,
   type BudgetPolicySummary,
   type ExecutionWorkspace,
 } from "@paperclipai/shared";
 import { budgetsApi } from "../api/budgets";
+import { companiesApi } from "../api/companies";
+import { conferenceRoomsApi } from "../api/conferenceRooms";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
+import { goalsApi } from "../api/goals";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
+import { routinesApi } from "../api/routines";
 import { assetsApi } from "../api/assets";
 import { ApiError } from "../api/client";
 import { usePanel } from "../context/PanelContext";
@@ -35,6 +40,14 @@ import { PageTabBar } from "../components/PageTabBar";
 import { buildProjectWorkspaceSummaries } from "../lib/project-workspaces-tab";
 import { projectRouteRef, projectWorkspaceUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
+import {
+  ONBOARDING_BRANCH_TITLE,
+  ONBOARDING_DEMO_TITLES,
+  ONBOARDING_KICKOFF_ROOM_TITLE,
+  ONBOARDING_ROUTINE_TITLES,
+  STARTER_AGENT_NAMES,
+} from "../lib/onboarding-bootstrap";
+import { ONBOARDING_PROJECT_NAME } from "../lib/onboarding-launch";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
@@ -103,6 +116,181 @@ function OverviewContent({
             <p>{project.targetDate}</p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function OnboardingReadinessCard({
+  project,
+  companyId,
+  budgetOverview,
+}: {
+  project: { id: string; name: string; goalIds: string[] };
+  companyId: string;
+  budgetOverview?: BudgetOverview;
+}) {
+  const companyQuery = useQuery({
+    queryKey: queryKeys.companies.detail(companyId),
+    queryFn: () => companiesApi.get(companyId),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+  const goalsQuery = useQuery({
+    queryKey: queryKeys.goals.list(companyId),
+    queryFn: () => goalsApi.list(companyId),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+  const companyDocsQuery = useQuery({
+    queryKey: queryKeys.companies.documents(companyId),
+    queryFn: () => companiesApi.listDocuments(companyId),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+  const teamDocsQuery = useQuery({
+    queryKey: queryKeys.companies.teamDocuments(companyId),
+    queryFn: () => companiesApi.listTeamDocuments(companyId),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+  const projectDocsQuery = useQuery({
+    queryKey: queryKeys.projects.documents(project.id),
+    queryFn: () => projectsApi.listDocuments(project.id, companyId),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+  const routinesQuery = useQuery({
+    queryKey: queryKeys.routines.list(companyId),
+    queryFn: () => routinesApi.list(companyId),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+  const roomsQuery = useQuery({
+    queryKey: queryKeys.conferenceRooms.list(companyId),
+    queryFn: () => conferenceRoomsApi.list(companyId),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+  const agentsQuery = useQuery({
+    queryKey: queryKeys.agents.list(companyId),
+    queryFn: () => agentsApi.list(companyId),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+  const issuesQuery = useQuery({
+    queryKey: queryKeys.issues.listByProject(companyId, project.id),
+    queryFn: () => issuesApi.list(companyId, { projectId: project.id }),
+    enabled: project.name === ONBOARDING_PROJECT_NAME,
+  });
+
+  if (project.name !== ONBOARDING_PROJECT_NAME) return null;
+
+  if (
+    goalsQuery.isLoading ||
+    companyDocsQuery.isLoading ||
+    teamDocsQuery.isLoading ||
+    projectDocsQuery.isLoading ||
+    routinesQuery.isLoading ||
+    roomsQuery.isLoading ||
+    companyQuery.isLoading ||
+    agentsQuery.isLoading ||
+    issuesQuery.isLoading
+  ) {
+    return (
+      <div className="rounded-lg border border-border px-4 py-4 text-sm text-muted-foreground">
+        Loading onboarding readiness...
+      </div>
+    );
+  }
+
+  const companyGoals = (goalsQuery.data ?? []).filter((goal) => goal.level === "company");
+  const companyDocExists = (companyDocsQuery.data ?? []).some((document) => document.key === "company");
+  const teamDocs = teamDocsQuery.data ?? [];
+  const projectDocs = projectDocsQuery.data ?? [];
+  const routines = routinesQuery.data ?? [];
+  const rooms = roomsQuery.data ?? [];
+  const agents = agentsQuery.data ?? [];
+  const issues = issuesQuery.data ?? [];
+  const company = companyQuery.data ?? null;
+  const projectBudget = budgetOverview?.policies.find(
+    (policy) => policy.scopeType === "project" && policy.scopeId === project.id,
+  );
+  const starterAgentNames = [
+    STARTER_AGENT_NAMES.ceo,
+    STARTER_AGENT_NAMES.technicalProjectLead,
+    STARTER_AGENT_NAMES.continuityOwner,
+    STARTER_AGENT_NAMES.auditReviewer,
+  ] as const;
+  const starterAgents = agents.filter((agent) => starterAgentNames.some((name) => name === agent.name));
+
+  const items = [
+    { label: "Company goal exists", ready: companyGoals.length > 0 },
+    { label: "Onboarding project goal linked", ready: project.goalIds.length > 0 },
+    { label: "COMPANY.md exists", ready: companyDocExists },
+    {
+      label: "Project docs exist",
+      ready: PROJECT_RESERVED_DOCUMENT_KEYS.every((key) => projectDocs.some((document) => document.key === key)),
+    },
+    {
+      label: "Relevant TEAM.md docs exist",
+      ready:
+        teamDocs.some((document) => document.departmentKey === "engineering" && document.key === "team")
+        && teamDocs.some((document) => document.departmentKey === "operations" && document.key === "team"),
+    },
+    {
+      label: "Kickoff room exists",
+      ready: rooms.some((room) => room.title === ONBOARDING_KICKOFF_ROOM_TITLE),
+    },
+    {
+      label: "Baseline routines exist",
+      ready: [
+        ONBOARDING_ROUTINE_TITLES.dailyReadiness,
+        ONBOARDING_ROUTINE_TITLES.weeklyBudgetAudit,
+        ONBOARDING_ROUTINE_TITLES.weeklyKickoffRiskReview,
+      ].every((title) => routines.some((routine) => routine.title === title)),
+    },
+    {
+      label: "At least one worker heartbeat is enabled",
+      ready: starterAgents.some((agent) => {
+        const heartbeat = ((agent.runtimeConfig as Record<string, unknown> | null)?.heartbeat as Record<string, unknown> | null) ?? null;
+        return heartbeat?.enabled === true;
+      }),
+    },
+    {
+      label: "Demo governance lane exists",
+      ready: [
+        ONBOARDING_BRANCH_TITLE,
+        ONBOARDING_DEMO_TITLES.review,
+        ONBOARDING_DEMO_TITLES.handoff,
+      ].every((title) => issues.some((issue) => issue.title === title)),
+    },
+    {
+      label: "Company, project, and starter-agent budgets are non-zero",
+      ready:
+        (company?.budgetMonthlyCents ?? 0) > 0
+        && (projectBudget?.amount ?? 0) > 0
+        && starterAgents.length >= starterAgentNames.length
+        && starterAgents.every((agent) => (agent.budgetMonthlyCents ?? 0) > 0),
+    },
+  ];
+  const readyCount = items.filter((item) => item.ready).length;
+
+  return (
+    <div className="rounded-lg border border-border px-4 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            Enterprise bootstrap
+          </div>
+          <h3 className="text-lg font-semibold">Onboarding readiness</h3>
+        </div>
+        <div className="text-sm text-muted-foreground">
+          {readyCount}/{items.length} ready
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className="flex items-center gap-3 rounded-md border border-border px-3 py-2 text-sm"
+          >
+            <span className={`h-2.5 w-2.5 rounded-full ${item.ready ? "bg-emerald-500" : "bg-amber-500"}`} />
+            <span>{item.label}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1036,14 +1224,21 @@ export function ProjectDetail() {
       </Tabs>
 
       {activeTab === "overview" && (
-        <OverviewContent
-          project={project}
-          onUpdate={(data) => updateProject.mutate(data)}
-          imageUploadHandler={async (file) => {
-            const asset = await uploadImage.mutateAsync(file);
-            return asset.contentPath;
-          }}
-        />
+        <div className="space-y-4">
+          <OnboardingReadinessCard
+            project={project}
+            companyId={resolvedCompanyId!}
+            budgetOverview={budgetOverview}
+          />
+          <OverviewContent
+            project={project}
+            onUpdate={(data) => updateProject.mutate(data)}
+            imageUploadHandler={async (file) => {
+              const asset = await uploadImage.mutateAsync(file);
+              return asset.contentPath;
+            }}
+          />
+        </div>
       )}
 
       {activeTab === "list" && project?.id && resolvedCompanyId && (
