@@ -1,8 +1,10 @@
 import { z } from "zod";
 import {
+  COMPANY_RESERVED_DOCUMENT_KEYS,
   CONFERENCE_ROOM_KINDS,
   ISSUE_RESERVED_DOCUMENT_KEYS,
   PROJECT_RESERVED_DOCUMENT_KEYS,
+  TEAM_RESERVED_DOCUMENT_KEYS,
 } from "../constants.js";
 import type {
   AssignmentPacket,
@@ -220,8 +222,10 @@ export const packetEnvelopeSchema = z.union([
 ]) as z.ZodType<PacketEnvelope>;
 
 export const conferenceRoomKindSchema = z.enum(CONFERENCE_ROOM_KINDS);
+export const companyReservedDocumentKeySchema = z.enum(COMPANY_RESERVED_DOCUMENT_KEYS);
 export const projectReservedDocumentKeySchema = z.enum(PROJECT_RESERVED_DOCUMENT_KEYS);
 export const issueReservedDocumentKeySchema = z.enum(ISSUE_RESERVED_DOCUMENT_KEYS);
+export const teamReservedDocumentKeySchema = z.enum(TEAM_RESERVED_DOCUMENT_KEYS);
 
 const issueProgressDocumentKindSchema = z.literal("paperclip/issue-progress.v1");
 const issueHandoffDocumentKindSchema = z.literal("paperclip/issue-handoff.v1");

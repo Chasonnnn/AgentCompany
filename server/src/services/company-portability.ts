@@ -31,6 +31,7 @@ import type {
   RoutineVariable,
 } from "@paperclipai/shared";
 import {
+  AGENT_DEPARTMENT_LABELS,
   AGENT_ROLES,
   ISSUE_PRIORITIES,
   ISSUE_RESERVED_DOCUMENT_KEYS,
@@ -710,6 +711,18 @@ function buildPortableProjectDocumentTitle(key: string) {
 
 function buildPortableIssueDocumentTitle(key: string) {
   return `${key.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}.md`;
+}
+
+function buildPortableTeamPath(departmentKey: string, departmentName: string | null) {
+  const slug = departmentKey === "custom"
+    ? `custom-${normalizeAgentUrlKey(departmentName ?? "team") ?? "team"}`
+    : departmentKey;
+  return `teams/${slug}/TEAM.md`;
+}
+
+function departmentLabelFromPortableScope(departmentKey: string, departmentName: string | null) {
+  if (departmentKey === "custom") return departmentName ?? "Custom";
+  return AGENT_DEPARTMENT_LABELS[departmentKey as keyof typeof AGENT_DEPARTMENT_LABELS] ?? departmentKey;
 }
 
 function normalizeRoutineTriggerExtension(value: unknown): CompanyPortabilityIssueRoutineTriggerManifestEntry | null {
@@ -3133,6 +3146,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
 
     const companyPath = "COMPANY.md";
     const operatingSystemPath = "OPERATING_SYSTEM.md";
+    const companyDocument = include.company ? await documents.getCompanyDocumentByKey(company.id, "company") : null;
     files[companyPath] = buildMarkdown(
       {
         name: company.name,
@@ -3140,7 +3154,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         schema: "agentcompanies/v1",
         slug: rootPath,
       },
-      "",
+      companyDocument?.body ?? "",
     );
     files[operatingSystemPath] = DEFAULT_PORTABLE_OPERATING_SYSTEM_MARKDOWN;
 
@@ -3161,6 +3175,20 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             warnings.push(`Failed to export company logo ${company.logoAssetId}: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
+      }
+    }
+
+    if (include.company) {
+      const teamDocumentRows = await documents.listTeamDocuments(company.id);
+      for (const document of teamDocumentRows) {
+        files[buildPortableTeamPath(document.departmentKey, document.departmentName)] = buildMarkdown(
+          {
+            departmentKey: document.departmentKey,
+            departmentName: document.departmentName,
+            team: departmentLabelFromPortableScope(document.departmentKey, document.departmentName),
+          },
+          document.body ?? "",
+        );
       }
     }
 
@@ -4071,6 +4099,72 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
               warnings.push(`Failed to import company logo ${logoPath}: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
+        }
+      }
+
+      const companyMarkdown = readPortableTextFile(plan.source.files, sourceManifest.company?.path ?? "COMPANY.md");
+      if (typeof companyMarkdown === "string") {
+        const parsedCompanyMarkdown = parseFrontmatterMarkdown(companyMarkdown);
+        const existingCompanyDocument = await documents.getCompanyDocumentByKey(targetCompany.id, "company");
+        await documents.upsertCompanyDocument({
+          companyId: targetCompany.id,
+          key: "company",
+          title: "COMPANY.md",
+          format: "markdown",
+          body: parsedCompanyMarkdown.body,
+          baseRevisionId: existingCompanyDocument?.latestRevisionId ?? null,
+          createdByAgentId: null,
+          createdByUserId: actorUserId ?? null,
+          createdByRunId: null,
+        });
+      }
+
+      const teamDocumentPaths = Object.keys(plan.source.files)
+        .filter((entry) => /^teams\/[^/]+\/TEAM\.md$/i.test(normalizePortablePath(entry)))
+        .sort();
+      for (const teamDocumentPath of teamDocumentPaths) {
+        const teamMarkdown = readPortableTextFile(plan.source.files, teamDocumentPath);
+        if (typeof teamMarkdown !== "string") continue;
+        const parsedTeamMarkdown = parseFrontmatterMarkdown(teamMarkdown);
+        const departmentKeyRaw = asString(parsedTeamMarkdown.frontmatter.departmentKey);
+        if (!departmentKeyRaw) {
+          warnings.push(`Skipped team document ${teamDocumentPath} because departmentKey is missing.`);
+          continue;
+        }
+        const departmentKey = departmentKeyRaw === "custom"
+          ? "custom"
+          : Object.keys(AGENT_DEPARTMENT_LABELS).includes(departmentKeyRaw)
+            ? departmentKeyRaw
+            : null;
+        if (!departmentKey) {
+          warnings.push(`Skipped team document ${teamDocumentPath} because departmentKey is invalid.`);
+          continue;
+        }
+        const departmentName = departmentKey === "custom"
+          ? asString(parsedTeamMarkdown.frontmatter.departmentName)
+          : null;
+        try {
+          const existingTeamDocument = await documents.getTeamDocumentByScope({
+            companyId: targetCompany.id,
+            departmentKey,
+            departmentName,
+            key: "team",
+          });
+          await documents.upsertTeamDocument({
+            companyId: targetCompany.id,
+            departmentKey,
+            departmentName,
+            key: "team",
+            title: "TEAM.md",
+            format: "markdown",
+            body: parsedTeamMarkdown.body,
+            baseRevisionId: existingTeamDocument?.latestRevisionId ?? null,
+            createdByAgentId: null,
+            createdByUserId: actorUserId ?? null,
+            createdByRunId: null,
+          });
+        } catch (error) {
+          warnings.push(`Failed to import ${teamDocumentPath}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     }

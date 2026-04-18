@@ -1,12 +1,16 @@
 import {
+  COMPANY_RESERVED_DOCUMENT_KEYS,
   CONFERENCE_ROOM_KINDS,
   ISSUE_RESERVED_DOCUMENT_KEYS,
   ISSUE_CONTINUITY_TIERS,
   PROJECT_RESERVED_DOCUMENT_KEYS,
+  TEAM_RESERVED_DOCUMENT_KEYS,
   type ConferenceRoomKind,
+  type CompanyReservedDocumentKey,
   type IssueContinuityTier,
   type IssueReservedDocumentKey,
   type ProjectReservedDocumentKey,
+  type TeamReservedDocumentKey,
 } from "./constants.js";
 import type {
   ConferenceRoomKindDescriptor,
@@ -59,6 +63,24 @@ export const PROJECT_RESERVED_DOCUMENT_DESCRIPTORS: Record<ProjectReservedDocume
     label: "Runbook",
     owner: "Project leadership",
     description: "Operational instructions, coordination norms, and repeatable procedures.",
+  },
+};
+
+export const COMPANY_RESERVED_DOCUMENT_DESCRIPTORS: Record<CompanyReservedDocumentKey, ReservedDocumentDescriptor> = {
+  company: {
+    key: "company",
+    label: "COMPANY.md",
+    owner: "Board and CEO",
+    description: "Durable company charter, operating regime, and bootstrap context.",
+  },
+};
+
+export const TEAM_RESERVED_DOCUMENT_DESCRIPTORS: Record<TeamReservedDocumentKey, ReservedDocumentDescriptor> = {
+  team: {
+    key: "team",
+    label: "TEAM.md",
+    owner: "Department lead",
+    description: "Durable team charter, routines, and operating instructions for a department lane.",
   },
 };
 
@@ -149,16 +171,32 @@ export function isReservedProjectDocumentKey(value: string): value is ProjectRes
   return PROJECT_RESERVED_DOCUMENT_KEYS.includes(value as ProjectReservedDocumentKey);
 }
 
+export function isReservedCompanyDocumentKey(value: string): value is CompanyReservedDocumentKey {
+  return COMPANY_RESERVED_DOCUMENT_KEYS.includes(value as CompanyReservedDocumentKey);
+}
+
 export function isReservedIssueDocumentKey(value: string): value is IssueReservedDocumentKey {
   return ISSUE_RESERVED_DOCUMENT_KEYS.includes(value as IssueReservedDocumentKey);
+}
+
+export function isReservedTeamDocumentKey(value: string): value is TeamReservedDocumentKey {
+  return TEAM_RESERVED_DOCUMENT_KEYS.includes(value as TeamReservedDocumentKey);
 }
 
 export function getReservedProjectDocumentDescriptor(key: string): ReservedDocumentDescriptor | null {
   return isReservedProjectDocumentKey(key) ? PROJECT_RESERVED_DOCUMENT_DESCRIPTORS[key] : null;
 }
 
+export function getReservedCompanyDocumentDescriptor(key: string): ReservedDocumentDescriptor | null {
+  return isReservedCompanyDocumentKey(key) ? COMPANY_RESERVED_DOCUMENT_DESCRIPTORS[key] : null;
+}
+
 export function getReservedIssueDocumentDescriptor(key: string): ReservedDocumentDescriptor | null {
   return isReservedIssueDocumentKey(key) ? ISSUE_RESERVED_DOCUMENT_DESCRIPTORS[key] : null;
+}
+
+export function getReservedTeamDocumentDescriptor(key: string): ReservedDocumentDescriptor | null {
+  return isReservedTeamDocumentKey(key) ? TEAM_RESERVED_DOCUMENT_DESCRIPTORS[key] : null;
 }
 
 export function getConferenceRoomKindDescriptor(kind: ConferenceRoomKind | null | undefined): ConferenceRoomKindDescriptor | null {

@@ -42,6 +42,20 @@ const mockFeedbackService = vi.hoisted(() => ({
   getFeedbackTraceById: vi.fn(),
   saveIssueVote: vi.fn(),
 }));
+const mockDocumentService = vi.hoisted(() => ({
+  listCompanyDocuments: vi.fn(),
+  getCompanyDocumentByKey: vi.fn(),
+  upsertCompanyDocument: vi.fn(),
+  listCompanyDocumentRevisions: vi.fn(),
+  restoreCompanyDocumentRevision: vi.fn(),
+  deleteCompanyDocument: vi.fn(),
+  listTeamDocuments: vi.fn(),
+  getTeamDocumentByScope: vi.fn(),
+  upsertTeamDocument: vi.fn(),
+  listTeamDocumentRevisions: vi.fn(),
+  restoreTeamDocumentRevision: vi.fn(),
+  deleteTeamDocument: vi.fn(),
+}));
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
@@ -50,6 +64,7 @@ vi.mock("../services/index.js", () => ({
   companyPortabilityService: () => mockCompanyPortabilityService,
   companyService: () => mockCompanyService,
   agentTemplateService: () => mockAgentTemplateService,
+  documentService: () => mockDocumentService,
   feedbackService: () => mockFeedbackService,
   logActivity: mockLogActivity,
 }));

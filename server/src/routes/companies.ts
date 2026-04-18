@@ -2,6 +2,8 @@ import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
 import {
   DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION,
+  agentDepartmentKeySchema,
+  companyReservedDocumentKeySchema,
   companyPortabilityExportSchema,
   companyPortabilityImportSchema,
   companyPortabilityPreviewSchema,
@@ -9,6 +11,9 @@ import {
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
   feedbackVoteValueSchema,
+  restoreProjectDocumentRevisionSchema,
+  teamReservedDocumentKeySchema,
+  upsertProjectDocumentSchema,
   updateCompanyBrandingSchema,
   updateCompanySchema,
 } from "@paperclipai/shared";
@@ -21,6 +26,7 @@ import {
   budgetService,
   companyPortabilityService,
   companyService,
+  documentService,
   feedbackService,
   logActivity,
 } from "../services/index.js";
@@ -37,6 +43,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   const portability = companyPortabilityService(db, storage);
   const access = accessService(db);
   const budgets = budgetService(db);
+  const documents = documentService(db);
   const feedback = feedbackService(db);
 
   function parseBooleanQuery(value: unknown) {
@@ -136,6 +143,283 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       return;
     }
     res.json(company);
+  });
+
+  function assertCompanyDocumentKey(rawKey: string) {
+    return companyReservedDocumentKeySchema.parse(rawKey);
+  }
+
+  function assertTeamDocumentKey(rawKey: string) {
+    return teamReservedDocumentKeySchema.parse(rawKey);
+  }
+
+  function parseDepartmentScope(req: Request) {
+    const departmentKey = agentDepartmentKeySchema.parse(req.params.departmentKey as string);
+    const departmentNameRaw = typeof req.query.departmentName === "string" ? req.query.departmentName : null;
+    const departmentName = departmentNameRaw?.trim() ? departmentNameRaw.trim() : null;
+    return { departmentKey, departmentName };
+  }
+
+  router.get("/:companyId/documents", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    res.json(await documents.listCompanyDocuments(companyId));
+  });
+
+  router.get("/:companyId/documents/:key", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const key = assertCompanyDocumentKey(req.params.key as string);
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const document = await documents.getCompanyDocumentByKey(companyId, key);
+    if (!document) {
+      res.status(404).json({ error: "Company document not found" });
+      return;
+    }
+    res.json(document);
+  });
+
+  router.put("/:companyId/documents/:key", validate(upsertProjectDocumentSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const key = assertCompanyDocumentKey(req.params.key as string);
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const actor = getActorInfo(req);
+    const result = await documents.upsertCompanyDocument({
+      companyId,
+      key,
+      ...req.body,
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      createdByRunId: actor.runId,
+    });
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: result.created ? "company.document_created" : "company.document_updated",
+      entityType: "company",
+      entityId: companyId,
+      details: {
+        key,
+        revisionNumber: result.document.latestRevisionNumber,
+      },
+    });
+    res.status(result.created ? 201 : 200).json(result.document);
+  });
+
+  router.get("/:companyId/documents/:key/revisions", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const key = assertCompanyDocumentKey(req.params.key as string);
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    res.json(await documents.listCompanyDocumentRevisions(companyId, key));
+  });
+
+  router.post(
+    "/:companyId/documents/:key/revisions/:revisionId/restore",
+    validate(restoreProjectDocumentRevisionSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      const key = assertCompanyDocumentKey(req.params.key as string);
+      const revisionId = req.params.revisionId as string;
+      assertCompanyAccess(req, companyId);
+      assertBoard(req);
+      const actor = getActorInfo(req);
+      const result = await documents.restoreCompanyDocumentRevision({
+        companyId,
+        key,
+        revisionId,
+        createdByAgentId: actor.agentId,
+        createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "company.document_restored",
+        entityType: "company",
+        entityId: companyId,
+        details: {
+          key,
+          revisionId,
+          restoredFromRevisionNumber: result.restoredFromRevisionNumber,
+        },
+      });
+      res.json(result.document);
+    },
+  );
+
+  router.delete("/:companyId/documents/:key", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const key = assertCompanyDocumentKey(req.params.key as string);
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const deleted = await documents.deleteCompanyDocument(companyId, key);
+    if (!deleted) {
+      res.status(404).json({ error: "Company document not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "company.document_deleted",
+      entityType: "company",
+      entityId: companyId,
+      details: { key },
+    });
+    res.json(deleted);
+  });
+
+  router.get("/:companyId/team-documents", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    res.json(await documents.listTeamDocuments(companyId));
+  });
+
+  router.get("/:companyId/team-documents/:departmentKey/:key", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const { departmentKey, departmentName } = parseDepartmentScope(req);
+    const key = assertTeamDocumentKey(req.params.key as string);
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const document = await documents.getTeamDocumentByScope({
+      companyId,
+      departmentKey,
+      departmentName,
+      key,
+    });
+    if (!document) {
+      res.status(404).json({ error: "Team document not found" });
+      return;
+    }
+    res.json(document);
+  });
+
+  router.put("/:companyId/team-documents/:departmentKey/:key", validate(upsertProjectDocumentSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const { departmentKey, departmentName } = parseDepartmentScope(req);
+    const key = assertTeamDocumentKey(req.params.key as string);
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const actor = getActorInfo(req);
+    const result = await documents.upsertTeamDocument({
+      companyId,
+      departmentKey,
+      departmentName,
+      key,
+      ...req.body,
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      createdByRunId: actor.runId,
+    });
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: result.created ? "team.document_created" : "team.document_updated",
+      entityType: "company",
+      entityId: companyId,
+      details: {
+        departmentKey,
+        departmentName,
+        key,
+        revisionNumber: result.document.latestRevisionNumber,
+      },
+    });
+    res.status(result.created ? 201 : 200).json(result.document);
+  });
+
+  router.get("/:companyId/team-documents/:departmentKey/:key/revisions", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const { departmentKey, departmentName } = parseDepartmentScope(req);
+    const key = assertTeamDocumentKey(req.params.key as string);
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    res.json(await documents.listTeamDocumentRevisions({ companyId, departmentKey, departmentName, key }));
+  });
+
+  router.post(
+    "/:companyId/team-documents/:departmentKey/:key/revisions/:revisionId/restore",
+    validate(restoreProjectDocumentRevisionSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      const { departmentKey, departmentName } = parseDepartmentScope(req);
+      const key = assertTeamDocumentKey(req.params.key as string);
+      const revisionId = req.params.revisionId as string;
+      assertCompanyAccess(req, companyId);
+      assertBoard(req);
+      const actor = getActorInfo(req);
+      const result = await documents.restoreTeamDocumentRevision({
+        companyId,
+        departmentKey,
+        departmentName,
+        key,
+        revisionId,
+        createdByAgentId: actor.agentId,
+        createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "team.document_restored",
+        entityType: "company",
+        entityId: companyId,
+        details: {
+          departmentKey,
+          departmentName,
+          key,
+          revisionId,
+          restoredFromRevisionNumber: result.restoredFromRevisionNumber,
+        },
+      });
+      res.json(result.document);
+    },
+  );
+
+  router.delete("/:companyId/team-documents/:departmentKey/:key", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const { departmentKey, departmentName } = parseDepartmentScope(req);
+    const key = assertTeamDocumentKey(req.params.key as string);
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const deleted = await documents.deleteTeamDocument({ companyId, departmentKey, departmentName, key });
+    if (!deleted) {
+      res.status(404).json({ error: "Team document not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "team.document_deleted",
+      entityType: "company",
+      entityId: companyId,
+      details: {
+        departmentKey,
+        departmentName,
+        key,
+      },
+    });
+    res.json(deleted);
   });
 
   router.get("/:companyId/feedback-traces", async (req, res) => {

@@ -32,6 +32,20 @@ function registerRouteMocks() {
     agentService: () => ({
       getById: vi.fn(),
     }),
+    documentService: () => ({
+      listCompanyDocuments: vi.fn(),
+      getCompanyDocumentByKey: vi.fn(),
+      upsertCompanyDocument: vi.fn(),
+      listCompanyDocumentRevisions: vi.fn(),
+      restoreCompanyDocumentRevision: vi.fn(),
+      deleteCompanyDocument: vi.fn(),
+      listTeamDocuments: vi.fn(),
+      getTeamDocumentByScope: vi.fn(),
+      upsertTeamDocument: vi.fn(),
+      listTeamDocumentRevisions: vi.fn(),
+      restoreTeamDocumentRevision: vi.fn(),
+      deleteTeamDocument: vi.fn(),
+    }),
     feedbackService: () => ({
       listIssueVotesForUser: vi.fn(),
       listFeedbackTraces: vi.fn(),

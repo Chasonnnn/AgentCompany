@@ -47,6 +47,12 @@ const documentSvc = {
   listIssueDocuments: vi.fn(),
   getIssueDocumentByKey: vi.fn(),
   upsertIssueDocument: vi.fn(),
+  listCompanyDocuments: vi.fn(),
+  getCompanyDocumentByKey: vi.fn(),
+  upsertCompanyDocument: vi.fn(),
+  listTeamDocuments: vi.fn(),
+  getTeamDocumentByScope: vi.fn(),
+  upsertTeamDocument: vi.fn(),
 };
 
 const routineSvc = {
@@ -234,6 +240,18 @@ describe("company portability", () => {
     documentSvc.getIssueDocumentByKey.mockResolvedValue(null);
     documentSvc.upsertIssueDocument.mockResolvedValue({
       document: { id: "issue-doc-1", latestRevisionNumber: 1 },
+      created: true,
+    });
+    documentSvc.listCompanyDocuments.mockResolvedValue([]);
+    documentSvc.getCompanyDocumentByKey.mockResolvedValue(null);
+    documentSvc.upsertCompanyDocument.mockResolvedValue({
+      document: { id: "company-doc-1", latestRevisionNumber: 1 },
+      created: true,
+    });
+    documentSvc.listTeamDocuments.mockResolvedValue([]);
+    documentSvc.getTeamDocumentByScope.mockResolvedValue(null);
+    documentSvc.upsertTeamDocument.mockResolvedValue({
+      document: { id: "team-doc-1", latestRevisionNumber: 1 },
       created: true,
     });
     routineSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
@@ -573,6 +591,77 @@ describe("company portability", () => {
     const taskPlanPath = Object.keys(exported.files).find((entry) => entry.startsWith("tasks/") && entry.endsWith("/docs/plan.md"));
     expect(taskPlanPath).toBeTruthy();
     expect(asTextFile(exported.files[taskPlanPath!])).toBe("# Plan");
+  });
+
+  it("exports native company and team docs through portable COMPANY.md and TEAM.md", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    documentSvc.getCompanyDocumentByKey.mockResolvedValue({
+      id: "company-doc-1",
+      companyId: "company-1",
+      key: "company",
+      title: "COMPANY.md",
+      format: "markdown",
+      body: "# COMPANY.md\n\nNative company doc",
+      latestRevisionId: "company-rev-1",
+      latestRevisionNumber: 1,
+      createdByAgentId: null,
+      createdByUserId: "user-1",
+      updatedByAgentId: null,
+      updatedByUserId: "user-1",
+      createdAt: new Date("2026-04-17T00:00:00Z"),
+      updatedAt: new Date("2026-04-17T00:00:00Z"),
+    });
+    documentSvc.listTeamDocuments.mockResolvedValue([
+      {
+        id: "team-doc-1",
+        companyId: "company-1",
+        departmentKey: "engineering",
+        departmentName: null,
+        key: "team",
+        title: "TEAM.md",
+        format: "markdown",
+        body: "# TEAM.md\n\nEngineering charter",
+        latestRevisionId: "team-rev-1",
+        latestRevisionNumber: 1,
+        createdByAgentId: null,
+        createdByUserId: "user-1",
+        updatedByAgentId: null,
+        updatedByUserId: "user-1",
+        createdAt: new Date("2026-04-17T00:00:00Z"),
+        updatedAt: new Date("2026-04-17T00:00:00Z"),
+      },
+    ]);
+    documentSvc.getTeamDocumentByScope.mockResolvedValue({
+      id: "team-doc-1",
+      companyId: "company-1",
+      departmentKey: "engineering",
+      departmentName: null,
+      key: "team",
+      title: "TEAM.md",
+      format: "markdown",
+      body: "# TEAM.md\n\nEngineering charter",
+      latestRevisionId: "team-rev-1",
+      latestRevisionNumber: 1,
+      createdByAgentId: null,
+      createdByUserId: "user-1",
+      updatedByAgentId: null,
+      updatedByUserId: "user-1",
+      createdAt: new Date("2026-04-17T00:00:00Z"),
+      updatedAt: new Date("2026-04-17T00:00:00Z"),
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: false,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    expect(asTextFile(exported.files["COMPANY.md"])).toContain("Native company doc");
+    expect(asTextFile(exported.files["teams/engineering/TEAM.md"])).toContain("Engineering charter");
   });
 
   it("exports default sidebar order into the Paperclip extension and manifest", async () => {
@@ -1299,6 +1388,76 @@ describe("company portability", () => {
         portability: "portable",
       },
     ]);
+  });
+
+  it("imports native company and team docs from portable files", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.create.mockResolvedValue({
+      id: "company-imported",
+      name: "Imported Paperclip",
+    });
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    agentSvc.list.mockResolvedValue([]);
+    projectSvc.list.mockResolvedValue([]);
+
+    await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: "/tmp/imported-paperclip",
+        files: {
+          "COMPANY.md": [
+            "---",
+            'schema: "agentcompanies/v1"',
+            'name: "Imported Paperclip"',
+            "---",
+            "",
+            "# COMPANY.md",
+            "",
+            "Imported company charter",
+          ].join("\n"),
+          "teams/engineering/TEAM.md": [
+            "---",
+            'departmentKey: "engineering"',
+            'departmentName: "Engineering"',
+            'team: "TEAM.md"',
+            "---",
+            "",
+            "# TEAM.md",
+            "",
+            "Imported engineering team charter",
+          ].join("\n"),
+        },
+      },
+      include: {
+        company: true,
+        agents: false,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "new_company",
+        newCompanyName: "Imported Paperclip",
+      },
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(documentSvc.upsertCompanyDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        companyId: "company-imported",
+        key: "company",
+        body: expect.stringContaining("Imported company charter"),
+      }),
+    );
+    expect(documentSvc.upsertTeamDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        companyId: "company-imported",
+        departmentKey: "engineering",
+        departmentName: null,
+        key: "team",
+        body: expect.stringContaining("Imported engineering team charter"),
+      }),
+    );
   });
 
   it("exports project env as portable inputs without concrete values", async () => {

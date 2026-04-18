@@ -1,4 +1,12 @@
-export type { Company } from "./company.js";
+export type {
+  Company,
+  CompanyDocument,
+  CompanyDocumentRevision,
+  CompanyDocumentSummary,
+  TeamDocument,
+  TeamDocumentRevision,
+  TeamDocumentSummary,
+} from "./company.js";
 export type {
   PortfolioCluster,
   PortfolioClusterCreateRequest,
