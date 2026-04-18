@@ -132,4 +132,13 @@ describe("onboarding launch payloads", () => {
       prepareContinuity: true,
     });
   });
+
+  it("includes the onboarding lead when one is provided", () => {
+    expect(buildOnboardingProjectPayload("goal-1", "agent-7")).toEqual({
+      name: "Onboarding",
+      status: "in_progress",
+      goalIds: ["goal-1"],
+      leadAgentId: "agent-7",
+    });
+  });
 });

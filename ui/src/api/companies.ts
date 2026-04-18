@@ -1,5 +1,8 @@
 import type {
   Company,
+  CompanyDocument,
+  CompanyDocumentRevision,
+  CompanyDocumentSummary,
   CompanyPortabilityExportRequest,
   CompanyPortabilityExportPreviewResult,
   CompanyPortabilityExportResult,
@@ -7,6 +10,10 @@ import type {
   CompanyPortabilityImportResult,
   CompanyPortabilityPreviewRequest,
   CompanyPortabilityPreviewResult,
+  TeamDocument,
+  TeamDocumentRevision,
+  TeamDocumentSummary,
+  UpsertProjectDocument,
   UpdateCompanyBranding,
 } from "@paperclipai/shared";
 import { api } from "./client";
@@ -41,6 +48,49 @@ export const companiesApi = {
   ) => api.patch<Company>(`/companies/${companyId}`, data),
   updateBranding: (companyId: string, data: UpdateCompanyBranding) =>
     api.patch<Company>(`/companies/${companyId}/branding`, data),
+  listDocuments: (companyId: string) => api.get<CompanyDocumentSummary[]>(`/companies/${companyId}/documents`),
+  getDocument: (companyId: string, key: string) =>
+    api.get<CompanyDocument>(`/companies/${companyId}/documents/${encodeURIComponent(key)}`),
+  upsertDocument: (companyId: string, key: string, data: UpsertProjectDocument) =>
+    api.put<CompanyDocument>(`/companies/${companyId}/documents/${encodeURIComponent(key)}`, data),
+  listDocumentRevisions: (companyId: string, key: string) =>
+    api.get<CompanyDocumentRevision[]>(`/companies/${companyId}/documents/${encodeURIComponent(key)}/revisions`),
+  restoreDocumentRevision: (companyId: string, key: string, revisionId: string) =>
+    api.post<CompanyDocument>(
+      `/companies/${companyId}/documents/${encodeURIComponent(key)}/revisions/${encodeURIComponent(revisionId)}/restore`,
+      {},
+    ),
+  listTeamDocuments: (companyId: string) => api.get<TeamDocumentSummary[]>(`/companies/${companyId}/team-documents`),
+  getTeamDocument: (companyId: string, departmentKey: string, key: string, departmentName?: string | null) =>
+    api.get<TeamDocument>(
+      `/companies/${companyId}/team-documents/${encodeURIComponent(departmentKey)}/${encodeURIComponent(key)}${departmentName ? `?departmentName=${encodeURIComponent(departmentName)}` : ""}`,
+    ),
+  upsertTeamDocument: (
+    companyId: string,
+    departmentKey: string,
+    key: string,
+    data: UpsertProjectDocument,
+    departmentName?: string | null,
+  ) =>
+    api.put<TeamDocument>(
+      `/companies/${companyId}/team-documents/${encodeURIComponent(departmentKey)}/${encodeURIComponent(key)}${departmentName ? `?departmentName=${encodeURIComponent(departmentName)}` : ""}`,
+      data,
+    ),
+  listTeamDocumentRevisions: (companyId: string, departmentKey: string, key: string, departmentName?: string | null) =>
+    api.get<TeamDocumentRevision[]>(
+      `/companies/${companyId}/team-documents/${encodeURIComponent(departmentKey)}/${encodeURIComponent(key)}/revisions${departmentName ? `?departmentName=${encodeURIComponent(departmentName)}` : ""}`,
+    ),
+  restoreTeamDocumentRevision: (
+    companyId: string,
+    departmentKey: string,
+    key: string,
+    revisionId: string,
+    departmentName?: string | null,
+  ) =>
+    api.post<TeamDocument>(
+      `/companies/${companyId}/team-documents/${encodeURIComponent(departmentKey)}/${encodeURIComponent(key)}/revisions/${encodeURIComponent(revisionId)}/restore${departmentName ? `?departmentName=${encodeURIComponent(departmentName)}` : ""}`,
+      {},
+    ),
   archive: (companyId: string) => api.post<Company>(`/companies/${companyId}/archive`, {}),
   remove: (companyId: string) => api.delete<{ ok: true }>(`/companies/${companyId}`),
   exportBundle: (

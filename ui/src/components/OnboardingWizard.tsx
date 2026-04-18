@@ -7,8 +7,12 @@ import { useCompany } from "../context/CompanyContext";
 import { companiesApi } from "../api/companies";
 import { goalsApi } from "../api/goals";
 import { agentsApi } from "../api/agents";
+import { agentTemplatesApi } from "../api/agentTemplates";
+import { budgetsApi } from "../api/budgets";
+import { conferenceRoomsApi } from "../api/conferenceRooms";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
+import { routinesApi } from "../api/routines";
 import { queryKeys } from "../lib/queryKeys";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import {
@@ -37,6 +41,24 @@ import {
   buildOnboardingProjectPayload,
   selectDefaultCompanyGoalId
 } from "../lib/onboarding-launch";
+import {
+  buildCompanyDocumentBody,
+  buildEngineeringTeamDocumentBody,
+  buildFallbackCompanyGoal,
+  buildOnboardingKickoffQuestion,
+  buildOnboardingProjectDocuments,
+  buildOnboardingProjectGoal,
+  buildOperationsTeamDocumentBody,
+  DEFAULT_COMPANY_BUDGET_CENTS,
+  DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS,
+  DEFAULT_STARTER_AGENT_BUDGET_CENTS,
+  DEFAULT_WORKER_HEARTBEAT_INTERVAL_SEC,
+  ONBOARDING_BRANCH_TITLE,
+  ONBOARDING_DEMO_TITLES,
+  ONBOARDING_KICKOFF_ROOM_TITLE,
+  ONBOARDING_ROUTINE_TITLES,
+  STARTER_AGENT_NAMES,
+} from "../lib/onboarding-bootstrap";
 import { buildNewAgentRuntimeConfig } from "../lib/new-agent-runtime-config";
 import {
   defaultCodexLocalFastModeForModel,
@@ -69,6 +91,10 @@ const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the
 - create one lean execution lane
 - hire a project lead or continuity owner only if needed
 - break the first milestone into concrete issue continuity work`;
+
+function findTemplateIdByArchetype(templates: Array<{ id: string; archetypeKey: string }>, archetypeKey: string) {
+  return templates.find((template) => template.archetypeKey === archetypeKey)?.id ?? null;
+}
 
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
@@ -390,29 +416,29 @@ export function OnboardingWizard() {
     setLoading(true);
     setError(null);
     try {
-      const company = await companiesApi.create({ name: companyName.trim() });
+      const trimmedCompanyName = companyName.trim();
+      const company = await companiesApi.create({
+        name: trimmedCompanyName,
+        budgetMonthlyCents: DEFAULT_COMPANY_BUDGET_CENTS,
+      });
       setCreatedCompanyId(company.id);
       setCreatedCompanyPrefix(company.issuePrefix);
       setSelectedCompanyId(company.id);
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
 
-      if (companyGoal.trim()) {
-        const parsedGoal = parseOnboardingGoalInput(companyGoal);
-        const goal = await goalsApi.create(company.id, {
-          title: parsedGoal.title,
-          ...(parsedGoal.description
-            ? { description: parsedGoal.description }
-            : {}),
-          level: "company",
-          status: "active"
-        });
-        setCreatedCompanyGoalId(goal.id);
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.goals.list(company.id)
-        });
-      } else {
-        setCreatedCompanyGoalId(null);
-      }
+      const parsedGoal = companyGoal.trim()
+        ? parseOnboardingGoalInput(companyGoal)
+        : buildFallbackCompanyGoal(trimmedCompanyName);
+      const goal = await goalsApi.create(company.id, {
+        title: parsedGoal.title,
+        ...(parsedGoal.description ? { description: parsedGoal.description } : {}),
+        level: "company",
+        status: "active",
+      });
+      setCreatedCompanyGoalId(goal.id);
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.goals.list(company.id)
+      });
 
       setStep(2);
     } catch (err) {
@@ -468,9 +494,11 @@ export function OnboardingWizard() {
       const agent = await agentsApi.create(createdCompanyId, {
         name: agentName.trim(),
         role: "ceo",
+        departmentKey: "executive",
         adapterType,
         adapterConfig: buildAdapterConfig(),
-        runtimeConfig: buildNewAgentRuntimeConfig()
+        runtimeConfig: buildNewAgentRuntimeConfig(),
+        budgetMonthlyCents: DEFAULT_STARTER_AGENT_BUDGET_CENTS,
       });
       setCreatedAgentId(agent.id);
       queryClient.invalidateQueries({
@@ -544,42 +572,474 @@ export function OnboardingWizard() {
     setLoading(true);
     setError(null);
     try {
-      let goalId = createdCompanyGoalId;
-      if (!goalId) {
-        const goals = await goalsApi.list(createdCompanyId);
-        goalId = selectDefaultCompanyGoalId(goals);
-        setCreatedCompanyGoalId(goalId);
+      const companyId = createdCompanyId;
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const currentCompany = await companiesApi.get(companyId);
+      const resolvedCompanyName = currentCompany.name;
+
+      if ((currentCompany.budgetMonthlyCents ?? 0) <= 0) {
+        await companiesApi.update(companyId, { budgetMonthlyCents: DEFAULT_COMPANY_BUDGET_CENTS });
       }
 
-      let projectId = createdProjectId;
-      if (!projectId) {
-        const project = await projectsApi.create(
-          createdCompanyId,
-          buildOnboardingProjectPayload(goalId)
+      let allGoals = await goalsApi.list(companyId);
+      let companyGoalId = createdCompanyGoalId ?? selectDefaultCompanyGoalId(allGoals);
+      let companyGoal = companyGoalId
+        ? allGoals.find((goal) => goal.id === companyGoalId) ?? null
+        : null;
+      if (!companyGoal) {
+        const fallbackGoal = buildFallbackCompanyGoal(resolvedCompanyName);
+        companyGoal = await goalsApi.create(companyId, {
+          title: fallbackGoal.title,
+          description: fallbackGoal.description,
+          level: "company",
+          status: "active",
+        });
+        companyGoalId = companyGoal.id;
+        setCreatedCompanyGoalId(companyGoal.id);
+        allGoals = await goalsApi.list(companyId);
+      }
+
+      const onboardingProjectGoalDraft = buildOnboardingProjectGoal({
+        companyName: resolvedCompanyName,
+        companyGoalTitle: companyGoal.title,
+        ownerAgentId: createdAgentId,
+        parentId: companyGoal.id,
+      });
+      let onboardingProjectGoal =
+        allGoals.find((goal) => goal.title === onboardingProjectGoalDraft.title)
+        ?? await goalsApi.create(companyId, onboardingProjectGoalDraft);
+      if (!allGoals.some((goal) => goal.id === onboardingProjectGoal.id)) {
+        allGoals = await goalsApi.list(companyId);
+      }
+
+      let project = createdProjectId
+        ? await projectsApi.get(createdProjectId, companyId).catch(() => null)
+        : null;
+      if (!project) {
+        const existingProjects = await projectsApi.list(companyId);
+        project = existingProjects.find((entry) => entry.name === "Onboarding") ?? null;
+      }
+      if (!project) {
+        project = await projectsApi.create(
+          companyId,
+          buildOnboardingProjectPayload(onboardingProjectGoal.id, createdAgentId),
         );
-        projectId = project.id;
-        setCreatedProjectId(projectId);
+        setCreatedProjectId(project.id);
         queryClient.invalidateQueries({
-          queryKey: queryKeys.projects.list(createdCompanyId)
+          queryKey: queryKeys.projects.list(companyId)
         });
       }
 
-      let issueRef = createdIssueRef;
-      if (!issueRef) {
-        const issue = await issuesApi.create(
-          createdCompanyId,
+      await budgetsApi.upsertPolicy(companyId, {
+        scopeType: "project",
+        scopeId: project.id,
+        metric: "billed_cents",
+        windowKind: "lifetime",
+        amount: DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS,
+      });
+
+      const templates = await agentTemplatesApi.list(companyId);
+      const technicalProjectLeadTemplateId = findTemplateIdByArchetype(templates, "project_lead");
+      const continuityOwnerTemplateId = findTemplateIdByArchetype(templates, "backend_api_continuity_owner");
+      const auditReviewerTemplateId = findTemplateIdByArchetype(templates, "audit_reviewer");
+      if (!technicalProjectLeadTemplateId || !continuityOwnerTemplateId || !auditReviewerTemplateId) {
+        throw new Error("Required onboarding agent templates are missing.");
+      }
+
+      const existingAgents = await agentsApi.list(companyId);
+      const ceo = existingAgents.find((agent) => agent.id === createdAgentId)
+        ?? existingAgents.find((agent) => agent.name === STARTER_AGENT_NAMES.ceo)
+        ?? null;
+      if (!ceo) {
+        throw new Error("Starter CEO agent not found.");
+      }
+      if ((ceo.budgetMonthlyCents ?? 0) <= 0) {
+        await agentsApi.update(ceo.id, {
+          budgetMonthlyCents: DEFAULT_STARTER_AGENT_BUDGET_CENTS,
+        }, companyId);
+      }
+
+      const workerRuntimeConfig = buildNewAgentRuntimeConfig({
+        heartbeatEnabled: true,
+        intervalSec: DEFAULT_WORKER_HEARTBEAT_INTERVAL_SEC,
+      });
+
+      async function ensureStarterAgent(input: {
+        templateId: string;
+        name: string;
+        title: string;
+        departmentKey: "engineering" | "operations";
+        reportsTo: string | null;
+        archetypeKey: string;
+        projectPlacement?: Record<string, unknown>;
+      }) {
+        const existing = existingAgents.find((agent) =>
+          agent.archetypeKey === input.archetypeKey || agent.name === input.name,
+        );
+        if (existing) {
+          const heartbeat = ((existing.runtimeConfig as Record<string, unknown> | null)?.heartbeat as Record<string, unknown> | null) ?? null;
+          const heartbeatEnabled = heartbeat?.enabled === true;
+          if (!heartbeatEnabled || (existing.budgetMonthlyCents ?? 0) <= 0) {
+            await agentsApi.update(existing.id, {
+              runtimeConfig: workerRuntimeConfig,
+              budgetMonthlyCents: existing.budgetMonthlyCents > 0
+                ? existing.budgetMonthlyCents
+                : DEFAULT_STARTER_AGENT_BUDGET_CENTS,
+            }, companyId);
+          }
+          return existing;
+        }
+        const created = await agentsApi.create(companyId, {
+          name: input.name,
+          title: input.title,
+          templateId: input.templateId,
+          reportsTo: input.reportsTo,
+          departmentKey: input.departmentKey,
+          adapterType,
+          adapterConfig: buildAdapterConfig(),
+          runtimeConfig: workerRuntimeConfig,
+          budgetMonthlyCents: DEFAULT_STARTER_AGENT_BUDGET_CENTS,
+          ...(input.projectPlacement ? { projectPlacement: input.projectPlacement } : {}),
+        });
+        existingAgents.push(created);
+        return created;
+      }
+
+      const technicalProjectLead = await ensureStarterAgent({
+        templateId: technicalProjectLeadTemplateId,
+        name: STARTER_AGENT_NAMES.technicalProjectLead,
+        title: STARTER_AGENT_NAMES.technicalProjectLead,
+        departmentKey: "engineering",
+        reportsTo: ceo.id,
+        archetypeKey: "project_lead",
+        projectPlacement: {
+          projectId: project.id,
+          projectRole: "engineering_manager",
+          scopeMode: "leadership_raw",
+          teamFunctionKey: "engineering",
+          teamFunctionLabel: "Engineering",
+          workstreamKey: "onboarding",
+          workstreamLabel: "Onboarding bootstrap",
+          requestedReason: "Onboarding starter team",
+        },
+      });
+
+      const continuityOwner = await ensureStarterAgent({
+        templateId: continuityOwnerTemplateId,
+        name: STARTER_AGENT_NAMES.continuityOwner,
+        title: STARTER_AGENT_NAMES.continuityOwner,
+        departmentKey: "engineering",
+        reportsTo: technicalProjectLead.id,
+        archetypeKey: "backend_api_continuity_owner",
+        projectPlacement: {
+          projectId: project.id,
+          projectRole: "worker",
+          scopeMode: "execution",
+          teamFunctionKey: "engineering",
+          teamFunctionLabel: "Engineering",
+          workstreamKey: "onboarding",
+          workstreamLabel: "Onboarding bootstrap",
+          requestedReason: "Onboarding starter team",
+        },
+      });
+
+      const auditReviewer = await ensureStarterAgent({
+        templateId: auditReviewerTemplateId,
+        name: STARTER_AGENT_NAMES.auditReviewer,
+        title: STARTER_AGENT_NAMES.auditReviewer,
+        departmentKey: "operations",
+        reportsTo: technicalProjectLead.id,
+        archetypeKey: "audit_reviewer",
+      });
+
+      const projectNeedsLeadUpdate =
+        project.leadAgentId !== technicalProjectLead.id
+        || !project.goalIds.includes(onboardingProjectGoal.id);
+      if (projectNeedsLeadUpdate) {
+        project = await projectsApi.update(project.id, {
+          leadAgentId: technicalProjectLead.id,
+          goalIds: project.goalIds.includes(onboardingProjectGoal.id)
+            ? project.goalIds
+            : [...project.goalIds, onboardingProjectGoal.id],
+        }, companyId);
+      }
+
+      const companyDocuments = await companiesApi.listDocuments(companyId);
+      if (!companyDocuments.some((document) => document.key === "company")) {
+        await companiesApi.upsertDocument(companyId, "company", {
+          title: "COMPANY.md",
+          format: "markdown",
+          body: buildCompanyDocumentBody({
+            companyName: resolvedCompanyName,
+            companyGoalTitle: companyGoal.title,
+          }),
+          baseRevisionId: null,
+        });
+      }
+
+      const teamDocuments = await companiesApi.listTeamDocuments(companyId);
+      const engineeringTeamDoc = teamDocuments.find((document) => document.departmentKey === "engineering" && document.key === "team");
+      if (!engineeringTeamDoc) {
+        await companiesApi.upsertTeamDocument(companyId, "engineering", "team", {
+          title: "TEAM.md",
+          format: "markdown",
+          body: buildEngineeringTeamDocumentBody(),
+          baseRevisionId: null,
+        });
+      }
+      const operationsTeamDoc = teamDocuments.find((document) => document.departmentKey === "operations" && document.key === "team");
+      if (!operationsTeamDoc) {
+        await companiesApi.upsertTeamDocument(companyId, "operations", "team", {
+          title: "TEAM.md",
+          format: "markdown",
+          body: buildOperationsTeamDocumentBody(),
+          baseRevisionId: null,
+        });
+      }
+
+      const projectDocs = await projectsApi.listDocuments(project.id, companyId);
+      const projectDocBodies = buildOnboardingProjectDocuments({
+        companyName: resolvedCompanyName,
+        companyGoalTitle: companyGoal.title,
+        projectGoalTitle: onboardingProjectGoal.title,
+      });
+      for (const [key, body] of Object.entries(projectDocBodies)) {
+        if (projectDocs.some((document) => document.key === key)) continue;
+        await projectsApi.upsertDocument(project.id, key, {
+          title: key === "decision-log" ? "Decision Log" : key,
+          format: "markdown",
+          body,
+          baseRevisionId: null,
+        }, companyId);
+      }
+
+      const routines = await routinesApi.list(companyId);
+      const ensureRoutine = async (input: {
+        title: string;
+        description: string;
+        assigneeAgentId: string;
+        cronExpression: string;
+        label: string;
+      }) => {
+        if (routines.some((routine) => routine.title === input.title)) return;
+        const routine = await routinesApi.create(companyId, {
+          projectId: project.id,
+          goalId: onboardingProjectGoal.id,
+          title: input.title,
+          description: input.description,
+          assigneeAgentId: input.assigneeAgentId,
+          priority: "medium",
+          status: "active",
+          concurrencyPolicy: "skip_if_active",
+          catchUpPolicy: "skip_missed",
+        });
+        await routinesApi.createTrigger(routine.id, {
+          kind: "schedule",
+          label: input.label,
+          enabled: true,
+          cronExpression: input.cronExpression,
+          timezone,
+        });
+      };
+
+      await ensureRoutine({
+        title: ONBOARDING_ROUTINE_TITLES.dailyReadiness,
+        description: "Review onboarding readiness, open questions, and next actions for the governed bootstrap lane.",
+        assigneeAgentId: ceo.id,
+        cronExpression: "0 9 * * 1-5",
+        label: "Weekdays at 9:00",
+      });
+      await ensureRoutine({
+        title: ONBOARDING_ROUTINE_TITLES.weeklyBudgetAudit,
+        description: "Audit budget posture, heartbeat defaults, and runtime health for the onboarding starter team.",
+        assigneeAgentId: continuityOwner.id,
+        cronExpression: "0 10 * * 1",
+        label: "Mondays at 10:00",
+      });
+      await ensureRoutine({
+        title: ONBOARDING_ROUTINE_TITLES.weeklyKickoffRiskReview,
+        description: "Review kickoff outcomes, milestone intent, dependencies, and key onboarding risks.",
+        assigneeAgentId: technicalProjectLead.id,
+        cronExpression: "0 11 * * 3",
+        label: "Wednesdays at 11:00",
+      });
+
+      let projectIssues = await issuesApi.list(companyId, { projectId: project.id });
+      let rootIssue = projectIssues.find((issue) =>
+        (createdIssueRef && issue.identifier === createdIssueRef) || issue.title === taskTitle.trim(),
+      ) ?? null;
+      if (!rootIssue) {
+        rootIssue = await issuesApi.create(
+          companyId,
           buildOnboardingIssuePayload({
             title: taskTitle,
             description: taskDescription,
-            assigneeAgentId: createdAgentId,
-            projectId,
-            goalId
-          })
+            assigneeAgentId: technicalProjectLead.id,
+            projectId: project.id,
+            goalId: onboardingProjectGoal.id,
+          }),
         );
-        issueRef = issue.identifier ?? issue.id;
-        setCreatedIssueRef(issueRef);
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.issues.list(createdCompanyId)
+      } else if (
+        rootIssue.assigneeAgentId !== technicalProjectLead.id
+        || rootIssue.goalId !== onboardingProjectGoal.id
+      ) {
+        rootIssue = await issuesApi.update(rootIssue.id, {
+          assigneeAgentId: technicalProjectLead.id,
+          goalId: onboardingProjectGoal.id,
+        });
+      }
+      await issuesApi.prepareContinuity(rootIssue.id, { tier: "normal" }).catch(() => undefined);
+
+      const rootIssueRef = rootIssue.identifier ?? rootIssue.id;
+      setCreatedIssueRef(rootIssueRef);
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.issues.list(companyId)
+      });
+
+      const roomParticipants = [ceo.id, technicalProjectLead.id, continuityOwner.id, auditReviewer.id];
+      let kickoffRoom = (await conferenceRoomsApi.list(companyId)).find((room) => room.title === ONBOARDING_KICKOFF_ROOM_TITLE) ?? null;
+      if (!kickoffRoom) {
+        kickoffRoom = await conferenceRoomsApi.create(companyId, {
+          title: ONBOARDING_KICKOFF_ROOM_TITLE,
+          summary: "Kickoff coordination for the onboarding execution lane.",
+          agenda: "Confirm scope, owned work breakdown, dependencies, milestone intent, and key risks.",
+          kind: "project_leadership",
+          issueIds: [rootIssue.id],
+          participantAgentIds: roomParticipants,
+        });
+      } else {
+        const mergedIssueIds = Array.from(new Set([...kickoffRoom.linkedIssues.map((issue) => issue.issueId), rootIssue.id]));
+        const mergedParticipants = Array.from(new Set([...kickoffRoom.participants.map((participant) => participant.agentId), ...roomParticipants]));
+        kickoffRoom = await conferenceRoomsApi.update(kickoffRoom.id, {
+          issueIds: mergedIssueIds,
+          participantAgentIds: mergedParticipants,
+        });
+      }
+      const kickoffComments = await conferenceRoomsApi.listComments(kickoffRoom.id);
+      if (!kickoffComments.some((comment) => comment.messageType === "question")) {
+        await conferenceRoomsApi.addComment(kickoffRoom.id, {
+          body: buildOnboardingKickoffQuestion({
+            companyName: resolvedCompanyName,
+            projectGoalTitle: onboardingProjectGoal.title,
+          }),
+          messageType: "question",
+        });
+      }
+
+      projectIssues = await issuesApi.list(companyId, { projectId: project.id });
+      let branchIssue = projectIssues.find((issue) => issue.title === ONBOARDING_BRANCH_TITLE) ?? null;
+      if (!branchIssue) {
+        const createdBranch = await issuesApi.mutateContinuityBranch(rootIssue.id, {
+          action: "create",
+          title: ONBOARDING_BRANCH_TITLE,
+          description: "Inspect the bootstrap lane and return explicit parent-document updates.",
+          purpose: "Exercise the branch-return path during onboarding.",
+          scope: "Review the kickoff, docs, and startup risks; then propose parent updates.",
+          budget: "$5 and one short execution slice",
+          expectedReturnArtifact: "A branch-return document with explicit parent updates.",
+          mergeCriteria: [
+            "Record branch-return updates explicitly",
+            "Keep parent continuity docs current",
+          ],
+          assigneeAgentId: continuityOwner.id,
+          priority: "medium",
+        });
+        branchIssue = "branchIssue" in createdBranch ? createdBranch.branchIssue : null;
+      }
+      if (branchIssue) {
+        const branchDocuments = await issuesApi.listDocuments(branchIssue.id);
+        if (!branchDocuments.some((document) => document.key === "branch-return")) {
+          await issuesApi.returnContinuityBranch(rootIssue.id, branchIssue.id, {
+            kind: "paperclip/issue-branch-return.v1",
+            purposeScopeRecap: "Review the onboarding bootstrap lane and return explicit parent updates.",
+            resultSummary: "Kickoff, docs, and startup risks were reviewed for the onboarding lane.",
+            proposedParentUpdates: [
+              {
+                documentKey: "progress",
+                action: "append",
+                summary: "Recorded bootstrap branch return findings.",
+                content: "Branch review completed. Carry forward the kickoff outcomes, risk owners, and next validation step into the parent progress log.",
+              },
+            ],
+            mergeChecklist: [
+              "Carry forward the branch-return summary into parent progress.",
+              "Keep kickoff risks visible in the project risk log.",
+            ],
+            unresolvedRisks: [
+              "Kickoff commitments can still drift if the project docs stop being updated.",
+            ],
+            openQuestions: [
+              "Which onboarding acceptance check should be exercised next after the starter lane is inspected?",
+            ],
+            evidence: [
+              "Onboarding kickoff room and project docs reviewed.",
+            ],
+            returnedArtifacts: [
+              "branch-return",
+            ],
+          });
+        }
+      }
+
+      let reviewIssue = projectIssues.find((issue) => issue.title === ONBOARDING_DEMO_TITLES.review) ?? null;
+      if (!reviewIssue) {
+        reviewIssue = await issuesApi.create(companyId, {
+          title: ONBOARDING_DEMO_TITLES.review,
+          description: "Demonstrate review-return findings on onboarding readiness.",
+          assigneeAgentId: auditReviewer.id,
+          projectId: project.id,
+          goalId: onboardingProjectGoal.id,
+          status: "todo",
+          continuityTier: "normal",
+          prepareContinuity: true,
+        });
+      }
+      const reviewDocuments = await issuesApi.listDocuments(reviewIssue.id);
+      if (!reviewDocuments.some((document) => document.key === "review-findings")) {
+        await issuesApi.reviewReturn(reviewIssue.id, {
+          decisionContext: "Onboarding readiness demo review",
+          outcome: "changes_requested",
+          findings: [
+            {
+              severity: "medium",
+              category: "governance",
+              title: "Kickoff outputs must stay durable",
+              detail: "The onboarding lane should keep owned work, risks, and next actions in docs instead of relying on room chat alone.",
+              requiredAction: "Update the project and issue continuity docs after each material kickoff or review outcome.",
+              evidence: ["Onboarding kickoff and project docs."],
+            },
+          ],
+          ownerNextAction: "Refresh the planning and risk docs, then resubmit the issue for readiness review.",
+        });
+      }
+
+      let handoffIssue = projectIssues.find((issue) => issue.title === ONBOARDING_DEMO_TITLES.handoff) ?? null;
+      if (!handoffIssue) {
+        handoffIssue = await issuesApi.create(companyId, {
+          title: ONBOARDING_DEMO_TITLES.handoff,
+          description: "Demonstrate a structured handoff from project leadership to continuity ownership.",
+          assigneeAgentId: technicalProjectLead.id,
+          projectId: project.id,
+          goalId: onboardingProjectGoal.id,
+          status: "todo",
+          continuityTier: "normal",
+          prepareContinuity: true,
+        });
+      }
+      const handoffDocuments = await issuesApi.listDocuments(handoffIssue.id);
+      if (!handoffDocuments.some((document) => document.key === "handoff")) {
+        await issuesApi.handoffContinuity(handoffIssue.id, {
+          assigneeAgentId: continuityOwner.id,
+          reasonCode: "reassignment",
+          exactNextAction: "Review the kickoff room, project docs, and demo findings, then continue the next onboarding improvement slice.",
+          unresolvedBranches: [],
+          openQuestions: [
+            "Which readiness item should be turned into the next concrete implementation issue?",
+          ],
+          evidence: [
+            "Onboarding kickoff room",
+            "Project context, risks, and runbook",
+          ],
         });
       }
 
@@ -588,8 +1048,8 @@ export function OnboardingWizard() {
       closeOnboarding();
       navigate(
         createdCompanyPrefix
-          ? `/${createdCompanyPrefix}/issues/${issueRef}`
-          : `/issues/${issueRef}`
+          ? `/${createdCompanyPrefix}/issues/${rootIssueRef}`
+          : `/issues/${rootIssueRef}`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task");
@@ -712,11 +1172,11 @@ export function OnboardingWizard() {
                           : "text-muted-foreground group-focus-within:text-foreground"
                       )}
                     >
-                      Mission / goal (optional)
+                      Mission / goal
                     </label>
                     <textarea
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50 resize-none min-h-[60px]"
-                      placeholder="What is this company trying to achieve?"
+                      placeholder="What is this company trying to achieve? If left blank, Paperclip will scaffold a default goal from the company name."
                       value={companyGoal}
                       onChange={(e) => setCompanyGoal(e.target.value)}
                     />

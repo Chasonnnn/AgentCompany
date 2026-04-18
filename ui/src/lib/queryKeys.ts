@@ -3,6 +3,19 @@ export const queryKeys = {
     all: ["companies"] as const,
     detail: (id: string) => ["companies", id] as const,
     stats: ["companies", "stats"] as const,
+    documents: (companyId: string) => ["companies", companyId, "documents"] as const,
+    document: (companyId: string, key: string) => ["companies", companyId, "documents", key] as const,
+    documentRevisions: (companyId: string, key: string) =>
+      ["companies", companyId, "documents", key, "revisions"] as const,
+    teamDocuments: (companyId: string) => ["companies", companyId, "team-documents"] as const,
+    teamDocument: (companyId: string, departmentKey: string, departmentName: string | null | undefined, key: string) =>
+      ["companies", companyId, "team-documents", departmentKey, departmentName ?? "__default__", key] as const,
+    teamDocumentRevisions: (
+      companyId: string,
+      departmentKey: string,
+      departmentName: string | null | undefined,
+      key: string,
+    ) => ["companies", companyId, "team-documents", departmentKey, departmentName ?? "__default__", key, "revisions"] as const,
   },
   companySkills: {
     list: (companyId: string) => ["company-skills", companyId] as const,
