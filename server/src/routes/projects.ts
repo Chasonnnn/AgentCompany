@@ -14,7 +14,13 @@ import {
 } from "@paperclipai/shared";
 import { trackProjectCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { documentService, projectService, logActivity, secretService, workspaceOperationService } from "../services/index.js";
+import {
+  documentService,
+  projectService,
+  logActivity as baseLogActivity,
+  secretService,
+  workspaceOperationService,
+} from "../services/index.js";
 import { conflict, forbidden } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { startRuntimeServicesForWorkspaceControl, stopRuntimeServicesForProjectWorkspace } from "../services/workspace-runtime.js";
@@ -26,12 +32,35 @@ import {
 } from "./workspace-command-authz.js";
 import { assertCanManageProjectWorkspaceRuntimeServices } from "./workspace-runtime-service-authz.js";
 
-export function projectRoutes(db: Db) {
+type ProjectRouteDeps = {
+  documentService: ReturnType<typeof documentService>;
+  projectService: ReturnType<typeof projectService>;
+  logActivity: typeof baseLogActivity;
+  secretService: ReturnType<typeof secretService>;
+  workspaceOperationService: ReturnType<typeof workspaceOperationService>;
+};
+
+export function projectRoutes(
+  db: Db,
+  opts?: {
+    services?: Partial<ProjectRouteDeps>;
+    telemetry?: {
+      getTelemetryClient?: typeof getTelemetryClient;
+      trackProjectCreated?: typeof trackProjectCreated;
+    };
+  },
+) {
   const router = Router();
-  const svc = projectService(db);
-  const documentsSvc = documentService(db);
-  const secretsSvc = secretService(db);
-  const workspaceOperations = workspaceOperationService(db);
+  const svc = opts?.services?.projectService ?? projectService(db);
+  const documentsSvc = opts?.services?.documentService ?? documentService(db);
+  const secretsSvc = opts?.services?.secretService ?? secretService(db);
+  const workspaceOperations =
+    opts?.services?.workspaceOperationService ?? workspaceOperationService(db);
+  const logActivity = opts?.services?.logActivity ?? baseLogActivity;
+  const getTelemetryClientFn =
+    opts?.telemetry?.getTelemetryClient ?? getTelemetryClient;
+  const trackProjectCreatedFn =
+    opts?.telemetry?.trackProjectCreated ?? trackProjectCreated;
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
 
   async function resolveCompanyIdForProjectReference(req: Request) {
@@ -326,9 +355,9 @@ export function projectRoutes(db: Db) {
         envKeys: project.env ? Object.keys(project.env).sort() : [],
       },
     });
-    const telemetryClient = getTelemetryClient();
+    const telemetryClient = getTelemetryClientFn();
     if (telemetryClient) {
-      trackProjectCreated(telemetryClient);
+      trackProjectCreatedFn(telemetryClient);
     }
     res.status(201).json(hydratedProject ?? project);
   });

@@ -3,13 +3,32 @@ import type { Db } from "@paperclipai/db";
 import { createGoalSchema, updateGoalSchema } from "@paperclipai/shared";
 import { trackGoalCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { goalService, logActivity } from "../services/index.js";
+import { goalService, logActivity as baseLogActivity } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { getTelemetryClient } from "../telemetry.js";
 
-export function goalRoutes(db: Db) {
+type GoalRouteDeps = {
+  goalService: ReturnType<typeof goalService>;
+  logActivity: typeof baseLogActivity;
+};
+
+export function goalRoutes(
+  db: Db,
+  opts?: {
+    services?: Partial<GoalRouteDeps>;
+    telemetry?: {
+      getTelemetryClient?: typeof getTelemetryClient;
+      trackGoalCreated?: typeof trackGoalCreated;
+    };
+  },
+) {
   const router = Router();
-  const svc = goalService(db);
+  const svc = opts?.services?.goalService ?? goalService(db);
+  const logActivity = opts?.services?.logActivity ?? baseLogActivity;
+  const getTelemetryClientFn =
+    opts?.telemetry?.getTelemetryClient ?? getTelemetryClient;
+  const trackGoalCreatedFn =
+    opts?.telemetry?.trackGoalCreated ?? trackGoalCreated;
 
   router.get("/companies/:companyId/goals", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -44,9 +63,9 @@ export function goalRoutes(db: Db) {
       entityId: goal.id,
       details: { title: goal.title },
     });
-    const telemetryClient = getTelemetryClient();
+    const telemetryClient = getTelemetryClientFn();
     if (telemetryClient) {
-      trackGoalCreated(telemetryClient, { goalLevel: goal.level });
+      trackGoalCreatedFn(telemetryClient, { goalLevel: goal.level });
     }
     res.status(201).json(goal);
   });

@@ -530,6 +530,10 @@ export function issueRoutes(
       }): Promise<unknown>;
     };
     services?: Partial<IssueRouteDeps>;
+    telemetry?: {
+      getTelemetryClient?: typeof getTelemetryClient;
+      trackAgentTaskCompleted?: typeof trackAgentTaskCompleted;
+    };
   },
 ) {
   const router = Router();
@@ -558,6 +562,10 @@ export function issueRoutes(
   const conferenceContext = opts?.services?.conferenceContextService ?? conferenceContextService(db);
   const logActivity = opts?.services?.logActivity ?? baseLogActivity;
   const feedbackExportService = opts?.feedbackExportService;
+  const getTelemetryClientFn =
+    opts?.telemetry?.getTelemetryClient ?? getTelemetryClient;
+  const trackAgentTaskCompletedFn =
+    opts?.telemetry?.trackAgentTaskCompleted ?? trackAgentTaskCompleted;
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
@@ -2639,11 +2647,11 @@ export function issueRoutes(
     }
 
     if (issue.status === "done" && existing.status !== "done") {
-      const tc = getTelemetryClient();
+      const tc = getTelemetryClientFn();
       if (tc && actor.agentId) {
         const actorAgent = await agentsSvc.getById(actor.agentId);
         if (actorAgent) {
-          trackAgentTaskCompleted(tc, { agentRole: actorAgent.role });
+          trackAgentTaskCompletedFn(tc, { agentRole: actorAgent.role });
         }
       }
     }

@@ -51,7 +51,7 @@ import {
   agentService,
   boardAuthService,
   deduplicateAgentName,
-  logActivity,
+  logActivity as baseLogActivity,
   notifyHireApproved
 } from "../services/index.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
@@ -113,6 +113,13 @@ function requestBaseUrl(req: Request) {
 function buildCliAuthApprovalPath(challengeId: string, token: string) {
   return `/cli-auth/${challengeId}?token=${encodeURIComponent(token)}`;
 }
+
+type AccessRouteDeps = {
+  accessService: ReturnType<typeof accessService>;
+  agentService: ReturnType<typeof agentService>;
+  boardAuthService: ReturnType<typeof boardAuthService>;
+  logActivity: typeof baseLogActivity;
+};
 
 /** Resolve the Paperclip repo skills directory (built-in / managed skills). */
 function resolvePaperclipSkillsDir(): string | null {
@@ -2064,12 +2071,14 @@ export function accessRoutes(
     deploymentExposure: DeploymentExposure;
     bindHost: string;
     allowedHostnames: string[];
+    services?: Partial<AccessRouteDeps>;
   }
 ) {
   const router = Router();
-  const access = accessService(db);
-  const boardAuth = boardAuthService(db);
-  const agents = agentService(db);
+  const access = opts.services?.accessService ?? accessService(db);
+  const boardAuth = opts.services?.boardAuthService ?? boardAuthService(db);
+  const agents = opts.services?.agentService ?? agentService(db);
+  const logActivity = opts.services?.logActivity ?? baseLogActivity;
 
   async function assertInstanceAdmin(req: Request) {
     if (req.actor.type !== "board") throw unauthorized();

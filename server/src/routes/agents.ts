@@ -44,7 +44,7 @@ import {
   heartbeatService,
   issueApprovalService,
   issueService,
-  logActivity,
+  logActivity as baseLogActivity,
   secretService,
   syncInstructionsBundleConfigFromFilePath,
   workspaceOperationService,
@@ -82,7 +82,34 @@ import {
   collectAgentAdapterWorkspaceCommandPaths,
 } from "./workspace-command-authz.js";
 
-export function agentRoutes(db: Db) {
+type AgentRouteDeps = {
+  agentService: ReturnType<typeof agentService>;
+  accessService: ReturnType<typeof accessService>;
+  agentProjectPlacementService: ReturnType<typeof agentProjectPlacementService>;
+  agentTemplateService: ReturnType<typeof agentTemplateService>;
+  approvalService: ReturnType<typeof approvalService>;
+  agentSkillService: ReturnType<typeof agentSkillService>;
+  budgetService: ReturnType<typeof budgetService>;
+  heartbeatService: ReturnType<typeof heartbeatService>;
+  issueApprovalService: ReturnType<typeof issueApprovalService>;
+  issueService: ReturnType<typeof issueService>;
+  logActivity: typeof baseLogActivity;
+  secretService: ReturnType<typeof secretService>;
+  agentInstructionsService: ReturnType<typeof agentInstructionsService>;
+  workspaceOperationService: ReturnType<typeof workspaceOperationService>;
+  instanceSettingsService: ReturnType<typeof instanceSettingsService>;
+};
+
+export function agentRoutes(
+  db: Db,
+  opts?: {
+    services?: Partial<AgentRouteDeps>;
+    telemetry?: {
+      getTelemetryClient?: typeof getTelemetryClient;
+      trackAgentCreated?: typeof trackAgentCreated;
+    };
+  },
+) {
   // Legacy hardcoded maps — used as fallback when adapter module does not
   // declare capability flags explicitly.
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
@@ -122,19 +149,30 @@ export function agentRoutes(db: Db) {
   ] as const;
 
   const router = Router();
-  const svc = agentService(db);
-  const access = accessService(db);
-  const placementSvc = agentProjectPlacementService(db);
-  const templateSvc = agentTemplateService(db);
-  const approvalsSvc = approvalService(db);
-  const budgets = budgetService(db);
-  const heartbeat = heartbeatService(db);
-  const issueApprovalsSvc = issueApprovalService(db);
-  const secretsSvc = secretService(db);
-  const instructions = agentInstructionsService();
-  const skillSync = agentSkillService(db);
-  const workspaceOperations = workspaceOperationService(db);
-  const instanceSettings = instanceSettingsService(db);
+  const svc = opts?.services?.agentService ?? agentService(db);
+  const access = opts?.services?.accessService ?? accessService(db);
+  const placementSvc =
+    opts?.services?.agentProjectPlacementService ?? agentProjectPlacementService(db);
+  const templateSvc = opts?.services?.agentTemplateService ?? agentTemplateService(db);
+  const approvalsSvc = opts?.services?.approvalService ?? approvalService(db);
+  const budgets = opts?.services?.budgetService ?? budgetService(db);
+  const heartbeat = opts?.services?.heartbeatService ?? heartbeatService(db);
+  const issueApprovalsSvc =
+    opts?.services?.issueApprovalService ?? issueApprovalService(db);
+  const issuesSvc = opts?.services?.issueService ?? issueService(db);
+  const secretsSvc = opts?.services?.secretService ?? secretService(db);
+  const instructions =
+    opts?.services?.agentInstructionsService ?? agentInstructionsService();
+  const skillSync = opts?.services?.agentSkillService ?? agentSkillService(db);
+  const workspaceOperations =
+    opts?.services?.workspaceOperationService ?? workspaceOperationService(db);
+  const instanceSettings =
+    opts?.services?.instanceSettingsService ?? instanceSettingsService(db);
+  const logActivity = opts?.services?.logActivity ?? baseLogActivity;
+  const getTelemetryClientFn =
+    opts?.telemetry?.getTelemetryClient ?? getTelemetryClient;
+  const trackAgentCreatedFn =
+    opts?.telemetry?.trackAgentCreated ?? trackAgentCreated;
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
 
   async function getCurrentUserRedactionOptions() {
@@ -1269,7 +1307,6 @@ export function agentRoutes(db: Db) {
       return;
     }
 
-    const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       assigneeAgentId: req.actor.agentId,
       includeRoutineExecutions: true,
@@ -1299,7 +1336,6 @@ export function agentRoutes(db: Db) {
     }
 
     const query = agentMineInboxQuerySchema.parse(req.query);
-    const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       touchedByUserId: query.userId,
       inboxArchivedByUserId: query.userId,
@@ -1663,9 +1699,9 @@ export function agentRoutes(db: Db) {
         projectPlacement: requestedProjectPlacement,
       },
     });
-    const telemetryClient = getTelemetryClient();
+    const telemetryClient = getTelemetryClientFn();
     if (telemetryClient) {
-      trackAgentCreated(telemetryClient, { agentRole: agent.role });
+      trackAgentCreatedFn(telemetryClient, { agentRole: agent.role });
     }
 
     await applyDefaultAgentTaskAssignGrant(
@@ -1802,9 +1838,9 @@ export function agentRoutes(db: Db) {
         projectPlacement: requestedProjectPlacement,
       },
     });
-    const telemetryClient = getTelemetryClient();
+    const telemetryClient = getTelemetryClientFn();
     if (telemetryClient) {
-      trackAgentCreated(telemetryClient, { agentRole: agent.role });
+      trackAgentCreatedFn(telemetryClient, { agentRole: agent.role });
     }
 
     await applyDefaultAgentTaskAssignGrant(
@@ -2783,9 +2819,8 @@ export function agentRoutes(db: Db) {
 
   router.get("/issues/:issueId/live-runs", async (req, res) => {
     const rawId = req.params.issueId as string;
-    const issueSvc = issueService(db);
     const isIdentifier = /^[A-Z]+-\d+$/i.test(rawId);
-    const issue = isIdentifier ? await issueSvc.getByIdentifier(rawId) : await issueSvc.getById(rawId);
+    const issue = isIdentifier ? await issuesSvc.getByIdentifier(rawId) : await issuesSvc.getById(rawId);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
@@ -2821,9 +2856,8 @@ export function agentRoutes(db: Db) {
 
   router.get("/issues/:issueId/active-run", async (req, res) => {
     const rawId = req.params.issueId as string;
-    const issueSvc = issueService(db);
     const isIdentifier = /^[A-Z]+-\d+$/i.test(rawId);
-    const issue = isIdentifier ? await issueSvc.getByIdentifier(rawId) : await issueSvc.getById(rawId);
+    const issue = isIdentifier ? await issuesSvc.getByIdentifier(rawId) : await issuesSvc.getById(rawId);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
