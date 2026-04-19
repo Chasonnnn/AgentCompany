@@ -5,6 +5,7 @@ import { useLocation, useNavigate, useParams } from "@/lib/router";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { companiesApi } from "../api/companies";
+import { companySkillsApi } from "../api/companySkills";
 import { goalsApi } from "../api/goals";
 import { agentsApi } from "../api/agents";
 import { agentTemplatesApi } from "../api/agentTemplates";
@@ -42,21 +43,27 @@ import {
   selectDefaultCompanyGoalId
 } from "../lib/onboarding-launch";
 import {
+  buildGlobalCatalogInstallPlan,
   buildCompanyDocumentBody,
   buildEngineeringTeamDocumentBody,
   buildFallbackCompanyGoal,
   buildOnboardingKickoffQuestion,
   buildOnboardingProjectDocuments,
   buildOnboardingProjectGoal,
+  canonicalizeDesiredSkillRefs,
+  mergeDesiredSkillRefs,
   buildOperationsTeamDocumentBody,
   DEFAULT_COMPANY_BUDGET_CENTS,
   DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS,
   DEFAULT_STARTER_AGENT_BUDGET_CENTS,
   DEFAULT_WORKER_HEARTBEAT_INTERVAL_SEC,
   ONBOARDING_BRANCH_TITLE,
+  ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS,
   ONBOARDING_DEMO_TITLES,
   ONBOARDING_KICKOFF_ROOM_TITLE,
+  ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS,
   ONBOARDING_ROUTINE_TITLES,
+  ONBOARDING_STARTER_SKILL_ASSIGNMENTS,
   STARTER_AGENT_NAMES,
 } from "../lib/onboarding-bootstrap";
 import { buildNewAgentRuntimeConfig } from "../lib/new-agent-runtime-config";
@@ -94,6 +101,10 @@ const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the
 
 function findTemplateIdByArchetype(templates: Array<{ id: string; archetypeKey: string }>, archetypeKey: string) {
   return templates.find((template) => template.archetypeKey === archetypeKey)?.id ?? null;
+}
+
+function arraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 export function OnboardingWizard() {
@@ -381,6 +392,61 @@ export function OnboardingWizard() {
     return config;
   }
 
+  async function ensureCompanySkillSlugs(
+    companyId: string,
+    desiredSlugs: string[],
+    options?: { requiredSlugs?: string[] },
+  ) {
+    const [installedSkills, globalCatalog] = await Promise.all([
+      companySkillsApi.list(companyId),
+      companySkillsApi.globalCatalog(companyId),
+    ]);
+    const installedSlugSet = new Set(installedSkills.map((skill) => skill.slug));
+    const { installCatalogKeys, missingSlugs } = buildGlobalCatalogInstallPlan(
+      installedSlugSet,
+      globalCatalog,
+      desiredSlugs,
+    );
+
+    for (const catalogKey of installCatalogKeys) {
+      await companySkillsApi.installGlobal(companyId, { catalogKey });
+    }
+
+    const refreshedSkills = installCatalogKeys.length > 0
+      ? await companySkillsApi.list(companyId)
+      : installedSkills;
+    const refreshedSlugSet = new Set(refreshedSkills.map((skill) => skill.slug));
+    const requiredSlugs = Array.from(new Set(options?.requiredSlugs ?? desiredSlugs));
+    const stillMissingRequired = requiredSlugs.filter((slug) => !refreshedSlugSet.has(slug));
+    if (stillMissingRequired.length > 0) {
+      throw new Error(
+        `Missing required company skills: ${stillMissingRequired.join(", ")}`,
+      );
+    }
+
+    if (missingSlugs.length > 0) {
+      console.warn("Skipped missing catalog skills during onboarding bootstrap:", missingSlugs);
+    }
+
+    return refreshedSkills;
+  }
+
+  async function ensureAgentDesiredSkills(
+    companyId: string,
+    agentId: string,
+    desiredRefs: string[],
+    slugToKey: Map<string, string>,
+  ) {
+    const snapshot = await agentsApi.skills(agentId, companyId);
+    const currentRefs = canonicalizeDesiredSkillRefs(snapshot.desiredSkills, slugToKey);
+    const nextRefs = canonicalizeDesiredSkillRefs(
+      mergeDesiredSkillRefs(snapshot.desiredSkills, desiredRefs),
+      slugToKey,
+    );
+    if (arraysEqual(currentRefs, nextRefs)) return;
+    await agentsApi.syncSkills(agentId, nextRefs, companyId);
+  }
+
   async function runAdapterEnvironmentTest(
     adapterConfigOverride?: Record<string, unknown>
   ): Promise<AdapterEnvironmentTestResult | null> {
@@ -491,10 +557,17 @@ export function OnboardingWizard() {
         if (!result) return;
       }
 
+      await ensureCompanySkillSlugs(
+        createdCompanyId,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.ceo,
+        { requiredSlugs: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.ceo },
+      );
+
       const agent = await agentsApi.create(createdCompanyId, {
         name: agentName.trim(),
         role: "ceo",
         departmentKey: "executive",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.ceo,
         adapterType,
         adapterConfig: buildAdapterConfig(),
         runtimeConfig: buildNewAgentRuntimeConfig(),
@@ -638,6 +711,13 @@ export function OnboardingWizard() {
         amount: DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS,
       });
 
+      const companySkills = await ensureCompanySkillSlugs(
+        companyId,
+        ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS,
+        { requiredSlugs: ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS },
+      );
+      const skillKeyBySlug = new Map(companySkills.map((skill) => [skill.slug, skill.key] as const));
+
       const templates = await agentTemplatesApi.list(companyId);
       const technicalProjectLeadTemplateId = findTemplateIdByArchetype(templates, "project_lead");
       const continuityOwnerTemplateId = findTemplateIdByArchetype(templates, "backend_api_continuity_owner");
@@ -671,6 +751,7 @@ export function OnboardingWizard() {
         departmentKey: "engineering" | "operations";
         reportsTo: string | null;
         archetypeKey: string;
+        desiredSkills: string[];
         projectPlacement?: Record<string, unknown>;
       }) {
         const existing = existingAgents.find((agent) =>
@@ -695,6 +776,7 @@ export function OnboardingWizard() {
           templateId: input.templateId,
           reportsTo: input.reportsTo,
           departmentKey: input.departmentKey,
+          desiredSkills: input.desiredSkills,
           adapterType,
           adapterConfig: buildAdapterConfig(),
           runtimeConfig: workerRuntimeConfig,
@@ -712,6 +794,7 @@ export function OnboardingWizard() {
         departmentKey: "engineering",
         reportsTo: ceo.id,
         archetypeKey: "project_lead",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.technicalProjectLead,
         projectPlacement: {
           projectId: project.id,
           projectRole: "engineering_manager",
@@ -731,6 +814,7 @@ export function OnboardingWizard() {
         departmentKey: "engineering",
         reportsTo: technicalProjectLead.id,
         archetypeKey: "backend_api_continuity_owner",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.continuityOwner,
         projectPlacement: {
           projectId: project.id,
           projectRole: "worker",
@@ -750,7 +834,33 @@ export function OnboardingWizard() {
         departmentKey: "operations",
         reportsTo: technicalProjectLead.id,
         archetypeKey: "audit_reviewer",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer,
       });
+
+      await ensureAgentDesiredSkills(
+        companyId,
+        ceo.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.ceo,
+        skillKeyBySlug,
+      );
+      await ensureAgentDesiredSkills(
+        companyId,
+        technicalProjectLead.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.technicalProjectLead,
+        skillKeyBySlug,
+      );
+      await ensureAgentDesiredSkills(
+        companyId,
+        continuityOwner.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.continuityOwner,
+        skillKeyBySlug,
+      );
+      await ensureAgentDesiredSkills(
+        companyId,
+        auditReviewer.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer,
+        skillKeyBySlug,
+      );
 
       const projectNeedsLeadUpdate =
         project.leadAgentId !== technicalProjectLead.id

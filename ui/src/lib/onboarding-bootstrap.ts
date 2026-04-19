@@ -1,3 +1,9 @@
+import {
+  DEFAULT_COMPANY_SKILL_IMPORT_SLUGS,
+  getDefaultDesiredSkillSlugsForAgent,
+  type GlobalSkillCatalogItem,
+} from "@paperclipai/shared";
+
 export const DEFAULT_COMPANY_BUDGET_CENTS = 5_000;
 export const DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS = 2_500;
 export const DEFAULT_STARTER_AGENT_BUDGET_CENTS = 1_000;
@@ -24,6 +30,63 @@ export const ONBOARDING_DEMO_TITLES = {
 
 export const ONBOARDING_BRANCH_TITLE = "Demo branch: inspect onboarding bootstrap risks";
 export const ONBOARDING_KICKOFF_ROOM_TITLE = "Onboarding Kickoff";
+export const ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS = [...DEFAULT_COMPANY_SKILL_IMPORT_SLUGS];
+export const ONBOARDING_STARTER_SKILL_ASSIGNMENTS = {
+  ceo: getDefaultDesiredSkillSlugsForAgent({ role: "ceo" }),
+  technicalProjectLead: getDefaultDesiredSkillSlugsForAgent({
+    role: "engineer",
+    operatingClass: "project_leadership",
+    archetypeKey: "project_lead",
+  }),
+  continuityOwner: getDefaultDesiredSkillSlugsForAgent({
+    role: "engineer",
+    operatingClass: "worker",
+    archetypeKey: "backend_api_continuity_owner",
+  }),
+  auditReviewer: getDefaultDesiredSkillSlugsForAgent({
+    role: "qa",
+    operatingClass: "consultant",
+    archetypeKey: "audit_reviewer",
+  }),
+} as const;
+export const ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS = mergeDesiredSkillRefs(
+  [],
+  Object.values(ONBOARDING_STARTER_SKILL_ASSIGNMENTS).flat(),
+);
+
+export function mergeDesiredSkillRefs(currentRefs: string[], requiredRefs: string[]) {
+  return Array.from(new Set([...currentRefs, ...requiredRefs]));
+}
+
+export function canonicalizeDesiredSkillRefs(
+  refs: string[],
+  slugToKey: Map<string, string>,
+) {
+  return Array.from(new Set(refs.map((ref) => slugToKey.get(ref) ?? ref))).sort();
+}
+
+export function buildGlobalCatalogInstallPlan(
+  installedSlugs: Set<string>,
+  catalog: GlobalSkillCatalogItem[],
+  desiredSlugs: string[],
+) {
+  const catalogBySlug = new Map(catalog.map((item) => [item.slug, item] as const));
+  const missingSlugs: string[] = [];
+  const installCatalogKeys: string[] = [];
+
+  for (const slug of desiredSlugs) {
+    if (installedSlugs.has(slug)) continue;
+    const item = catalogBySlug.get(slug);
+    if (!item) {
+      missingSlugs.push(slug);
+      continue;
+    }
+    if (item.installedSkillId) continue;
+    installCatalogKeys.push(item.catalogKey);
+  }
+
+  return { installCatalogKeys, missingSlugs };
+}
 
 export function buildFallbackCompanyGoal(companyName: string) {
   const trimmedName = companyName.trim() || "the company";

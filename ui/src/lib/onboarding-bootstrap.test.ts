@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildGlobalCatalogInstallPlan,
   buildCompanyDocumentBody,
   buildEngineeringTeamDocumentBody,
   buildFallbackCompanyGoal,
   buildOnboardingKickoffQuestion,
   buildOnboardingProjectDocuments,
   buildOnboardingProjectGoal,
+  canonicalizeDesiredSkillRefs,
+  mergeDesiredSkillRefs,
+  ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS,
+  ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS,
+  ONBOARDING_STARTER_SKILL_ASSIGNMENTS,
   buildOperationsTeamDocumentBody,
 } from "./onboarding-bootstrap";
 
@@ -79,5 +85,90 @@ describe("onboarding bootstrap helpers", () => {
     expect(question).toContain("Project goal: Stand up onboarding");
     expect(question).toContain("- owned work breakdown");
     expect(question).toContain("- key risks");
+  });
+
+  it("defines the starter-team skill assignments and broad company import set", () => {
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.ceo).toEqual(
+      expect.arrayContaining(["para-memory-files", "paperclip-create-agent", "plan-ceo-review"]),
+    );
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.technicalProjectLead).toEqual(
+      expect.arrayContaining(["plan-eng-review", "review", "health"]),
+    );
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.continuityOwner).toEqual(
+      expect.arrayContaining(["supabase-postgres-best-practices", "security-best-practices"]),
+    );
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer).toEqual(
+      expect.arrayContaining(["audit", "qa-only"]),
+    );
+    expect(ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS).toEqual(
+      expect.arrayContaining([
+        "para-memory-files",
+        "plan-eng-review",
+        "supabase-postgres-best-practices",
+        "audit",
+      ]),
+    );
+    expect(ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS).toEqual(
+      expect.arrayContaining([
+        "impeccable",
+        "playwright-interactive",
+        "security-threat-model",
+        "agent-browser",
+      ]),
+    );
+  });
+
+  it("builds a targeted global-catalog install plan and preserves existing skill refs", () => {
+    const plan = buildGlobalCatalogInstallPlan(
+      new Set(["paperclip-create-agent"]),
+      [
+        {
+          catalogKey: "catalog-1",
+          slug: "paperclip-create-agent",
+          name: "Paperclip Create Agent",
+          description: null,
+          sourceRoot: "codex",
+          sourcePath: ".codex/skills/paperclip-create-agent",
+          trustLevel: "markdown_only",
+          compatibility: "compatible",
+          fileInventory: [],
+          installedSkillId: "skill-1",
+          installedSkillKey: "company/company-1/paperclip-create-agent",
+        },
+        {
+          catalogKey: "catalog-2",
+          slug: "plan-eng-review",
+          name: "Plan Eng Review",
+          description: null,
+          sourceRoot: "codex",
+          sourcePath: ".codex/skills/gstack-plan-eng-review",
+          trustLevel: "markdown_only",
+          compatibility: "compatible",
+          fileInventory: [],
+          installedSkillId: null,
+          installedSkillKey: null,
+        },
+      ],
+      ["paperclip-create-agent", "plan-eng-review", "missing-skill"],
+    );
+
+    expect(plan).toEqual({
+      installCatalogKeys: ["catalog-2"],
+      missingSlugs: ["missing-skill"],
+    });
+
+    expect(mergeDesiredSkillRefs(["skill-a"], ["skill-a", "skill-b"])).toEqual([
+      "skill-a",
+      "skill-b",
+    ]);
+    expect(
+      canonicalizeDesiredSkillRefs(
+        ["plan-eng-review", "company/company-1/custom-skill"],
+        new Map([["plan-eng-review", "company/company-1/plan-eng-review"]]),
+      ),
+    ).toEqual([
+      "company/company-1/custom-skill",
+      "company/company-1/plan-eng-review",
+    ]);
   });
 });
