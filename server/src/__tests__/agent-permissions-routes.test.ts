@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentRoutes } from "../routes/agents.js";
+import { errorHandler } from "../middleware/index.js";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const companyId = "22222222-2222-4222-8222-222222222222";
@@ -79,10 +81,6 @@ const mockSecretService = vi.hoisted(() => ({
 const mockAgentInstructionsService = vi.hoisted(() => ({
   materializeManagedBundle: vi.fn(),
 }));
-const mockCompanySkillService = vi.hoisted(() => ({
-  listRuntimeSkillEntries: vi.fn(),
-  resolveRequestedSkillKeys: vi.fn(),
-}));
 const mockAgentSkillService = vi.hoisted(() => ({
   listSkills: vi.fn(),
   syncAgentSkills: vi.fn(),
@@ -95,46 +93,6 @@ const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
-const mockAgentHasCreatePermission = vi.hoisted(() =>
-  vi.fn((agent: Record<string, unknown> | null | undefined) => agent?.permissions?.canCreateAgents === true),
-);
-
-function registerServiceMocks() {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentCreated: mockTrackAgentCreated,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
-
-  vi.doMock("../services/index.js", () => ({
-    agentService: () => mockAgentService,
-    agentProjectPlacementService: () => ({
-      previewForInput: vi.fn(),
-      applyPrimaryPlacement: vi.fn(),
-    }),
-    agentTemplateService: () => mockAgentTemplateService,
-    agentInstructionsService: () => mockAgentInstructionsService,
-    accessService: () => mockAccessService,
-    approvalService: () => mockApprovalService,
-    agentSkillService: () => mockAgentSkillService,
-    companySkillService: () => mockCompanySkillService,
-    budgetService: () => mockBudgetService,
-    heartbeatService: () => mockHeartbeatService,
-    issueApprovalService: () => mockIssueApprovalService,
-    issueService: () => mockIssueService,
-    logActivity: mockLogActivity,
-    secretService: () => mockSecretService,
-    syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
-    workspaceOperationService: () => mockWorkspaceOperationService,
-  }));
-
-  vi.doMock("../services/agent-permissions.js", () => ({
-    agentHasCreatePermission: mockAgentHasCreatePermission,
-  }));
-}
 
 function createDbStub() {
   return {
@@ -153,19 +111,41 @@ function createDbStub() {
 }
 
 async function createApp(actor: Record<string, unknown>) {
-  vi.resetModules();
-  registerServiceMocks();
-  const [{ agentRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/agents.js"),
-    import("../middleware/index.js"),
-  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes(createDbStub() as any));
+  app.use(
+    "/api",
+    agentRoutes(createDbStub() as any, {
+      services: {
+        agentService: mockAgentService as any,
+        accessService: mockAccessService as any,
+        agentProjectPlacementService: {
+          previewForInput: vi.fn(),
+          applyPrimaryPlacement: vi.fn(),
+        } as any,
+        agentTemplateService: mockAgentTemplateService as any,
+        approvalService: mockApprovalService as any,
+        agentSkillService: mockAgentSkillService as any,
+        budgetService: mockBudgetService as any,
+        heartbeatService: mockHeartbeatService as any,
+        issueApprovalService: mockIssueApprovalService as any,
+        issueService: mockIssueService as any,
+        logActivity: mockLogActivity as any,
+        secretService: mockSecretService as any,
+        agentInstructionsService: mockAgentInstructionsService as any,
+        workspaceOperationService: mockWorkspaceOperationService as any,
+        instanceSettingsService: {} as any,
+      },
+      telemetry: {
+        getTelemetryClient: mockGetTelemetryClient as any,
+        trackAgentCreated: mockTrackAgentCreated as any,
+      },
+    }),
+  );
   app.use(errorHandler);
   return app;
 }
@@ -174,9 +154,6 @@ describe("agent permission routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
-    mockAgentHasCreatePermission.mockImplementation(
-      (agent: Record<string, unknown> | null | undefined) => agent?.permissions?.canCreateAgents === true,
-    );
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockAgentService.getById.mockResolvedValue(baseAgent);
     mockAgentService.getChainOfCommand.mockResolvedValue([]);
@@ -196,8 +173,6 @@ describe("agent permission routes", () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([]);
     mockAccessService.ensureMembership.mockResolvedValue(undefined);
     mockAccessService.setPrincipalPermission.mockResolvedValue(undefined);
-    mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
-    mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(async (_companyId, requested) => requested);
     mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
       async (
         _companyId: string,
@@ -223,10 +198,6 @@ describe("agent permission routes", () => {
           promptTemplate: files["AGENTS.md"] ?? "",
         },
       }),
-    );
-    mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
-    mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(
-      async (_companyId: string, requested: string[]) => requested,
     );
     mockSecretService.normalizeAdapterConfigForPersistence.mockImplementation(async (_companyId, config) => config);
     mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(async (_companyId, config) => ({ config }));

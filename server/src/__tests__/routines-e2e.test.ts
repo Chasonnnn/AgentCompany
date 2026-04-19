@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import express from "express";
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agentWakeupRequests,
@@ -26,20 +26,9 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
-
-function resetServiceModuleMocks() {
-  vi.unmock("../services/index.js");
-  vi.unmock("../services/companies.js");
-  vi.unmock("../services/agents.js");
-  vi.unmock("../services/access.js");
-  vi.unmock("../services/projects.js");
-  vi.unmock("../services/issues.js");
-  vi.unmock("../services/routines.js");
-  vi.unmock("../services/company-skills.js");
-  vi.unmock("../services/assets.js");
-  vi.unmock("../services/agent-instructions.js");
-  vi.unmock("../routes/org-chart-svg.js");
-}
+import { routineRoutes } from "../routes/routines.js";
+import { accessService } from "../services/access.js";
+import { routineService } from "../services/routines.js";
 
 async function wakeQueuedRunForIssue(db: ReturnType<typeof createDb>, agentId: string, wakeupOpts: any) {
   const issueId =
@@ -93,11 +82,6 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     db = createDb(tempDb.connectionString);
   }, 20_000);
 
-  beforeEach(() => {
-    resetServiceModuleMocks();
-    vi.resetModules();
-  });
-
   afterEach(async () => {
     await db.delete(activityLog);
     await db.delete(routineRuns);
@@ -115,7 +99,6 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     await db.delete(agents);
     await db.delete(companies);
     await db.delete(instanceSettings);
-    resetServiceModuleMocks();
   });
 
   afterAll(async () => {
@@ -123,16 +106,6 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   });
 
   async function createApp(actor: Record<string, unknown>) {
-    resetServiceModuleMocks();
-    const [
-      { routineRoutes },
-      { accessService },
-      { routineService },
-    ] = await Promise.all([
-      import("../routes/routines.js"),
-      vi.importActual<typeof import("../services/access.js")>("../services/access.js"),
-      vi.importActual<typeof import("../services/routines.js")>("../services/routines.js"),
-    ]);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -157,8 +130,6 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   }
 
   async function seedFixture() {
-    resetServiceModuleMocks();
-    const { accessService } = await vi.importActual<typeof import("../services/access.js")>("../services/access.js");
     const companyId = randomUUID();
     const agentId = randomUUID();
     const projectId = randomUUID();

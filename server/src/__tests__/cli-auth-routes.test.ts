@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { accessRoutes } from "../routes/access.js";
+import { errorHandler } from "../middleware/index.js";
 
 const mockAccessService = vi.hoisted(() => ({
   isInstanceAdmin: vi.fn(),
@@ -25,17 +27,6 @@ const mockBoardAuthService = vi.hoisted(() => ({
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
-function registerServiceMocks() {
-  vi.doMock("../services/index.js", () => ({
-    accessService: () => mockAccessService,
-    agentService: () => mockAgentService,
-    boardAuthService: () => mockBoardAuthService,
-    logActivity: mockLogActivity,
-    notifyHireApproved: vi.fn(),
-    deduplicateAgentName: vi.fn((name: string) => name),
-  }));
-}
-
 function createApp(actor: any) {
   const app = express();
   app.use(express.json());
@@ -43,30 +34,28 @@ function createApp(actor: any) {
     req.actor = actor;
     next();
   });
-  return import("../routes/access.js").then(({ accessRoutes }) =>
-    Promise.resolve().then(() => {
-      app.use(
-        "/api",
-        accessRoutes({} as any, {
-          deploymentMode: "authenticated",
-          deploymentExposure: "private",
-          bindHost: "127.0.0.1",
-          allowedHostnames: [],
-        }),
-      );
-      app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-        res.status(err?.status ?? 500).json({ error: err?.message ?? "Internal server error" });
-      });
-      return app;
+  app.use(
+    "/api",
+    accessRoutes({} as any, {
+      deploymentMode: "authenticated",
+      deploymentExposure: "private",
+      bindHost: "127.0.0.1",
+      allowedHostnames: [],
+      services: {
+        accessService: mockAccessService as any,
+        agentService: mockAgentService as any,
+        boardAuthService: mockBoardAuthService as any,
+        logActivity: mockLogActivity as any,
+      },
     }),
   );
+  app.use(errorHandler);
+  return app;
 }
 
 describe("cli auth routes", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.resetAllMocks();
-    registerServiceMocks();
   });
 
   it("creates a CLI auth challenge with approval metadata", async () => {
@@ -79,7 +68,7 @@ describe("cli auth routes", () => {
       pendingBoardToken: "pcp_board_token",
     });
 
-    const app = await createApp({ type: "none", source: "none" });
+    const app = createApp({ type: "none", source: "none" });
     const res = await request(app)
       .post("/api/cli-auth/challenges")
       .send({
@@ -115,7 +104,7 @@ describe("cli auth routes", () => {
       approvedByUser: null,
     });
 
-    const app = await createApp({ type: "none", source: "none" });
+    const app = createApp({ type: "none", source: "none" });
     const res = await request(app).get("/api/cli-auth/challenges/challenge-1?token=pcp_cli_auth_secret");
 
     expect(res.status).toBe(200);
@@ -141,7 +130,7 @@ describe("cli auth routes", () => {
     });
     mockBoardAuthService.resolveBoardActivityCompanyIds.mockResolvedValue(["company-1"]);
 
-    const app = await createApp({
+    const app = createApp({
       type: "board",
       userId: "user-1",
       source: "session",
@@ -181,7 +170,7 @@ describe("cli auth routes", () => {
     });
     mockBoardAuthService.resolveBoardActivityCompanyIds.mockResolvedValue(["company-a", "company-b"]);
 
-    const app = await createApp({
+    const app = createApp({
       type: "board",
       userId: "admin-1",
       source: "session",
@@ -208,7 +197,7 @@ describe("cli auth routes", () => {
     });
     mockBoardAuthService.resolveBoardActivityCompanyIds.mockResolvedValue(["company-z"]);
 
-    const app = await createApp({
+    const app = createApp({
       type: "board",
       userId: "admin-2",
       keyId: "board-key-3",
