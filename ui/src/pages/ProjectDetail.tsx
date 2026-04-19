@@ -213,6 +213,9 @@ function OnboardingReadinessCard({
     STARTER_AGENT_NAMES.technicalProjectLead,
     STARTER_AGENT_NAMES.continuityOwner,
     STARTER_AGENT_NAMES.auditReviewer,
+    STARTER_AGENT_NAMES.researchSpecialist,
+    STARTER_AGENT_NAMES.growthSpecialist,
+    STARTER_AGENT_NAMES.consultingSpecialist,
   ] as const;
   const starterAgents = agents.filter((agent) => starterAgentNames.some((name) => name === agent.name));
 
@@ -228,7 +231,9 @@ function OnboardingReadinessCard({
       label: "Relevant TEAM.md docs exist",
       ready:
         teamDocs.some((document) => document.departmentKey === "engineering" && document.key === "team")
-        && teamDocs.some((document) => document.departmentKey === "operations" && document.key === "team"),
+        && teamDocs.some((document) => document.departmentKey === "operations" && document.key === "team")
+        && teamDocs.some((document) => document.departmentKey === "research" && document.key === "team")
+        && teamDocs.some((document) => document.departmentKey === "marketing" && document.key === "team"),
     },
     {
       label: "Kickoff room exists",
@@ -258,12 +263,11 @@ function OnboardingReadinessCard({
       ].every((title) => issues.some((issue) => issue.title === title)),
     },
     {
-      label: "Company, project, and starter-agent budgets are non-zero",
+      label: "Company and project budgets are non-zero",
       ready:
         (company?.budgetMonthlyCents ?? 0) > 0
         && (projectBudget?.amount ?? 0) > 0
-        && starterAgents.length >= starterAgentNames.length
-        && starterAgents.every((agent) => (agent.budgetMonthlyCents ?? 0) > 0),
+        && starterAgents.length >= starterAgentNames.length,
     },
   ];
   const readyCount = items.filter((item) => item.ready).length;

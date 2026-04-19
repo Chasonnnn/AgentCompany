@@ -4,6 +4,7 @@ import {
   buildCompanyDocumentBody,
   buildEngineeringTeamDocumentBody,
   buildFallbackCompanyGoal,
+  buildMarketingTeamDocumentBody,
   buildOnboardingKickoffQuestion,
   buildOnboardingProjectDocuments,
   buildOnboardingProjectGoal,
@@ -13,6 +14,7 @@ import {
   ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS,
   ONBOARDING_STARTER_SKILL_ASSIGNMENTS,
   buildOperationsTeamDocumentBody,
+  buildResearchTeamDocumentBody,
 } from "./onboarding-bootstrap";
 
 describe("onboarding bootstrap helpers", () => {
@@ -20,7 +22,7 @@ describe("onboarding bootstrap helpers", () => {
     expect(buildFallbackCompanyGoal("Paperclip")).toEqual({
       title: "Paperclip: stand up an enterprise-ready operating company",
       description:
-        "Create a governed company with durable docs, non-zero budgets, active routines, working heartbeats, and a visible governance path from kickoff through delivery.",
+        "Create a governed company with durable docs, company and project budgets, active routines, working heartbeats, and a visible governance path from kickoff through delivery.",
     });
   });
 
@@ -53,6 +55,8 @@ describe("onboarding bootstrap helpers", () => {
     });
     const engineeringTeamDoc = buildEngineeringTeamDocumentBody();
     const operationsTeamDoc = buildOperationsTeamDocumentBody();
+    const researchTeamDoc = buildResearchTeamDocumentBody();
+    const marketingTeamDoc = buildMarketingTeamDocumentBody();
     const projectDocs = buildOnboardingProjectDocuments({
       companyName: "Paperclip",
       companyGoalTitle: "Run a governed company",
@@ -61,6 +65,7 @@ describe("onboarding bootstrap helpers", () => {
 
     expect(companyDoc).toContain("# COMPANY.md");
     expect(companyDoc).toContain("Company monthly budget: $50");
+    expect(companyDoc).toContain("Starter-agent budgets: unset by default.");
     expect(companyDoc).toContain("project_leadership");
 
     expect(engineeringTeamDoc).toContain("# TEAM.md");
@@ -69,8 +74,14 @@ describe("onboarding bootstrap helpers", () => {
     expect(operationsTeamDoc).toContain("# TEAM.md");
     expect(operationsTeamDoc).toContain("heartbeat hygiene");
 
+    expect(researchTeamDoc).toContain("# TEAM.md");
+    expect(researchTeamDoc).toContain("shared-service engagements");
+
+    expect(marketingTeamDoc).toContain("# TEAM.md");
+    expect(marketingTeamDoc).toContain("growth, onboarding, and market-learning support");
+
     expect(projectDocs.context).toContain("Company goal: Run a governed company");
-    expect(projectDocs["decision-log"]).toContain("Default budgets are non-zero and conservative.");
+    expect(projectDocs["decision-log"]).toContain("Default company and project budgets are non-zero and conservative.");
     expect(projectDocs.risks).toContain("Workers exist but never wake.");
     expect(projectDocs.runbook).toContain("Use the seeded demo issues");
   });
@@ -100,12 +111,24 @@ describe("onboarding bootstrap helpers", () => {
     expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer).toEqual(
       expect.arrayContaining(["audit", "qa-only"]),
     );
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.researchSpecialist).toEqual(
+      expect.arrayContaining(["arxiv", "research-paper-writing", "transcribe"]),
+    );
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.growthSpecialist).toEqual(
+      expect.arrayContaining(["onboard", "clarify", "agent-browser"]),
+    );
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.consultingSpecialist).toEqual(
+      expect.arrayContaining(["find-skills"]),
+    );
     expect(ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS).toEqual(
       expect.arrayContaining([
         "para-memory-files",
         "plan-eng-review",
         "supabase-postgres-best-practices",
         "audit",
+        "arxiv",
+        "agent-browser",
+        "find-skills",
       ]),
     );
     expect(ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS).toEqual(

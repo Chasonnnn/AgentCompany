@@ -47,12 +47,14 @@ import {
   buildCompanyDocumentBody,
   buildEngineeringTeamDocumentBody,
   buildFallbackCompanyGoal,
+  buildMarketingTeamDocumentBody,
   buildOnboardingKickoffQuestion,
   buildOnboardingProjectDocuments,
   buildOnboardingProjectGoal,
   canonicalizeDesiredSkillRefs,
   mergeDesiredSkillRefs,
   buildOperationsTeamDocumentBody,
+  buildResearchTeamDocumentBody,
   DEFAULT_COMPANY_BUDGET_CENTS,
   DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS,
   DEFAULT_STARTER_AGENT_BUDGET_CENTS,
@@ -722,7 +724,17 @@ export function OnboardingWizard() {
       const technicalProjectLeadTemplateId = findTemplateIdByArchetype(templates, "project_lead");
       const continuityOwnerTemplateId = findTemplateIdByArchetype(templates, "backend_api_continuity_owner");
       const auditReviewerTemplateId = findTemplateIdByArchetype(templates, "audit_reviewer");
-      if (!technicalProjectLeadTemplateId || !continuityOwnerTemplateId || !auditReviewerTemplateId) {
+      const researchSpecialistTemplateId = findTemplateIdByArchetype(templates, "research_specialist");
+      const growthSpecialistTemplateId = findTemplateIdByArchetype(templates, "growth_specialist");
+      const consultingSpecialistTemplateId = findTemplateIdByArchetype(templates, "consulting_specialist");
+      if (
+        !technicalProjectLeadTemplateId ||
+        !continuityOwnerTemplateId ||
+        !auditReviewerTemplateId ||
+        !researchSpecialistTemplateId ||
+        !growthSpecialistTemplateId ||
+        !consultingSpecialistTemplateId
+      ) {
         throw new Error("Required onboarding agent templates are missing.");
       }
 
@@ -733,7 +745,7 @@ export function OnboardingWizard() {
       if (!ceo) {
         throw new Error("Starter CEO agent not found.");
       }
-      if ((ceo.budgetMonthlyCents ?? 0) <= 0) {
+      if ((ceo.budgetMonthlyCents ?? 0) !== DEFAULT_STARTER_AGENT_BUDGET_CENTS) {
         await agentsApi.update(ceo.id, {
           budgetMonthlyCents: DEFAULT_STARTER_AGENT_BUDGET_CENTS,
         }, companyId);
@@ -748,24 +760,28 @@ export function OnboardingWizard() {
         templateId: string;
         name: string;
         title: string;
-        departmentKey: "engineering" | "operations";
+        departmentKey: "engineering" | "operations" | "research" | "marketing";
         reportsTo: string | null;
         archetypeKey: string;
         desiredSkills: string[];
+        runtimeConfig?: Record<string, unknown>;
+        budgetMonthlyCents?: number;
         projectPlacement?: Record<string, unknown>;
       }) {
         const existing = existingAgents.find((agent) =>
           agent.archetypeKey === input.archetypeKey || agent.name === input.name,
         );
+        const desiredBudgetMonthlyCents = input.budgetMonthlyCents ?? DEFAULT_STARTER_AGENT_BUDGET_CENTS;
         if (existing) {
-          const heartbeat = ((existing.runtimeConfig as Record<string, unknown> | null)?.heartbeat as Record<string, unknown> | null) ?? null;
-          const heartbeatEnabled = heartbeat?.enabled === true;
-          if (!heartbeatEnabled || (existing.budgetMonthlyCents ?? 0) <= 0) {
+          const desiredRuntimeConfig = input.runtimeConfig ?? {};
+          const shouldUpdateRuntimeConfig =
+            Object.keys(desiredRuntimeConfig).length > 0
+            && JSON.stringify(existing.runtimeConfig ?? {}) !== JSON.stringify(desiredRuntimeConfig);
+          const shouldUpdateBudget = (existing.budgetMonthlyCents ?? 0) !== desiredBudgetMonthlyCents;
+          if (shouldUpdateRuntimeConfig || shouldUpdateBudget) {
             await agentsApi.update(existing.id, {
-              runtimeConfig: workerRuntimeConfig,
-              budgetMonthlyCents: existing.budgetMonthlyCents > 0
-                ? existing.budgetMonthlyCents
-                : DEFAULT_STARTER_AGENT_BUDGET_CENTS,
+              ...(shouldUpdateRuntimeConfig ? { runtimeConfig: desiredRuntimeConfig } : {}),
+              budgetMonthlyCents: desiredBudgetMonthlyCents,
             }, companyId);
           }
           return existing;
@@ -779,8 +795,8 @@ export function OnboardingWizard() {
           desiredSkills: input.desiredSkills,
           adapterType,
           adapterConfig: buildAdapterConfig(),
-          runtimeConfig: workerRuntimeConfig,
-          budgetMonthlyCents: DEFAULT_STARTER_AGENT_BUDGET_CENTS,
+          runtimeConfig: input.runtimeConfig ?? {},
+          budgetMonthlyCents: desiredBudgetMonthlyCents,
           ...(input.projectPlacement ? { projectPlacement: input.projectPlacement } : {}),
         });
         existingAgents.push(created);
@@ -795,6 +811,7 @@ export function OnboardingWizard() {
         reportsTo: ceo.id,
         archetypeKey: "project_lead",
         desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.technicalProjectLead,
+        runtimeConfig: workerRuntimeConfig,
         projectPlacement: {
           projectId: project.id,
           projectRole: "engineering_manager",
@@ -815,6 +832,7 @@ export function OnboardingWizard() {
         reportsTo: technicalProjectLead.id,
         archetypeKey: "backend_api_continuity_owner",
         desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.continuityOwner,
+        runtimeConfig: workerRuntimeConfig,
         projectPlacement: {
           projectId: project.id,
           projectRole: "worker",
@@ -835,6 +853,37 @@ export function OnboardingWizard() {
         reportsTo: technicalProjectLead.id,
         archetypeKey: "audit_reviewer",
         desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer,
+        runtimeConfig: workerRuntimeConfig,
+      });
+
+      const researchSpecialist = await ensureStarterAgent({
+        templateId: researchSpecialistTemplateId,
+        name: STARTER_AGENT_NAMES.researchSpecialist,
+        title: STARTER_AGENT_NAMES.researchSpecialist,
+        departmentKey: "research",
+        reportsTo: ceo.id,
+        archetypeKey: "research_specialist",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.researchSpecialist,
+      });
+
+      const growthSpecialist = await ensureStarterAgent({
+        templateId: growthSpecialistTemplateId,
+        name: STARTER_AGENT_NAMES.growthSpecialist,
+        title: STARTER_AGENT_NAMES.growthSpecialist,
+        departmentKey: "marketing",
+        reportsTo: ceo.id,
+        archetypeKey: "growth_specialist",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.growthSpecialist,
+      });
+
+      const consultingSpecialist = await ensureStarterAgent({
+        templateId: consultingSpecialistTemplateId,
+        name: STARTER_AGENT_NAMES.consultingSpecialist,
+        title: STARTER_AGENT_NAMES.consultingSpecialist,
+        departmentKey: "operations",
+        reportsTo: ceo.id,
+        archetypeKey: "consulting_specialist",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.consultingSpecialist,
       });
 
       await ensureAgentDesiredSkills(
@@ -859,6 +908,24 @@ export function OnboardingWizard() {
         companyId,
         auditReviewer.id,
         ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer,
+        skillKeyBySlug,
+      );
+      await ensureAgentDesiredSkills(
+        companyId,
+        researchSpecialist.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.researchSpecialist,
+        skillKeyBySlug,
+      );
+      await ensureAgentDesiredSkills(
+        companyId,
+        growthSpecialist.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.growthSpecialist,
+        skillKeyBySlug,
+      );
+      await ensureAgentDesiredSkills(
+        companyId,
+        consultingSpecialist.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.consultingSpecialist,
         skillKeyBySlug,
       );
 
@@ -903,6 +970,24 @@ export function OnboardingWizard() {
           title: "TEAM.md",
           format: "markdown",
           body: buildOperationsTeamDocumentBody(),
+          baseRevisionId: null,
+        });
+      }
+      const researchTeamDoc = teamDocuments.find((document) => document.departmentKey === "research" && document.key === "team");
+      if (!researchTeamDoc) {
+        await companiesApi.upsertTeamDocument(companyId, "research", "team", {
+          title: "TEAM.md",
+          format: "markdown",
+          body: buildResearchTeamDocumentBody(),
+          baseRevisionId: null,
+        });
+      }
+      const marketingTeamDoc = teamDocuments.find((document) => document.departmentKey === "marketing" && document.key === "team");
+      if (!marketingTeamDoc) {
+        await companiesApi.upsertTeamDocument(companyId, "marketing", "team", {
+          title: "TEAM.md",
+          format: "markdown",
+          body: buildMarketingTeamDocumentBody(),
           baseRevisionId: null,
         });
       }

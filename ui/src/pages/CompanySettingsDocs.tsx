@@ -72,7 +72,7 @@ function buildCompanyTemplate(companyName: string) {
     "",
     "- Company monthly budget: $50",
     "- Default onboarding project budget: $25",
-    "- Default starter-agent budget: $10",
+    "- Starter-agent budgets: unset by default",
     "",
     "## Approval Regime",
     "",

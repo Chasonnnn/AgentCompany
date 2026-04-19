@@ -48,6 +48,32 @@ describe("agent skill packs", () => {
     expect(qaSkills).not.toContain("security-best-practices");
   });
 
+  it("assigns specialist packs by archetype", () => {
+    const researchSkills = getDefaultDesiredSkillSlugsForAgent({
+      role: "researcher",
+      operatingClass: "consultant",
+      archetypeKey: "research_specialist",
+    });
+    const growthSkills = getDefaultDesiredSkillSlugsForAgent({
+      role: "general",
+      operatingClass: "consultant",
+      archetypeKey: "growth_specialist",
+    });
+    const consultingSkills = getDefaultDesiredSkillSlugsForAgent({
+      role: "general",
+      operatingClass: "consultant",
+      archetypeKey: "consulting_specialist",
+    });
+
+    expect(researchSkills).toEqual(
+      expect.arrayContaining(["arxiv", "research-paper-writing", "openai-docs"]),
+    );
+    expect(growthSkills).toEqual(
+      expect.arrayContaining(["onboard", "clarify", "agent-browser"]),
+    );
+    expect(consultingSkills).toEqual(["find-skills"]);
+  });
+
   it("imports the company-wide catalog needed by the default packs", () => {
     expect(DEFAULT_COMPANY_SKILL_IMPORT_SLUGS).toEqual(
       expect.arrayContaining([

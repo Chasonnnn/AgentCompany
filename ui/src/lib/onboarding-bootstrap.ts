@@ -6,7 +6,7 @@ import {
 
 export const DEFAULT_COMPANY_BUDGET_CENTS = 5_000;
 export const DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS = 2_500;
-export const DEFAULT_STARTER_AGENT_BUDGET_CENTS = 1_000;
+export const DEFAULT_STARTER_AGENT_BUDGET_CENTS = 0;
 export const DEFAULT_WORKER_HEARTBEAT_INTERVAL_SEC = 300;
 
 export const STARTER_AGENT_NAMES = {
@@ -14,6 +14,9 @@ export const STARTER_AGENT_NAMES = {
   technicalProjectLead: "Technical Project Lead",
   continuityOwner: "Continuity Owner",
   auditReviewer: "Audit Reviewer",
+  researchSpecialist: "Research Specialist",
+  growthSpecialist: "Growth Specialist",
+  consultingSpecialist: "Consulting Specialist",
 } as const;
 
 export const ONBOARDING_ROUTINE_TITLES = {
@@ -47,6 +50,21 @@ export const ONBOARDING_STARTER_SKILL_ASSIGNMENTS = {
     role: "qa",
     operatingClass: "consultant",
     archetypeKey: "audit_reviewer",
+  }),
+  researchSpecialist: getDefaultDesiredSkillSlugsForAgent({
+    role: "researcher",
+    operatingClass: "consultant",
+    archetypeKey: "research_specialist",
+  }),
+  growthSpecialist: getDefaultDesiredSkillSlugsForAgent({
+    role: "general",
+    operatingClass: "consultant",
+    archetypeKey: "growth_specialist",
+  }),
+  consultingSpecialist: getDefaultDesiredSkillSlugsForAgent({
+    role: "general",
+    operatingClass: "consultant",
+    archetypeKey: "consulting_specialist",
   }),
 } as const;
 export const ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS = mergeDesiredSkillRefs(
@@ -93,7 +111,7 @@ export function buildFallbackCompanyGoal(companyName: string) {
   return {
     title: `${trimmedName}: stand up an enterprise-ready operating company`,
     description:
-      "Create a governed company with durable docs, non-zero budgets, active routines, working heartbeats, and a visible governance path from kickoff through delivery.",
+      "Create a governed company with durable docs, company and project budgets, active routines, working heartbeats, and a visible governance path from kickoff through delivery.",
   };
 }
 
@@ -140,7 +158,7 @@ export function buildCompanyDocumentBody(input: {
     "",
     "- Company monthly budget: $50",
     "- Onboarding project budget: $25",
-    "- Starter-agent monthly budgets: $10 each",
+    "- Starter-agent budgets: unset by default.",
     "",
     "## Approval Regime",
     "",
@@ -198,6 +216,46 @@ export function buildOperationsTeamDocumentBody() {
   ].join("\n");
 }
 
+export function buildResearchTeamDocumentBody() {
+  return [
+    "# TEAM.md",
+    "",
+    "## Charter",
+    "",
+    "- Provide scoped research support, option analysis, and evidence gathering through explicit shared-service engagements.",
+    "",
+    "## Operating Rhythm",
+    "",
+    "- Stay dormant until a project lead or continuity owner requests a bounded research engagement.",
+    "- Return findings as durable artifacts linked from the issue, branch return, or project docs instead of continuing execution by default.",
+    "",
+    "## Interfaces",
+    "",
+    "- Work with Engineering on architecture questions, unknowns, and comparative option analysis.",
+    "- Escalate ambiguous scope or missing success criteria before continuing.",
+  ].join("\n");
+}
+
+export function buildMarketingTeamDocumentBody() {
+  return [
+    "# TEAM.md",
+    "",
+    "## Charter",
+    "",
+    "- Provide growth, onboarding, and market-learning support through explicit shared-service engagements.",
+    "",
+    "## Operating Rhythm",
+    "",
+    "- Stay dormant until the company has a concrete launch, onboarding, or market-learning question.",
+    "- Return bounded recommendations, experiment ideas, and evidence rather than becoming a standing execution lane by default.",
+    "",
+    "## Interfaces",
+    "",
+    "- Work with the CEO on company-level growth questions and with project leads on scoped onboarding or launch work.",
+    "- Escalate unclear success criteria or unsupported requests before continuing.",
+  ].join("\n");
+}
+
 export function buildOnboardingProjectDocuments(input: {
   companyName: string;
   companyGoalTitle: string;
@@ -215,7 +273,7 @@ export function buildOnboardingProjectDocuments(input: {
     "decision-log": [
       "# Decision Log",
       "",
-      "- Default budgets are non-zero and conservative.",
+      "- Default company and project budgets are non-zero and conservative.",
       "- Starter workers run timer heartbeats every 300 seconds with wake-on-demand enabled.",
       "- Kickoff outcomes live in project docs, issue plans, and decision logs rather than a new reserved artifact.",
       "",
