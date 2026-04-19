@@ -17,6 +17,7 @@ import {
   createAgentHireSchema,
   createAgentSchema,
   deriveAgentUrlKey,
+  getDefaultDesiredSkillSlugsForAgent,
   isUuidLike,
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
@@ -646,13 +647,14 @@ export function agentRoutes(db: Db) {
   ): Promise<{
     mergedInput: Record<string, unknown>;
     instructionsBody: string | null;
+    resolvedFromTemplate: boolean;
   }> {
     const resolved = await templateSvc.resolveRevisionForInstantiation(companyId, {
       templateId: typeof input.templateId === "string" ? input.templateId : null,
       templateRevisionId: typeof input.templateRevisionId === "string" ? input.templateRevisionId : null,
     });
     if (!resolved) {
-      return { mergedInput: input, instructionsBody: null };
+      return { mergedInput: input, instructionsBody: null, resolvedFromTemplate: false };
     }
 
     const snapshot = agentTemplateSnapshotSchema.parse(resolved.revision.snapshot);
@@ -688,7 +690,27 @@ export function agentRoutes(db: Db) {
     return {
       mergedInput,
       instructionsBody: snapshot.instructionsBody ?? null,
+      resolvedFromTemplate: true,
     };
+  }
+
+  function mergeDefaultDesiredSkills(
+    requestedDesiredSkills: string[] | undefined,
+    input: {
+      role?: string | null;
+      operatingClass?: string | null;
+      archetypeKey?: string | null;
+    },
+    options?: { resolvedFromTemplate?: boolean },
+  ) {
+    const requested = Array.isArray(requestedDesiredSkills)
+      ? requestedDesiredSkills.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    const templateDefaults = options?.resolvedFromTemplate
+      ? getDefaultDesiredSkillSlugsForAgent(input)
+      : [];
+    const merged = Array.from(new Set([...templateDefaults, ...requested]));
+    return merged.length > 0 ? merged : undefined;
   }
 
   function buildAgentCreatePayload(
@@ -1469,11 +1491,20 @@ export function agentRoutes(db: Db) {
       hireInput.adapterType as string,
       ((hireInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
+    const mergedDesiredSkillRefs = mergeDefaultDesiredSkills(
+      Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
+      {
+        role: typeof hireInput.role === "string" ? hireInput.role : null,
+        operatingClass: typeof hireInput.operatingClass === "string" ? hireInput.operatingClass : null,
+        archetypeKey: typeof hireInput.archetypeKey === "string" ? hireInput.archetypeKey : null,
+      },
+      { resolvedFromTemplate: templateResolved.resolvedFromTemplate },
+    );
     const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
       companyId,
       hireInput.adapterType as string,
       requestedAdapterConfig,
-      Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
+      mergedDesiredSkillRefs,
     );
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       companyId,
@@ -1689,11 +1720,20 @@ export function agentRoutes(db: Db) {
       createInput.adapterType as string,
       ((createInput.adapterConfig ?? {}) as Record<string, unknown>),
     );
+    const mergedDesiredSkillRefs = mergeDefaultDesiredSkills(
+      Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
+      {
+        role: typeof createInput.role === "string" ? createInput.role : null,
+        operatingClass: typeof createInput.operatingClass === "string" ? createInput.operatingClass : null,
+        archetypeKey: typeof createInput.archetypeKey === "string" ? createInput.archetypeKey : null,
+      },
+      { resolvedFromTemplate: templateResolved.resolvedFromTemplate },
+    );
     const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
       companyId,
       createInput.adapterType as string,
       requestedAdapterConfig,
-      Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
+      mergedDesiredSkillRefs,
     );
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       companyId,

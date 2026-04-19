@@ -162,6 +162,44 @@ function makeAgent(adapterType: string) {
   };
 }
 
+function makeTemplateResolution(
+  snapshotOverrides: Record<string, unknown> = {},
+) {
+  return {
+    template: {
+      id: "22222222-2222-4222-8222-222222222222",
+      companyId: "company-1",
+      archivedAt: null,
+    },
+    revision: {
+      id: "33333333-3333-4333-8333-333333333333",
+      templateId: "22222222-2222-4222-8222-222222222222",
+      revisionNumber: 1,
+      snapshot: {
+        name: "Template Agent",
+        role: "engineer",
+        title: "Template Agent",
+        icon: "bot",
+        reportsTo: null,
+        orgLevel: "staff",
+        operatingClass: "worker",
+        capabilityProfileKey: "worker",
+        archetypeKey: "frontend_ui_continuity_owner",
+        departmentKey: "engineering",
+        departmentName: "Engineering",
+        capabilities: null,
+        adapterType: "claude_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        budgetMonthlyCents: 0,
+        metadata: null,
+        instructionsBody: "Template instructions",
+        ...snapshotOverrides,
+      },
+    },
+  };
+}
+
 describe("agent skill routes", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -500,6 +538,35 @@ describe("agent skill routes", () => {
     });
   });
 
+  it("adds default template skill packs when creating a template-backed agent", async () => {
+    mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(
+      makeTemplateResolution(),
+    );
+
+    const res = await request(await createApp())
+      .post("/api/companies/company-1/agents")
+      .send({
+        name: "Frontend Owner",
+        templateId: "22222222-2222-4222-8222-222222222222",
+        adapterType: "claude_local",
+        desiredSkills: ["company/company-1/custom-skill"],
+        adapterConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentSkillService.resolveDesiredSkillAssignment).toHaveBeenCalledWith(
+      "company-1",
+      "claude_local",
+      {},
+      expect.arrayContaining([
+        "company/company-1/custom-skill",
+        "impeccable",
+        "shape",
+        "playwright-interactive",
+      ]),
+    );
+  });
+
   it("materializes a managed AGENTS.md for directly created local agents", async () => {
     const res = await request(await createApp())
       .post("/api/companies/company-1/agents")
@@ -619,6 +686,43 @@ describe("agent skill routes", () => {
           }),
         }),
       }),
+    );
+  });
+
+  it("adds default template skill packs when creating a template-backed hire", async () => {
+    mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(
+      makeTemplateResolution({
+        role: "qa",
+        operatingClass: "consultant",
+        capabilityProfileKey: "consultant",
+        archetypeKey: "audit_reviewer",
+        title: "Audit Reviewer",
+        departmentKey: "operations",
+        departmentName: "Operations",
+      }),
+    );
+
+    const res = await request(await createApp(createDb(true)))
+      .post("/api/companies/company-1/agent-hires")
+      .send({
+        name: "Audit Reviewer",
+        templateId: "22222222-2222-4222-8222-222222222222",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentSkillService.resolveDesiredSkillAssignment).toHaveBeenCalledWith(
+      "company-1",
+      "claude_local",
+      {},
+      expect.arrayContaining([
+        "audit",
+        "critique",
+        "security-best-practices",
+        "qa-only",
+        "playwright",
+      ]),
     );
   });
 
