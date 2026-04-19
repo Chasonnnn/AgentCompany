@@ -367,7 +367,7 @@ describe("NewIssueDialog", () => {
         projectId: "project-1",
         executionWorkspaceId: "workspace-1",
         continuityTier: "normal",
-        prepareContinuity: false,
+        prepareContinuity: true,
       }),
     );
 

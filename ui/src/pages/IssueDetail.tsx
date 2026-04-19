@@ -691,6 +691,19 @@ export function IssueDetail() {
     issue?.title,
     openNewIssue,
   ]);
+  const openArtifactsDocument = useCallback((documentKey = "plan") => {
+    setExecutionSurfaceTab("artifacts");
+    navigate(
+      {
+        pathname: location.pathname,
+        search: location.search,
+        hash: `#document-${encodeURIComponent(documentKey)}`,
+      },
+      {
+        state: resolvedIssueDetailState ?? location.state,
+      },
+    );
+  }, [location.pathname, location.search, location.state, navigate, resolvedIssueDetailState]);
 
   const commentReassignOptions = useMemo(() => {
     const options: Array<{ id: string; label: string; searchText?: string }> = [];
@@ -1949,6 +1962,7 @@ export function IssueDetail() {
             issue={issue}
             agents={agents ?? []}
             childIssues={childIssues}
+            onOpenArtifacts={openArtifactsDocument}
           />
         </TabsContent>
 

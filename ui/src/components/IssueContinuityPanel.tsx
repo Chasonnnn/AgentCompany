@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Agent, Issue, IssueBranchMergePreview } from "@paperclipai/shared";
 import {
+  buildIssueDocumentTemplate,
+  getReservedIssueDocumentDescriptor,
   parseIssueBranchReturnMarkdown,
   parseIssueHandoffMarkdown,
   parseIssueProgressMarkdown,
@@ -18,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 type ContinuityTier = "tiny" | "normal" | "long_running";
+type PlanningDocStatus = "missing" | "not_started" | "started";
 
 function actorLabel(input: {
   assigneeAgentId?: string | null;
@@ -67,6 +70,65 @@ function toneClass(kind: "healthy" | "warn" | "danger") {
     default:
       return "border-border bg-muted/20 text-foreground";
   }
+}
+
+function chipClass(kind: "default" | "info" | "warn" | "danger" | "success") {
+  switch (kind) {
+    case "info":
+      return "border-blue-500/25 bg-blue-500/10 text-blue-700 dark:text-blue-300";
+    case "warn":
+      return "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "danger":
+      return "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300";
+    case "success":
+      return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    default:
+      return "border-border bg-background/80 text-foreground";
+  }
+}
+
+function docStatusLabel(status: PlanningDocStatus) {
+  switch (status) {
+    case "missing":
+      return "Missing";
+    case "not_started":
+      return "Not started";
+    default:
+      return "Started";
+  }
+}
+
+function docStatusTone(status: PlanningDocStatus): "default" | "warn" | "success" {
+  switch (status) {
+    case "missing":
+      return "warn";
+    case "not_started":
+      return "default";
+    default:
+      return "success";
+  }
+}
+
+function lifecycleMeta(input: {
+  hasPlanningScaffolds: boolean;
+  hasMissingDocs: boolean;
+  hasActiveReview: boolean;
+  hasPendingHandoff: boolean;
+  hasBranchWork: boolean;
+}) {
+  if (input.hasPendingHandoff) {
+    return { label: "Handoff pending", tone: "info" as const };
+  }
+  if (input.hasActiveReview) {
+    return { label: "In review", tone: "info" as const };
+  }
+  if (input.hasBranchWork) {
+    return { label: "Branch work", tone: "info" as const };
+  }
+  if (input.hasMissingDocs || input.hasPlanningScaffolds) {
+    return { label: "Planning setup", tone: input.hasMissingDocs ? "warn" as const : "default" as const };
+  }
+  return { label: "Execution ready", tone: "success" as const };
 }
 
 function splitLines(value: string) {
@@ -132,10 +194,12 @@ export function IssueContinuityPanel({
   issue,
   agents,
   childIssues,
+  onOpenArtifacts,
 }: {
   issue: Issue;
   agents: Agent[];
   childIssues: Issue[];
+  onOpenArtifacts?: (documentKey?: string) => void;
 }) {
   const queryClient = useQueryClient();
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
@@ -192,6 +256,10 @@ export function IssueContinuityPanel({
   const [branchReturnEvidence, setBranchReturnEvidence] = useState("");
   const [branchReturnArtifacts, setBranchReturnArtifacts] = useState("");
   const [showQuestionForm, setShowQuestionForm] = useState(false);
+  const [showAdvancedActions, setShowAdvancedActions] = useState(false);
+  const [advancedActionsTouched, setAdvancedActionsTouched] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [showSpecThawForm, setShowSpecThawForm] = useState(false);
   const [questionTitle, setQuestionTitle] = useState("");
   const [questionBody, setQuestionBody] = useState("");
   const [questionWhyBlocked, setQuestionWhyBlocked] = useState("");
@@ -581,11 +649,79 @@ export function IssueContinuityPanel({
   const returnedBranches = (state?.returnedBranchIssueIds ?? [])
     .map((branchId) => childIssuesById.get(branchId))
     .filter((branch): branch is Issue => Boolean(branch));
+  const planningDocuments = useMemo(() => {
+    if (!state || !bundle) return [];
+    return state.requiredDocumentKeys.map((key) => {
+      const snapshot = bundle.issueDocuments[key as keyof typeof bundle.issueDocuments] ?? null;
+      const template = buildIssueDocumentTemplate(key, {
+        title: issue.title,
+        description: issue.description ?? null,
+        tier: state.tier,
+      });
+      const status: PlanningDocStatus = !snapshot
+        ? "missing"
+        : template && snapshot.body.trim() === template.trim()
+          ? "not_started"
+          : "started";
+      return {
+        key,
+        label: getReservedIssueDocumentDescriptor(key)?.label ?? key,
+        status,
+        snapshot,
+      };
+    });
+  }, [bundle, issue.description, issue.title, state]);
+  const startedPlanningDocCount = planningDocuments.filter((doc) => doc.status === "started").length;
+  const missingPlanningDocCount = planningDocuments.filter((doc) => doc.status === "missing").length;
+  const hasPlanningScaffolds =
+    planningDocuments.length > 0
+    && missingPlanningDocCount === 0
+    && startedPlanningDocCount === 0
+    && planningDocuments.some((doc) => doc.status === "not_started");
+  const progressDocStatus = planningDocuments.find((doc) => doc.key === "progress")?.status ?? "missing";
+  const progressMeaningfullyStarted = progressDocStatus === "started";
+  const hasPendingHandoff = state?.status === "handoff_pending" || state?.health === "invalid_handoff";
+  const hasActiveReview =
+    Boolean(continuity?.activeGateParticipant)
+    || Boolean(reviewFindingsDoc && reviewFindingsDoc.document.resolutionState === "open");
+  const hasBranchWork =
+    Boolean(state?.branchRole === "branch")
+    || Boolean(returnedBranches.length > 0)
+    || Boolean((state?.unresolvedBranchIssueIds.length ?? 0) > 0);
+  const lifecycle = state
+    ? lifecycleMeta({
+        hasPlanningScaffolds,
+        hasMissingDocs: missingPlanningDocCount > 0,
+        hasActiveReview,
+        hasPendingHandoff,
+        hasBranchWork,
+      })
+    : { label: "Planning setup", tone: "default" as const };
   const readyToExecute =
     state?.status === "ready" &&
     state.health === "healthy" &&
     (state.blockingDecisionQuestionCount ?? 0) === 0 &&
-    state.missingDocumentKeys.length === 0;
+    state.missingDocumentKeys.length === 0 &&
+    startedPlanningDocCount === planningDocuments.length;
+  const showCheckpointShortcut = state?.status === "active" || progressMeaningfullyStarted;
+  const shouldAutoExpandAdvanced = Boolean(
+    state
+    && (
+      hasPendingHandoff
+      || Boolean(reviewFindingsDoc && reviewFindingsDoc.document.resolutionState === "open")
+      || returnedBranches.length > 0
+      || Boolean(continuity?.activeGateParticipant)
+      || state.branchRole === "branch"
+    ),
+  );
+
+  useEffect(() => {
+    if (!advancedActionsTouched && shouldAutoExpandAdvanced) {
+      setShowAdvancedActions(true);
+    }
+  }, [advancedActionsTouched, shouldAutoExpandAdvanced]);
+
+  const topSuggestedAction = remediation?.suggestedActions[0] ?? null;
 
   if (!state) {
     return (
@@ -596,7 +732,7 @@ export function IssueContinuityPanel({
             <p className="text-xs text-muted-foreground">Server continuity state has not been prepared yet.</p>
           </div>
           <Button size="sm" onClick={() => prepareMutation.mutate()} disabled={prepareMutation.isPending}>
-            {prepareMutation.isPending ? "Preparing…" : "Prepare execution"}
+            {prepareMutation.isPending ? "Preparing…" : "Prepare planning docs"}
           </Button>
         </div>
       </div>
@@ -604,136 +740,139 @@ export function IssueContinuityPanel({
   }
 
   const healthTone =
-    state.health === "healthy"
-      ? "healthy"
-      : state.health === "missing_required_docs" || state.health === "invalid_handoff"
-        ? "danger"
-        : "warn";
+    state.health === "invalid_handoff"
+      ? "danger"
+      : state.health === "missing_required_docs" || state.health === "stale_progress"
+        ? "warn"
+        : "healthy";
+  const primaryPlanningActionLabel = missingPlanningDocCount > 0 ? "Prepare planning docs" : "Open planning docs";
+  const openArtifacts = (documentKey = "plan") => {
+    onOpenArtifacts?.(documentKey);
+  };
+  const nextStepActionLabel = topSuggestedAction?.id === "prepare_execution" ? "Prepare planning docs" : topSuggestedAction?.label ?? null;
+  const nextStepAction = topSuggestedAction
+    ? () => {
+        switch (topSuggestedAction.id) {
+          case "prepare_execution":
+            prepareMutation.mutate();
+            break;
+          case "progress_checkpoint":
+            setShowCheckpointForm(true);
+            break;
+          case "handoff_repair":
+          case "handoff_cancel":
+            setAdvancedActionsTouched(true);
+            setShowAdvancedActions(true);
+            setShowRepairForm(true);
+            break;
+          case "review_resubmit":
+            setAdvancedActionsTouched(true);
+            setShowAdvancedActions(true);
+            setShowResubmitForm(true);
+            break;
+          case "branch_merge":
+            setAdvancedActionsTouched(true);
+            setShowAdvancedActions(true);
+            setSelectedMergeBranchId((current) => current ?? returnedBranches[0]?.id ?? null);
+            break;
+        }
+      }
+    : null;
+  const detailedRemediationActions = [...(remediation?.suggestedActions ?? []), ...(remediation?.blockedActions ?? [])];
 
   return (
     <div className={cn("space-y-3 rounded-lg border p-3", toneClass(healthTone))}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
+      <div data-testid="continuity-summary" className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-medium">Continuity</h3>
-            <span className="rounded-full border border-border px-2 py-0.5 text-[11px]">{tierLabel(state.tier)}</span>
-            <span className="rounded-full border border-border px-2 py-0.5 text-[11px] capitalize">
-              {state.status.replaceAll("_", " ")}
+            <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", chipClass("default"))}>
+              {tierLabel(state.tier)}
             </span>
-            <span className="rounded-full border border-border px-2 py-0.5 text-[11px] capitalize">
-              {state.specState.replaceAll("_", " ")}
-            </span>
-            <span className="rounded-full border border-border px-2 py-0.5 text-[11px] capitalize">
-              {state.health.replaceAll("_", " ")}
-            </span>
-            <span className="rounded-full border border-border px-2 py-0.5 text-[11px]">
-              {readyToExecute ? "Ready to execute" : "Planning required"}
+            <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", chipClass(lifecycle.tone))}>
+              {lifecycle.label}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
             Owner: {actorLabel({ assigneeAgentId: issue.assigneeAgentId, assigneeUserId: issue.assigneeUserId, agentsById })}
-            {" · "}
-            Active gate: {gateLabel(continuity?.activeGateParticipant, agentsById)}
           </p>
+          {continuity?.activeGateParticipant ? (
+            <p className="text-xs text-muted-foreground">
+              Gate: {gateLabel(continuity.activeGateParticipant, agentsById)}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          <select
-            value={prepareTier}
-            onChange={(event) => setPrepareTier(event.target.value as ContinuityTier)}
-            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+          <Button
+            size="sm"
+            onClick={() => {
+              if (missingPlanningDocCount > 0) {
+                prepareMutation.mutate();
+                return;
+              }
+              openArtifacts("plan");
+            }}
+            disabled={prepareMutation.isPending}
           >
-            <option value="tiny">Tiny</option>
-            <option value="normal">Normal</option>
-            <option value="long_running">Long-running</option>
-          </select>
-          <Button size="sm" variant="outline" onClick={() => prepareMutation.mutate()} disabled={prepareMutation.isPending}>
-            {prepareMutation.isPending ? "Preparing…" : "Prepare execution"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setShowCheckpointForm((value) => !value)}>
-            Add checkpoint
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setShowBranchForm((value) => !value)}>
-            Create branch issue
+            {prepareMutation.isPending ? "Preparing…" : primaryPlanningActionLabel}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setShowQuestionForm((value) => !value)}>
             Ask decision
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setShowHandoffForm((value) => !value)}>
-            Start handoff
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => specThawMutation.mutate()} disabled={specThawMutation.isPending}>
-            {specThawMutation.isPending ? "Requesting…" : "Request spec thaw"}
-          </Button>
+          {showCheckpointShortcut ? (
+            <Button size="sm" variant="outline" onClick={() => setShowCheckpointForm((value) => !value)}>
+              Add checkpoint
+            </Button>
+          ) : null}
         </div>
       </div>
 
-      <div className="grid gap-3 text-xs text-muted-foreground md:grid-cols-2">
-        <div>
-          <span className="font-medium text-foreground">Required docs:</span> {state.requiredDocumentKeys.join(", ")}
-        </div>
-        <div>
-          <span className="font-medium text-foreground">Missing docs:</span>{" "}
-          {state.missingDocumentKeys.length > 0 ? state.missingDocumentKeys.join(", ") : "none"}
-        </div>
-        <div>
-          <span className="font-medium text-foreground">Last progress:</span>{" "}
-          {state.lastProgressAt ? relativeTime(state.lastProgressAt) : "none"}
-        </div>
-        <div>
-          <span className="font-medium text-foreground">Last handoff:</span>{" "}
-          {state.lastHandoffAt ? relativeTime(state.lastHandoffAt) : "none"}
-        </div>
-        <div>
-          <span className="font-medium text-foreground">Last review return:</span>{" "}
-          {state.lastReviewReturnAt ? relativeTime(state.lastReviewReturnAt) : "none"}
-        </div>
-        <div>
-          <span className="font-medium text-foreground">Last branch return:</span>{" "}
-          {state.lastBranchReturnAt ? relativeTime(state.lastBranchReturnAt) : "none"}
-        </div>
-        <div>
-          <span className="font-medium text-foreground">Open decisions:</span>{" "}
-          {state.openDecisionQuestionCount ?? 0}
-          {state.blockingDecisionQuestionCount ? ` (${state.blockingDecisionQuestionCount} blocking)` : ""}
-        </div>
-        <div>
-          <span className="font-medium text-foreground">Last answered decision:</span>{" "}
-          {state.lastDecisionAnswerAt ? relativeTime(state.lastDecisionAnswerAt) : "none"}
-        </div>
-      </div>
-
-      {state.healthReason || (state.healthDetails?.length ?? 0) > 0 ? (
-        <SectionCard
-          title="Continuity health"
-          subtitle={state.healthReason?.replaceAll("_", " ") ?? "Derived from server-owned continuity state."}
-        >
-          <ul className="space-y-1 text-xs text-muted-foreground">
-            {(state.healthDetails ?? []).map((detail) => (
-              <li key={detail}>{detail}</li>
-            ))}
-          </ul>
+      {topSuggestedAction && nextStepActionLabel && nextStepAction ? (
+        <SectionCard title="Next step" subtitle={topSuggestedAction.description}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-muted-foreground">
+              {topSuggestedAction.actor.replaceAll("_", " ")}
+            </div>
+            <Button size="sm" variant="outline" onClick={nextStepAction}>
+              {nextStepActionLabel}
+            </Button>
+          </div>
         </SectionCard>
       ) : null}
 
       <SectionCard
-        title="Planning readiness"
-        subtitle="Execution starts after planning docs exist, blocking decisions are resolved, and continuity health is clean."
+        title="Planning checklist"
+        subtitle={`Planning docs started ${startedPlanningDocCount}/${planningDocuments.length}`}
       >
-        <div className="grid gap-2 text-xs md:grid-cols-2">
-          <div>
-            <span className="font-medium text-foreground">Ready gate:</span> {readyToExecute ? "open" : "blocked"}
-          </div>
-          <div>
-            <span className="font-medium text-foreground">Planning status:</span> {state.status.replaceAll("_", " ")}
-          </div>
-          <div>
-            <span className="font-medium text-foreground">Required docs present:</span>{" "}
-            {state.missingDocumentKeys.length === 0 ? "yes" : "no"}
-          </div>
-          <div>
-            <span className="font-medium text-foreground">Blocking decisions:</span>{" "}
-            {state.blockingDecisionQuestionCount ?? 0}
-          </div>
+        <div data-testid="continuity-planning-checklist" className="space-y-2">
+          {planningDocuments.map((doc) => (
+            <div
+              key={doc.key}
+              data-testid={`continuity-planning-doc-${doc.key}`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-background/80 px-3 py-2"
+            >
+              <div className="min-w-0 space-y-1">
+                <div className="text-xs font-medium text-foreground">{doc.label}</div>
+                <div className="text-xs text-muted-foreground">
+                  {doc.status === "missing"
+                    ? "This document has not been scaffolded yet."
+                    : doc.status === "not_started"
+                      ? "Scaffolded and waiting for the first real edit."
+                      : doc.snapshot?.updatedAt
+                        ? `Updated ${relativeTime(doc.snapshot.updatedAt)}`
+                        : "In progress."}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", chipClass(docStatusTone(doc.status)))}>
+                  {docStatusLabel(doc.status)}
+                </span>
+                <Button size="sm" variant="outline" onClick={() => openArtifacts(doc.key)}>
+                  Open
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
       </SectionCard>
 
@@ -877,94 +1016,12 @@ export function IssueContinuityPanel({
         </SectionCard>
       ) : null}
 
-      {reviewFindingsDoc && reviewFindingsDoc.document.resolutionState === "open" ? (
-        <SectionCard
-          title="Active review findings"
-          subtitle={`${reviewFindingsDoc.document.outcome.replaceAll("_", " ")} · ${reviewFindingsDoc.document.reviewStage}`}
-        >
-          <div className="space-y-2 text-xs">
-            <p className="text-muted-foreground">{reviewFindingsDoc.document.ownerNextAction}</p>
-            <ul className="space-y-2">
-              {reviewFindingsDoc.document.findings.map((finding, index) => (
-                <li key={`${finding.title}-${index}`} className="rounded border border-border/60 px-2 py-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-foreground">{finding.title}</span>
-                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase">
-                      {finding.severity}
-                    </span>
-                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px]">
-                      {finding.category}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-muted-foreground">{finding.detail}</p>
-                  <p className="mt-1">
-                    <span className="font-medium text-foreground">Required action:</span> {finding.requiredAction}
-                  </p>
-                </li>
-              ))}
-            </ul>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => setShowResubmitForm((value) => !value)}>
-                Address findings
-              </Button>
-            </div>
-          </div>
-        </SectionCard>
-      ) : null}
-
-      {(remediation?.suggestedActions.length ?? 0) > 0 || (remediation?.blockedActions.length ?? 0) > 0 ? (
-        <SectionCard title="Remediation" subtitle="Server-derived next steps and actor eligibility.">
-          {(remediation?.suggestedActions ?? []).map((action) => (
-            <ActionRow key={`suggested-${action.id}`} title={action.label} description={action.description}>
-              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                Eligible actor: {action.actor.replaceAll("_", " ")}
-              </div>
-            </ActionRow>
-          ))}
-          {(remediation?.blockedActions ?? []).map((action) => (
-            <ActionRow key={`blocked-${action.id}`} title={action.label} description={action.description}>
-              <div className="text-[11px] text-muted-foreground">{action.blockedReason ?? "Currently blocked."}</div>
-            </ActionRow>
-          ))}
-        </SectionCard>
-      ) : null}
-
-      {progressDoc ? (
+      {progressDoc && progressMeaningfullyStarted ? (
         <SectionCard title="Current checkpoint" subtitle="Top snapshot from the continuity progress document.">
           <p className="text-xs text-muted-foreground">{progressDoc.document.currentState}</p>
           <p className="text-xs">
             <span className="font-medium text-foreground">Next:</span> {progressDoc.document.nextAction}
           </p>
-        </SectionCard>
-      ) : null}
-
-      {handoffDoc ? (
-        <SectionCard title="Latest handoff" subtitle="Most recent typed handoff artifact.">
-          <p className="text-xs">
-            <span className="font-medium text-foreground">Target:</span> {handoffDoc.document.transferTarget}
-          </p>
-          <p className="text-xs">
-            <span className="font-medium text-foreground">Next:</span> {handoffDoc.document.exactNextAction}
-          </p>
-        </SectionCard>
-      ) : null}
-
-      {state.unresolvedBranchIssueIds.length > 0 ? (
-        <SectionCard title="Unresolved branches" subtitle="Outstanding branch work that still feeds this execution thread.">
-          <div className="flex flex-wrap gap-2">
-            {state.unresolvedBranchIssueIds.map((branchId) => {
-              const branchIssue = childIssuesById.get(branchId);
-              return (
-                <Link
-                  key={branchId}
-                  to={`/issues/${branchIssue?.identifier ?? branchId}`}
-                  className="rounded-full border border-border px-2 py-0.5 text-xs underline-offset-2 hover:underline"
-                >
-                  {branchIssue?.identifier ?? branchId}
-                </Link>
-              );
-            })}
-          </div>
         </SectionCard>
       ) : null}
 
@@ -992,340 +1049,535 @@ export function IssueContinuityPanel({
         </SectionCard>
       ) : null}
 
-      {showBranchForm ? (
-        <SectionCard title="Create branch issue" subtitle="Bounded branch work returns into the same parent continuity thread.">
-          <div className="grid gap-2 md:grid-cols-2">
-            <Input value={branchTitle} onChange={(event) => setBranchTitle(event.target.value)} placeholder="Branch issue title" />
-            <Input value={branchBudget} onChange={(event) => setBranchBudget(event.target.value)} placeholder="Budget" />
-            <Textarea value={branchPurpose} onChange={(event) => setBranchPurpose(event.target.value)} placeholder="Purpose" className="md:col-span-2" />
-            <Textarea value={branchScope} onChange={(event) => setBranchScope(event.target.value)} placeholder="Scope" className="md:col-span-2" />
-            <Input
-              value={branchReturnArtifact}
-              onChange={(event) => setBranchReturnArtifact(event.target.value)}
-              placeholder="Expected return artifact"
-              className="md:col-span-2"
-            />
-            <div className="md:col-span-2 flex gap-2">
-              <Button
-                size="sm"
-                onClick={() => branchMutation.mutate()}
-                disabled={branchMutation.isPending || !branchTitle.trim() || !branchPurpose.trim() || !branchScope.trim()}
-              >
-                {branchMutation.isPending ? "Creating…" : "Create branch issue"}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setShowBranchForm(false)}>Cancel</Button>
-            </div>
+      <SectionCard
+        title="Advanced continuity actions"
+        subtitle="Handoff, review, branch, and thaw workflows stay available here when needed."
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-muted-foreground">
+            Hidden by default until the issue enters a review, handoff, or branch workflow.
           </div>
-        </SectionCard>
-      ) : null}
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="continuity-advanced-toggle"
+            onClick={() => {
+              setAdvancedActionsTouched(true);
+              setShowAdvancedActions((value) => !value);
+            }}
+          >
+            {showAdvancedActions ? "Hide advanced" : "Show advanced"}
+          </Button>
+        </div>
 
-      {showHandoffForm ? (
-        <SectionCard title="Start handoff" subtitle="Ownership transfer is explicit and requires a durable handoff artifact.">
-          <div className="grid gap-2 md:grid-cols-2">
-            <select
-              value={handoffAgentId}
-              onChange={(event) => setHandoffAgentId(event.target.value)}
-              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-            >
-              <option value="">Select agent target</option>
-              {agents
-                .filter((agent) => agent.id !== issue.assigneeAgentId)
-                .map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </option>
-                ))}
-            </select>
-            <Input value={handoffUserId} onChange={(event) => setHandoffUserId(event.target.value)} placeholder="Or board user id" />
-            <Input value={handoffReason} onChange={(event) => setHandoffReason(event.target.value)} placeholder="Reason code" />
-            <Input value={handoffNextAction} onChange={(event) => setHandoffNextAction(event.target.value)} placeholder="Exact next action" className="md:col-span-2" />
-            <div className="md:col-span-2 flex gap-2">
-              <Button
-                size="sm"
-                onClick={() => handoffMutation.mutate()}
-                disabled={handoffMutation.isPending || (!handoffAgentId && !handoffUserId.trim()) || !handoffNextAction.trim()}
-              >
-                {handoffMutation.isPending ? "Handing off…" : "Confirm handoff"}
+        {showAdvancedActions ? (
+          <div data-testid="continuity-advanced-panel" className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => setShowHandoffForm((value) => !value)}>
+                Start handoff
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setShowHandoffForm(false)}>Cancel</Button>
-            </div>
-          </div>
-        </SectionCard>
-      ) : null}
-
-      {state.status === "handoff_pending" || state.health === "invalid_handoff" ? (
-        <SectionCard title="Pending handoff remediation" subtitle="Repair or cancel the current handoff explicitly.">
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => setShowRepairForm((value) => !value)}>
-              Repair handoff
-            </Button>
-          </div>
-          {showRepairForm ? (
-            <div className="grid gap-2 md:grid-cols-2">
-              <Input value={repairReasonCode} onChange={(event) => setRepairReasonCode(event.target.value)} placeholder="Reason code" />
-              <Input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Cancel reason" />
-              <Textarea value={repairNextAction} onChange={(event) => setRepairNextAction(event.target.value)} placeholder="Exact next action" className="md:col-span-2" />
-              <Textarea value={repairOpenQuestions} onChange={(event) => setRepairOpenQuestions(event.target.value)} placeholder="Open questions (one per line)" className="md:col-span-2" />
-              <Textarea value={repairEvidence} onChange={(event) => setRepairEvidence(event.target.value)} placeholder="Evidence (one per line)" className="md:col-span-2" />
-              <div className="md:col-span-2 flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => repairHandoffMutation.mutate()}
-                  disabled={repairHandoffMutation.isPending || !repairNextAction.trim()}
-                >
-                  {repairHandoffMutation.isPending ? "Repairing…" : "Repair handoff"}
+              <Button size="sm" variant="outline" onClick={() => setShowBranchForm((value) => !value)}>
+                Create branch issue
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setShowSpecThawForm((value) => !value)}>
+                Request spec thaw
+              </Button>
+              {continuity?.activeGateParticipant ? (
+                <Button size="sm" variant="outline" onClick={() => setShowReviewReturnForm((value) => !value)}>
+                  Return findings
                 </Button>
+              ) : null}
+              {reviewFindingsDoc && reviewFindingsDoc.document.resolutionState === "open" ? (
+                <Button size="sm" variant="outline" onClick={() => setShowResubmitForm((value) => !value)}>
+                  Resubmit for review
+                </Button>
+              ) : null}
+              {state.status === "handoff_pending" || state.health === "invalid_handoff" ? (
+                <Button size="sm" variant="outline" onClick={() => setShowRepairForm((value) => !value)}>
+                  Repair handoff
+                </Button>
+              ) : null}
+              {state.branchRole === "branch" ? (
+                <Button size="sm" variant="outline" onClick={() => setShowBranchReturnForm((value) => !value)}>
+                  Return branch work
+                </Button>
+              ) : null}
+              {returnedBranches.length > 0 ? (
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => cancelHandoffMutation.mutate()}
-                  disabled={cancelHandoffMutation.isPending || !cancelReason.trim()}
+                  onClick={() => setSelectedMergeBranchId((current) => current ?? returnedBranches[0]?.id ?? null)}
                 >
-                  {cancelHandoffMutation.isPending ? "Cancelling…" : "Cancel handoff"}
+                  Review returned branches
                 </Button>
-              </div>
+              ) : null}
             </div>
-          ) : null}
-        </SectionCard>
-      ) : null}
 
-      {continuity?.activeGateParticipant ? (
-        <SectionCard title="Review gate" subtitle="Review and approval remain gates. They do not take continuity ownership.">
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => setShowReviewReturnForm((value) => !value)}>
-              Return findings
-            </Button>
-          </div>
-          {showReviewReturnForm ? (
-            <div className="grid gap-2 md:grid-cols-2">
-              <select
-                value={reviewOutcome}
-                onChange={(event) => setReviewOutcome(event.target.value as typeof reviewOutcome)}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+            {showSpecThawForm ? (
+              <ActionRow
+                title="Request spec thaw"
+                description="Use this only when the spec must be edited after execution has already started."
               >
-                <option value="changes_requested">Changes requested</option>
-                <option value="approved_with_notes">Approved with notes</option>
-                <option value="blocked">Blocked</option>
-              </select>
-              <Input value={reviewContext} onChange={(event) => setReviewContext(event.target.value)} placeholder="Decision context" />
-              <select
-                value={reviewSeverity}
-                onChange={(event) => setReviewSeverity(event.target.value as typeof reviewSeverity)}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    value={specThawReason}
+                    onChange={(event) => setSpecThawReason(event.target.value)}
+                    placeholder="Optional spec thaw reason"
+                    className="max-w-sm"
+                  />
+                  <Button size="sm" onClick={() => specThawMutation.mutate()} disabled={specThawMutation.isPending}>
+                    {specThawMutation.isPending ? "Requesting…" : "Request thaw"}
+                  </Button>
+                </div>
+              </ActionRow>
+            ) : null}
+
+            {reviewFindingsDoc && reviewFindingsDoc.document.resolutionState === "open" ? (
+              <SectionCard
+                title="Active review findings"
+                subtitle={`${reviewFindingsDoc.document.outcome.replaceAll("_", " ")} · ${reviewFindingsDoc.document.reviewStage}`}
               >
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-              <Input value={reviewCategory} onChange={(event) => setReviewCategory(event.target.value)} placeholder="Category" />
-              <Input value={reviewTitle} onChange={(event) => setReviewTitle(event.target.value)} placeholder="Finding title" className="md:col-span-2" />
-              <Textarea value={reviewDetail} onChange={(event) => setReviewDetail(event.target.value)} placeholder="Detail" className="md:col-span-2" />
-              <Textarea value={reviewRequiredAction} onChange={(event) => setReviewRequiredAction(event.target.value)} placeholder="Required action" className="md:col-span-2" />
-              <Textarea value={reviewEvidence} onChange={(event) => setReviewEvidence(event.target.value)} placeholder="Evidence links (one per line)" className="md:col-span-2" />
-              <Textarea value={reviewOwnerNextAction} onChange={(event) => setReviewOwnerNextAction(event.target.value)} placeholder="Owner-facing exact next action" className="md:col-span-2" />
-              <div className="md:col-span-2 flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => reviewReturnMutation.mutate()}
-                  disabled={
-                    reviewReturnMutation.isPending
-                    || !reviewTitle.trim()
-                    || !reviewDetail.trim()
-                    || !reviewRequiredAction.trim()
-                    || !reviewOwnerNextAction.trim()
-                  }
-                >
-                  {reviewReturnMutation.isPending ? "Returning…" : "Write findings and return"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setShowReviewReturnForm(false)}>Cancel</Button>
-              </div>
-            </div>
-          ) : null}
-        </SectionCard>
-      ) : null}
-
-      {reviewFindingsDoc && reviewFindingsDoc.document.resolutionState === "open" ? (
-        <SectionCard title="Review resubmit" subtitle="The continuity owner explicitly marks findings addressed and reopens the same gate.">
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => setShowResubmitForm((value) => !value)}>
-              Resubmit for review
-            </Button>
-          </div>
-          {showResubmitForm ? (
-            <div className="grid gap-2 md:grid-cols-2">
-              <Textarea value={resubmitResponseNote} onChange={(event) => setResubmitResponseNote(event.target.value)} placeholder="Owner response note" className="md:col-span-2" />
-              <Textarea value={checkpointCurrentState} onChange={(event) => setCheckpointCurrentState(event.target.value)} placeholder="Updated current state (optional checkpoint)" className="md:col-span-2" />
-              <Textarea value={checkpointNextAction} onChange={(event) => setCheckpointNextAction(event.target.value)} placeholder="Updated next action (optional checkpoint)" className="md:col-span-2" />
-              <div className="md:col-span-2 flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => reviewResubmitMutation.mutate()}
-                  disabled={reviewResubmitMutation.isPending}
-                >
-                  {reviewResubmitMutation.isPending ? "Resubmitting…" : "Mark addressed and resubmit"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setShowResubmitForm(false)}>Cancel</Button>
-              </div>
-            </div>
-          ) : null}
-        </SectionCard>
-      ) : null}
-
-      {state.branchRole === "branch" ? (
-        <SectionCard title="Branch return" subtitle="Return branch output through a typed artifact before the parent can merge anything.">
-          {branchReturnDoc ? (
-            <div className="space-y-1 text-xs">
-              <p className="text-muted-foreground">{branchReturnDoc.document.resultSummary}</p>
-              <p>
-                <span className="font-medium text-foreground">Proposed parent updates:</span>{" "}
-                {branchReturnDoc.document.proposedParentUpdates.map((update) => update.documentKey).join(", ") || "none"}
-              </p>
-            </div>
-          ) : null}
-          {issue.parentId ? (
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => setShowBranchReturnForm((value) => !value)}>
-                Return to parent
-              </Button>
-            </div>
-          ) : null}
-          {showBranchReturnForm ? (
-            <div className="grid gap-2 md:grid-cols-2">
-              <Textarea value={branchReturnPurposeScopeRecap} onChange={(event) => setBranchReturnPurposeScopeRecap(event.target.value)} placeholder="Purpose / scope recap" className="md:col-span-2" />
-              <Textarea value={branchReturnResultSummary} onChange={(event) => setBranchReturnResultSummary(event.target.value)} placeholder="Returned result summary" className="md:col-span-2" />
-              <select
-                value={branchReturnDocKey}
-                onChange={(event) => setBranchReturnDocKey(event.target.value)}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-              >
-                <option value="spec">spec</option>
-                <option value="plan">plan</option>
-                <option value="runbook">runbook</option>
-                <option value="progress">progress</option>
-                <option value="test-plan">test-plan</option>
-                <option value="handoff">handoff</option>
-              </select>
-              <select
-                value={branchReturnDocAction}
-                onChange={(event) => setBranchReturnDocAction(event.target.value as "replace" | "append")}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-              >
-                <option value="append">append</option>
-                <option value="replace">replace</option>
-              </select>
-              <Input value={branchReturnDocSummary} onChange={(event) => setBranchReturnDocSummary(event.target.value)} placeholder="Proposed update summary" className="md:col-span-2" />
-              <Textarea value={branchReturnDocContent} onChange={(event) => setBranchReturnDocContent(event.target.value)} placeholder="Proposed parent document content" className="md:col-span-2" />
-              <Textarea value={branchReturnChecklist} onChange={(event) => setBranchReturnChecklist(event.target.value)} placeholder="Merge checklist (one per line)" className="md:col-span-2" />
-              <Textarea value={branchReturnRisks} onChange={(event) => setBranchReturnRisks(event.target.value)} placeholder="Unresolved risks (one per line)" className="md:col-span-2" />
-              <Textarea value={branchReturnQuestions} onChange={(event) => setBranchReturnQuestions(event.target.value)} placeholder="Open questions (one per line)" className="md:col-span-2" />
-              <Textarea value={branchReturnEvidence} onChange={(event) => setBranchReturnEvidence(event.target.value)} placeholder="Evidence links (one per line)" className="md:col-span-2" />
-              <Textarea value={branchReturnArtifacts} onChange={(event) => setBranchReturnArtifacts(event.target.value)} placeholder="Returned artifacts (one per line)" className="md:col-span-2" />
-              <div className="md:col-span-2 flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => branchReturnMutation.mutate()}
-                  disabled={branchReturnMutation.isPending || !branchReturnPurposeScopeRecap.trim() || !branchReturnResultSummary.trim()}
-                >
-                  {branchReturnMutation.isPending ? "Returning…" : "Write branch return"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setShowBranchReturnForm(false)}>Cancel</Button>
-              </div>
-            </div>
-          ) : null}
-        </SectionCard>
-      ) : null}
-
-      {returnedBranches.length > 0 ? (
-        <SectionCard title="Returned branches" subtitle="Preview returned artifacts and confirm parent updates explicitly.">
-          <div className="flex flex-wrap gap-2">
-            {returnedBranches.map((branch) => (
-              <Button
-                key={branch.id}
-                size="sm"
-                variant={selectedMergeBranchId === branch.id ? "default" : "outline"}
-                onClick={() => setSelectedMergeBranchId(branch.id)}
-              >
-                Review {branch.identifier ?? branch.id.slice(0, 8)}
-              </Button>
-            ))}
-          </div>
-
-          {selectedMergeBranchId && mergePreviewQuery.isLoading ? (
-            <p className="text-xs text-muted-foreground">Loading merge preview…</p>
-          ) : null}
-
-          {selectedMergeBranchId && mergePreviewQuery.data ? (
-            <div className="space-y-3">
-              <div className="text-xs text-muted-foreground">
-                {mergePreviewQuery.data.canMerge
-                  ? "Select which proposed parent updates to apply."
-                  : mergePreviewQuery.data.blockedReason ?? "Merge is blocked."}
-              </div>
-
-              {mergePreviewQuery.data.proposedUpdates.length > 0 ? (
-                <div className="space-y-2">
-                  {mergePreviewQuery.data.proposedUpdates.map((update, index) => {
-                    const checked = selectedMergeKeys.includes(update.documentKey);
-                    return (
-                      <div key={`${update.documentKey}-${index}`} className="rounded-md border border-border/70 p-3 space-y-2">
-                        <div className="flex items-start gap-2">
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(value) => {
-                              setSelectedMergeKeys((current) => {
-                                if (value) {
-                                  return current.includes(update.documentKey) ? current : [...current, update.documentKey];
-                                }
-                                return current.filter((key) => key !== update.documentKey);
-                              });
-                            }}
-                          />
-                          <div className="space-y-1">
-                            <div className="text-xs font-medium text-foreground">
-                              {update.documentKey} · {update.action}
-                            </div>
-                            <p className="text-xs text-muted-foreground">{update.summary}</p>
-                            <pre className="max-h-48 overflow-auto rounded bg-muted/40 p-2 text-[11px] whitespace-pre-wrap">
-                              {update.content}
-                            </pre>
-                          </div>
+                <div className="space-y-2 text-xs">
+                  <p className="text-muted-foreground">{reviewFindingsDoc.document.ownerNextAction}</p>
+                  <ul className="space-y-2">
+                    {reviewFindingsDoc.document.findings.map((finding, index) => (
+                      <li key={`${finding.title}-${index}`} className="rounded border border-border/60 px-2 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-foreground">{finding.title}</span>
+                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase">
+                            {finding.severity}
+                          </span>
+                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px]">
+                            {finding.category}
+                          </span>
                         </div>
+                        <p className="mt-1 text-muted-foreground">{finding.detail}</p>
+                        <p className="mt-1">
+                          <span className="font-medium text-foreground">Required action:</span> {finding.requiredAction}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </SectionCard>
+            ) : null}
+
+            {showBranchForm ? (
+              <SectionCard title="Create branch issue" subtitle="Bounded branch work returns into the same parent continuity thread.">
+                <div className="grid gap-2 md:grid-cols-2">
+                  <Input value={branchTitle} onChange={(event) => setBranchTitle(event.target.value)} placeholder="Branch issue title" />
+                  <Input value={branchBudget} onChange={(event) => setBranchBudget(event.target.value)} placeholder="Budget" />
+                  <Textarea value={branchPurpose} onChange={(event) => setBranchPurpose(event.target.value)} placeholder="Purpose" className="md:col-span-2" />
+                  <Textarea value={branchScope} onChange={(event) => setBranchScope(event.target.value)} placeholder="Scope" className="md:col-span-2" />
+                  <Input
+                    value={branchReturnArtifact}
+                    onChange={(event) => setBranchReturnArtifact(event.target.value)}
+                    placeholder="Expected return artifact"
+                    className="md:col-span-2"
+                  />
+                  <div className="md:col-span-2 flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => branchMutation.mutate()}
+                      disabled={branchMutation.isPending || !branchTitle.trim() || !branchPurpose.trim() || !branchScope.trim()}
+                    >
+                      {branchMutation.isPending ? "Creating…" : "Create branch issue"}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setShowBranchForm(false)}>Cancel</Button>
+                  </div>
+                </div>
+              </SectionCard>
+            ) : null}
+
+            {showHandoffForm ? (
+              <SectionCard title="Start handoff" subtitle="Ownership transfer is explicit and requires a durable handoff artifact.">
+                <div className="grid gap-2 md:grid-cols-2">
+                  <select
+                    value={handoffAgentId}
+                    onChange={(event) => setHandoffAgentId(event.target.value)}
+                    className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                  >
+                    <option value="">Select agent target</option>
+                    {agents
+                      .filter((agent) => agent.id !== issue.assigneeAgentId)
+                      .map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </option>
+                      ))}
+                  </select>
+                  <Input value={handoffUserId} onChange={(event) => setHandoffUserId(event.target.value)} placeholder="Or board user id" />
+                  <Input value={handoffReason} onChange={(event) => setHandoffReason(event.target.value)} placeholder="Reason code" />
+                  <Input value={handoffNextAction} onChange={(event) => setHandoffNextAction(event.target.value)} placeholder="Exact next action" className="md:col-span-2" />
+                  <div className="md:col-span-2 flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => handoffMutation.mutate()}
+                      disabled={handoffMutation.isPending || (!handoffAgentId && !handoffUserId.trim()) || !handoffNextAction.trim()}
+                    >
+                      {handoffMutation.isPending ? "Handing off…" : "Confirm handoff"}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setShowHandoffForm(false)}>Cancel</Button>
+                  </div>
+                </div>
+              </SectionCard>
+            ) : null}
+
+            {state.status === "handoff_pending" || state.health === "invalid_handoff" ? (
+              <SectionCard title="Pending handoff remediation" subtitle="Repair or cancel the current handoff explicitly.">
+                {showRepairForm ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <Input value={repairReasonCode} onChange={(event) => setRepairReasonCode(event.target.value)} placeholder="Reason code" />
+                    <Input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Cancel reason" />
+                    <Textarea value={repairNextAction} onChange={(event) => setRepairNextAction(event.target.value)} placeholder="Exact next action" className="md:col-span-2" />
+                    <Textarea value={repairOpenQuestions} onChange={(event) => setRepairOpenQuestions(event.target.value)} placeholder="Open questions (one per line)" className="md:col-span-2" />
+                    <Textarea value={repairEvidence} onChange={(event) => setRepairEvidence(event.target.value)} placeholder="Evidence (one per line)" className="md:col-span-2" />
+                    <div className="md:col-span-2 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => repairHandoffMutation.mutate()}
+                        disabled={repairHandoffMutation.isPending || !repairNextAction.trim()}
+                      >
+                        {repairHandoffMutation.isPending ? "Repairing…" : "Repair handoff"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => cancelHandoffMutation.mutate()}
+                        disabled={cancelHandoffMutation.isPending || !cancelReason.trim()}
+                      >
+                        {cancelHandoffMutation.isPending ? "Cancelling…" : "Cancel handoff"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </SectionCard>
+            ) : null}
+
+            {continuity?.activeGateParticipant ? (
+              <SectionCard title="Review gate" subtitle="Review and approval remain gates. They do not take continuity ownership.">
+                {showReviewReturnForm ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <select
+                      value={reviewOutcome}
+                      onChange={(event) => setReviewOutcome(event.target.value as typeof reviewOutcome)}
+                      className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                    >
+                      <option value="changes_requested">Changes requested</option>
+                      <option value="approved_with_notes">Approved with notes</option>
+                      <option value="blocked">Blocked</option>
+                    </select>
+                    <Input value={reviewContext} onChange={(event) => setReviewContext(event.target.value)} placeholder="Decision context" />
+                    <select
+                      value={reviewSeverity}
+                      onChange={(event) => setReviewSeverity(event.target.value as typeof reviewSeverity)}
+                      className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                    >
+                      <option value="critical">Critical</option>
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                    <Input value={reviewCategory} onChange={(event) => setReviewCategory(event.target.value)} placeholder="Category" />
+                    <Input value={reviewTitle} onChange={(event) => setReviewTitle(event.target.value)} placeholder="Finding title" className="md:col-span-2" />
+                    <Textarea value={reviewDetail} onChange={(event) => setReviewDetail(event.target.value)} placeholder="Detail" className="md:col-span-2" />
+                    <Textarea value={reviewRequiredAction} onChange={(event) => setReviewRequiredAction(event.target.value)} placeholder="Required action" className="md:col-span-2" />
+                    <Textarea value={reviewEvidence} onChange={(event) => setReviewEvidence(event.target.value)} placeholder="Evidence links (one per line)" className="md:col-span-2" />
+                    <Textarea value={reviewOwnerNextAction} onChange={(event) => setReviewOwnerNextAction(event.target.value)} placeholder="Owner-facing exact next action" className="md:col-span-2" />
+                    <div className="md:col-span-2 flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => reviewReturnMutation.mutate()}
+                        disabled={
+                          reviewReturnMutation.isPending
+                          || !reviewTitle.trim()
+                          || !reviewDetail.trim()
+                          || !reviewRequiredAction.trim()
+                          || !reviewOwnerNextAction.trim()
+                        }
+                      >
+                        {reviewReturnMutation.isPending ? "Returning…" : "Write findings and return"}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setShowReviewReturnForm(false)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : null}
+              </SectionCard>
+            ) : null}
+
+            {reviewFindingsDoc && reviewFindingsDoc.document.resolutionState === "open" ? (
+              <SectionCard title="Review resubmit" subtitle="The continuity owner explicitly marks findings addressed and reopens the same gate.">
+                {showResubmitForm ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <Textarea value={resubmitResponseNote} onChange={(event) => setResubmitResponseNote(event.target.value)} placeholder="Owner response note" className="md:col-span-2" />
+                    <Textarea value={checkpointCurrentState} onChange={(event) => setCheckpointCurrentState(event.target.value)} placeholder="Updated current state (optional checkpoint)" className="md:col-span-2" />
+                    <Textarea value={checkpointNextAction} onChange={(event) => setCheckpointNextAction(event.target.value)} placeholder="Updated next action (optional checkpoint)" className="md:col-span-2" />
+                    <div className="md:col-span-2 flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => reviewResubmitMutation.mutate()}
+                        disabled={reviewResubmitMutation.isPending}
+                      >
+                        {reviewResubmitMutation.isPending ? "Resubmitting…" : "Mark addressed and resubmit"}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setShowResubmitForm(false)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : null}
+              </SectionCard>
+            ) : null}
+
+            {state.branchRole === "branch" ? (
+              <SectionCard title="Branch return" subtitle="Return branch output through a typed artifact before the parent can merge anything.">
+                {branchReturnDoc ? (
+                  <div className="space-y-1 text-xs">
+                    <p className="text-muted-foreground">{branchReturnDoc.document.resultSummary}</p>
+                    <p>
+                      <span className="font-medium text-foreground">Proposed parent updates:</span>{" "}
+                      {branchReturnDoc.document.proposedParentUpdates.map((update) => update.documentKey).join(", ") || "none"}
+                    </p>
+                  </div>
+                ) : null}
+                {showBranchReturnForm && issue.parentId ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <Textarea value={branchReturnPurposeScopeRecap} onChange={(event) => setBranchReturnPurposeScopeRecap(event.target.value)} placeholder="Purpose / scope recap" className="md:col-span-2" />
+                    <Textarea value={branchReturnResultSummary} onChange={(event) => setBranchReturnResultSummary(event.target.value)} placeholder="Returned result summary" className="md:col-span-2" />
+                    <select
+                      value={branchReturnDocKey}
+                      onChange={(event) => setBranchReturnDocKey(event.target.value)}
+                      className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                    >
+                      <option value="spec">spec</option>
+                      <option value="plan">plan</option>
+                      <option value="runbook">runbook</option>
+                      <option value="progress">progress</option>
+                      <option value="test-plan">test-plan</option>
+                      <option value="handoff">handoff</option>
+                    </select>
+                    <select
+                      value={branchReturnDocAction}
+                      onChange={(event) => setBranchReturnDocAction(event.target.value as "replace" | "append")}
+                      className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                    >
+                      <option value="append">append</option>
+                      <option value="replace">replace</option>
+                    </select>
+                    <Input value={branchReturnDocSummary} onChange={(event) => setBranchReturnDocSummary(event.target.value)} placeholder="Proposed update summary" className="md:col-span-2" />
+                    <Textarea value={branchReturnDocContent} onChange={(event) => setBranchReturnDocContent(event.target.value)} placeholder="Proposed parent document content" className="md:col-span-2" />
+                    <Textarea value={branchReturnChecklist} onChange={(event) => setBranchReturnChecklist(event.target.value)} placeholder="Merge checklist (one per line)" className="md:col-span-2" />
+                    <Textarea value={branchReturnRisks} onChange={(event) => setBranchReturnRisks(event.target.value)} placeholder="Unresolved risks (one per line)" className="md:col-span-2" />
+                    <Textarea value={branchReturnQuestions} onChange={(event) => setBranchReturnQuestions(event.target.value)} placeholder="Open questions (one per line)" className="md:col-span-2" />
+                    <Textarea value={branchReturnEvidence} onChange={(event) => setBranchReturnEvidence(event.target.value)} placeholder="Evidence links (one per line)" className="md:col-span-2" />
+                    <Textarea value={branchReturnArtifacts} onChange={(event) => setBranchReturnArtifacts(event.target.value)} placeholder="Returned artifacts (one per line)" className="md:col-span-2" />
+                    <div className="md:col-span-2 flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => branchReturnMutation.mutate()}
+                        disabled={branchReturnMutation.isPending || !branchReturnPurposeScopeRecap.trim() || !branchReturnResultSummary.trim()}
+                      >
+                        {branchReturnMutation.isPending ? "Returning…" : "Write branch return"}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setShowBranchReturnForm(false)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : null}
+              </SectionCard>
+            ) : null}
+
+            {returnedBranches.length > 0 ? (
+              <SectionCard title="Returned branches" subtitle="Preview returned artifacts and confirm parent updates explicitly.">
+                <div className="flex flex-wrap gap-2">
+                  {returnedBranches.map((branch) => (
+                    <Button
+                      key={branch.id}
+                      size="sm"
+                      variant={selectedMergeBranchId === branch.id ? "default" : "outline"}
+                      onClick={() => setSelectedMergeBranchId(branch.id)}
+                    >
+                      Review {branch.identifier ?? branch.id.slice(0, 8)}
+                    </Button>
+                  ))}
+                </div>
+
+                {selectedMergeBranchId && mergePreviewQuery.isLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading merge preview…</p>
+                ) : null}
+
+                {selectedMergeBranchId && mergePreviewQuery.data ? (
+                  <div className="space-y-3">
+                    <div className="text-xs text-muted-foreground">
+                      {mergePreviewQuery.data.canMerge
+                        ? "Select which proposed parent updates to apply."
+                        : mergePreviewQuery.data.blockedReason ?? "Merge is blocked."}
+                    </div>
+
+                    {mergePreviewQuery.data.proposedUpdates.length > 0 ? (
+                      <div className="space-y-2">
+                        {mergePreviewQuery.data.proposedUpdates.map((update, index) => {
+                          const checked = selectedMergeKeys.includes(update.documentKey);
+                          return (
+                            <div key={`${update.documentKey}-${index}`} className="rounded-md border border-border/70 p-3 space-y-2">
+                              <div className="flex items-start gap-2">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(value) => {
+                                    setSelectedMergeKeys((current) => {
+                                      if (value) {
+                                        return current.includes(update.documentKey) ? current : [...current, update.documentKey];
+                                      }
+                                      return current.filter((key) => key !== update.documentKey);
+                                    });
+                                  }}
+                                />
+                                <div className="space-y-1">
+                                  <div className="text-xs font-medium text-foreground">
+                                    {update.documentKey} · {update.action}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground">{update.summary}</p>
+                                  <pre className="max-h-48 overflow-auto rounded bg-muted/40 p-2 text-[11px] whitespace-pre-wrap">
+                                    {update.content}
+                                  </pre>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">This branch return proposed no parent document updates.</p>
+                    )}
+
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => mergeBranchMutation.mutate(mergePreviewQuery.data)}
+                        disabled={mergeBranchMutation.isPending || !mergePreviewQuery.data.canMerge}
+                      >
+                        {mergeBranchMutation.isPending ? "Merging…" : "Confirm merge"}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setSelectedMergeBranchId(null)}>Close preview</Button>
+                    </div>
+                  </div>
+                ) : null}
+              </SectionCard>
+            ) : null}
+          </div>
+        ) : null}
+      </SectionCard>
+
+      <SectionCard title="Details" subtitle="Continuity metadata and low-level diagnostics.">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-muted-foreground">
+            Required docs, timestamps, health details, and actor eligibility.
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="continuity-details-toggle"
+            onClick={() => setShowDetails((value) => !value)}
+          >
+            {showDetails ? "Hide details" : "Show details"}
+          </Button>
+        </div>
+
+        {showDetails ? (
+          <div data-testid="continuity-details-panel" className="space-y-3">
+            <div className="grid gap-3 text-xs text-muted-foreground md:grid-cols-2">
+              <div>
+                <span className="font-medium text-foreground">Required docs:</span> {state.requiredDocumentKeys.join(", ")}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Missing docs:</span>{" "}
+                {state.missingDocumentKeys.length > 0 ? state.missingDocumentKeys.join(", ") : "none"}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Spec state:</span> {state.specState.replaceAll("_", " ")}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Ready gate:</span> {readyToExecute ? "open" : "blocked"}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Last progress:</span>{" "}
+                {state.lastProgressAt ? relativeTime(state.lastProgressAt) : "none"}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Last handoff:</span>{" "}
+                {state.lastHandoffAt ? relativeTime(state.lastHandoffAt) : "none"}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Last review return:</span>{" "}
+                {state.lastReviewReturnAt ? relativeTime(state.lastReviewReturnAt) : "none"}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Last branch return:</span>{" "}
+                {state.lastBranchReturnAt ? relativeTime(state.lastBranchReturnAt) : "none"}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Open decisions:</span>{" "}
+                {state.openDecisionQuestionCount ?? 0}
+                {state.blockingDecisionQuestionCount ? ` (${state.blockingDecisionQuestionCount} blocking)` : ""}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Last answered decision:</span>{" "}
+                {state.lastDecisionAnswerAt ? relativeTime(state.lastDecisionAnswerAt) : "none"}
+              </div>
+            </div>
+
+            {state.healthReason || (state.healthDetails?.length ?? 0) > 0 ? (
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <div className="font-medium text-foreground">Health details</div>
+                {(state.healthDetails ?? []).map((detail) => (
+                  <div key={detail}>{detail}</div>
+                ))}
+              </div>
+            ) : null}
+
+            {handoffDoc ? (
+              <div className="space-y-1 text-xs">
+                <div className="font-medium text-foreground">Latest handoff</div>
+                <p className="text-muted-foreground">Target: {handoffDoc.document.transferTarget}</p>
+                <p className="text-muted-foreground">Next: {handoffDoc.document.exactNextAction}</p>
+              </div>
+            ) : null}
+
+            {state.unresolvedBranchIssueIds.length > 0 ? (
+              <div className="space-y-1 text-xs">
+                <div className="font-medium text-foreground">Unresolved branches</div>
+                <div className="flex flex-wrap gap-2">
+                  {state.unresolvedBranchIssueIds.map((branchId) => {
+                    const branchIssue = childIssuesById.get(branchId);
+                    return (
+                      <Link
+                        key={branchId}
+                        to={`/issues/${branchIssue?.identifier ?? branchId}`}
+                        className="rounded-full border border-border px-2 py-0.5 text-xs underline-offset-2 hover:underline"
+                      >
+                        {branchIssue?.identifier ?? branchId}
+                      </Link>
                     );
                   })}
                 </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">This branch return proposed no parent document updates.</p>
-              )}
-
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => mergeBranchMutation.mutate(mergePreviewQuery.data)}
-                  disabled={mergeBranchMutation.isPending || !mergePreviewQuery.data.canMerge}
-                >
-                  {mergeBranchMutation.isPending ? "Merging…" : "Confirm merge"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setSelectedMergeBranchId(null)}>Close preview</Button>
               </div>
-            </div>
-          ) : null}
-        </SectionCard>
-      ) : null}
+            ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Label htmlFor="continuity-spec-thaw-reason" className="text-xs text-muted-foreground">
-          Optional spec thaw reason
-        </Label>
-        <Input
-          id="continuity-spec-thaw-reason"
-          value={specThawReason}
-          onChange={(event) => setSpecThawReason(event.target.value)}
-          placeholder="Optional spec thaw reason"
-          className="max-w-sm"
-        />
-      </div>
+            {detailedRemediationActions.length > 0 ? (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-foreground">Remediation actor eligibility</div>
+                {detailedRemediationActions.map((action, index) => (
+                  <ActionRow key={`${action.id}-${index}`} title={action.label} description={action.description}>
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                      Eligible actor: {action.actor.replaceAll("_", " ")}
+                    </div>
+                    {!action.eligible && action.blockedReason ? (
+                      <div className="text-xs text-muted-foreground">{action.blockedReason}</div>
+                    ) : null}
+                  </ActionRow>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </SectionCard>
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </div>
