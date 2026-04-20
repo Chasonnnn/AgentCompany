@@ -7,16 +7,28 @@ import {
 } from "@paperclipai/shared";
 import { notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
-import { logActivity, sharedServiceEngagementService } from "../services/index.js";
+import {
+  logActivity as baseLogActivity,
+  sharedServiceEngagementService,
+} from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const closeSharedServiceEngagementSchema = z.object({
   outcomeSummary: z.string().optional().nullable(),
 }).strict();
 
-export function sharedServiceEngagementRoutes(db: Db) {
+type SharedServiceEngagementRouteDeps = {
+  engagements: ReturnType<typeof sharedServiceEngagementService>;
+  logActivity: typeof baseLogActivity;
+};
+
+export function sharedServiceEngagementRoutes(
+  db: Db,
+  deps?: Partial<SharedServiceEngagementRouteDeps>,
+) {
   const router = Router();
-  const engagements = sharedServiceEngagementService(db);
+  const engagements = deps?.engagements ?? sharedServiceEngagementService(db);
+  const logActivity = deps?.logActivity ?? baseLogActivity;
 
   router.get("/companies/:companyId/shared-service-engagements", async (req, res) => {
     const companyId = req.params.companyId as string;

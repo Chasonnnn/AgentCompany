@@ -1,22 +1,19 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { sharedServiceEngagementRoutes } from "../routes/shared-service-engagements.js";
 
-const mockSharedServiceEngagementService = vi.hoisted(() => ({
+const mockSharedServiceEngagementService = {
   listForCompany: vi.fn(),
   create: vi.fn(),
   getById: vi.fn(),
   update: vi.fn(),
   approve: vi.fn(),
   close: vi.fn(),
-}));
+};
 
-const mockLogActivity = vi.hoisted(() => vi.fn());
-
-vi.mock("../services/index.js", () => ({
-  logActivity: mockLogActivity,
-  sharedServiceEngagementService: () => mockSharedServiceEngagementService,
-}));
+const mockLogActivity = vi.fn();
 
 async function createApp(
   actor: Record<string, unknown> = {
@@ -27,17 +24,19 @@ async function createApp(
     isInstanceAdmin: false,
   },
 ) {
-  const [{ sharedServiceEngagementRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/shared-service-engagements.js"),
-    import("../middleware/index.js"),
-  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", sharedServiceEngagementRoutes({} as any));
+  app.use(
+    "/api",
+    sharedServiceEngagementRoutes({} as any, {
+      engagements: mockSharedServiceEngagementService as any,
+      logActivity: mockLogActivity,
+    }),
+  );
   app.use(errorHandler);
   return app;
 }
