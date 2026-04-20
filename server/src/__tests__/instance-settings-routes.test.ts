@@ -1,10 +1,8 @@
 import express from "express";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { instanceSettingsRoutes } from "../routes/instance-settings.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-function createHarness(actor: any) {
+async function createHarness(actor: any) {
   const instanceSettingsService = {
     getGeneral: vi.fn().mockResolvedValue({
       censorUsernameInLogs: false,
@@ -35,6 +33,10 @@ function createHarness(actor: any) {
     listCompanyIds: vi.fn().mockResolvedValue(["company-1", "company-2"]),
   };
   const logActivity = vi.fn().mockResolvedValue(undefined);
+  const [{ errorHandler }, { instanceSettingsRoutes }] = await Promise.all([
+    import("../middleware/index.js"),
+    import("../routes/instance-settings.js"),
+  ]);
 
   const app = express();
   app.use(express.json());
@@ -52,6 +54,10 @@ function createHarness(actor: any) {
 }
 
 describe("instance settings routes", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
   it("allows local board users to read and update experimental settings", async () => {
     const actor = {
       type: "board",
@@ -59,7 +65,7 @@ describe("instance settings routes", () => {
       source: "local_implicit",
       isInstanceAdmin: true,
     };
-    const { app: readApp } = createHarness(actor);
+    const { app: readApp } = await createHarness(actor);
 
     const getRes = await request(readApp).get("/api/instance/settings/experimental");
     expect(getRes.status).toBe(200);
@@ -68,7 +74,7 @@ describe("instance settings routes", () => {
       autoRestartDevServerWhenIdle: false,
     });
 
-    const { app: patchApp } = createHarness(actor);
+    const { app: patchApp } = await createHarness(actor);
     const patchRes = await request(patchApp)
       .patch("/api/instance/settings/experimental")
       .send({ enableIsolatedWorkspaces: true });
@@ -81,7 +87,7 @@ describe("instance settings routes", () => {
   });
 
   it("allows local board users to update guarded dev-server auto-restart", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "local-board",
       source: "local_implicit",
@@ -106,7 +112,7 @@ describe("instance settings routes", () => {
       source: "local_implicit",
       isInstanceAdmin: true,
     };
-    const { app: readApp } = createHarness(actor);
+    const { app: readApp } = await createHarness(actor);
 
     const getRes = await request(readApp).get("/api/instance/settings/general");
     expect(getRes.status).toBe(200);
@@ -116,7 +122,7 @@ describe("instance settings routes", () => {
       feedbackDataSharingPreference: "prompt",
     });
 
-    const { app: patchApp } = createHarness(actor);
+    const { app: patchApp } = await createHarness(actor);
     const patchRes = await request(patchApp)
       .patch("/api/instance/settings/general")
       .send({
@@ -134,7 +140,7 @@ describe("instance settings routes", () => {
   });
 
   it("allows non-admin board users to read general settings", async () => {
-    const { app, instanceSettingsService } = createHarness({
+    const { app, instanceSettingsService } = await createHarness({
       type: "board",
       userId: "user-1",
       source: "session",
@@ -149,7 +155,7 @@ describe("instance settings routes", () => {
   });
 
   it("rejects non-admin board users from updating general settings", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "user-1",
       source: "session",
@@ -166,7 +172,7 @@ describe("instance settings routes", () => {
   });
 
   it("rejects agent callers", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "agent",
       agentId: "agent-1",
       companyId: "company-1",

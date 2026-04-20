@@ -10,14 +10,6 @@ const { createAssetMock, getAssetByIdMock, logActivityMock } = vi.hoisted(() => 
   logActivityMock: vi.fn(),
 }));
 
-vi.mock("../services/index.js", () => ({
-  assetService: vi.fn(() => ({
-    create: createAssetMock,
-    getById: getAssetByIdMock,
-  })),
-  logActivity: logActivityMock,
-}));
-
 function createAsset() {
   const now = new Date("2026-01-01T00:00:00.000Z");
   return {
@@ -81,9 +73,14 @@ async function createApp(storage: ReturnType<typeof createStorageService>) {
 describe("POST /api/companies/:companyId/assets/images", () => {
   beforeEach(() => {
     vi.resetModules();
-    createAssetMock.mockReset();
-    getAssetByIdMock.mockReset();
-    logActivityMock.mockReset();
+    vi.resetAllMocks();
+    vi.doMock("../services/index.js", () => ({
+      assetService: vi.fn(() => ({
+        create: createAssetMock,
+        getById: getAssetByIdMock,
+      })),
+      logActivity: logActivityMock,
+    }));
   });
 
   it("accepts PNG image uploads and returns an asset path", async () => {
@@ -138,9 +135,14 @@ describe("POST /api/companies/:companyId/assets/images", () => {
 describe("POST /api/companies/:companyId/logo", () => {
   beforeEach(() => {
     vi.resetModules();
-    createAssetMock.mockReset();
-    getAssetByIdMock.mockReset();
-    logActivityMock.mockReset();
+    vi.resetAllMocks();
+    vi.doMock("../services/index.js", () => ({
+      assetService: vi.fn(() => ({
+        create: createAssetMock,
+        getById: getAssetByIdMock,
+      })),
+      logActivity: logActivityMock,
+    }));
   });
 
   it("accepts PNG logo uploads and returns an asset path", async () => {
