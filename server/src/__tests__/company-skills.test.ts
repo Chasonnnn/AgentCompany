@@ -245,7 +245,7 @@ describe("missing local skill reconciliation", () => {
   });
 });
 
-describeEmbeddedPostgres("global skill catalog installs", () => {
+describeEmbeddedPostgres("global skill catalog installs", { timeout: 20_000 }, () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
 
@@ -490,6 +490,83 @@ describeEmbeddedPostgres("global skill catalog installs", () => {
 
     await expect(
       svc.installGlobalCatalogSkill(companyId, { catalogKey: discovered[0]!.catalogKey }),
+    ).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it("preserves the company skill id and key when reimporting the same local lineage", async () => {
+    const companyId = await seedCompany();
+    const workspace = await makeTempDir("paperclip-same-lineage-import-");
+    const skillDir = path.join(workspace, "gstack-review");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: Review",
+        "description: First version",
+        "---",
+        "",
+        "# Review",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const svc = companySkillService(db);
+    const first = (await svc.importFromSource(companyId, skillDir)).imported[0]!;
+
+    await fs.writeFile(
+      path.join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: Review",
+        "description: Updated version",
+        "---",
+        "",
+        "# Review",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const second = (await svc.importFromSource(companyId, skillDir)).imported[0]!;
+
+    expect(second.id).toBe(first.id);
+    expect(second.key).toBe(first.key);
+    expect(second.description).toBe("Updated version");
+  });
+
+  it("rejects reimports when the slug is already ambiguous across multiple installed rows", async () => {
+    const companyId = await seedCompany();
+    const workspace = await makeTempDir("paperclip-ambiguous-slug-import-");
+    const firstDir = path.join(workspace, "codex-review");
+    const secondDir = path.join(workspace, "agents-review");
+    const thirdDir = path.join(workspace, "third-review");
+    for (const skillDir of [firstDir, secondDir, thirdDir]) {
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(
+        path.join(skillDir, "SKILL.md"),
+        [
+          "---",
+          "name: Review",
+          "slug: review",
+          "---",
+          "",
+          "# Review",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+    }
+
+    const svc = companySkillService(db);
+    await svc.importFromSource(companyId, firstDir);
+    await svc.importFromSource(companyId, secondDir);
+
+    await expect(
+      svc.importFromSource(companyId, thirdDir),
     ).rejects.toMatchObject({
       status: 409,
     });

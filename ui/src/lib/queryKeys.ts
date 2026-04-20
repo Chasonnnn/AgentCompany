@@ -20,6 +20,9 @@ export const queryKeys = {
   companySkills: {
     list: (companyId: string) => ["company-skills", companyId] as const,
     globalCatalog: (companyId: string) => ["company-skills", companyId, "global-catalog"] as const,
+    coverageAudit: (companyId: string) => ["company-skills", companyId, "coverage-audit"] as const,
+    coverageRepairPreview: (companyId: string) =>
+      ["company-skills", companyId, "coverage-audit", "repair-preview"] as const,
     detail: (companyId: string, skillId: string) => ["company-skills", companyId, skillId] as const,
     updateStatus: (companyId: string, skillId: string) =>
       ["company-skills", companyId, skillId, "update-status"] as const,

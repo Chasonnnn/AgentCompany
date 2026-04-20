@@ -1368,6 +1368,90 @@ function normalizeSourceLocatorDirectory(sourceLocator: string | null) {
   return path.basename(resolved).toLowerCase() === "skill.md" ? path.dirname(resolved) : resolved;
 }
 
+function buildSkillLineageIdentity(
+  input: Pick<ImportedSkill, "slug" | "sourceType" | "sourceLocator" | "metadata">
+    | Pick<CompanySkill, "slug" | "sourceType" | "sourceLocator" | "metadata">,
+) {
+  const slug = normalizeSkillSlug(input.slug) ?? "skill";
+  const metadata = isPlainRecord(input.metadata) ? input.metadata : null;
+  const sourceKind = asString(metadata?.sourceKind);
+
+  if (sourceKind === "paperclip_bundled") {
+    return `paperclip:${slug}`;
+  }
+
+  if (sourceKind === "global_catalog") {
+    const catalogKey = asString(metadata?.catalogKey);
+    if (catalogKey) return `catalog:${catalogKey}`;
+    const catalogPath = normalizeSourceLocatorDirectory(
+      asString(metadata?.catalogSourcePath) ?? input.sourceLocator,
+    );
+    if (catalogPath) return `catalog-path:${catalogPath}`;
+  }
+
+  const owner = normalizeSkillSlug(asString(metadata?.owner));
+  const repo = normalizeSkillSlug(asString(metadata?.repo));
+  if (
+    input.sourceType === "github"
+    || input.sourceType === "skills_sh"
+    || sourceKind === "github"
+    || sourceKind === "skills_sh"
+  ) {
+    const hostname = normalizeSkillSlug(asString(metadata?.hostname) ?? "github.com") ?? "github-com";
+    const repoSkillDir = normalizePortablePath(asString(metadata?.repoSkillDir) ?? `skills/${slug}`);
+    if (owner && repo) {
+      return `github:${hostname}:${owner}:${repo}:${repoSkillDir || `skills/${slug}`}`;
+    }
+  }
+
+  if (input.sourceType === "url" || sourceKind === "url") {
+    const locator = asString(input.sourceLocator);
+    if (locator) return `url:${locator}`;
+  }
+
+  if (
+    input.sourceType === "local_path"
+    || sourceKind === "local_path"
+    || sourceKind === "project_scan"
+    || sourceKind === "managed_local"
+  ) {
+    const directory = normalizeSourceLocatorDirectory(input.sourceLocator);
+    if (directory) return `local:${directory}`;
+  }
+
+  return null;
+}
+
+function findCompatibleImportedSkill(
+  existingSkills: CompanySkill[],
+  incomingSkill: ImportedSkill,
+): { existing: CompanySkill | null; ambiguous: boolean } {
+  const normalizedSlug = normalizeSkillSlug(incomingSkill.slug) ?? incomingSkill.slug;
+  const sameSlug = existingSkills.filter(
+    (skill) => (normalizeSkillSlug(skill.slug) ?? skill.slug) === normalizedSlug,
+  );
+  if (sameSlug.length === 0) {
+    return { existing: null, ambiguous: false };
+  }
+
+  const incomingLineage = buildSkillLineageIdentity(incomingSkill);
+  if (incomingLineage) {
+    const compatible = sameSlug.filter((skill) => buildSkillLineageIdentity(skill) === incomingLineage);
+    if (compatible.length === 1) {
+      return { existing: compatible[0] ?? null, ambiguous: false };
+    }
+    if (compatible.length > 1) {
+      return { existing: null, ambiguous: true };
+    }
+  }
+
+  if (sameSlug.length > 1) {
+    return { existing: null, ambiguous: true };
+  }
+
+  return { existing: null, ambiguous: false };
+}
+
 export async function findMissingLocalSkillIds(
   skills: Array<Pick<CompanySkill, "id" | "sourceType" | "sourceLocator">>,
 ) {
@@ -2499,8 +2583,25 @@ export function companySkillService(db: Db) {
 
   async function upsertImportedSkills(companyId: string, imported: ImportedSkill[]): Promise<CompanySkill[]> {
     const out: CompanySkill[] = [];
+    const existingSkills = await db
+      .select()
+      .from(companySkills)
+      .where(eq(companySkills.companyId, companyId))
+      .orderBy(asc(companySkills.name), asc(companySkills.key))
+      .then((rows) => rows.map((row) => toCompanySkill(row)));
+    const existingByKey = new Map(existingSkills.map((skill) => [skill.key, skill] as const));
     for (const skill of imported) {
-      const existing = await getByKey(companyId, skill.key);
+      let existing = existingByKey.get(skill.key) ?? null;
+      if (!existing) {
+        const compatible = findCompatibleImportedSkill(existingSkills, skill);
+        if (compatible.ambiguous) {
+          throw conflict(
+            `Cannot import ${skill.name}: slug ${skill.slug} matches multiple installed skills. Select an explicit skill key to update.`,
+          );
+        }
+        existing = compatible.existing;
+      }
+
       const existingMeta = existing ? getSkillMeta(existing) : {};
       const incomingMeta = skill.metadata && isPlainRecord(skill.metadata) ? skill.metadata : {};
       const incomingOwner = asString(incomingMeta.owner);
@@ -2517,13 +2618,14 @@ export function companySkillService(db: Db) {
         continue;
       }
 
+      const persistedKey = existing?.key ?? skill.key;
       const metadata = {
         ...(skill.metadata ?? {}),
-        skillKey: skill.key,
+        skillKey: persistedKey,
       };
       const values = {
         companyId,
-        key: skill.key,
+        key: persistedKey,
         slug: skill.slug,
         name: skill.name,
         description: skill.description,
@@ -2550,7 +2652,16 @@ export function companySkillService(db: Db) {
           .returning()
           .then((rows) => rows[0] ?? null);
       if (!row) throw notFound("Failed to persist company skill");
-      out.push(toCompanySkill(row));
+      const persisted = toCompanySkill(row);
+      out.push(persisted);
+
+      const previousIndex = existingSkills.findIndex((entry) => entry.id === persisted.id);
+      if (previousIndex >= 0) {
+        existingSkills[previousIndex] = persisted;
+      } else {
+        existingSkills.push(persisted);
+      }
+      existingByKey.set(persisted.key, persisted);
     }
     return out;
   }

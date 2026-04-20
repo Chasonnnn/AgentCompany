@@ -22,6 +22,9 @@ const mockCompanySkillService = vi.hoisted(() => ({
 const mockAgentSkillService = vi.hoisted(() => ({
   previewBulkSkillGrant: vi.fn(),
   applyBulkSkillGrant: vi.fn(),
+  coverageAudit: vi.fn(),
+  previewCoverageRepair: vi.fn(),
+  applyCoverageRepair: vi.fn(),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
@@ -161,6 +164,47 @@ function applyDefaultMocks() {
     rollbackPerformed: false,
     rollbackErrors: [],
   });
+  mockAgentSkillService.coverageAudit.mockResolvedValue({
+    companyId: "company-1",
+    auditedAgentCount: 2,
+    coveredCount: 1,
+    repairableGapCount: 1,
+    nonrepairableGapCount: 0,
+    customizedCount: 0,
+    plannedImports: [],
+    agents: [],
+  });
+  mockAgentSkillService.previewCoverageRepair.mockResolvedValue({
+    companyId: "company-1",
+    auditedAgentCount: 2,
+    coveredCount: 1,
+    repairableGapCount: 1,
+    nonrepairableGapCount: 0,
+    customizedCount: 0,
+    plannedImports: [],
+    agents: [],
+    changedAgentCount: 1,
+    selectionFingerprint: "coverage-fingerprint-1",
+  });
+  mockAgentSkillService.applyCoverageRepair.mockResolvedValue({
+    companyId: "company-1",
+    changedAgentCount: 1,
+    appliedAgentIds: ["agent-1"],
+    importedSkills: [],
+    rollbackPerformed: false,
+    rollbackErrors: [],
+    selectionFingerprint: "coverage-fingerprint-1",
+    audit: {
+      companyId: "company-1",
+      auditedAgentCount: 2,
+      coveredCount: 2,
+      repairableGapCount: 0,
+      nonrepairableGapCount: 0,
+      customizedCount: 0,
+      plannedImports: [],
+      agents: [],
+    },
+  });
   mockLogActivity.mockResolvedValue(undefined);
   mockAccessService.canUser.mockResolvedValue(true);
   mockAccessService.hasPermission.mockResolvedValue(false);
@@ -294,6 +338,68 @@ describe("company skill mutation permissions", () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(mocks.companySkillService.installAllGlobalCatalogSkills).toHaveBeenCalledWith("company-1");
+  });
+
+  it("returns the company skill coverage audit", async () => {
+    const { app, mocks } = await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app).get("/api/companies/company-1/skills/coverage-audit");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mocks.agentSkillService.coverageAudit).toHaveBeenCalledWith("company-1");
+  });
+
+  it("previews a company skill coverage repair", async () => {
+    const { app, mocks } = await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app)
+      .post("/api/companies/company-1/skills/coverage-audit/repair-preview")
+      .send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mocks.agentSkillService.previewCoverageRepair).toHaveBeenCalledWith("company-1");
+  });
+
+  it("applies a company skill coverage repair", async () => {
+    const { app, mocks } = await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app)
+      .post("/api/companies/company-1/skills/coverage-audit/repair-apply")
+      .send({ selectionFingerprint: "coverage-fingerprint-1" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mocks.agentSkillService.applyCoverageRepair).toHaveBeenCalledWith(
+      "company-1",
+      { selectionFingerprint: "coverage-fingerprint-1" },
+      {
+        actorType: "user",
+        actorId: "local-board",
+        agentId: null,
+        runId: null,
+      },
+    );
+    expect(mocks.logActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "company.skill_coverage_repair_applied",
+      entityId: "company-1",
+    }));
   });
 
   it("previews a bulk skill grant for board actors", async () => {

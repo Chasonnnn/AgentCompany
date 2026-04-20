@@ -9,6 +9,8 @@ import type {
   BulkSkillGrantRequest,
   BulkSkillGrantTier,
   CompanySkillCreateRequest,
+  CompanySkillCoverageAudit,
+  CompanySkillCoverageRepairPreview,
   CompanySkillDetail,
   CompanySkillFileDetail,
   CompanySkillFileInventoryEntry,
@@ -119,6 +121,11 @@ function stripFrontmatter(markdown: string) {
   const closing = normalized.indexOf("\n---\n", 4);
   if (closing < 0) return normalized.trim();
   return normalized.slice(closing + 5).trim();
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
 }
 
 function splitFrontmatter(markdown: string): { frontmatter: string | null; body: string } {
@@ -710,6 +717,214 @@ function NewSkillForm({
           >
             {isPending ? "Creating..." : "Create skill"}
           </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function coverageStatusLabel(status: CompanySkillCoverageAudit["agents"][number]["status"]) {
+  if (status === "repairable_gap") return "Repairable gap";
+  if (status === "nonrepairable_gap") return "Needs review";
+  if (status === "customized") return "Customized";
+  return "Covered";
+}
+
+function coverageStatusClassName(status: CompanySkillCoverageAudit["agents"][number]["status"]) {
+  if (status === "repairable_gap") {
+    return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200";
+  }
+  if (status === "nonrepairable_gap") {
+    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  }
+  if (status === "customized") {
+    return "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200";
+  }
+  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+}
+
+function SkillCoverageAuditPanel({
+  audit,
+  loading,
+  error,
+  preview,
+  previewPending,
+  applyPending,
+  onPreview,
+  onApply,
+}: {
+  audit: CompanySkillCoverageAudit | undefined;
+  loading: boolean;
+  error: Error | null;
+  preview: CompanySkillCoverageRepairPreview | null;
+  previewPending: boolean;
+  applyPending: boolean;
+  onPreview: () => void;
+  onApply: () => void;
+}) {
+  if (loading && !audit) {
+    return (
+      <div className="rounded-md border border-border px-5 py-4 text-sm text-muted-foreground">
+        Auditing active agent skill coverage...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-md border border-destructive/30 px-5 py-4 text-sm text-destructive">
+        {error.message}
+      </div>
+    );
+  }
+
+  if (!audit) return null;
+
+  const activePreview = preview ?? null;
+  const agents = activePreview?.agents ?? audit.agents;
+  const visibleAgents = agents.filter((agent) => agent.status !== "covered");
+  const changedAgentCount = activePreview?.changedAgentCount ?? 0;
+  const plannedImports = activePreview?.plannedImports ?? audit.plannedImports;
+  const canApply = Boolean(activePreview && changedAgentCount > 0 && !applyPending);
+
+  return (
+    <div className="rounded-md border border-border">
+      <div className="border-b border-border px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold">Active Workforce Coverage</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Audit every non-terminated agent against the default Paperclip skill packs, preserve custom grants, and repair missing baseline assignments conservatively.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={onPreview} disabled={previewPending || applyPending}>
+              {previewPending ? (
+                <>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Previewing...
+                </>
+              ) : (
+                "Preview repair"
+              )}
+            </Button>
+            <Button onClick={onApply} disabled={!canApply}>
+              {applyPending
+                ? "Applying..."
+                : activePreview
+                  ? `Apply to ${changedAgentCount} agent${changedAgentCount === 1 ? "" : "s"}`
+                  : "Apply repair"}
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Audited</div>
+            <div className="mt-2 text-xl font-semibold">{audit.auditedAgentCount}</div>
+          </div>
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Covered</div>
+            <div className="mt-2 text-xl font-semibold">{audit.coveredCount}</div>
+          </div>
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Repairable</div>
+            <div className="mt-2 text-xl font-semibold">{audit.repairableGapCount}</div>
+          </div>
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Customized</div>
+            <div className="mt-2 text-xl font-semibold">{audit.customizedCount}</div>
+          </div>
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Needs review</div>
+            <div className="mt-2 text-xl font-semibold">{audit.nonrepairableGapCount}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-5 px-5 py-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
+        <div>
+          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Agent coverage</div>
+          <div className="mt-3 rounded-md border border-border">
+            {visibleAgents.length === 0 ? (
+              <div className="px-3 py-4 text-sm text-muted-foreground">
+                Every active agent already matches its expected baseline pack.
+              </div>
+            ) : (
+              visibleAgents.map((agent) => (
+                <div key={agent.id} className="border-b border-border px-3 py-3 last:border-b-0">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link
+                        to={`/agents/${agent.urlKey}/skills`}
+                        className="font-medium text-foreground no-underline hover:underline"
+                      >
+                        {agent.name}
+                      </Link>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {agent.title ?? agent.role}
+                      </div>
+                    </div>
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em]",
+                        coverageStatusClassName(agent.status),
+                      )}
+                    >
+                      {coverageStatusLabel(agent.status)}
+                    </span>
+                  </div>
+                  {agent.note ? (
+                    <p className="mt-3 text-sm text-muted-foreground">{agent.note}</p>
+                  ) : null}
+                  {agent.missingSkillSlugs.length > 0 ? (
+                    <div className="mt-3 text-xs text-muted-foreground">
+                      Missing defaults: {agent.missingSkillSlugs.join(", ")}
+                    </div>
+                  ) : null}
+                  {agent.preservedCustomSkillKeys.length > 0 ? (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Preserved custom grants: {agent.preservedCustomSkillKeys.join(", ")}
+                    </div>
+                  ) : null}
+                  {agent.repairable && !sameStringArray(agent.currentDesiredSkills, agent.nextDesiredSkills) ? (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Next explicit grants: {agent.nextDesiredSkills.join(", ")}
+                    </div>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Planned imports</div>
+            <div className="mt-3 rounded-md border border-border">
+              {plannedImports.length === 0 ? (
+                <div className="px-3 py-4 text-sm text-muted-foreground">
+                  No additional library imports are required for the current baseline packs.
+                </div>
+              ) : (
+                plannedImports.map((entry) => (
+                  <div key={entry.expectedKey} className="border-b border-border px-3 py-3 last:border-b-0">
+                    <div className="text-sm font-medium text-foreground">{entry.name}</div>
+                    <div className="mt-1 font-mono text-xs text-muted-foreground">{entry.expectedKey}</div>
+                    <div className="mt-2 text-xs text-muted-foreground break-all">{entry.sourcePath}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border px-3 py-3 text-sm text-muted-foreground">
+            {activePreview
+              ? changedAgentCount === 0
+                ? "The preview found no repairable assignment changes to apply."
+                : `${changedAgentCount} active agent${changedAgentCount === 1 ? "" : "s"} will receive repaired explicit skill grants.`
+              : "Run Preview repair to freeze the exact import set and per-agent assignment changes before applying."}
+          </div>
         </div>
       </div>
     </div>
@@ -1472,6 +1687,13 @@ export function CompanySkills() {
     enabled: Boolean(selectedCompanyId && libraryView === "global"),
   });
 
+  const coverageAuditQuery = useQuery({
+    queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId ?? ""),
+    queryFn: () => companySkillsApi.coverageAudit(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId && libraryView === "installed"),
+    staleTime: 60_000,
+  });
+
   const sessionQuery = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -1679,7 +1901,10 @@ export function CompanySkills() {
   const importSkill = useMutation({
     mutationFn: (importSource: string) => companySkillsApi.importFromSource(selectedCompanyId!, importSource),
     onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+      ]);
       if (result.imported[0]) navigate(skillRoute(result.imported[0].id));
       pushToast({
         tone: "success",
@@ -1706,6 +1931,7 @@ export function CompanySkills() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.globalCatalog(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
       ]);
       pushToast({
         tone: "success",
@@ -1728,6 +1954,7 @@ export function CompanySkills() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.globalCatalog(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
       ]);
       const summaryParts = [
         `${result.installedCount} installed`,
@@ -1758,6 +1985,51 @@ export function CompanySkills() {
     },
   });
   const globalSkillInstallBusy = installGlobalSkill.isPending || installAllGlobalSkills.isPending;
+
+  const previewCoverageRepair = useMutation({
+    mutationFn: () => companySkillsApi.coverageRepairPreview(selectedCompanyId!),
+    onError: (error) => {
+      pushToast({
+        tone: "error",
+        title: "Coverage preview failed",
+        body: error instanceof Error ? error.message : "Failed to preview workforce skill repair.",
+      });
+    },
+  });
+
+  const applyCoverageRepair = useMutation({
+    mutationFn: (selectionFingerprint: string) =>
+      companySkillsApi.coverageRepairApply(selectedCompanyId!, { selectionFingerprint }),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId!, "department") }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId!, "project") }),
+      ]);
+      for (const agentId of result.appliedAgentIds) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.agents.skills(agentId) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentId) });
+      }
+      previewCoverageRepair.reset();
+      pushToast({
+        tone: "success",
+        title: "Coverage repair applied",
+        body:
+          result.changedAgentCount === 0
+            ? "No active agent grants needed to change."
+            : `${result.changedAgentCount} active agent${result.changedAgentCount === 1 ? "" : "s"} updated.`,
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        tone: "error",
+        title: "Coverage repair failed",
+        body: error instanceof Error ? error.message : "Failed to apply workforce skill repair.",
+      });
+    },
+  });
 
   const previewBulkGrant = useMutation({
     mutationFn: ({ payload }: { payload: BulkSkillGrantRequest; requestKey: string }) =>
@@ -1817,7 +2089,10 @@ export function CompanySkills() {
   const createSkill = useMutation({
     mutationFn: (payload: CompanySkillCreateRequest) => companySkillsApi.create(selectedCompanyId!, payload),
     onSuccess: async (skill) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+      ]);
       navigate(skillRoute(skill.id));
       setCreateOpen(false);
       pushToast({
@@ -1842,7 +2117,10 @@ export function CompanySkills() {
     },
     onSuccess: async (result) => {
       setScanStatusMessage("Refreshing skills list...");
-      await queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+      ]);
       const summary = formatProjectScanSummary(result);
       setScanStatusMessage(summary);
       pushToast({
@@ -1910,6 +2188,7 @@ export function CompanySkills() {
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, selectedSkillId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.updateStatus(selectedCompanyId!, selectedSkillId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.file(selectedCompanyId!, selectedSkillId!, selectedPath) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
       ]);
       navigate(skillRoute(skill.id, selectedPath));
       pushToast({
@@ -1935,6 +2214,7 @@ export function CompanySkills() {
       setDisplayedFile(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
         ...(deleteTargetSkillId ? [
           queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, deleteTargetSkillId) }),
           queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.updateStatus(selectedCompanyId!, deleteTargetSkillId) }),
@@ -2282,28 +2562,45 @@ export function CompanySkills() {
 
         <div className="min-w-0 pl-6">
           {libraryView === "installed" ? (
-            <SkillPane
-              key={skillPaneSelectionKey}
-              selectionKey={skillPaneSelectionKey}
-              loading={skillsQuery.isLoading || detailQuery.isLoading}
-              detail={activeDetail}
-              file={activeFile}
-              fileLoading={fileQuery.isLoading && !activeFile}
-              updateStatus={updateStatusQuery.data}
-              updateStatusLoading={updateStatusQuery.isLoading}
-              onCheckUpdates={() => {
-                void updateStatusQuery.refetch();
-              }}
-              checkUpdatesPending={updateStatusQuery.isFetching}
-              onInstallUpdate={() => installUpdate.mutate()}
-              installUpdatePending={installUpdate.isPending}
-              onDelete={openDeleteDialog}
-              deletePending={deleteSkill.isPending}
-              onOpenBulkGrant={openBulkGrantDialog}
-              canManageBulkGrant={canManageBulkGrants}
-              onSave={(nextDraft) => saveFile.mutate(nextDraft)}
-              savePending={saveFile.isPending}
-            />
+            <div className="space-y-6 py-4 pr-6">
+              <SkillCoverageAuditPanel
+                audit={coverageAuditQuery.data}
+                loading={coverageAuditQuery.isLoading}
+                error={coverageAuditQuery.error instanceof Error ? coverageAuditQuery.error : null}
+                preview={previewCoverageRepair.data ?? null}
+                previewPending={previewCoverageRepair.isPending}
+                applyPending={applyCoverageRepair.isPending}
+                onPreview={() => previewCoverageRepair.mutate()}
+                onApply={() => {
+                  const fingerprint = previewCoverageRepair.data?.selectionFingerprint;
+                  if (!fingerprint) return;
+                  applyCoverageRepair.mutate(fingerprint);
+                }}
+              />
+
+              <SkillPane
+                key={skillPaneSelectionKey}
+                selectionKey={skillPaneSelectionKey}
+                loading={skillsQuery.isLoading || detailQuery.isLoading}
+                detail={activeDetail}
+                file={activeFile}
+                fileLoading={fileQuery.isLoading && !activeFile}
+                updateStatus={updateStatusQuery.data}
+                updateStatusLoading={updateStatusQuery.isLoading}
+                onCheckUpdates={() => {
+                  void updateStatusQuery.refetch();
+                }}
+                checkUpdatesPending={updateStatusQuery.isFetching}
+                onInstallUpdate={() => installUpdate.mutate()}
+                installUpdatePending={installUpdate.isPending}
+                onDelete={openDeleteDialog}
+                deletePending={deleteSkill.isPending}
+                onOpenBulkGrant={openBulkGrantDialog}
+                canManageBulkGrant={canManageBulkGrants}
+                onSave={(nextDraft) => saveFile.mutate(nextDraft)}
+                savePending={saveFile.isPending}
+              />
+            </div>
           ) : (
             <GlobalCatalogPane
               loading={globalCatalogQuery.isLoading}

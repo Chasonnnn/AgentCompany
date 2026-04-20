@@ -4,6 +4,7 @@ import {
   bulkSkillGrantApplyRequestSchema,
   bulkSkillGrantRequestSchema,
   companySkillCreateSchema,
+  companySkillCoverageRepairApplyRequestSchema,
   companySkillFileUpdateSchema,
   companySkillImportSchema,
   companySkillInstallGlobalSchema,
@@ -94,6 +95,52 @@ export function companySkillRoutes(db: Db) {
     const result = await svc.listGlobalCatalog(companyId);
     res.json(result);
   });
+
+  router.get("/companies/:companyId/skills/coverage-audit", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const result = await skillGrants.coverageAudit(companyId);
+    res.json(result);
+  });
+
+  router.post("/companies/:companyId/skills/coverage-audit/repair-preview", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertBoard(req);
+    await assertCanMutateCompanySkills(req, companyId);
+    const result = await skillGrants.previewCoverageRepair(companyId);
+    res.json(result);
+  });
+
+  router.post(
+    "/companies/:companyId/skills/coverage-audit/repair-apply",
+    validate(companySkillCoverageRepairApplyRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertBoard(req);
+      await assertCanMutateCompanySkills(req, companyId);
+      const actor = getActorInfo(req);
+      const result = await skillGrants.applyCoverageRepair(companyId, req.body, actor);
+
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "company.skill_coverage_repair_applied",
+        entityType: "company",
+        entityId: companyId,
+        details: {
+          changedAgentCount: result.changedAgentCount,
+          appliedAgentIds: result.appliedAgentIds,
+          importedSkillKeys: result.importedSkills.map((skill) => skill.key),
+          rollbackPerformed: result.rollbackPerformed,
+        },
+      });
+
+      res.json(result);
+    },
+  );
 
   router.get("/companies/:companyId/skills/:skillId", async (req, res) => {
     const companyId = req.params.companyId as string;

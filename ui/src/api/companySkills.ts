@@ -4,6 +4,10 @@ import type {
   BulkSkillGrantRequest,
   BulkSkillGrantResult,
   CompanySkill,
+  CompanySkillCoverageAudit,
+  CompanySkillCoverageRepairApplyRequest,
+  CompanySkillCoverageRepairPreview,
+  CompanySkillCoverageRepairResult,
   CompanySkillInstallGlobalAllResult,
   CompanySkillCreateRequest,
   CompanySkillDetail,
@@ -24,6 +28,20 @@ export const companySkillsApi = {
   globalCatalog: (companyId: string) =>
     api.get<GlobalSkillCatalogItem[]>(
       `/companies/${encodeURIComponent(companyId)}/skills/global-catalog`,
+    ),
+  coverageAudit: (companyId: string) =>
+    api.get<CompanySkillCoverageAudit>(
+      `/companies/${encodeURIComponent(companyId)}/skills/coverage-audit`,
+    ),
+  coverageRepairPreview: (companyId: string) =>
+    api.post<CompanySkillCoverageRepairPreview>(
+      `/companies/${encodeURIComponent(companyId)}/skills/coverage-audit/repair-preview`,
+      {},
+    ),
+  coverageRepairApply: (companyId: string, payload: CompanySkillCoverageRepairApplyRequest) =>
+    api.post<CompanySkillCoverageRepairResult>(
+      `/companies/${encodeURIComponent(companyId)}/skills/coverage-audit/repair-apply`,
+      payload,
     ),
   detail: (companyId: string, skillId: string) =>
     api.get<CompanySkillDetail>(

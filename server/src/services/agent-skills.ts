@@ -1,8 +1,21 @@
 import { createHash } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import {
   AGENT_DEPARTMENT_LABELS,
+  getDefaultDesiredSkillSlugsForAgent,
+  normalizeAgentUrlKey,
   type AgentNavigationDepartmentNode,
+  type CompanySkill,
+  type CompanySkillCoverageAudit,
+  type CompanySkillCoverageAuditAgent,
+  type CompanySkillCoveragePlannedImport,
+  type CompanySkillCoverageRepairApplyRequest,
+  type CompanySkillCoverageRepairPreview,
+  type CompanySkillCoverageRepairResult,
+  type CompanySkillCoverageResolvedSkill,
+  type CompanySkillCoverageStatus,
   type AgentNavigationProjectNode,
   type AgentSkillSnapshot,
   type BulkSkillGrantApplyRequest,
@@ -22,7 +35,7 @@ import {
 import { conflict, notFound, unprocessable, HttpError } from "../errors.js";
 import { findActiveServerAdapter } from "../adapters/index.js";
 import { agentService, type NormalizedAgentRow } from "./agents.js";
-import { companySkillService } from "./company-skills.js";
+import { companySkillService, readLocalSkillImportFromDirectory } from "./company-skills.js";
 import { secretService } from "./secrets.js";
 import { logActivity, type LogActivityInput } from "./activity-log.js";
 
@@ -59,6 +72,32 @@ interface BulkSkillAgentPlan {
 interface BulkSkillGrantPlan {
   preview: BulkSkillGrantPreview;
   agents: BulkSkillAgentPlan[];
+}
+
+interface SkillCoverageAgentPlan {
+  agent: NormalizedAgentRow;
+  status: CompanySkillCoverageStatus;
+  repairable: boolean;
+  expectedSkillSlugs: string[];
+  resolvedExpectedSkills: CompanySkillCoverageResolvedSkill[];
+  requiredSkillKeys: string[];
+  currentDesiredSkills: string[];
+  currentFullDesiredSkills: string[];
+  nextDesiredSkills: string[];
+  nextFullDesiredSkills: string[];
+  preservedCustomSkillKeys: string[];
+  missingSkillSlugs: string[];
+  ambiguousSkillSlugs: string[];
+  unresolvedCurrentReferences: string[];
+  note: string | null;
+  nextAdapterConfig: Record<string, unknown>;
+}
+
+interface SkillCoveragePlan {
+  audit: CompanySkillCoverageAudit;
+  preview: CompanySkillCoverageRepairPreview;
+  agents: SkillCoverageAgentPlan[];
+  plannedImports: CompanySkillCoveragePlannedImport[];
 }
 
 function normalizeDesiredSkillReferences(requestedDesiredSkills: string[]) {
@@ -161,6 +200,78 @@ function buildBulkSkillGrantFingerprint(
           currentDesiredSkills: plan.currentDesiredSkills,
           nextDesiredSkills: plan.nextDesiredSkills,
         })),
+      }),
+    )
+    .digest("hex");
+}
+
+const COVERAGE_SOURCE_ROOT_PRIORITY: Record<string, number> = {
+  codex: 0,
+  agents: 1,
+  claude: 2,
+};
+
+function sortUniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function arraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function inferSkillSourceRoot(skill: Pick<CompanySkill, "sourceLocator" | "metadata">) {
+  const metadata = typeof skill.metadata === "object" && skill.metadata && !Array.isArray(skill.metadata)
+    ? skill.metadata as Record<string, unknown>
+    : null;
+  const metadataRoot = typeof metadata?.catalogSourceRoot === "string" ? metadata.catalogSourceRoot : null;
+  if (metadataRoot === "codex" || metadataRoot === "agents" || metadataRoot === "claude") {
+    return metadataRoot;
+  }
+
+  const locator = typeof skill.sourceLocator === "string" ? skill.sourceLocator : null;
+  if (!locator) return null;
+  const resolved = path.resolve(locator);
+  const homeDir = path.resolve(process.env.HOME?.trim() || os.homedir());
+  const roots = [
+    { prefix: path.join(homeDir, ".codex", "skills"), root: "codex" },
+    { prefix: path.join(homeDir, ".agents", "skills"), root: "agents" },
+    { prefix: path.join(homeDir, ".claude", "skills"), root: "claude" },
+  ] as const;
+  for (const entry of roots) {
+    const normalizedPrefix = `${entry.prefix}${path.sep}`;
+    if (resolved === entry.prefix || resolved.startsWith(normalizedPrefix)) {
+      return entry.root;
+    }
+  }
+  return null;
+}
+
+function canonicalGstackSkillSource(slug: string) {
+  const homeDir = path.resolve(process.env.HOME?.trim() || os.homedir());
+  return path.join(homeDir, "gstack", ".agents", "skills", `gstack-${slug}`);
+}
+
+function buildSkillCoverageFingerprint(
+  preview: Omit<CompanySkillCoverageRepairPreview, "selectionFingerprint">,
+  plans: SkillCoverageAgentPlan[],
+) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        companyId: preview.companyId,
+        plannedImports: preview.plannedImports,
+        agents: plans
+          .filter((plan) => plan.repairable && !arraysEqual(plan.currentDesiredSkills, plan.nextDesiredSkills))
+          .map((plan) => ({
+            id: plan.agent.id,
+            updatedAt: plan.agent.updatedAt.toISOString(),
+            status: plan.status,
+            repairable: plan.repairable,
+            currentDesiredSkills: plan.currentDesiredSkills,
+            nextDesiredSkills: plan.nextDesiredSkills,
+            requiredSkillKeys: plan.requiredSkillKeys,
+          })),
       }),
     )
     .digest("hex");
@@ -693,6 +804,527 @@ export function agentSkillService(db: Db) {
     };
   }
 
+  async function resolveCoverageImportCandidate(
+    companyId: string,
+    slug: string,
+    cache: Map<string, Promise<CompanySkillCoveragePlannedImport | null>>,
+  ) {
+    const normalizedSlug = normalizeAgentUrlKey(slug) ?? slug;
+    const existing = cache.get(normalizedSlug);
+    if (existing) return existing;
+    const pending = readLocalSkillImportFromDirectory(
+      companyId,
+      canonicalGstackSkillSource(normalizedSlug),
+    )
+      .then((imported) => {
+        if (imported.slug !== normalizedSlug) return null;
+        return {
+          slug: normalizedSlug,
+          name: imported.name,
+          sourcePath: imported.sourceLocator ?? canonicalGstackSkillSource(normalizedSlug),
+          expectedKey: imported.key,
+        } satisfies CompanySkillCoveragePlannedImport;
+      })
+      .catch(() => null);
+    cache.set(normalizedSlug, pending);
+    return pending;
+  }
+
+  function choosePreferredSkill(
+    candidates: CompanySkill[],
+    currentDesiredSkills: string[],
+  ): { skill: CompanySkill | null; ambiguous: boolean } {
+    if (candidates.length === 0) {
+      return { skill: null, ambiguous: false };
+    }
+
+    const currentMatches = candidates.filter((candidate) => currentDesiredSkills.includes(candidate.key));
+    if (currentMatches.length === 1) {
+      return { skill: currentMatches[0] ?? null, ambiguous: false };
+    }
+    if (currentMatches.length > 1) {
+      return { skill: null, ambiguous: true };
+    }
+
+    if (candidates.length === 1) {
+      return { skill: candidates[0] ?? null, ambiguous: false };
+    }
+
+    const sorted = [...candidates].sort((left, right) => {
+      const leftPriority = COVERAGE_SOURCE_ROOT_PRIORITY[inferSkillSourceRoot(left) ?? ""] ?? 99;
+      const rightPriority = COVERAGE_SOURCE_ROOT_PRIORITY[inferSkillSourceRoot(right) ?? ""] ?? 99;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      return left.key.localeCompare(right.key);
+    });
+    const best = sorted[0] ?? null;
+    const second = sorted[1] ?? null;
+    if (!best) {
+      return { skill: null, ambiguous: false };
+    }
+    const bestPriority = COVERAGE_SOURCE_ROOT_PRIORITY[inferSkillSourceRoot(best) ?? ""] ?? 99;
+    const secondPriority = second ? COVERAGE_SOURCE_ROOT_PRIORITY[inferSkillSourceRoot(second) ?? ""] ?? 99 : null;
+    if (secondPriority === null || secondPriority > bestPriority) {
+      return { skill: best, ambiguous: false };
+    }
+    return { skill: null, ambiguous: true };
+  }
+
+  function resolveReferenceToSkillKey(
+    reference: string,
+    installedByKey: Map<string, CompanySkill>,
+    installedBySlug: Map<string, CompanySkill[]>,
+  ) {
+    const trimmed = reference.trim();
+    if (!trimmed) {
+      return { key: null, ambiguous: false };
+    }
+
+    const byKey = installedByKey.get(trimmed) ?? null;
+    if (byKey) {
+      return { key: byKey.key, ambiguous: false };
+    }
+
+    const normalized = normalizeAgentUrlKey(trimmed);
+    const candidateSlugs = new Set<string>();
+    if (normalized) {
+      candidateSlugs.add(normalized);
+      const segments = normalized.split("/").filter(Boolean);
+      const lastSegment = segments[segments.length - 1];
+      if (lastSegment) {
+        candidateSlugs.add(lastSegment);
+      }
+    }
+
+    for (const slug of candidateSlugs) {
+      const preferred = choosePreferredSkill(installedBySlug.get(slug) ?? [], []);
+      if (preferred.skill) {
+        return { key: preferred.skill.key, ambiguous: false };
+      }
+      if (preferred.ambiguous) {
+        return { key: null, ambiguous: true };
+      }
+    }
+
+    return { key: null, ambiguous: false };
+  }
+
+  async function resolveCoveragePlan(companyId: string): Promise<SkillCoveragePlan> {
+    const [companyAgents, installedSkills, runtimeSkillEntries] = await Promise.all([
+      agents.list(companyId),
+      companySkills.listFull(companyId),
+      companySkills.listRuntimeSkillEntries(companyId, { materializeMissing: false }),
+    ]);
+
+    const activeAgents = companyAgents.filter((agent) => agent.status !== "terminated");
+    const requiredSkillKeys = sortUniqueStrings(
+      runtimeSkillEntries.filter((entry) => entry.required).map((entry) => entry.key),
+    );
+    const requiredSkillKeySet = new Set(requiredSkillKeys);
+    const installedByKey = new Map(installedSkills.map((skill) => [skill.key, skill] as const));
+    const installedBySlug = new Map<string, CompanySkill[]>();
+    for (const skill of installedSkills) {
+      const slug = normalizeAgentUrlKey(skill.slug) ?? skill.slug;
+      const existing = installedBySlug.get(slug) ?? [];
+      existing.push(skill);
+      installedBySlug.set(slug, existing);
+    }
+
+    const requiredSkillBySlug = new Map<string, CompanySkill>();
+    for (const requiredKey of requiredSkillKeys) {
+      const skill = installedByKey.get(requiredKey);
+      if (!skill) continue;
+      const slug = normalizeAgentUrlKey(skill.slug) ?? skill.slug;
+      requiredSkillBySlug.set(slug, skill);
+    }
+
+    const importCandidateCache = new Map<string, Promise<CompanySkillCoveragePlannedImport | null>>();
+    const auditAgents: CompanySkillCoverageAuditAgent[] = [];
+    const plans: SkillCoverageAgentPlan[] = [];
+    const plannedImportsByKey = new Map<string, CompanySkillCoveragePlannedImport>();
+
+    for (const agent of activeAgents) {
+      const rawDesiredSkills = readPaperclipSkillSyncPreference(
+        agent.adapterConfig as Record<string, unknown>,
+      ).desiredSkills;
+      const resolvedCurrentDesired = new Set<string>();
+      const unresolvedCurrentReferences = new Set<string>();
+      const ambiguousCurrentReferences = new Set<string>();
+      for (const reference of rawDesiredSkills) {
+        const resolved = resolveReferenceToSkillKey(reference, installedByKey, installedBySlug);
+        if (resolved.key) {
+          resolvedCurrentDesired.add(resolved.key);
+          continue;
+        }
+        if (resolved.ambiguous) {
+          ambiguousCurrentReferences.add(reference);
+        } else {
+          unresolvedCurrentReferences.add(reference);
+        }
+      }
+
+      const currentFullDesiredSkills = sortUniqueStrings([
+        ...requiredSkillKeys,
+        ...Array.from(resolvedCurrentDesired),
+      ]);
+      const currentDesiredSkills = currentFullDesiredSkills.filter((key) => !requiredSkillKeySet.has(key));
+
+      const expectedSkillSlugs = getDefaultDesiredSkillSlugsForAgent({
+        role: agent.role,
+        operatingClass: agent.operatingClass,
+        archetypeKey: agent.archetypeKey,
+      });
+      const resolvedExpectedSkills: CompanySkillCoverageResolvedSkill[] = [];
+      const missingSkillSlugs = new Set<string>();
+      const ambiguousSkillSlugs = new Set<string>();
+      const unrepairableMissingSkillSlugs = new Set<string>();
+      const expectedNonRequiredKeys = new Set<string>();
+
+      for (const expectedSlug of expectedSkillSlugs) {
+        const normalizedSlug = normalizeAgentUrlKey(expectedSlug) ?? expectedSlug;
+        const requiredSkill = requiredSkillBySlug.get(normalizedSlug) ?? null;
+        if (requiredSkill) {
+          resolvedExpectedSkills.push({
+            slug: normalizedSlug,
+            key: requiredSkill.key,
+            name: requiredSkill.name,
+            source: "installed",
+          });
+          continue;
+        }
+
+        const preferredInstalled = choosePreferredSkill(
+          installedBySlug.get(normalizedSlug) ?? [],
+          currentFullDesiredSkills,
+        );
+        if (preferredInstalled.skill) {
+          resolvedExpectedSkills.push({
+            slug: normalizedSlug,
+            key: preferredInstalled.skill.key,
+            name: preferredInstalled.skill.name,
+            source: "installed",
+          });
+          expectedNonRequiredKeys.add(preferredInstalled.skill.key);
+          if (!currentFullDesiredSkills.includes(preferredInstalled.skill.key)) {
+            missingSkillSlugs.add(normalizedSlug);
+          }
+          continue;
+        }
+        if (preferredInstalled.ambiguous) {
+          ambiguousSkillSlugs.add(normalizedSlug);
+          unrepairableMissingSkillSlugs.add(normalizedSlug);
+          resolvedExpectedSkills.push({
+            slug: normalizedSlug,
+            key: null,
+            name: null,
+            source: "missing",
+          });
+          missingSkillSlugs.add(normalizedSlug);
+          continue;
+        }
+
+        const importCandidate = await resolveCoverageImportCandidate(
+          companyId,
+          normalizedSlug,
+          importCandidateCache,
+        );
+        if (importCandidate) {
+          plannedImportsByKey.set(importCandidate.expectedKey, importCandidate);
+          resolvedExpectedSkills.push({
+            slug: normalizedSlug,
+            key: importCandidate.expectedKey,
+            name: importCandidate.name,
+            source: "planned_import",
+          });
+          expectedNonRequiredKeys.add(importCandidate.expectedKey);
+          missingSkillSlugs.add(normalizedSlug);
+          continue;
+        }
+
+        resolvedExpectedSkills.push({
+          slug: normalizedSlug,
+          key: null,
+          name: null,
+          source: "missing",
+        });
+        missingSkillSlugs.add(normalizedSlug);
+        unrepairableMissingSkillSlugs.add(normalizedSlug);
+      }
+
+      const nextDesiredSkills = sortUniqueStrings([
+        ...currentDesiredSkills,
+        ...Array.from(expectedNonRequiredKeys),
+      ]);
+      const nextFullDesiredSkills = sortUniqueStrings([...requiredSkillKeys, ...nextDesiredSkills]);
+      const preservedCustomSkillKeys = currentDesiredSkills.filter(
+        (key) => !Array.from(expectedNonRequiredKeys).includes(key),
+      );
+
+      let note: string | null = null;
+      if (unresolvedCurrentReferences.size > 0) {
+        note = `Unresolved desired skill refs: ${Array.from(unresolvedCurrentReferences).sort().join(", ")}`;
+      } else if (ambiguousCurrentReferences.size > 0 || ambiguousSkillSlugs.size > 0) {
+        note = `Ambiguous skill lineage for ${sortUniqueStrings([
+          ...Array.from(ambiguousCurrentReferences),
+          ...Array.from(ambiguousSkillSlugs),
+        ]).join(", ")}`;
+      } else if (preservedCustomSkillKeys.length > 0) {
+        note = `Preserves ${preservedCustomSkillKeys.length} custom granted skill${preservedCustomSkillKeys.length === 1 ? "" : "s"}.`;
+      } else if (missingSkillSlugs.size > 0) {
+        note = `Repairs ${missingSkillSlugs.size} missing default skill${missingSkillSlugs.size === 1 ? "" : "s"}.`;
+      }
+
+      const needsChange = !arraysEqual(currentDesiredSkills, nextDesiredSkills);
+      const hasNonrepairableGap =
+        unrepairableMissingSkillSlugs.size > 0
+        || unresolvedCurrentReferences.size > 0
+        || ambiguousCurrentReferences.size > 0
+        || ambiguousSkillSlugs.size > 0;
+      const hasCustomizations = preservedCustomSkillKeys.length > 0;
+      const repairable = !hasNonrepairableGap && needsChange;
+      const status: CompanySkillCoverageStatus = hasNonrepairableGap
+        ? "nonrepairable_gap"
+        : hasCustomizations
+          ? "customized"
+          : needsChange
+            ? "repairable_gap"
+            : "covered";
+
+      const nextAdapterConfig = writePaperclipSkillSyncPreference(
+        agent.adapterConfig as Record<string, unknown>,
+        nextFullDesiredSkills,
+      );
+
+      const auditAgent: CompanySkillCoverageAuditAgent = {
+        id: agent.id,
+        name: agent.name,
+        urlKey: agent.urlKey,
+        role: agent.role,
+        title: agent.title ?? null,
+        operatingClass: agent.operatingClass,
+        archetypeKey: agent.archetypeKey,
+        status,
+        repairable,
+        expectedSkillSlugs,
+        resolvedExpectedSkills,
+        requiredSkillKeys,
+        currentDesiredSkills,
+        nextDesiredSkills,
+        missingSkillSlugs: sortUniqueStrings(Array.from(missingSkillSlugs)),
+        ambiguousSkillSlugs: sortUniqueStrings([
+          ...Array.from(ambiguousCurrentReferences),
+          ...Array.from(ambiguousSkillSlugs),
+        ]),
+        preservedCustomSkillKeys,
+        note,
+      };
+      auditAgents.push(auditAgent);
+      plans.push({
+        agent,
+        status,
+        repairable,
+        expectedSkillSlugs,
+        resolvedExpectedSkills,
+        requiredSkillKeys,
+        currentDesiredSkills,
+        currentFullDesiredSkills,
+        nextDesiredSkills,
+        nextFullDesiredSkills,
+        preservedCustomSkillKeys,
+        missingSkillSlugs: auditAgent.missingSkillSlugs,
+        ambiguousSkillSlugs: auditAgent.ambiguousSkillSlugs,
+        unresolvedCurrentReferences: sortUniqueStrings(Array.from(unresolvedCurrentReferences)),
+        note,
+        nextAdapterConfig,
+      });
+    }
+
+    auditAgents.sort((left, right) => left.name.localeCompare(right.name));
+    plans.sort((left, right) => left.agent.name.localeCompare(right.agent.name));
+
+    const plannedImports = Array.from(plannedImportsByKey.values()).sort((left, right) =>
+      left.slug.localeCompare(right.slug),
+    );
+    const audit: CompanySkillCoverageAudit = {
+      companyId,
+      auditedAgentCount: auditAgents.length,
+      coveredCount: auditAgents.filter((agent) => agent.status === "covered").length,
+      repairableGapCount: auditAgents.filter((agent) => agent.status === "repairable_gap").length,
+      nonrepairableGapCount: auditAgents.filter((agent) => agent.status === "nonrepairable_gap").length,
+      customizedCount: auditAgents.filter((agent) => agent.status === "customized").length,
+      plannedImports,
+      agents: auditAgents,
+    };
+    const previewWithoutFingerprint: Omit<CompanySkillCoverageRepairPreview, "selectionFingerprint"> = {
+      ...audit,
+      changedAgentCount: plans.filter(
+        (plan) => plan.repairable && !arraysEqual(plan.currentDesiredSkills, plan.nextDesiredSkills),
+      ).length,
+    };
+    const selectionFingerprint = buildSkillCoverageFingerprint(previewWithoutFingerprint, plans);
+
+    return {
+      audit,
+      preview: {
+        ...previewWithoutFingerprint,
+        selectionFingerprint,
+      },
+      agents: plans,
+      plannedImports,
+    };
+  }
+
+  async function coverageAudit(companyId: string) {
+    return (await resolveCoveragePlan(companyId)).audit;
+  }
+
+  async function previewCoverageRepair(companyId: string) {
+    return (await resolveCoveragePlan(companyId)).preview;
+  }
+
+  async function applyCoverageRepair(
+    companyId: string,
+    input: CompanySkillCoverageRepairApplyRequest,
+    actor: ActorInfo,
+  ): Promise<CompanySkillCoverageRepairResult> {
+    const plan = await resolveCoveragePlan(companyId);
+    if (plan.preview.selectionFingerprint !== input.selectionFingerprint) {
+      throw conflict("Skill coverage preview is stale. Refresh the preview and try again.");
+    }
+
+    const changedPlans = plan.agents.filter(
+      (entry) => entry.repairable && !arraysEqual(entry.currentDesiredSkills, entry.nextDesiredSkills),
+    );
+    if (changedPlans.length === 0 && plan.plannedImports.length === 0) {
+      return {
+        companyId,
+        changedAgentCount: 0,
+        appliedAgentIds: [],
+        importedSkills: [],
+        rollbackPerformed: false,
+        rollbackErrors: [],
+        selectionFingerprint: plan.preview.selectionFingerprint,
+        audit: plan.audit,
+      };
+    }
+
+    const importedSkills: CompanySkill[] = [];
+    for (const plannedImport of plan.plannedImports) {
+      const result = await companySkills.importFromSource(companyId, plannedImport.sourcePath);
+      const imported = result.imported.find((skill) => skill.key === plannedImport.expectedKey)
+        ?? result.imported[0]
+        ?? null;
+      if (!imported) {
+        throw conflict(`Failed to import ${plannedImport.slug} from ${plannedImport.sourcePath}.`);
+      }
+      importedSkills.push(imported);
+    }
+
+    const originalConfigs = changedPlans.map((entry) => ({
+      id: entry.agent.id,
+      adapterConfig: entry.agent.adapterConfig as Record<string, unknown>,
+      desiredSkills: entry.currentFullDesiredSkills,
+    }));
+
+    const updatedAgents = await agents.batchUpdateAdapterConfigs(
+      changedPlans.map((entry) => ({
+        id: entry.agent.id,
+        adapterConfig: entry.nextAdapterConfig,
+      })),
+      {
+        recordRevision: {
+          createdByAgentId: actor.agentId,
+          createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+          source: "skill-coverage-repair",
+        },
+      },
+    );
+    const updatedById = new Map(updatedAgents.map((agent) => [agent.id, agent] as const));
+    const syncedAgentIds: string[] = [];
+
+    try {
+      for (const entry of changedPlans) {
+        const updated = updatedById.get(entry.agent.id);
+        if (!updated) {
+          throw notFound("Agent not found");
+        }
+        await syncRuntimeSkillsForAgent(updated, entry.nextFullDesiredSkills, actor, {
+          canManage: true,
+          source: "skill-coverage-repair",
+        });
+        syncedAgentIds.push(updated.id);
+      }
+    } catch (error) {
+      const rollbackErrors: string[] = [];
+      let rolledBackAgents: NormalizedAgentRow[] = [];
+      try {
+        rolledBackAgents = await agents.batchUpdateAdapterConfigs(
+          originalConfigs.map((entry) => ({
+            id: entry.id,
+            adapterConfig: entry.adapterConfig,
+          })),
+          {
+            recordRevision: {
+              createdByAgentId: actor.agentId,
+              createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+              source: "skill-coverage-repair-rollback",
+            },
+          },
+        );
+      } catch (rollbackPersistError) {
+        rollbackErrors.push(
+          rollbackPersistError instanceof Error
+            ? rollbackPersistError.message
+            : "Failed to restore agent skill coverage settings in storage.",
+        );
+      }
+
+      if (rolledBackAgents.length > 0) {
+        const rolledBackById = new Map(rolledBackAgents.map((agent) => [agent.id, agent] as const));
+        for (const entry of originalConfigs) {
+          const rolledBack = rolledBackById.get(entry.id);
+          if (!rolledBack) continue;
+          try {
+            await syncRuntimeSkillsForAgent(rolledBack, entry.desiredSkills, actor, {
+              canManage: true,
+              source: "skill-coverage-repair-rollback",
+            });
+          } catch (rollbackSyncError) {
+            rollbackErrors.push(
+              rollbackSyncError instanceof Error
+                ? rollbackSyncError.message
+                : `Failed to restore runtime skills for agent ${entry.id}.`,
+            );
+          }
+        }
+      }
+
+      throw new HttpError(
+        500,
+        rollbackErrors.length > 0
+          ? "Skill coverage repair failed and rollback could not be completed cleanly."
+          : "Skill coverage repair failed. All agent skill changes were rolled back.",
+        {
+          rollbackPerformed: true,
+          rollbackErrors,
+          syncedAgentIds,
+          cause: error instanceof Error ? error.message : "Skill coverage repair failed.",
+        },
+      );
+    }
+
+    const nextAudit = await coverageAudit(companyId);
+    return {
+      companyId,
+      changedAgentCount: changedPlans.length,
+      appliedAgentIds: changedPlans.map((entry) => entry.agent.id),
+      importedSkills,
+      rollbackPerformed: false,
+      rollbackErrors: [],
+      selectionFingerprint: plan.preview.selectionFingerprint,
+      audit: nextAudit,
+    };
+  }
+
   return {
     shouldMaterializeRuntimeSkillsForAdapter,
     buildUnsupportedSkillSnapshot,
@@ -702,6 +1334,9 @@ export function agentSkillService(db: Db) {
     syncAgentSkills,
     previewBulkSkillGrant,
     applyBulkSkillGrant,
+    coverageAudit,
+    previewCoverageRepair,
+    applyCoverageRepair,
   };
 }
 

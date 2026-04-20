@@ -5,6 +5,12 @@ export const companySkillTrustLevelSchema = z.enum(["markdown_only", "assets", "
 export const companySkillCompatibilitySchema = z.enum(["compatible", "unknown", "invalid"]);
 export const companySkillSourceBadgeSchema = z.enum(["paperclip", "github", "local", "url", "catalog", "skills_sh"]);
 export const globalSkillCatalogSourceRootSchema = z.enum(["codex", "claude", "agents"]);
+export const companySkillCoverageStatusSchema = z.enum([
+  "covered",
+  "repairable_gap",
+  "nonrepairable_gap",
+  "customized",
+]);
 
 export const companySkillFileInventoryEntrySchema = z.object({
   path: z.string().min(1),
@@ -193,6 +199,72 @@ export const bulkSkillGrantResultSchema = z.object({
   rollbackErrors: z.array(z.string()),
 });
 
+export const companySkillCoverageResolvedSkillSchema = z.object({
+  slug: z.string().min(1),
+  key: z.string().min(1).nullable(),
+  name: z.string().min(1).nullable(),
+  source: z.enum(["installed", "planned_import", "missing"]),
+});
+
+export const companySkillCoveragePlannedImportSchema = z.object({
+  slug: z.string().min(1),
+  name: z.string().min(1),
+  sourcePath: z.string().min(1),
+  expectedKey: z.string().min(1),
+});
+
+export const companySkillCoverageAuditAgentSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  urlKey: z.string().min(1),
+  role: z.string().min(1),
+  title: z.string().nullable(),
+  operatingClass: z.string().min(1),
+  archetypeKey: z.string().min(1),
+  status: companySkillCoverageStatusSchema,
+  repairable: z.boolean(),
+  expectedSkillSlugs: z.array(z.string().min(1)),
+  resolvedExpectedSkills: z.array(companySkillCoverageResolvedSkillSchema),
+  requiredSkillKeys: z.array(z.string().min(1)),
+  currentDesiredSkills: z.array(z.string().min(1)),
+  nextDesiredSkills: z.array(z.string().min(1)),
+  missingSkillSlugs: z.array(z.string().min(1)),
+  ambiguousSkillSlugs: z.array(z.string().min(1)),
+  preservedCustomSkillKeys: z.array(z.string().min(1)),
+  note: z.string().nullable(),
+});
+
+export const companySkillCoverageAuditSchema = z.object({
+  companyId: z.string().uuid(),
+  auditedAgentCount: z.number().int().nonnegative(),
+  coveredCount: z.number().int().nonnegative(),
+  repairableGapCount: z.number().int().nonnegative(),
+  nonrepairableGapCount: z.number().int().nonnegative(),
+  customizedCount: z.number().int().nonnegative(),
+  plannedImports: z.array(companySkillCoveragePlannedImportSchema),
+  agents: z.array(companySkillCoverageAuditAgentSchema),
+});
+
+export const companySkillCoverageRepairPreviewSchema = companySkillCoverageAuditSchema.extend({
+  changedAgentCount: z.number().int().nonnegative(),
+  selectionFingerprint: z.string().min(1),
+});
+
+export const companySkillCoverageRepairApplyRequestSchema = z.object({
+  selectionFingerprint: z.string().min(1),
+});
+
+export const companySkillCoverageRepairResultSchema = z.object({
+  companyId: z.string().uuid(),
+  changedAgentCount: z.number().int().nonnegative(),
+  appliedAgentIds: z.array(z.string().uuid()),
+  importedSkills: z.array(companySkillSchema),
+  rollbackPerformed: z.boolean(),
+  rollbackErrors: z.array(z.string()),
+  selectionFingerprint: z.string().min(1),
+  audit: companySkillCoverageAuditSchema,
+});
+
 export const companySkillProjectScanRequestSchema = z.object({
   projectIds: z.array(z.string().uuid()).optional(),
   workspaceIds: z.array(z.string().uuid()).optional(),
@@ -259,6 +331,7 @@ export type CompanySkillInstallGlobal = z.infer<typeof companySkillInstallGlobal
 export type CompanySkillInstallGlobalAllResult = z.infer<typeof companySkillInstallGlobalAllResultSchema>;
 export type BulkSkillGrantRequest = z.infer<typeof bulkSkillGrantRequestSchema>;
 export type BulkSkillGrantApplyRequest = z.infer<typeof bulkSkillGrantApplyRequestSchema>;
+export type CompanySkillCoverageRepairApplyRequest = z.infer<typeof companySkillCoverageRepairApplyRequestSchema>;
 export type CompanySkillProjectScan = z.infer<typeof companySkillProjectScanRequestSchema>;
 export type CompanySkillCreate = z.infer<typeof companySkillCreateSchema>;
 export type CompanySkillFileUpdate = z.infer<typeof companySkillFileUpdateSchema>;

@@ -11,6 +11,11 @@ export type CompanySkillSourceBadge = "paperclip" | "github" | "local" | "url" |
 export type GlobalSkillCatalogSourceRoot = "codex" | "claude" | "agents";
 export type BulkSkillGrantTier = "all" | "leaders" | "workers";
 export type BulkSkillGrantMode = "add" | "remove" | "replace";
+export type CompanySkillCoverageStatus =
+  | "covered"
+  | "repairable_gap"
+  | "nonrepairable_gap"
+  | "customized";
 
 export interface CompanySkillFileInventoryEntry {
   path: string;
@@ -207,6 +212,72 @@ export interface BulkSkillGrantResult {
   appliedAgentIds: string[];
   rollbackPerformed: boolean;
   rollbackErrors: string[];
+}
+
+export interface CompanySkillCoverageResolvedSkill {
+  slug: string;
+  key: string | null;
+  name: string | null;
+  source: "installed" | "planned_import" | "missing";
+}
+
+export interface CompanySkillCoveragePlannedImport {
+  slug: string;
+  name: string;
+  sourcePath: string;
+  expectedKey: string;
+}
+
+export interface CompanySkillCoverageAuditAgent {
+  id: string;
+  name: string;
+  urlKey: string;
+  role: AgentRole;
+  title: string | null;
+  operatingClass: string;
+  archetypeKey: string;
+  status: CompanySkillCoverageStatus;
+  repairable: boolean;
+  expectedSkillSlugs: string[];
+  resolvedExpectedSkills: CompanySkillCoverageResolvedSkill[];
+  requiredSkillKeys: string[];
+  currentDesiredSkills: string[];
+  nextDesiredSkills: string[];
+  missingSkillSlugs: string[];
+  ambiguousSkillSlugs: string[];
+  preservedCustomSkillKeys: string[];
+  note: string | null;
+}
+
+export interface CompanySkillCoverageAudit {
+  companyId: string;
+  auditedAgentCount: number;
+  coveredCount: number;
+  repairableGapCount: number;
+  nonrepairableGapCount: number;
+  customizedCount: number;
+  plannedImports: CompanySkillCoveragePlannedImport[];
+  agents: CompanySkillCoverageAuditAgent[];
+}
+
+export interface CompanySkillCoverageRepairPreview extends CompanySkillCoverageAudit {
+  changedAgentCount: number;
+  selectionFingerprint: string;
+}
+
+export interface CompanySkillCoverageRepairApplyRequest {
+  selectionFingerprint: string;
+}
+
+export interface CompanySkillCoverageRepairResult {
+  companyId: string;
+  changedAgentCount: number;
+  appliedAgentIds: string[];
+  importedSkills: CompanySkill[];
+  rollbackPerformed: boolean;
+  rollbackErrors: string[];
+  selectionFingerprint: string;
+  audit: CompanySkillCoverageAudit;
 }
 
 export interface CompanySkillImportResult {

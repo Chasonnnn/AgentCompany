@@ -10,6 +10,9 @@ import { CompanySkills } from "./CompanySkills";
 const mockCompanySkillsApi = vi.hoisted(() => ({
   list: vi.fn(),
   globalCatalog: vi.fn(),
+  coverageAudit: vi.fn(),
+  coverageRepairPreview: vi.fn(),
+  coverageRepairApply: vi.fn(),
   installGlobal: vi.fn(),
   installAllGlobal: vi.fn(),
   bulkGrantPreview: vi.fn(),
@@ -159,6 +162,103 @@ describe("CompanySkills", () => {
     Object.values(mockAgentsApi).forEach((mockFn) => mockFn.mockReset());
     Object.values(mockAuthApi).forEach((mockFn) => mockFn.mockReset());
     mockCompanySkillsApi.list.mockResolvedValue([]);
+    mockCompanySkillsApi.coverageAudit.mockResolvedValue({
+      companyId: "company-1",
+      auditedAgentCount: 2,
+      coveredCount: 1,
+      repairableGapCount: 1,
+      nonrepairableGapCount: 0,
+      customizedCount: 0,
+      plannedImports: [
+        {
+          slug: "investigate",
+          name: "Investigate",
+          sourcePath: "/Users/chason/gstack/.agents/skills/gstack-investigate",
+          expectedKey: "local/e780050bf1/investigate",
+        },
+      ],
+      agents: [
+        {
+          id: "agent-1",
+          name: "Technical Project Lead",
+          urlKey: "technical-project-lead",
+          role: "engineer",
+          title: "Technical Project Lead",
+          operatingClass: "project_leadership",
+          archetypeKey: "technical_project_lead",
+          status: "repairable_gap",
+          repairable: true,
+          expectedSkillSlugs: ["investigate", "review"],
+          resolvedExpectedSkills: [],
+          requiredSkillKeys: [],
+          currentDesiredSkills: [],
+          nextDesiredSkills: ["local/e780050bf1/investigate", "local/97804d2edd/review"],
+          missingSkillSlugs: ["investigate", "review"],
+          ambiguousSkillSlugs: [],
+          preservedCustomSkillKeys: [],
+          note: "Repairs 2 missing default skills.",
+        },
+      ],
+    });
+    mockCompanySkillsApi.coverageRepairPreview.mockResolvedValue({
+      companyId: "company-1",
+      auditedAgentCount: 2,
+      coveredCount: 1,
+      repairableGapCount: 1,
+      nonrepairableGapCount: 0,
+      customizedCount: 0,
+      plannedImports: [
+        {
+          slug: "investigate",
+          name: "Investigate",
+          sourcePath: "/Users/chason/gstack/.agents/skills/gstack-investigate",
+          expectedKey: "local/e780050bf1/investigate",
+        },
+      ],
+      agents: [
+        {
+          id: "agent-1",
+          name: "Technical Project Lead",
+          urlKey: "technical-project-lead",
+          role: "engineer",
+          title: "Technical Project Lead",
+          operatingClass: "project_leadership",
+          archetypeKey: "technical_project_lead",
+          status: "repairable_gap",
+          repairable: true,
+          expectedSkillSlugs: ["investigate", "review"],
+          resolvedExpectedSkills: [],
+          requiredSkillKeys: [],
+          currentDesiredSkills: [],
+          nextDesiredSkills: ["local/e780050bf1/investigate", "local/97804d2edd/review"],
+          missingSkillSlugs: ["investigate", "review"],
+          ambiguousSkillSlugs: [],
+          preservedCustomSkillKeys: [],
+          note: "Repairs 2 missing default skills.",
+        },
+      ],
+      changedAgentCount: 1,
+      selectionFingerprint: "coverage-fingerprint-1",
+    });
+    mockCompanySkillsApi.coverageRepairApply.mockResolvedValue({
+      companyId: "company-1",
+      changedAgentCount: 1,
+      appliedAgentIds: ["agent-1"],
+      importedSkills: [],
+      rollbackPerformed: false,
+      rollbackErrors: [],
+      selectionFingerprint: "coverage-fingerprint-1",
+      audit: {
+        companyId: "company-1",
+        auditedAgentCount: 2,
+        coveredCount: 2,
+        repairableGapCount: 0,
+        nonrepairableGapCount: 0,
+        customizedCount: 0,
+        plannedImports: [],
+        agents: [],
+      },
+    });
     mockCompanySkillsApi.globalCatalog.mockResolvedValue([
       {
         catalogKey: "global/codex/abc123/design-guide",
@@ -287,6 +387,52 @@ describe("CompanySkills", () => {
   afterEach(() => {
     queryClient.clear();
     container.remove();
+  });
+
+  it("previews and applies an active workforce coverage repair", async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <CompanySkills />
+        </QueryClientProvider>,
+      );
+    });
+
+    await flush();
+
+    expect(mockCompanySkillsApi.coverageAudit).toHaveBeenCalledWith("company-1");
+    expect(container.textContent).toContain("Active Workforce Coverage");
+    expect(container.textContent).toContain("Technical Project Lead");
+
+    const previewButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Preview repair"));
+    expect(previewButton).toBeDefined();
+
+    await act(async () => {
+      previewButton?.click();
+    });
+    await flush();
+
+    expect(mockCompanySkillsApi.coverageRepairPreview).toHaveBeenCalledWith("company-1");
+    expect(container.textContent).toContain("Apply to 1 agent");
+
+    const applyButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Apply to 1 agent"));
+    expect(applyButton).toBeDefined();
+
+    await act(async () => {
+      applyButton?.click();
+    });
+    await flush();
+
+    expect(mockCompanySkillsApi.coverageRepairApply).toHaveBeenCalledWith("company-1", {
+      selectionFingerprint: "coverage-fingerprint-1",
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
   });
 
   it("switches to the global catalog view and installs a selected global skill", async () => {
