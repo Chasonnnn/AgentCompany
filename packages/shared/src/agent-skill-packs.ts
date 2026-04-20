@@ -198,7 +198,7 @@ export function getDefaultDesiredSkillSlugsForAgent(
 ) {
   const archetypeKey = input.archetypeKey?.trim().toLowerCase() ?? null;
 
-  if (archetypeKey === "project_lead") {
+  if (archetypeKey === "project_lead" || archetypeKey === "technical_project_lead") {
     return [...PROJECT_LEAD_ENGINEERING_MANAGEMENT_SKILL_SLUGS];
   }
 

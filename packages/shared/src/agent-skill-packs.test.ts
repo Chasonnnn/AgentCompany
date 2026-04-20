@@ -17,6 +17,24 @@ describe("agent skill packs", () => {
     ]);
   });
 
+  it("treats technical project lead as a project-lead pack alias", () => {
+    expect(
+      getDefaultDesiredSkillSlugsForAgent({
+        role: "engineer",
+        operatingClass: "project_leadership",
+        archetypeKey: "technical_project_lead",
+      }),
+    ).toEqual([
+      "para-memory-files",
+      "find-skills",
+      "plan-eng-review",
+      "review",
+      "health",
+      "investigate",
+      "checkpoint",
+    ]);
+  });
+
   it("assigns the frontend pack with its impeccable dependency", () => {
     const skills = getDefaultDesiredSkillSlugsForAgent({
       role: "engineer",
