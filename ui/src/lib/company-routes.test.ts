@@ -28,6 +28,13 @@ describe("company routes", () => {
     );
   });
 
+  it("treats the top-level workspaces route as a board path that needs a company prefix", () => {
+    expect(isBoardPathWithoutPrefix("/workspaces")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/workspaces")).toBeNull();
+    expect(applyCompanyPrefix("/workspaces", "PAP")).toBe("/PAP/workspaces");
+    expect(toCompanyRelativePath("/PAP/workspaces")).toBe("/workspaces");
+  });
+
   it("treats conference room paths as board routes that need a company prefix", () => {
     expect(isBoardPathWithoutPrefix("/conference-room/open")).toBe(true);
     expect(extractCompanyPrefixFromPath("/conference-room/open")).toBeNull();

@@ -13,7 +13,9 @@ import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { buildExecutionPolicy } from "../lib/issue-execution-policy";
+import { orderItemsBySelectedAndRecent } from "../lib/recent-selections";
 import { useToast } from "../context/ToastContext";
 import { claudeIssueThinkingEffortOptions } from "./agent-config-defaults";
 import {
@@ -863,6 +865,7 @@ export function NewIssueDialog() {
         ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
       : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [newIssueOpen]);
+  const recentProjectIds = useMemo(() => getRecentProjectIds(), [newIssueOpen]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
     () => [
       ...currentUserAssigneeOption(currentUserId),
@@ -879,12 +882,16 @@ export function NewIssueDialog() {
   );
   const projectOptions = useMemo<InlineEntityOption[]>(
     () =>
-      orderedProjects.map((project) => ({
-        id: project.id,
-        label: project.name,
-        searchText: project.description ?? "",
-      })),
-    [orderedProjects],
+      orderItemsBySelectedAndRecent(
+        orderedProjects.map((project) => ({
+          id: project.id,
+          label: project.name,
+          searchText: project.description ?? "",
+        })),
+        projectId || null,
+        recentProjectIds,
+      ),
+    [orderedProjects, projectId, recentProjectIds],
   );
   const savedDraft = loadDraft();
   const hasSavedDraft = Boolean(savedDraft?.title.trim() || savedDraft?.description.trim());
@@ -895,6 +902,7 @@ export function NewIssueDialog() {
   const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
 
   const handleProjectChange = useCallback((nextProjectId: string) => {
+    if (nextProjectId) trackRecentProject(nextProjectId);
     setProjectId(nextProjectId);
     const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
     executionWorkspaceDefaultProjectId.current = nextProjectId || null;

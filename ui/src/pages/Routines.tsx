@@ -14,6 +14,8 @@ import { queryKeys } from "../lib/queryKeys";
 import { groupBy } from "../lib/groupBy";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
+import { orderItemsBySelectedAndRecent } from "../lib/recent-selections";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
@@ -461,6 +463,7 @@ export function Routines() {
   });
 
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [composerOpen]);
+  const recentProjectIds = useMemo(() => getRecentProjectIds(), [composerOpen]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
     () =>
       sortAgentsByRecency(
@@ -475,12 +478,16 @@ export function Routines() {
   );
   const projectOptions = useMemo<InlineEntityOption[]>(
     () =>
-      (projects ?? []).map((project) => ({
-        id: project.id,
-        label: project.name,
-        searchText: project.description ?? "",
-      })),
-    [projects],
+      orderItemsBySelectedAndRecent(
+        (projects ?? []).map((project) => ({
+          id: project.id,
+          label: project.name,
+          searchText: project.description ?? "",
+        })),
+        draft.projectId || null,
+        recentProjectIds,
+      ),
+    [draft.projectId, projects, recentProjectIds],
   );
   const agentById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
@@ -765,7 +772,10 @@ export function Routines() {
                     noneLabel="No project"
                     searchPlaceholder="Search projects..."
                     emptyMessage="No projects found."
-                    onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))}
+                    onChange={(projectId) => {
+                      if (projectId) trackRecentProject(projectId);
+                      setDraft((current) => ({ ...current, projectId }));
+                    }}
                     onConfirm={() => descriptionEditorRef.current?.focus()}
                     renderTriggerValue={(option) =>
                       option && currentProject ? (

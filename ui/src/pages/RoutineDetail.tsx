@@ -40,6 +40,8 @@ import { RoutineVariablesEditor, RoutineVariablesHint } from "../components/Rout
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
 import { RunButton } from "../components/AgentActionButtons";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
+import { orderItemsBySelectedAndRecent } from "../lib/recent-selections";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
@@ -626,6 +628,7 @@ export function RoutineDetail() {
     [projects],
   );
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [routine?.id]);
+  const recentProjectIds = useMemo(() => getRecentProjectIds(), [routine?.id]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
     () =>
       sortAgentsByRecency(
@@ -640,12 +643,16 @@ export function RoutineDetail() {
   );
   const projectOptions = useMemo<InlineEntityOption[]>(
     () =>
-      (projects ?? []).map((project) => ({
-        id: project.id,
-        label: project.name,
-        searchText: project.description ?? "",
-      })),
-    [projects],
+      orderItemsBySelectedAndRecent(
+        (projects ?? []).map((project) => ({
+          id: project.id,
+          label: project.name,
+          searchText: project.description ?? "",
+        })),
+        editDraft.projectId || null,
+        recentProjectIds,
+      ),
+    [editDraft.projectId, projects, recentProjectIds],
   );
   const currentAssignee = editDraft.assigneeAgentId ? agentById.get(editDraft.assigneeAgentId) ?? null : null;
   const currentProject = editDraft.projectId ? projectById.get(editDraft.projectId) ?? null : null;
@@ -835,7 +842,10 @@ export function RoutineDetail() {
             noneLabel="No project"
             searchPlaceholder="Search projects..."
             emptyMessage="No projects found."
-            onChange={(projectId) => setEditDraft((current) => ({ ...current, projectId }))}
+            onChange={(projectId) => {
+              if (projectId) trackRecentProject(projectId);
+              setEditDraft((current) => ({ ...current, projectId }));
+            }}
             onConfirm={() => descriptionEditorRef.current?.focus()}
             renderTriggerValue={(option) =>
               option && currentProject ? (

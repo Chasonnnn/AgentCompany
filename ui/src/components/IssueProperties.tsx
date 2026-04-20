@@ -10,9 +10,16 @@ import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import {
+  getRecentAssigneeIds,
+  sortAgentsByRecency,
+  trackRecentAssignee,
+  trackRecentAssigneeUser,
+} from "../lib/recent-assignees";
+import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildExecutionPolicy, stageParticipantValues } from "../lib/issue-execution-policy";
+import { orderItemsBySelectedAndRecent } from "../lib/recent-selections";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { Identity } from "./Identity";
@@ -255,6 +262,7 @@ export function IssueProperties({
   };
 
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [assigneeOpen]);
+  const recentProjectIds = useMemo(() => getRecentProjectIds(), [projectOpen]);
   const sortedAgents = useMemo(
     () => sortAgentsByRecency((agents ?? []).filter((a) => a.status !== "terminated"), recentAssigneeIds),
     [agents, recentAssigneeIds],
@@ -483,6 +491,7 @@ export function IssueProperties({
               issue.assigneeUserId === currentUserId && "bg-accent",
             )}
             onClick={() => {
+              trackRecentAssigneeUser(currentUserId);
               onUpdate({ assigneeAgentId: null, assigneeUserId: currentUserId });
               setAssigneeOpen(false);
             }}
@@ -498,6 +507,7 @@ export function IssueProperties({
               issue.assigneeUserId === issue.createdByUserId && "bg-accent",
             )}
             onClick={() => {
+              if (issue.createdByUserId) trackRecentAssigneeUser(issue.createdByUserId);
               onUpdate({ assigneeAgentId: null, assigneeUserId: issue.createdByUserId });
               setAssigneeOpen(false);
             }}
@@ -628,25 +638,20 @@ export function IssueProperties({
         autoFocus={!inline}
       />
       <div className="max-h-48 overflow-y-auto overscroll-contain">
-        <button
-          className={cn(
-            "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 whitespace-nowrap",
-            !issue.projectId && "bg-accent"
-          )}
-          onClick={() => {
-            onUpdate({
-              projectId: null,
-              projectWorkspaceId: null,
-              executionWorkspaceId: null,
-              executionWorkspacePreference: null,
-              executionWorkspaceSettings: null,
-            });
-            setProjectOpen(false);
-          }}
-        >
-          No project
-        </button>
-        {orderedProjects
+        {orderItemsBySelectedAndRecent(
+          [
+            { id: "", kind: "none" as const, name: "No project", color: null as string | null },
+            ...orderedProjects.map((project) => ({
+              id: project.id,
+              kind: "project" as const,
+              name: project.name,
+              color: project.color ?? "#6366f1",
+              project,
+            })),
+          ],
+          issue.projectId ?? "",
+          recentProjectIds,
+        )
           .filter((p) => {
             if (!projectSearch.trim()) return true;
             const q = projectSearch.toLowerCase();
@@ -660,23 +665,36 @@ export function IssueProperties({
               p.id === issue.projectId && "bg-accent"
             )}
             onClick={() => {
-              const defaultMode = defaultExecutionWorkspaceModeForProject(p);
-              onUpdate({
-                projectId: p.id,
-                projectWorkspaceId: defaultProjectWorkspaceIdForProject(p),
-                executionWorkspaceId: null,
-                executionWorkspacePreference: defaultMode,
-                executionWorkspaceSettings: p.executionWorkspacePolicy?.enabled
-                  ? { mode: defaultMode }
-                  : null,
-              });
+              if (p.kind === "project") {
+                const defaultMode = defaultExecutionWorkspaceModeForProject(p.project);
+                trackRecentProject(p.project.id);
+                onUpdate({
+                  projectId: p.project.id,
+                  projectWorkspaceId: defaultProjectWorkspaceIdForProject(p.project),
+                  executionWorkspaceId: null,
+                  executionWorkspacePreference: defaultMode,
+                  executionWorkspaceSettings: p.project.executionWorkspacePolicy?.enabled
+                    ? { mode: defaultMode }
+                    : null,
+                });
+              } else {
+                onUpdate({
+                  projectId: null,
+                  projectWorkspaceId: null,
+                  executionWorkspaceId: null,
+                  executionWorkspacePreference: null,
+                  executionWorkspaceSettings: null,
+                });
+              }
               setProjectOpen(false);
             }}
           >
-            <span
-              className="shrink-0 h-3 w-3 rounded-sm"
-              style={{ backgroundColor: p.color ?? "#6366f1" }}
-            />
+            {p.kind === "project" ? (
+              <span
+                className="shrink-0 h-3 w-3 rounded-sm"
+                style={{ backgroundColor: p.color ?? "#6366f1" }}
+              />
+            ) : null}
             {p.name}
           </button>
         ))}
