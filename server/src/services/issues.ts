@@ -132,6 +132,25 @@ type IssueRelationSummaryMap = {
   blockedBy: IssueRelationIssueSummary[];
   blocks: IssueRelationIssueSummary[];
 };
+export type IssueDependencyReadiness = {
+  issueId: string;
+  blockerIssueIds: string[];
+  unresolvedBlockerIssueIds: string[];
+  unresolvedBlockerCount: number;
+  allBlockersDone: boolean;
+  isDependencyReady: boolean;
+};
+export type ChildIssueCompletionSummary = {
+  id: string;
+  identifier: string | null;
+  title: string;
+  status: string;
+  priority: string;
+  assigneeAgentId: string | null;
+  assigneeUserId: string | null;
+  updatedAt: Date;
+  summary: string | null;
+};
 
 function sameRunLock(checkoutRunId: string | null, actorRunId: string | null) {
   if (actorRunId) return checkoutRunId === actorRunId;
@@ -156,6 +175,96 @@ function chunkList<T>(values: T[], size: number): T[][] {
   return chunks;
 }
 
+function truncateInlineSummary(value: string | null | undefined, maxChars = CHILD_COMPLETION_SUMMARY_BODY_MAX_CHARS) {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  return normalized.length > maxChars ? `${normalized.slice(0, Math.max(0, maxChars - 15)).trimEnd()} [truncated]` : normalized;
+}
+
+function appendAcceptanceCriteriaToDescription(description: string | null | undefined, acceptanceCriteria: string[] | undefined) {
+  const criteria = (acceptanceCriteria ?? []).map((item) => item.trim()).filter(Boolean);
+  if (criteria.length === 0) return description ?? null;
+  const base = description?.trim() ?? "";
+  const criteriaMarkdown = ["## Acceptance Criteria", "", ...criteria.map((item) => `- ${item}`)].join("\n");
+  return base ? `${base}\n\n${criteriaMarkdown}` : criteriaMarkdown;
+}
+
+function createIssueDependencyReadiness(issueId: string): IssueDependencyReadiness {
+  return {
+    issueId,
+    blockerIssueIds: [],
+    unresolvedBlockerIssueIds: [],
+    unresolvedBlockerCount: 0,
+    allBlockersDone: true,
+    isDependencyReady: true,
+  };
+}
+
+async function listIssueDependencyReadinessMap(
+  dbOrTx: Pick<Db, "select">,
+  companyId: string,
+  issueIds: string[],
+) {
+  const uniqueIssueIds = [...new Set(issueIds.filter(Boolean))];
+  const readinessMap = new Map<string, IssueDependencyReadiness>();
+  for (const issueId of uniqueIssueIds) {
+    readinessMap.set(issueId, createIssueDependencyReadiness(issueId));
+  }
+  if (uniqueIssueIds.length === 0) return readinessMap;
+
+  const blockerRows = await dbOrTx
+    .select({
+      issueId: issueRelations.relatedIssueId,
+      blockerIssueId: issueRelations.issueId,
+      blockerStatus: issues.status,
+    })
+    .from(issueRelations)
+    .innerJoin(issues, eq(issueRelations.issueId, issues.id))
+    .where(
+      and(
+        eq(issueRelations.companyId, companyId),
+        eq(issueRelations.type, "blocks"),
+        inArray(issueRelations.relatedIssueId, uniqueIssueIds),
+      ),
+    );
+
+  for (const row of blockerRows) {
+    const current = readinessMap.get(row.issueId) ?? createIssueDependencyReadiness(row.issueId);
+    current.blockerIssueIds.push(row.blockerIssueId);
+    // Only done blockers resolve dependents; cancelled blockers stay unresolved
+    // until an operator removes or replaces the blocker relationship explicitly.
+    if (row.blockerStatus !== "done") {
+      current.unresolvedBlockerIssueIds.push(row.blockerIssueId);
+      current.unresolvedBlockerCount += 1;
+      current.allBlockersDone = false;
+      current.isDependencyReady = false;
+    }
+    readinessMap.set(row.issueId, current);
+  }
+
+  return readinessMap;
+}
+
+async function listUnresolvedBlockerIssueIds(
+  dbOrTx: Pick<Db, "select">,
+  companyId: string,
+  blockerIssueIds: string[],
+) {
+  const uniqueBlockerIssueIds = [...new Set(blockerIssueIds.filter(Boolean))];
+  if (uniqueBlockerIssueIds.length === 0) return [];
+  return dbOrTx
+    .select({ id: issues.id })
+    .from(issues)
+    .where(
+      and(
+        eq(issues.companyId, companyId),
+        inArray(issues.id, uniqueBlockerIssueIds),
+        // Cancelled blockers intentionally remain unresolved until the relation changes.
+        ne(issues.status, "done"),
+      ),
+    )
+    .then((rows) => rows.map((row) => row.id));
+}
 async function getProjectDefaultGoalId(
   db: ProjectGoalReader,
   companyId: string,
@@ -1339,6 +1448,21 @@ export function issueService(db: Db) {
       return relations.get(issueId) ?? { blockedBy: [], blocks: [] };
     },
 
+    getDependencyReadiness: async (issueId: string, dbOrTx: any = db) => {
+      const issue = await dbOrTx
+        .select({ id: issues.id, companyId: issues.companyId })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows: Array<{ id: string; companyId: string }>) => rows[0] ?? null);
+      if (!issue) throw notFound("Issue not found");
+      const readiness = await listIssueDependencyReadinessMap(dbOrTx, issue.companyId, [issueId]);
+      return readiness.get(issueId) ?? createIssueDependencyReadiness(issueId);
+    },
+
+    listDependencyReadiness: async (companyId: string, issueIds: string[], dbOrTx: any = db) => {
+      return listIssueDependencyReadinessMap(dbOrTx, companyId, issueIds);
+    },
+
     listWakeableBlockedDependents: async (blockerIssueId: string) => {
       const blockerIssue = await db
         .select({ id: issues.id, companyId: issues.companyId })
@@ -1669,6 +1793,16 @@ export function issueService(db: Db) {
       if (EXECUTING_ISSUE_STATUSES.has(nextStatus) && !nextAssigneeAgentId && !nextAssigneeUserId) {
         throw unprocessable(`${nextStatus} issues require an assignee`);
       }
+      if (patch.status === "in_progress") {
+        const unresolvedBlockerIssueIds = blockedByIssueIds !== undefined
+          ? await listUnresolvedBlockerIssueIds(dbOrTx, existing.companyId, blockedByIssueIds)
+          : (
+              await listIssueDependencyReadinessMap(dbOrTx, existing.companyId, [id])
+            ).get(id)?.unresolvedBlockerIssueIds ?? [];
+        if (unresolvedBlockerIssueIds.length > 0) {
+          throw unprocessable("Issue is blocked by unresolved blockers", { unresolvedBlockerIssueIds });
+        }
+      }
       if (issueData.assigneeAgentId) {
         await assertAssignableAgent(existing.companyId, issueData.assigneeAgentId);
       }
@@ -1837,6 +1971,12 @@ export function issueService(db: Db) {
             );
         }
       });
+
+      const dependencyReadiness = await listIssueDependencyReadinessMap(db, issueCompany.companyId, [id]);
+      const unresolvedBlockerIssueIds = dependencyReadiness.get(id)?.unresolvedBlockerIssueIds ?? [];
+      if (unresolvedBlockerIssueIds.length > 0) {
+        throw unprocessable("Issue is blocked by unresolved blockers", { unresolvedBlockerIssueIds });
+      }
 
       const sameRunAssigneeCondition = checkoutRunId
         ? and(
