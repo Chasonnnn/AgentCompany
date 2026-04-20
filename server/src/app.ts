@@ -32,6 +32,7 @@ import { evalRoutes } from "./routes/evals.js";
 import { sidebarBadgeRoutes } from "./routes/sidebar-badges.js";
 import { inboxDismissalRoutes } from "./routes/inbox-dismissals.js";
 import { instanceSettingsRoutes } from "./routes/instance-settings.js";
+import { userProfileRoutes } from "./routes/user-profiles.js";
 import {
   instanceDatabaseBackupRoutes,
   type InstanceDatabaseBackupService,
@@ -207,6 +208,7 @@ export async function createApp(
   api.use(evalRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(inboxDismissalRoutes(db));
+  api.use(userProfileRoutes(db));
   api.use(instanceSettingsRoutes(db));
   if (opts.databaseBackupService) {
     api.use(instanceDatabaseBackupRoutes(opts.databaseBackupService));

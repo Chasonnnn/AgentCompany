@@ -44,6 +44,7 @@ import { JoinRequestQueue } from "./pages/JoinRequestQueue";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { ProfileSettings } from "./pages/ProfileSettings";
+import { UserProfile } from "./pages/UserProfile";
 import { AdapterManager } from "./pages/AdapterManager";
 import { PluginPage } from "./pages/PluginPage";
 import { IssueChatUxLab } from "./pages/IssueChatUxLab";
@@ -139,6 +140,7 @@ function boardRoutes() {
       <Route path="company/settings/docs" element={<CompanySettingsDocs />} />
       <Route path="company/settings/access" element={<CompanyAccess />} />
       <Route path="company/settings/invites" element={<CompanyInvites />} />
+      <Route path="u/:userSlug" element={<UserProfile />} />
       <Route path="company/export/*" element={<CompanyExport />} />
       <Route path="company/import" element={<CompanyImport />} />
       <Route path="skills/*" element={<CompanySkills />} />

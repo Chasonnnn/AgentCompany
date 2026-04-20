@@ -41,6 +41,13 @@ describe("company routes", () => {
     expect(applyCompanyPrefix("/conference-room/open", "PAP")).toBe("/PAP/conference-room/open");
   });
 
+  it("treats user profile paths as board routes that need a company prefix", () => {
+    expect(isBoardPathWithoutPrefix("/u/board-user")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/u/board-user")).toBeNull();
+    expect(applyCompanyPrefix("/u/board-user", "PAP")).toBe("/PAP/u/board-user");
+    expect(toCompanyRelativePath("/PAP/u/board-user")).toBe("/u/board-user");
+  });
+
   it("normalizes prefixed conference room paths back to company-relative paths", () => {
     expect(toCompanyRelativePath("/PAP/conference-room/rooms/room-123")).toBe(
       "/conference-room/rooms/room-123",

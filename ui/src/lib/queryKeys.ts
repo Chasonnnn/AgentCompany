@@ -138,6 +138,8 @@ export const queryKeys = {
     currentBoardAccess: ["access", "current-board-access"] as const,
     invite: (token: string) => ["access", "invite", token] as const,
   },
+  userProfile: (companyId: string, userSlug: string) =>
+    ["user-profile", companyId, userSlug] as const,
   auth: {
     session: ["auth", "session"] as const,
   },

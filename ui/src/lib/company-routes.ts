@@ -2,6 +2,7 @@ const BOARD_ROUTE_ROOTS = new Set([
   "dashboard",
   "companies",
   "company",
+  "u",
   "skills",
   "conference-room",
   "org",

@@ -148,6 +148,16 @@ export type {
   UserCompanyAccessResponse,
 } from "./access.js";
 export type {
+  UserProfileIdentity,
+  UserProfileWindowStats,
+  UserProfileDailyPoint,
+  UserProfileIssueSummary,
+  UserProfileActivitySummary,
+  UserProfileAgentUsage,
+  UserProfileProviderUsage,
+  UserProfileResponse,
+} from "./user-profile.js";
+export type {
   Project,
   ProjectCodebase,
   ProjectCodebaseOrigin,
