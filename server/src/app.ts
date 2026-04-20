@@ -107,6 +107,25 @@ export function shouldEnablePrivateHostnameGuard(opts: {
     (opts.deploymentMode === "local_trusted" || opts.deploymentMode === "authenticated")
   );
 }
+
+export function resolveStaticUiDist(
+  dirname: string,
+  hasIndexHtml: (indexHtmlPath: string) => boolean = fs.existsSync,
+): string | null {
+  const candidates = [
+    // In a local monorepo checkout, prefer the fresh workspace UI build.
+    path.resolve(dirname, "../../ui/dist"),
+    // Fallback for packaged server artifacts prepared via scripts/prepare-server-ui-dist.sh.
+    path.resolve(dirname, "../ui-dist"),
+  ];
+  for (const candidate of candidates) {
+    if (hasIndexHtml(path.join(candidate, "index.html"))) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export async function createApp(
   db: Db,
   opts: {
@@ -300,12 +319,7 @@ export async function createApp(
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   if (opts.uiMode === "static") {
-    // Try published location first (server/ui-dist/), then monorepo dev location (../../ui/dist)
-    const candidates = [
-      path.resolve(__dirname, "../ui-dist"),
-      path.resolve(__dirname, "../../ui/dist"),
-    ];
-    const uiDist = candidates.find((p) => fs.existsSync(path.join(p, "index.html")));
+    const uiDist = resolveStaticUiDist(__dirname);
     if (uiDist) {
       const indexHtml = applyUiBranding(fs.readFileSync(path.join(uiDist, "index.html"), "utf-8"));
       // Hashed asset files (Vite emits them under /assets/<name>.<hash>.<ext>)
