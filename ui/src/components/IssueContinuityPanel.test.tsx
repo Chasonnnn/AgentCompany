@@ -12,6 +12,7 @@ import {
   type IssueContinuityDocumentSnapshot,
   type IssueContinuityRemediation,
   type IssueContinuityState,
+  type IssueDecisionQuestion,
 } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueContinuityPanel } from "./IssueContinuityPanel";
@@ -236,6 +237,7 @@ function createContinuityBundle(
   state: IssueContinuityState,
   issue: Issue,
   issueDocumentBodies: Partial<Record<string, string | null>>,
+  decisionQuestions: IssueDecisionQuestion[] = [],
 ): IssueContinuityBundle {
   return {
     issueId: issue.id,
@@ -244,7 +246,7 @@ function createContinuityBundle(
     continuityState: state,
     executionState: null,
     planApproval: state.planApproval,
-    decisionQuestions: [],
+    decisionQuestions,
     issueDocuments: {
       spec: issueDocumentBodies.spec ? createSnapshot("spec", issueDocumentBodies.spec) : null,
       plan: issueDocumentBodies.plan ? createSnapshot("plan", issueDocumentBodies.plan) : null,
@@ -263,19 +265,61 @@ function createContinuityBundle(
   };
 }
 
+function createDecisionQuestion(overrides: Partial<IssueDecisionQuestion> = {}): IssueDecisionQuestion {
+  return {
+    id: "question-1",
+    companyId: "company-1",
+    issueId: "issue-1",
+    target: "board",
+    requestedByAgentId: "agent-1",
+    requestedByUserId: null,
+    status: "open",
+    blocking: true,
+    title: "Pick the rollout path",
+    question: "Which rollout path should we use?",
+    whyBlocked: "The execution plan depends on the rollout shape.",
+    recommendedOptions: [
+      {
+        key: "incremental",
+        label: "Incremental",
+        description: "Lower risk, slower cleanup.",
+      },
+      {
+        key: "rebuild",
+        label: "Rebuild",
+        description: "Faster reset, higher migration risk.",
+      },
+    ],
+    suggestedDefault: "incremental",
+    answer: null,
+    answeredByUserId: null,
+    answeredAt: null,
+    linkedApprovalId: null,
+    createdAt: new Date("2026-04-17T12:00:00.000Z"),
+    updatedAt: new Date("2026-04-17T12:00:00.000Z"),
+    ...overrides,
+  };
+}
+
 function createContinuityResponse(options?: {
   issue?: Issue;
   state?: IssueContinuityState;
   issueDocumentBodies?: Partial<Record<string, string | null>>;
   activeGateParticipant?: IssueContinuityResponse["activeGateParticipant"];
   remediation?: IssueContinuityRemediation;
+  decisionQuestions?: IssueDecisionQuestion[];
 }): IssueContinuityResponse {
   const issue = options?.issue ?? createIssue();
   const state = options?.state ?? createContinuityState();
   return {
     issueId: issue.id,
     continuityState: state,
-    continuityBundle: createContinuityBundle(state, issue, options?.issueDocumentBodies ?? {}),
+    continuityBundle: createContinuityBundle(
+      state,
+      issue,
+      options?.issueDocumentBodies ?? {},
+      options?.decisionQuestions ?? [],
+    ),
     continuityOwner: {
       assigneeAgentId: issue.assigneeAgentId,
       assigneeUserId: issue.assigneeUserId,
@@ -518,5 +562,163 @@ describe("IssueContinuityPanel", () => {
     expect(container.textContent).toContain("Tighten the rollout plan before execution.");
     expect(container.textContent).toContain("Open plan approval");
     expect(container.textContent).toContain("Revise plan and resubmit");
+  });
+
+  it("uses an option-first answer form and removes note fields", async () => {
+    const question = createDecisionQuestion();
+    const response = createContinuityResponse({
+      issue: createIssue(),
+      decisionQuestions: [question],
+    });
+
+    await renderPanel({ response });
+
+    const openQuestionButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Answer / dismiss"));
+    expect(openQuestionButton).toBeTruthy();
+
+    await act(async () => {
+      openQuestionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.querySelector("textarea[placeholder='Add your own comment']")).toBeTruthy();
+    expect(container.querySelector("textarea[placeholder='Optional note']")).toBeNull();
+    expect(container.querySelector("textarea[placeholder='Dismissal note (optional)']")).toBeNull();
+    expect(container.querySelector("textarea[placeholder='Approval escalation summary (optional)']")).toBeNull();
+
+    const answerButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Answer");
+    expect(answerButton?.hasAttribute("disabled")).toBe(true);
+
+    const incrementalOption = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Incremental"));
+    expect(incrementalOption).toBeTruthy();
+
+    await act(async () => {
+      incrementalOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(answerButton?.hasAttribute("disabled")).toBe(false);
+
+    await act(async () => {
+      answerButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockIssuesApi.answerQuestion).toHaveBeenCalledWith(question.id, {
+      selectedOptionKey: "incremental",
+    });
+  });
+
+  it("clears the selected option when a custom comment is entered and uses empty dismiss/escalation payloads", async () => {
+    const question = createDecisionQuestion();
+    const response = createContinuityResponse({
+      issue: createIssue(),
+      decisionQuestions: [question],
+    });
+
+    await renderPanel({ response });
+
+    const findOpenQuestionButton = () => Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Answer / dismiss"));
+    const openQuestionButton = findOpenQuestionButton();
+    expect(openQuestionButton).toBeTruthy();
+
+    await act(async () => {
+      openQuestionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const incrementalOption = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Incremental"));
+    const customComment = container.querySelector("textarea[placeholder='Add your own comment']") as HTMLTextAreaElement | null;
+    expect(incrementalOption).toBeTruthy();
+    expect(customComment).toBeTruthy();
+
+    await act(async () => {
+      incrementalOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(incrementalOption?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(customComment, "Use a staged rollout with one extra audit pass.");
+      customComment?.dispatchEvent(new Event("input", { bubbles: true }));
+      customComment?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const answerButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Answer");
+    await act(async () => {
+      answerButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockIssuesApi.answerQuestion).toHaveBeenCalledWith(question.id, {
+      answer: "Use a staged rollout with one extra audit pass.",
+    });
+
+    await act(async () => {
+      findOpenQuestionButton()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dismissButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Dismiss");
+    const escalateButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Escalate to approval");
+    expect(dismissButton).toBeTruthy();
+    expect(escalateButton).toBeTruthy();
+
+    await act(async () => {
+      dismissButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockIssuesApi.dismissQuestion).toHaveBeenCalledWith(question.id, {});
+
+    await act(async () => {
+      findOpenQuestionButton()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const reopenedEscalateButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Escalate to approval");
+    await act(async () => {
+      reopenedEscalateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockIssuesApi.escalateQuestionApproval).toHaveBeenCalledWith(question.id, {});
+  });
+
+  it("renders answered options distinctly from freeform answers", async () => {
+    const response = createContinuityResponse({
+      issue: createIssue(),
+      decisionQuestions: [
+        createDecisionQuestion({
+          id: "question-answered-option",
+          status: "answered",
+          answer: {
+            selectedOptionKey: "incremental",
+            answer: "Incremental",
+            note: null,
+          },
+          answeredAt: new Date("2026-04-17T12:10:00.000Z"),
+        }),
+        createDecisionQuestion({
+          id: "question-answered-comment",
+          title: "Pick the fallback strategy",
+          status: "answered",
+          answer: {
+            selectedOptionKey: null,
+            answer: "Pause rollout until the test plan is expanded.",
+            note: null,
+          },
+          answeredAt: new Date("2026-04-17T12:12:00.000Z"),
+        }),
+      ],
+    });
+
+    await renderPanel({ response });
+
+    expect(container.textContent).toContain("Selected option: Incremental");
+    expect(container.textContent).toContain("Answer: Pause rollout until the test plan is expanded.");
   });
 });

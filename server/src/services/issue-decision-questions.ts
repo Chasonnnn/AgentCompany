@@ -182,14 +182,25 @@ export function issueDecisionQuestionService(db: Db) {
       if (existing.status !== "open") {
         throw unprocessable("Only open decision questions can be answered");
       }
+      const currentQuestion = toDecisionQuestion(existing);
+      const selectedOption = parsed.selectedOptionKey
+        ? currentQuestion.recommendedOptions.find((option) => option.key === parsed.selectedOptionKey) ?? null
+        : null;
+      if (parsed.selectedOptionKey && !selectedOption) {
+        throw unprocessable("Selected option is not available for this decision question");
+      }
+      const resolvedAnswer = selectedOption?.label ?? parsed.answer ?? null;
+      if (!resolvedAnswer) {
+        throw unprocessable("Decision answer is required");
+      }
       const updated = await db
         .update(issueDecisionQuestions)
         .set({
           status: "answered",
           answer: {
-            selectedOptionKey: parsed.selectedOptionKey ?? null,
-            answer: parsed.answer,
-            note: parsed.note ?? null,
+            selectedOptionKey: selectedOption?.key ?? null,
+            answer: resolvedAnswer,
+            note: null,
           },
           answeredByUserId: actor.userId,
           answeredAt: new Date(),

@@ -1,7 +1,9 @@
 import type {
   Approval,
+  AnswerIssueDecisionQuestion,
   ConferenceContext,
   DocumentRevision,
+  DismissIssueDecisionQuestion,
   IssueBranchMergePreview,
   IssueBranchReturnDocument,
   IssueContinuityRemediation,
@@ -38,6 +40,10 @@ export interface IssueContinuityResponse {
   activeGateParticipant: IssueExecutionStagePrincipal | null;
   remediation: IssueContinuityRemediation;
 }
+
+type AnswerIssueDecisionQuestionRequest =
+  Omit<AnswerIssueDecisionQuestion, "escalateToApproval">
+  & { escalateToApproval?: boolean };
 
 export const issuesApi = {
   list: (
@@ -115,12 +121,7 @@ export const issuesApi = {
     }>(`/issues/${id}/questions`, data),
   answerQuestion: (
     questionId: string,
-    data: {
-      selectedOptionKey?: string | null;
-      answer: string;
-      note?: string | null;
-      escalateToApproval?: boolean;
-    },
+    data: AnswerIssueDecisionQuestionRequest,
   ) =>
     api.post<{
       question: IssueDecisionQuestion;
@@ -128,7 +129,7 @@ export const issuesApi = {
       continuityBundle: IssueContinuityBundle;
       shouldEscalateToApproval?: boolean;
     }>(`/questions/${questionId}/answer`, data),
-  dismissQuestion: (questionId: string, data: { note?: string | null }) =>
+  dismissQuestion: (questionId: string, data: DismissIssueDecisionQuestion) =>
     api.post<{
       question: IssueDecisionQuestion;
       continuityState: IssueContinuityState;

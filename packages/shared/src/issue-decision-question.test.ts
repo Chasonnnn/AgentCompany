@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { issueDecisionQuestionSchema } from "./index.js";
+import { answerIssueDecisionQuestionSchema, issueDecisionQuestionSchema } from "./index.js";
 
 describe("issue decision question schema", () => {
   it("round-trips structured board questions", () => {
@@ -43,5 +43,34 @@ describe("issue decision question schema", () => {
     expect(parsed.status).toBe("answered");
     expect(parsed.answer?.selectedOptionKey).toBe("incremental");
     expect(parsed.recommendedOptions).toHaveLength(2);
+  });
+
+  it("accepts option-only answer payloads", () => {
+    const parsed = answerIssueDecisionQuestionSchema.parse({
+      selectedOptionKey: "incremental",
+    });
+
+    expect(parsed.selectedOptionKey).toBe("incremental");
+    expect(parsed.answer).toBeUndefined();
+  });
+
+  it("accepts custom-comment answer payloads", () => {
+    const parsed = answerIssueDecisionQuestionSchema.parse({
+      answer: "Add one more audit pass before rollout.",
+    });
+
+    expect(parsed.answer).toBe("Add one more audit pass before rollout.");
+    expect(parsed.selectedOptionKey).toBeUndefined();
+  });
+
+  it("rejects payloads that include both an option and a custom answer", () => {
+    expect(() => answerIssueDecisionQuestionSchema.parse({
+      selectedOptionKey: "incremental",
+      answer: "Incremental with an extra migration buffer.",
+    })).toThrow(/exactly one/i);
+  });
+
+  it("rejects payloads that include neither an option nor a custom answer", () => {
+    expect(() => answerIssueDecisionQuestionSchema.parse({})).toThrow(/exactly one/i);
   });
 });

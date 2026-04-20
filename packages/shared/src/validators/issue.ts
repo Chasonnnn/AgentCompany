@@ -281,9 +281,19 @@ export const createIssueDecisionQuestionSchema = z.object({
 
 export const answerIssueDecisionQuestionSchema = z.object({
   selectedOptionKey: z.string().trim().min(1).optional().nullable(),
-  answer: z.string().trim().min(1),
-  note: z.string().trim().min(1).optional().nullable(),
+  answer: z.string().trim().min(1).optional().nullable(),
   escalateToApproval: z.boolean().optional().default(false),
+}).superRefine((value, ctx) => {
+  const hasSelectedOption = typeof value.selectedOptionKey === "string" && value.selectedOptionKey.trim().length > 0;
+  const hasCustomAnswer = typeof value.answer === "string" && value.answer.trim().length > 0;
+
+  if (hasSelectedOption === hasCustomAnswer) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide exactly one of selectedOptionKey or answer",
+      path: hasSelectedOption ? ["answer"] : ["selectedOptionKey"],
+    });
+  }
 });
 
 export const dismissIssueDecisionQuestionSchema = z.object({

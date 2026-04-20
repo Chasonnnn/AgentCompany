@@ -124,6 +124,60 @@ describe("Paperclip room wake prompts", () => {
     expect(prompt).toContain("The board answered your decision question.");
   });
 
+  it("renders option-only decision answers using the canonical option label", () => {
+    const payload = {
+      reason: "decision_question_answered",
+      issue: {
+        id: "issue-1",
+        identifier: "AIW-12",
+        title: "Audit the architecture",
+        status: "todo",
+        priority: "high",
+      },
+      planningMode: true,
+      continuityStatus: "planning",
+      openDecisionQuestionCount: 0,
+      blockingDecisionQuestionCount: 0,
+      decisionQuestion: {
+        id: "question-1",
+        status: "answered",
+        blocking: true,
+        title: "Pick the first audit slice",
+        question: "Should the audit start with runtime or governance?",
+        whyBlocked: "The plan shape changes depending on the first slice.",
+        suggestedDefault: "runtime",
+        linkedApprovalId: null,
+        recommendedOptions: [
+          { key: "runtime", label: "Runtime" },
+          { key: "governance", label: "Governance" },
+        ],
+        answer: {
+          answer: "Runtime",
+          selectedOptionKey: "runtime",
+          note: null,
+        },
+      },
+      checkedOutByHarness: false,
+      executionStage: null,
+      commentIds: [],
+      latestCommentId: null,
+      comments: [],
+      requestedCount: 0,
+      includedCount: 0,
+      missingCount: 0,
+      truncated: false,
+      fallbackFetchNeeded: false,
+      conferenceRoom: null,
+      conferenceRoomMessage: null,
+      conferenceRoomThread: [],
+      conferenceRoomPendingResponses: [],
+    };
+
+    const prompt = renderPaperclipWakePrompt(payload);
+
+    expect(prompt).toContain("board answer: Runtime");
+  });
+
   it("renders plan approval revision guidance for issue wakes", () => {
     const payload = {
       reason: "approval_revision_requested",

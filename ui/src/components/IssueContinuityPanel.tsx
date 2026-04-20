@@ -292,10 +292,7 @@ export function IssueContinuityPanel({
   const [questionBlocking, setQuestionBlocking] = useState(true);
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
   const [questionAnswer, setQuestionAnswer] = useState("");
-  const [questionAnswerNote, setQuestionAnswerNote] = useState("");
   const [questionAnswerOptionKey, setQuestionAnswerOptionKey] = useState("");
-  const [questionDismissNote, setQuestionDismissNote] = useState("");
-  const [questionEscalationSummary, setQuestionEscalationSummary] = useState("");
   const [selectedMergeBranchId, setSelectedMergeBranchId] = useState<string | null>(null);
   const [selectedMergeKeys, setSelectedMergeKeys] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -336,6 +333,12 @@ export function IssueContinuityPanel({
         : Promise.resolve(),
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByParent(issue.companyId, issue.id) }),
     ]);
+  };
+
+  const resetDecisionQuestionComposer = () => {
+    setActiveQuestionId(null);
+    setQuestionAnswer("");
+    setQuestionAnswerOptionKey("");
   };
 
   const prepareMutation = useMutation({
@@ -608,56 +611,40 @@ export function IssueContinuityPanel({
   });
 
   const answerQuestionMutation = useMutation({
-    mutationFn: (questionId: string) =>
-      issuesApi.answerQuestion(questionId, {
-        selectedOptionKey: questionAnswerOptionKey || null,
-        answer: questionAnswer.trim(),
-        note: questionAnswerNote.trim() || null,
-      }),
+    mutationFn: (questionId: string) => {
+      const trimmedAnswer = questionAnswer.trim();
+      if (questionAnswerOptionKey) {
+        return issuesApi.answerQuestion(questionId, {
+          selectedOptionKey: questionAnswerOptionKey,
+        });
+      }
+      return issuesApi.answerQuestion(questionId, {
+        answer: trimmedAnswer,
+      });
+    },
     onSuccess: async () => {
       setError(null);
-      setActiveQuestionId(null);
-      setQuestionAnswer("");
-      setQuestionAnswerNote("");
-      setQuestionAnswerOptionKey("");
-      setQuestionDismissNote("");
-      setQuestionEscalationSummary("");
+      resetDecisionQuestionComposer();
       await invalidate();
     },
     onError: (err) => setError(err instanceof Error ? err.message : "Failed to answer decision question"),
   });
 
   const dismissQuestionMutation = useMutation({
-    mutationFn: (questionId: string) =>
-      issuesApi.dismissQuestion(questionId, {
-        note: questionDismissNote.trim() || null,
-      }),
+    mutationFn: (questionId: string) => issuesApi.dismissQuestion(questionId, {}),
     onSuccess: async () => {
       setError(null);
-      setActiveQuestionId(null);
-      setQuestionAnswer("");
-      setQuestionAnswerNote("");
-      setQuestionAnswerOptionKey("");
-      setQuestionDismissNote("");
-      setQuestionEscalationSummary("");
+      resetDecisionQuestionComposer();
       await invalidate();
     },
     onError: (err) => setError(err instanceof Error ? err.message : "Failed to dismiss decision question"),
   });
 
   const escalateQuestionMutation = useMutation({
-    mutationFn: (questionId: string) =>
-      issuesApi.escalateQuestionApproval(questionId, {
-        summary: questionEscalationSummary.trim() || null,
-      }),
+    mutationFn: (questionId: string) => issuesApi.escalateQuestionApproval(questionId, {}),
     onSuccess: async () => {
       setError(null);
-      setActiveQuestionId(null);
-      setQuestionAnswer("");
-      setQuestionAnswerNote("");
-      setQuestionAnswerOptionKey("");
-      setQuestionDismissNote("");
-      setQuestionEscalationSummary("");
+      resetDecisionQuestionComposer();
       await invalidate();
     },
     onError: (err) => setError(err instanceof Error ? err.message : "Failed to escalate decision question"),
@@ -1060,94 +1047,127 @@ export function IssueContinuityPanel({
       {openDecisionQuestions.length > 0 ? (
         <SectionCard title="Open decision questions" subtitle="Blocking questions pause work until the board answers or dismisses them.">
           <div className="space-y-2">
-            {openDecisionQuestions.map((question) => (
-              <div key={question.id} className="rounded-md border border-border/70 bg-background/80 p-3 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-xs font-medium text-foreground">{question.title}</div>
-                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase">
-                    {question.blocking ? "blocking" : "non-blocking"}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">{question.question}</p>
-                {question.whyBlocked ? (
-                  <p className="text-xs">
-                    <span className="font-medium text-foreground">Why blocked:</span> {question.whyBlocked}
-                  </p>
-                ) : null}
-                {question.recommendedOptions.length > 0 ? (
-                  <ul className="space-y-1 text-xs text-muted-foreground">
-                    {question.recommendedOptions.map((option) => (
-                      <li key={option.key}>
-                        <span className="font-medium text-foreground">{option.label}</span>
-                        {option.description ? ` — ${option.description}` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => {
-                    setActiveQuestionId(question.id);
-                    setQuestionAnswer("");
-                    setQuestionAnswerNote("");
-                    setQuestionAnswerOptionKey(question.recommendedOptions[0]?.key ?? "");
-                    setQuestionDismissNote("");
-                    setQuestionEscalationSummary("");
-                  }}>
-                    Answer / dismiss
-                  </Button>
-                </div>
-                {activeDecisionQuestion?.id === question.id ? (
-                  <div className="grid gap-2 md:grid-cols-2">
-                    {question.recommendedOptions.length > 0 ? (
-                      <select
-                        value={questionAnswerOptionKey}
-                        onChange={(event) => setQuestionAnswerOptionKey(event.target.value)}
-                        className="h-9 rounded-md border border-border bg-background px-2 text-sm md:col-span-2"
-                      >
-                        <option value="">No option selected</option>
-                        {question.recommendedOptions.map((option) => (
-                          <option key={option.key} value={option.key}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : null}
-                    <Textarea value={questionAnswer} onChange={(event) => setQuestionAnswer(event.target.value)} placeholder="Structured answer" className="md:col-span-2" />
-                    <Textarea value={questionAnswerNote} onChange={(event) => setQuestionAnswerNote(event.target.value)} placeholder="Optional note" className="md:col-span-2" />
-                    <Textarea value={questionDismissNote} onChange={(event) => setQuestionDismissNote(event.target.value)} placeholder="Dismissal note (optional)" className="md:col-span-2" />
-                    <Textarea value={questionEscalationSummary} onChange={(event) => setQuestionEscalationSummary(event.target.value)} placeholder="Approval escalation summary (optional)" className="md:col-span-2" />
-                    <div className="md:col-span-2 flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => answerQuestionMutation.mutate(question.id)}
-                        disabled={answerQuestionMutation.isPending || !questionAnswer.trim()}
-                      >
-                        {answerQuestionMutation.isPending ? "Saving…" : "Answer"}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => dismissQuestionMutation.mutate(question.id)}
-                        disabled={dismissQuestionMutation.isPending}
-                      >
-                        {dismissQuestionMutation.isPending ? "Dismissing…" : "Dismiss"}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => escalateQuestionMutation.mutate(question.id)}
-                        disabled={escalateQuestionMutation.isPending}
-                      >
-                        {escalateQuestionMutation.isPending ? "Escalating…" : "Escalate to approval"}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setActiveQuestionId(null)}>
-                        Cancel
-                      </Button>
-                    </div>
+            {openDecisionQuestions.map((question) => {
+              const hasSelectedOption = questionAnswerOptionKey.length > 0;
+              const hasCustomComment = questionAnswer.trim().length > 0;
+              const canAnswerQuestion = hasSelectedOption !== hasCustomComment;
+
+              return (
+                <div key={question.id} className="rounded-md border border-border/70 bg-background/80 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-xs font-medium text-foreground">{question.title}</div>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase">
+                      {question.blocking ? "blocking" : "non-blocking"}
+                    </span>
                   </div>
-                ) : null}
-              </div>
-            ))}
+                  <p className="text-xs text-muted-foreground">{question.question}</p>
+                  {question.whyBlocked ? (
+                    <p className="text-xs">
+                      <span className="font-medium text-foreground">Why blocked:</span> {question.whyBlocked}
+                    </p>
+                  ) : null}
+                  {question.recommendedOptions.length > 0 ? (
+                    <ul className="space-y-1 text-xs text-muted-foreground">
+                      {question.recommendedOptions.map((option) => (
+                        <li key={option.key}>
+                          <span className="font-medium text-foreground">{option.label}</span>
+                          {option.description ? ` — ${option.description}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => {
+                      setActiveQuestionId(question.id);
+                      setQuestionAnswer("");
+                      setQuestionAnswerOptionKey("");
+                    }}>
+                      Answer / dismiss
+                    </Button>
+                  </div>
+                  {activeDecisionQuestion?.id === question.id ? (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {question.recommendedOptions.length > 0 ? (
+                        <div className="space-y-2 md:col-span-2" role="radiogroup" aria-label="Recommended options">
+                          {question.recommendedOptions.map((option) => {
+                            const selected = questionAnswerOptionKey === option.key;
+
+                            return (
+                              <button
+                                key={option.key}
+                                type="button"
+                                className={cn(
+                                  "w-full rounded-md border px-3 py-2 text-left transition-colors",
+                                  selected
+                                    ? "border-primary bg-primary/10 text-foreground"
+                                    : "border-border/70 bg-background hover:border-border",
+                                )}
+                                aria-pressed={selected}
+                                onClick={() => {
+                                  setQuestionAnswerOptionKey(selected ? "" : option.key);
+                                  setQuestionAnswer("");
+                                }}
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-sm font-medium text-foreground">{option.label}</span>
+                                  {question.suggestedDefault === option.key ? (
+                                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
+                                      Suggested
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {option.description ? (
+                                  <div className="mt-1 text-xs text-muted-foreground">{option.description}</div>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      <Textarea
+                        value={questionAnswer}
+                        onChange={(event) => {
+                          setQuestionAnswer(event.target.value);
+                          if (event.target.value.trim().length > 0) {
+                            setQuestionAnswerOptionKey("");
+                          }
+                        }}
+                        placeholder={question.recommendedOptions.length > 0 ? "Add your own comment" : "Answer"}
+                        className="md:col-span-2"
+                      />
+                      <div className="md:col-span-2 flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => answerQuestionMutation.mutate(question.id)}
+                          disabled={answerQuestionMutation.isPending || !canAnswerQuestion}
+                        >
+                          {answerQuestionMutation.isPending ? "Saving…" : "Answer"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => dismissQuestionMutation.mutate(question.id)}
+                          disabled={dismissQuestionMutation.isPending}
+                        >
+                          {dismissQuestionMutation.isPending ? "Dismissing…" : "Dismiss"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => escalateQuestionMutation.mutate(question.id)}
+                          disabled={escalateQuestionMutation.isPending}
+                        >
+                          {escalateQuestionMutation.isPending ? "Escalating…" : "Escalate to approval"}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={resetDecisionQuestionComposer}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </SectionCard>
       ) : null}
@@ -1155,18 +1175,27 @@ export function IssueContinuityPanel({
       {answeredDecisionQuestions.length > 0 ? (
         <SectionCard title="Answered decisions" subtitle="Recent board answers persisted as decision artifacts.">
           <div className="space-y-2 text-xs">
-            {answeredDecisionQuestions.map((question) => (
-              <div key={question.id} className="rounded-md border border-border/70 bg-background/80 p-3 space-y-1">
-                <div className="font-medium text-foreground">{question.title}</div>
-                <p className="text-muted-foreground">{question.question}</p>
-                <p>
-                  <span className="font-medium text-foreground">Answer:</span> {question.answer?.answer ?? "none"}
-                </p>
-                <p className="text-muted-foreground">
-                  {question.answeredAt ? `Answered ${relativeTime(question.answeredAt)}` : "Answered"}
-                </p>
-              </div>
-            ))}
+            {answeredDecisionQuestions.map((question) => {
+              const selectedOption = question.answer?.selectedOptionKey
+                ? question.recommendedOptions.find((option) => option.key === question.answer?.selectedOptionKey) ?? null
+                : null;
+
+              return (
+                <div key={question.id} className="rounded-md border border-border/70 bg-background/80 p-3 space-y-1">
+                  <div className="font-medium text-foreground">{question.title}</div>
+                  <p className="text-muted-foreground">{question.question}</p>
+                  <p>
+                    <span className="font-medium text-foreground">
+                      {selectedOption ? "Selected option:" : "Answer:"}
+                    </span>{" "}
+                    {selectedOption?.label ?? question.answer?.answer ?? "none"}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {question.answeredAt ? `Answered ${relativeTime(question.answeredAt)}` : "Answered"}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </SectionCard>
       ) : null}
