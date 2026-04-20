@@ -247,6 +247,7 @@ export {
 
 export {
   createIssueSchema,
+  createChildIssueSchema,
   createIssueLabelSchema,
   updateIssueSchema,
   issueExecutionPolicySchema,
@@ -298,6 +299,7 @@ export {
   returnIssueContinuityBranchSchema,
   mergeIssueContinuityBranchSchema,
   type CreateIssue,
+  type CreateChildIssue,
   type CreateIssueLabel,
   type UpdateIssue,
   type IssueExecutionWorkspaceSettings,
@@ -463,6 +465,8 @@ export {
   pluginLauncherActionDeclarationSchema,
   pluginLauncherRenderDeclarationSchema,
   pluginLauncherDeclarationSchema,
+  pluginDatabaseDeclarationSchema,
+  pluginApiRouteDeclarationSchema,
   pluginManifestV1Schema,
   installPluginSchema,
   upsertPluginConfigSchema,
@@ -479,6 +483,8 @@ export {
   type PluginLauncherActionDeclarationInput,
   type PluginLauncherRenderDeclarationInput,
   type PluginLauncherDeclarationInput,
+  type PluginDatabaseDeclarationInput,
+  type PluginApiRouteDeclarationInput,
   type PluginManifestV1Input,
   type InstallPlugin,
   type UpsertPluginConfig,

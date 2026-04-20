@@ -48,6 +48,7 @@ import type { PluginJobScheduler } from "./plugin-job-scheduler.js";
 import type { PluginJobStore } from "./plugin-job-store.js";
 import type { PluginToolDispatcher } from "./plugin-tool-dispatcher.js";
 import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
+import { pluginDatabaseService } from "./plugin-database.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1701,14 +1702,22 @@ export function pluginLoader(
       // 1. Resolve worker entrypoint
       // ------------------------------------------------------------------
       const workerEntrypoint = resolveWorkerEntrypoint(plugin, localPluginDir);
+      const packageRoot = resolvePluginPackageRoot(plugin, localPluginDir);
 
       // ------------------------------------------------------------------
-      // 2. Build host handlers for this plugin
+      // 2. Apply restricted database migrations before worker startup
+      // ------------------------------------------------------------------
+      const databaseNamespace = manifest.database
+        ? (await pluginDatabaseService(db).applyMigrations(pluginId, manifest, packageRoot))?.namespaceName ?? null
+        : null;
+
+      // ------------------------------------------------------------------
+      // 3. Build host handlers for this plugin
       // ------------------------------------------------------------------
       const hostHandlers = buildHostHandlers(pluginId, manifest);
 
       // ------------------------------------------------------------------
-      // 3. Retrieve plugin config (if any)
+      // 4. Retrieve plugin config (if any)
       // ------------------------------------------------------------------
       let config: Record<string, unknown> = {};
       try {
@@ -1722,7 +1731,7 @@ export function pluginLoader(
       }
 
       // ------------------------------------------------------------------
-      // 4. Spawn worker process
+      // 5. Spawn worker process
       // ------------------------------------------------------------------
       const workerOptions: WorkerStartOptions = {
         entrypointPath: workerEntrypoint,
@@ -1730,6 +1739,7 @@ export function pluginLoader(
         config,
         instanceInfo,
         apiVersion: manifest.apiVersion,
+        databaseNamespace,
         hostHandlers,
         autoRestart: true,
       };
@@ -1750,7 +1760,7 @@ export function pluginLoader(
       );
 
       // ------------------------------------------------------------------
-      // 5. Sync job declarations and register with scheduler
+      // 6. Sync job declarations and register with scheduler
       // ------------------------------------------------------------------
       const jobDeclarations = manifest.jobs ?? [];
       if (jobDeclarations.length > 0) {
@@ -1937,6 +1947,26 @@ function resolveWorkerEntrypoint(
       `Checked: ${path.resolve(packageDir, workerRelPath)}, ` +
       `${path.resolve(directDir, workerRelPath)}`,
   );
+}
+
+function resolvePluginPackageRoot(
+  plugin: PluginRecord & { packagePath?: string | null },
+  localPluginDir: string,
+): string {
+  if (plugin.packagePath && existsSync(plugin.packagePath)) {
+    return path.resolve(plugin.packagePath);
+  }
+
+  const packageName = plugin.packageName;
+  const packageDir = packageName.startsWith("@")
+    ? path.join(localPluginDir, "node_modules", ...packageName.split("/"))
+    : path.join(localPluginDir, "node_modules", packageName);
+  if (existsSync(packageDir)) return packageDir;
+
+  const directDir = path.join(localPluginDir, packageName);
+  if (existsSync(directDir)) return directDir;
+
+  throw new Error(`Package root not found for plugin "${plugin.pluginKey}"`);
 }
 
 function resolveManagedInstallPackageDir(localPluginDir: string, packageName: string): string {
