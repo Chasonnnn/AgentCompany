@@ -131,6 +131,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
   env.PAPERCLIP_RUN_ID = runId;
+  env.PAPERCLIP_NATIVE_DECISION_QUESTIONS = "1";
 
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -450,7 +451,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     resumeSessionId: string | null,
     attemptInstructionsFilePath: string | undefined,
   ) => {
-    const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
+    const args = ["--print", "-", "--output-format", "stream-json", "--verbose", "--brief"];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
     if (dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
     if (chrome) args.push("--chrome");
@@ -564,7 +565,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       };
     }
 
-    if (!parsed) {
+    const hasStructuredOutput = Boolean(
+      parsed
+      || parsedStream.resultJson
+      || parsedStream.question
+      || parsedStream.summary
+      || parsedStream.sessionId,
+    );
+
+    if (!hasStructuredOutput) {
       return {
         exitCode: proc.exitCode,
         signal: proc.signal,
@@ -582,18 +591,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
     const usage =
       parsedStream.usage ??
-      (() => {
+      (parsed
+        ? (() => {
         const usageObj = parseObject(parsed.usage);
         return {
           inputTokens: asNumber(usageObj.input_tokens, 0),
           cachedInputTokens: asNumber(usageObj.cache_read_input_tokens, 0),
           outputTokens: asNumber(usageObj.output_tokens, 0),
         };
-      })();
+        })()
+        : undefined);
 
     const resolvedSessionId =
       parsedStream.sessionId ??
-      (asString(parsed.session_id, opts.fallbackSessionId ?? "") || opts.fallbackSessionId);
+      (parsed ? (asString(parsed.session_id, opts.fallbackSessionId ?? "") || opts.fallbackSessionId) : opts.fallbackSessionId);
     const resolvedSessionParams = resolvedSessionId
       ? ({
         sessionId: resolvedSessionId,
@@ -605,6 +616,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       } as Record<string, unknown>)
       : null;
     const clearSessionForMaxTurns = isClaudeMaxTurnsResult(parsed);
+    const fallbackResultJson = {
+      stdout: proc.stdout,
+      stderr: proc.stderr,
+    };
 
     return {
       exitCode: proc.exitCode,
@@ -613,7 +628,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       errorMessage:
         (proc.exitCode ?? 0) === 0
           ? null
-          : describeClaudeFailure(parsed) ?? `Claude exited with code ${proc.exitCode ?? -1}`,
+          : (parsed ? describeClaudeFailure(parsed) : null) ?? parseFallbackErrorMessage(proc),
       errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
       errorMeta,
       usage,
@@ -622,11 +637,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       sessionDisplayId: resolvedSessionId,
       provider: "anthropic",
       biller: isBedrockAuth(effectiveEnv) ? "aws_bedrock" : "anthropic",
-      model: parsedStream.model || asString(parsed.model, model),
+      model: parsedStream.model || (parsed ? asString(parsed.model, model) : model),
       billingType,
-      costUsd: parsedStream.costUsd ?? asNumber(parsed.total_cost_usd, 0),
-      resultJson: parsed,
-      summary: parsedStream.summary || asString(parsed.result, ""),
+      costUsd: parsedStream.costUsd ?? (parsed ? asNumber(parsed.total_cost_usd, 0) : null),
+      resultJson: parsed ?? parsedStream.resultJson ?? fallbackResultJson,
+      summary: parsedStream.summary || (parsed ? asString(parsed.result, "") : ""),
+      question: parsedStream.question ?? null,
       clearSession: clearSessionForMaxTurns || Boolean(opts.clearSessionOnMissingSession && !resolvedSessionId),
     };
   };

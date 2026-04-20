@@ -90,7 +90,8 @@ Conference-room replies stay in the conference room. Do not silently redirect ro
 **Board interaction rules.**
 
 - Plain issue comments are discussion-only. Do not treat them as a blocking governance artifact by themselves.
-- If you need a board answer to continue, create a structured decision question with `POST /api/issues/{issueId}/questions`.
+- If `PAPERCLIP_NATIVE_DECISION_QUESTIONS=1` is present and your runtime exposes a native ask-user tool, prefer that native tool for the board question. Paperclip will capture it back into a structured decision question artifact.
+- Otherwise, if you need a board answer to continue, create a structured decision question with `POST /api/issues/{issueId}/questions`.
 - If the plan is ready for go/no-go, request plan approval with `POST /api/issues/{issueId}/continuity/plan-approval`.
 - Do not continue normal execution work while the issue is waiting on a blocking decision question or an unapproved current plan revision.
 

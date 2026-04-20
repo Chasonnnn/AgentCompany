@@ -4,11 +4,93 @@ import { asString, asNumber, parseObject, parseJson } from "@paperclipai/adapter
 const CLAUDE_AUTH_REQUIRED_RE = /(?:not\s+logged\s+in|please\s+log\s+in|please\s+run\s+`?claude\s+login`?|login\s+required|requires\s+login|unauthorized|authentication\s+required)/i;
 const URL_RE = /(https?:\/\/[^\s'"`<>()[\]{};,!?]+[^\s'"`<>()[\]{};,!.?:]+)/gi;
 
+function normalizeChoiceKey(input: string, index: number): string {
+  const normalized = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || `option-${index + 1}`;
+}
+
+function normalizeClaudeQuestionInput(input: unknown) {
+  if (typeof input === "string") {
+    const prompt = input.trim();
+    return prompt ? { prompt, choices: [] } : null;
+  }
+
+  const obj = parseObject(input);
+  const prompt =
+    asString(obj.prompt, "").trim() ||
+    asString(obj.question, "").trim() ||
+    asString(obj.message, "").trim() ||
+    asString(obj.text, "").trim() ||
+    asString(obj.body, "").trim() ||
+    [
+      asString(obj.title, "").trim(),
+      asString(obj.description, "").trim() || asString(obj.detail, "").trim(),
+    ].filter(Boolean).join("\n\n");
+  if (!prompt) return null;
+
+  const rawChoices = Array.isArray(obj.choices)
+    ? obj.choices
+    : Array.isArray(obj.options)
+      ? obj.options
+      : Array.isArray(obj.suggested_responses)
+        ? obj.suggested_responses
+        : [];
+  const seenKeys = new Set<string>();
+  const choices = rawChoices.flatMap((choiceRaw, index) => {
+    if (typeof choiceRaw === "string") {
+      const label = choiceRaw.trim();
+      if (!label) return [];
+      let key = normalizeChoiceKey(label, index);
+      while (seenKeys.has(key)) key = `${key}-${index + 1}`;
+      seenKeys.add(key);
+      return [{ key, label }];
+    }
+
+    const choice = parseObject(choiceRaw);
+    const label =
+      asString(choice.label, "").trim() ||
+      asString(choice.title, "").trim() ||
+      asString(choice.text, "").trim() ||
+      asString(choice.message, "").trim();
+    if (!label) return [];
+
+    let key =
+      asString(choice.key, "").trim() ||
+      asString(choice.id, "").trim() ||
+      asString(choice.value, "").trim() ||
+      normalizeChoiceKey(label, index);
+    while (seenKeys.has(key)) key = `${key}-${index + 1}`;
+    seenKeys.add(key);
+
+    const description =
+      asString(choice.description, "").trim() ||
+      asString(choice.detail, "").trim() ||
+      asString(choice.subtitle, "").trim() ||
+      asString(choice.reason, "").trim();
+
+    return [{
+      key,
+      label,
+      ...(description ? { description } : {}),
+    }];
+  });
+
+  return {
+    prompt,
+    choices,
+  };
+}
+
 export function parseClaudeStreamJson(stdout: string) {
   let sessionId: string | null = null;
   let model = "";
   let finalResult: Record<string, unknown> | null = null;
   const assistantTexts: string[] = [];
+  let question: { prompt: string; choices: Array<{ key: string; label: string; description?: string }> } | null = null;
 
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -33,6 +115,10 @@ export function parseClaudeStreamJson(stdout: string) {
         if (asString(block.type, "") === "text") {
           const text = asString(block.text, "");
           if (text) assistantTexts.push(text);
+          continue;
+        }
+        if (!question && asString(block.type, "") === "tool_use" && asString(block.name, "") === "SendUserMessage") {
+          question = normalizeClaudeQuestionInput(block.input);
         }
       }
       continue;
@@ -52,6 +138,7 @@ export function parseClaudeStreamJson(stdout: string) {
       usage: null as UsageSummary | null,
       summary: assistantTexts.join("\n\n").trim(),
       resultJson: null as Record<string, unknown> | null,
+      question,
     };
   }
 
@@ -73,6 +160,7 @@ export function parseClaudeStreamJson(stdout: string) {
     usage,
     summary,
     resultJson: finalResult,
+    question,
   };
 }
 

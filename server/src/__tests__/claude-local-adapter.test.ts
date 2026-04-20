@@ -134,6 +134,45 @@ describe("claude_local server parser", () => {
       outputTokens: 5,
     });
   });
+
+  it("captures SendUserMessage tool_use blocks as decision questions", () => {
+    const parsed = parseClaudeStreamJson([
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        model: "claude-sonnet-4-6",
+        session_id: "claude-session-1",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        session_id: "claude-session-1",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tool_1",
+              name: "SendUserMessage",
+              input: {
+                question: "Which audit slice should I start with?",
+                options: [
+                  { key: "runtime", label: "Runtime", description: "Focus on execution and infra first." },
+                  { label: "Governance", description: "Start with instructions and approval flows." },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    ].join("\n"));
+
+    expect(parsed.question).toEqual({
+      prompt: "Which audit slice should I start with?",
+      choices: [
+        { key: "runtime", label: "Runtime", description: "Focus on execution and infra first." },
+        { key: "governance", label: "Governance", description: "Start with instructions and approval flows." },
+      ],
+    });
+  });
 });
 
 function stripAnsi(value: string) {

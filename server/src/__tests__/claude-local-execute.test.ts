@@ -32,6 +32,7 @@ const payload = {
       )
     : {},
   claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || null,
+  nativeDecisionQuestions: process.env.PAPERCLIP_NATIVE_DECISION_QUESTIONS || null,
   appendedSystemPromptFilePath,
   appendedSystemPromptFileContents: appendedSystemPromptFilePath ? fs.readFileSync(appendedSystemPromptFilePath, "utf8") : null,
 };
@@ -55,6 +56,7 @@ type CapturePayload = {
   skillEntries: string[];
   skillTargets: Record<string, string>;
   claudeConfigDir: string | null;
+  nativeDecisionQuestions?: string | null;
   appendedSystemPromptFilePath?: string | null;
   appendedSystemPromptFileContents?: string | null;
 };
@@ -95,6 +97,34 @@ if (shouldFailResume) {
 console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "claude-session-2", model: "claude-sonnet" }));
 console.log(JSON.stringify({ type: "assistant", session_id: "claude-session-2", message: { content: [{ type: "text", text: "hello" }] } }));
 console.log(JSON.stringify({ type: "result", session_id: "claude-session-2", result: "hello", usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 } }));
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeQuestionOnlyClaudeCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "claude-session-q1", model: "claude-sonnet" }));
+console.log(JSON.stringify({
+  type: "assistant",
+  session_id: "claude-session-q1",
+  message: {
+    content: [
+      {
+        type: "tool_use",
+        id: "tool_1",
+        name: "SendUserMessage",
+        input: {
+          question: "Which path should I take?",
+          options: [
+            { key: "incremental", label: "Incremental", description: "Lower risk." },
+            { key: "rebuild", label: "Rebuild", description: "Faster reset." }
+          ]
+        }
+      }
+    ]
+  }
+}));
 `;
   await fs.writeFile(commandPath, script, "utf8");
   await fs.chmod(commandPath, 0o755);
@@ -159,6 +189,8 @@ describe("claude execute", () => {
       });
       const captured = JSON.parse(await fs.readFile(capturePath, "utf-8"));
       expect(captured.argv).toContain("--append-system-prompt-file");
+      expect(captured.argv).toContain("--brief");
+      expect(captured.nativeDecisionQuestions).toBe("1");
     } finally {
       restore();
       await fs.rm(root, { recursive: true, force: true });
@@ -404,6 +436,44 @@ describe("claude execute", () => {
       else process.env.PATH = previousPath;
       if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
       else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns structured decision questions even when Claude exits after SendUserMessage without a result event", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-question-only-"));
+    const { workspace, commandPath, restore } = await setupExecuteEnv(root, {
+      commandWriter: writeQuestionOnlyClaudeCommand,
+    });
+
+    try {
+      const result = await execute({
+        runId: "run-question-only",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      expect(result.sessionId).toBe("claude-session-q1");
+      expect(result.question).toEqual({
+        prompt: "Which path should I take?",
+        choices: [
+          { key: "incremental", label: "Incremental", description: "Lower risk." },
+          { key: "rebuild", label: "Rebuild", description: "Faster reset." },
+        ],
+      });
+    } finally {
+      restore();
       await fs.rm(root, { recursive: true, force: true });
     }
   });
