@@ -17,6 +17,11 @@ import { useDialog } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
+import {
+  buildSharedServiceLeadDepartmentsFromAccountability,
+  buildSharedSpecialistGroupsFromAccountability,
+  countSharedSpecialists,
+} from "../lib/shared-specialists";
 import { agentRouteRef, agentUrl, cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
@@ -527,6 +532,44 @@ function SharedServiceDepartmentSection({
   );
 }
 
+function SharedSpecialistGroupSection({
+  group,
+  agentMap,
+  liveCountByAgent,
+  activeAgentId,
+  activeTab,
+  open,
+  onOpenChange,
+}: {
+  group: ReturnType<typeof buildSharedSpecialistGroupsFromAccountability>[number];
+  agentMap: Map<string, Agent>;
+  liveCountByAgent: Map<string, number>;
+  activeAgentId: string | null;
+  activeTab: string | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  return (
+    <HierarchyFolder
+      label={group.label}
+      count={group.members.length}
+      depth={1}
+      autoOpen={hasActiveMember(group.members, activeAgentId)}
+      open={open}
+      onOpenChange={onOpenChange}
+    >
+      <MemberList
+        members={group.members}
+        agentMap={agentMap}
+        liveCountByAgent={liveCountByAgent}
+        activeAgentId={activeAgentId}
+        activeTab={activeTab}
+        depth={2}
+      />
+    </HierarchyFolder>
+  );
+}
+
 function AccountabilityContent({
   accountability,
   agentMap,
@@ -540,14 +583,24 @@ function AccountabilityContent({
   activeAgentId: string | null;
   activeTab: string | null;
 }) {
+  const sharedSpecialists = buildSharedSpecialistGroupsFromAccountability(accountability);
+  const sharedServiceDepartments = buildSharedServiceLeadDepartmentsFromAccountability(accountability);
   const activeProject = accountability.projects.find((project) =>
     accountabilityProjectHasActiveMember(project, activeAgentId),
   );
-  const activeSharedService = accountability.sharedServices.find((department) =>
+  const activeSharedSpecialistGroup = sharedSpecialists.find((group) =>
+    hasActiveMember(group.members, activeAgentId),
+  );
+  const activeSharedService = sharedServiceDepartments.find((department) =>
     sharedServiceDepartmentHasActiveMember(department, activeAgentId),
   );
   const activeProjectKey = activeProject ? activeProject.projectId ?? activeProject.projectName : null;
   const { openKey: projectOpenKey, setOpenKey: setProjectOpenKey } = useSingleOpenBranch(activeProjectKey);
+  const activeSharedSpecialistKey = activeSharedSpecialistGroup?.key ?? null;
+  const {
+    openKey: sharedSpecialistOpenKey,
+    setOpenKey: setSharedSpecialistOpenKey,
+  } = useSingleOpenBranch(activeSharedSpecialistKey);
   const activeSharedServiceKey = activeSharedService ? `${activeSharedService.key}:${activeSharedService.name}` : null;
   const { openKey: sharedServiceOpenKey, setOpenKey: setSharedServiceOpenKey } = useSingleOpenBranch(activeSharedServiceKey);
 
@@ -583,14 +636,35 @@ function AccountabilityContent({
         />
       ))}
 
-      {accountability.sharedServices.length > 0 ? (
+      {sharedSpecialists.length > 0 ? (
+        <HierarchyFolder
+          label="Shared Specialists"
+          count={countSharedSpecialists(sharedSpecialists)}
+          defaultOpen={false}
+          autoOpen={sharedSpecialists.some((group) => hasActiveMember(group.members, activeAgentId))}
+        >
+          {sharedSpecialists.map((group) => (
+            <SharedSpecialistGroupSection
+              key={group.key}
+              group={group}
+              agentMap={agentMap}
+              liveCountByAgent={liveCountByAgent}
+              activeAgentId={activeAgentId}
+              activeTab={activeTab}
+              {...accordionFolderControl(group.key, sharedSpecialistOpenKey, setSharedSpecialistOpenKey)}
+            />
+          ))}
+        </HierarchyFolder>
+      ) : null}
+
+      {sharedServiceDepartments.length > 0 ? (
         <HierarchyFolder
           label="Shared Services"
-          count={accountability.sharedServices.reduce((sum, department) => sum + countSharedServiceDepartment(department), 0)}
+          count={sharedServiceDepartments.reduce((sum, department) => sum + countSharedServiceDepartment(department), 0)}
           defaultOpen={false}
-          autoOpen={accountability.sharedServices.some((department) => sharedServiceDepartmentHasActiveMember(department, activeAgentId))}
+          autoOpen={sharedServiceDepartments.some((department) => sharedServiceDepartmentHasActiveMember(department, activeAgentId))}
         >
-          {accountability.sharedServices.map((department) => (
+          {sharedServiceDepartments.map((department) => (
             <SharedServiceDepartmentSection
               key={`${department.key}:${department.name}`}
               department={department}
@@ -606,7 +680,7 @@ function AccountabilityContent({
 
       {accountability.unassigned.length > 0 ? (
         <HierarchyFolder
-          label="Unassigned"
+          label="Needs Scope"
           count={accountability.unassigned.length}
           defaultOpen={false}
           autoOpen={hasActiveMember(accountability.unassigned, activeAgentId)}

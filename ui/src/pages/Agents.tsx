@@ -19,6 +19,11 @@ import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
 import { queryKeys } from "../lib/queryKeys";
+import {
+  buildSharedServiceLeadDepartmentsFromNavigation,
+  buildSharedSpecialistGroupsFromNavigation,
+  countSharedSpecialists,
+} from "../lib/shared-specialists";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
 import { EntityRow } from "../components/EntityRow";
@@ -139,7 +144,11 @@ function filterNavigation(
   };
 }
 
-function navigationCount(navigation: CompanyAgentNavigation) {
+function navigationCount(
+  navigation: CompanyAgentNavigation,
+  sharedSpecialistsCount: number,
+  sharedServiceDepartments: AgentNavigationDepartmentNode[],
+) {
   const ids = new Set<string>();
   for (const agent of navigation.executives) ids.add(agent.id);
   for (const department of navigation.departments) {
@@ -164,7 +173,7 @@ function navigationCount(navigation: CompanyAgentNavigation) {
       for (const worker of project.workers) ids.add(worker.id);
     }
   }
-  for (const department of navigation.sharedServices) {
+  for (const department of sharedServiceDepartments) {
     for (const leader of department.leaders) ids.add(leader.id);
     for (const cluster of department.clusters ?? []) {
       if (cluster.portfolioDirector) ids.add(cluster.portfolioDirector.id);
@@ -186,27 +195,8 @@ function navigationCount(navigation: CompanyAgentNavigation) {
       for (const worker of project.workers) ids.add(worker.id);
     }
   }
-  for (const cluster of navigation.portfolioClusters ?? []) {
-    if (cluster.portfolioDirector) ids.add(cluster.portfolioDirector.id);
-    for (const project of cluster.projects) {
-      for (const leader of project.leaders) ids.add(leader.id);
-      for (const team of project.teams) {
-        for (const leader of team.leaders) ids.add(leader.id);
-        for (const worker of team.workers) ids.add(worker.id);
-      }
-      for (const worker of project.workers) ids.add(worker.id);
-    }
-  }
-  for (const project of navigation.projectPods) {
-    for (const leader of project.leaders) ids.add(leader.id);
-    for (const team of project.teams) {
-      for (const leader of team.leaders) ids.add(leader.id);
-      for (const worker of team.workers) ids.add(worker.id);
-    }
-    for (const worker of project.workers) ids.add(worker.id);
-  }
   for (const agent of navigation.unassigned) ids.add(agent.id);
-  return ids.size;
+  return ids.size + sharedSpecialistsCount;
 }
 
 function levelLabel(level: string) {
@@ -417,17 +407,24 @@ function DepartmentBlock({
   department,
   agentMap,
   liveRunByAgent,
+  membersLabel = "Leads",
 }: {
   department: AgentNavigationDepartmentNode;
   agentMap: Map<string, Agent>;
   liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+  membersLabel?: string;
 }) {
   return (
     <section className="space-y-4">
       <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
         {department.name}
       </div>
-      <MemberBlock label="Leads" members={department.leaders} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+      <MemberBlock
+        label={membersLabel}
+        members={department.leaders}
+        agentMap={agentMap}
+        liveRunByAgent={liveRunByAgent}
+      />
       {(department.clusters?.length ?? 0) > 0
         ? (department.clusters ?? []).map((cluster) => (
             <ClusterBlock
@@ -520,7 +517,15 @@ export function Agents() {
 
   const filteredAgents = filterAgents(agents ?? [], tab, showTerminated);
   const filteredNavigation = navigation ? filterNavigation(navigation, tab, showTerminated) : null;
-  const filteredNavigationCount = filteredNavigation ? navigationCount(filteredNavigation) : 0;
+  const sharedSpecialists = filteredNavigation
+    ? buildSharedSpecialistGroupsFromNavigation(filteredNavigation)
+    : [];
+  const sharedServiceDepartments = filteredNavigation
+    ? buildSharedServiceLeadDepartmentsFromNavigation(filteredNavigation)
+    : [];
+  const filteredNavigationCount = filteredNavigation
+    ? navigationCount(filteredNavigation, countSharedSpecialists(sharedSpecialists), sharedServiceDepartments)
+    : 0;
 
   return (
     <div className="space-y-4">
@@ -615,7 +620,7 @@ export function Agents() {
       ) : null}
       {effectiveView === "tree" && filteredNavigation ? (
         <p className="text-xs text-muted-foreground">
-          {filteredNavigationCount} agent{filteredNavigationCount !== 1 ? "s" : ""} in departments
+          {filteredNavigationCount} agent{filteredNavigationCount !== 1 ? "s" : ""} visible in browse tree
         </p>
       ) : null}
 
@@ -710,12 +715,29 @@ export function Agents() {
             />
           ))}
 
-          {filteredNavigation.sharedServices.length > 0 ? (
+          {sharedSpecialists.length > 0 ? (
+            <section className="space-y-4">
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Shared Specialists
+              </div>
+              {sharedSpecialists.map((group) => (
+                <MemberBlock
+                  key={group.key}
+                  label={group.label}
+                  members={group.members}
+                  agentMap={agentMap}
+                  liveRunByAgent={liveRunByAgent}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {sharedServiceDepartments.length > 0 ? (
             <section className="space-y-4">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
                 Shared Services
               </div>
-              {filteredNavigation.sharedServices.map((department) => (
+              {sharedServiceDepartments.map((department) => (
                 <DepartmentBlock
                   key={`${department.key}:${department.name}`}
                   department={department}
@@ -729,10 +751,10 @@ export function Agents() {
           {filteredNavigation.unassigned.length > 0 ? (
             <section className="space-y-3">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                Unassigned
+                Needs Scope
               </div>
               <MemberBlock
-                label="Needs staffing scope"
+                label="Not yet placed"
                 members={filteredNavigation.unassigned}
                 agentMap={agentMap}
                 liveRunByAgent={liveRunByAgent}

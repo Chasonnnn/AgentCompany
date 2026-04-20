@@ -264,6 +264,35 @@ interface SimplificationSignalRow {
   executionModel: ReturnType<typeof inferAgentExecutionModel>;
 }
 
+function isSharedServiceAgent(
+  row: Pick<NormalizedAgentRow, "operatingClass">,
+): boolean {
+  return row.operatingClass === "shared_service_lead" || row.operatingClass === "consultant";
+}
+
+function shouldListInSharedServiceDepartment(
+  row: Pick<NormalizedAgentRow, "operatingClass" | "id">,
+  scopedAgentIds: Set<string>,
+): boolean {
+  return row.operatingClass === "shared_service_lead"
+    || (row.operatingClass === "consultant" && !scopedAgentIds.has(row.id));
+}
+
+function getSharedServiceDepartmentGroup(
+  groups: Map<string, NavigationDepartmentGroup>,
+  row: Pick<NormalizedAgentRow, "departmentKey" | "departmentName">,
+): NavigationDepartmentGroup {
+  const departmentName = departmentDisplayName(row.departmentKey, row.departmentName);
+  const key = `${row.departmentKey}:${departmentName.toLowerCase()}`;
+  return groups.get(key) ?? {
+    key: row.departmentKey,
+    name: departmentName,
+    leaders: [],
+    clusters: new Map<string, NavigationClusterGroup>(),
+    projects: new Map<string, NavigationProjectGroup>(),
+  };
+}
+
 function normalizeArchetypeKey(value: string | null | undefined) {
   const trimmed = value?.trim().toLowerCase() ?? "";
   return trimmed.length > 0 ? trimmed : null;
@@ -1531,18 +1560,12 @@ export function agentService(db: Db) {
     const departments = new Map<string, NavigationDepartmentGroup>();
     const sharedServices = new Map<string, NavigationDepartmentGroup>();
     const clusterById = new Map(clusterRows.map((cluster) => [cluster.id, cluster] as const));
+    const scopedAgentIds = new Set(scopeRows.map((row) => row.scope.agentId));
 
     for (const agent of agentsById.values()) {
-      if (agent.operatingClass !== "shared_service_lead") continue;
-      const departmentName = departmentDisplayName(agent.departmentKey, agent.departmentName);
-      const key = `${agent.departmentKey}:${departmentName.toLowerCase()}`;
-      const group = sharedServices.get(key) ?? {
-        key: agent.departmentKey,
-        name: departmentName,
-        leaders: [],
-        clusters: new Map<string, NavigationClusterGroup>(),
-        projects: new Map<string, NavigationProjectGroup>(),
-      };
+      if (!shouldListInSharedServiceDepartment(agent, scopedAgentIds)) continue;
+      const group = getSharedServiceDepartmentGroup(sharedServices, agent);
+      const key = `${group.key}:${group.name.toLowerCase()}`;
       group.leaders.push(agent);
       sharedServices.set(key, group);
     }
@@ -1553,7 +1576,7 @@ export function agentService(db: Db) {
 
       const departmentName = departmentDisplayName(agent.departmentKey, agent.departmentName);
       const departmentKeyValue = `${agent.departmentKey}:${departmentName.toLowerCase()}`;
-      const targetMap = agent.operatingClass === "shared_service_lead" ? sharedServices : departments;
+      const targetMap = isSharedServiceAgent(agent) ? sharedServices : departments;
       const group = targetMap.get(departmentKeyValue) ?? {
         key: agent.departmentKey,
         name: departmentName,
@@ -2247,16 +2270,9 @@ export function agentService(db: Db) {
       const unassigned: NormalizedAgentRow[] = [];
 
       for (const row of normalizedRows) {
-        if (row.operatingClass === "shared_service_lead") {
-          const departmentName = departmentDisplayName(row.departmentKey, row.departmentName);
-          const key = `${row.departmentKey}:${departmentName.toLowerCase()}`;
-          const group = sharedServicesByDepartment.get(key) ?? {
-            key: row.departmentKey,
-            name: departmentName,
-            leaders: [],
-            clusters: new Map<string, NavigationClusterGroup>(),
-            projects: new Map<string, NavigationProjectGroup>(),
-          };
+        if (shouldListInSharedServiceDepartment(row, scopedAgentIds)) {
+          const group = getSharedServiceDepartmentGroup(sharedServicesByDepartment, row);
+          const key = `${group.key}:${group.name.toLowerCase()}`;
           group.leaders.push(row);
           sharedServicesByDepartment.set(key, group);
           continue;
@@ -2359,16 +2375,9 @@ export function agentService(db: Db) {
       const sharedServicesByDepartment = new Map<string, NavigationDepartmentGroup>();
 
       for (const row of normalizedRows) {
-        if (row.operatingClass === "shared_service_lead") {
-          const departmentName = departmentDisplayName(row.departmentKey, row.departmentName);
-          const key = `${row.departmentKey}:${departmentName.toLowerCase()}`;
-          const group = sharedServicesByDepartment.get(key) ?? {
-            key: row.departmentKey,
-            name: departmentName,
-            leaders: [],
-            clusters: new Map<string, NavigationClusterGroup>(),
-            projects: new Map<string, NavigationProjectGroup>(),
-          };
+        if (shouldListInSharedServiceDepartment(row, scopedAgentIds)) {
+          const group = getSharedServiceDepartmentGroup(sharedServicesByDepartment, row);
+          const key = `${group.key}:${group.name.toLowerCase()}`;
           group.leaders.push(row);
           sharedServicesByDepartment.set(key, group);
           continue;
@@ -2783,7 +2792,7 @@ export function agentService(db: Db) {
           normalizedRows.filter(
             (row) =>
               row.operatingClass !== "executive" &&
-              row.operatingClass !== "shared_service_lead" &&
+              !isSharedServiceAgent(row) &&
               !scopedAgentIds.has(row.id),
           ),
         ).map(toOperatingSummary),

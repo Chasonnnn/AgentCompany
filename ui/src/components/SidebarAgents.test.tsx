@@ -288,4 +288,211 @@ describe("SidebarAgents", () => {
 
     act(() => root.unmount());
   });
+
+  it("shows consultant specialists under shared services and renames the orphan bucket", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      createAgent({
+        id: "ceo",
+        name: "CEO",
+        urlKey: "ceo",
+        role: "ceo",
+        orgLevel: "executive",
+        departmentKey: "executive",
+      }),
+      createAgent({
+        id: "research-specialist",
+        name: "Research Specialist",
+        urlKey: "research-specialist",
+        role: "researcher",
+        departmentKey: "research",
+      }),
+      createAgent({
+        id: "growth-specialist",
+        name: "Growth Specialist",
+        urlKey: "growth-specialist",
+        role: "general",
+        departmentKey: "marketing",
+      }),
+      createAgent({
+        id: "consulting-specialist",
+        name: "Consulting Specialist",
+        urlKey: "consulting-specialist",
+        role: "general",
+        departmentKey: "general",
+      }),
+      createAgent({
+        id: "enablement-lead",
+        name: "Enablement Lead",
+        urlKey: "enablement-lead",
+        role: "general",
+        orgLevel: "director",
+        departmentKey: "custom",
+        departmentName: "Enablement",
+      }),
+      createAgent({
+        id: "ops-floater",
+        name: "Ops Floater",
+        urlKey: "ops-floater",
+        role: "general",
+        departmentKey: "operations",
+      }),
+    ]);
+    mockAgentsApi.accountability.mockResolvedValue({
+      ...createAccountability(),
+      counts: {
+        totalConfiguredAgents: 5,
+        activeContinuityOwners: 1,
+        activeGovernanceLeads: 1,
+        activeSharedServiceAgents: 3,
+        legacyAgents: 0,
+        inactiveAgents: 0,
+        simplificationCandidates: 0,
+      },
+      projects: [
+        {
+          ...createAccountability().projects[0]!,
+          sharedServices: [
+            createMember({
+              id: "growth-specialist",
+              name: "Growth Specialist",
+              urlKey: "growth-specialist",
+              role: "general",
+              operatingClass: "consultant",
+              departmentKey: "marketing",
+            }),
+          ],
+        },
+      ],
+      sharedServices: [
+        {
+          key: "custom",
+          name: "Enablement",
+          leaders: [
+            createMember({
+              id: "enablement-lead",
+              name: "Enablement Lead",
+              urlKey: "enablement-lead",
+              role: "general",
+              orgLevel: "director",
+              operatingClass: "shared_service_lead",
+              departmentKey: "custom",
+              departmentName: "Enablement",
+            }),
+          ],
+          projects: [],
+        },
+        {
+          key: "research",
+          name: "Research",
+          leaders: [
+            createMember({
+              id: "research-specialist",
+              name: "Research Specialist",
+              urlKey: "research-specialist",
+              role: "researcher",
+              operatingClass: "consultant",
+              departmentKey: "research",
+            }),
+          ],
+          projects: [],
+        },
+      ],
+      unassigned: [
+        createMember({
+          id: "ops-floater",
+          name: "Ops Floater",
+          urlKey: "ops-floater",
+          role: "general",
+          departmentKey: "operations",
+        }),
+      ],
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidebarAgents />
+        </QueryClientProvider>,
+      );
+    });
+
+    await flush();
+    await flush();
+
+    expect(container.textContent).toContain("Shared Specialists");
+    expect(container.textContent).toContain("Shared Services");
+    expect(container.textContent).toContain("Needs Scope");
+    expect(container.textContent).not.toContain("Unassigned");
+
+    const sharedSpecialistsButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Shared Specialists"));
+    expect(sharedSpecialistsButton).toBeTruthy();
+
+    await act(async () => {
+      sharedSpecialistsButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const researchButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Research"));
+    expect(researchButton).toBeTruthy();
+
+    await act(async () => {
+      researchButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(container.textContent).toContain("Research Specialist");
+
+    const marketingButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Marketing"));
+    expect(marketingButton).toBeTruthy();
+
+    await act(async () => {
+      marketingButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(container.textContent).toContain("Growth Specialist");
+
+    const sharedServicesButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Shared Services"));
+    expect(sharedServicesButton).toBeTruthy();
+
+    await act(async () => {
+      sharedServicesButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const enablementButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Enablement"));
+    expect(enablementButton).toBeTruthy();
+
+    await act(async () => {
+      enablementButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(container.textContent).toContain("Enablement Lead");
+
+    const needsScopeButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Needs Scope"));
+    expect(needsScopeButton).toBeTruthy();
+
+    await act(async () => {
+      needsScopeButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(container.textContent).toContain("Ops Floater");
+
+    act(() => root.unmount());
+  });
 });

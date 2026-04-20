@@ -298,9 +298,170 @@ describe("Agents page", () => {
     expect(buttonLabels).not.toContain("Department");
     expect(buttonLabels).not.toContain("Project");
 
-    expect(container.textContent).toContain("2 agents in departments");
+    expect(container.textContent).toContain("2 agents visible in browse tree");
     expect(container.textContent).toContain("Engineering");
     expect(container.textContent).not.toContain("Executive Sponsor");
+
+    act(() => root.unmount());
+  });
+
+  it("renders specialists in shared services and renames the leftover bucket", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      createAgent({
+        id: "ceo",
+        name: "CEO",
+        urlKey: "ceo",
+        role: "ceo",
+        orgLevel: "executive",
+        departmentKey: "executive",
+      }),
+      createAgent({
+        id: "research-specialist",
+        name: "Research Specialist",
+        urlKey: "research-specialist",
+        role: "researcher",
+        departmentKey: "research",
+      }),
+      createAgent({
+        id: "growth-specialist",
+        name: "Growth Specialist",
+        urlKey: "growth-specialist",
+        role: "general",
+        departmentKey: "marketing",
+      }),
+      createAgent({
+        id: "consulting-specialist",
+        name: "Consulting Specialist",
+        urlKey: "consulting-specialist",
+        role: "general",
+        departmentKey: "general",
+      }),
+      createAgent({
+        id: "enablement-lead",
+        name: "Enablement Lead",
+        urlKey: "enablement-lead",
+        role: "general",
+        departmentKey: "custom",
+        departmentName: "Enablement",
+      }),
+      createAgent({
+        id: "ops-floater",
+        name: "Ops Floater",
+        urlKey: "ops-floater",
+        role: "general",
+        departmentKey: "operations",
+      }),
+    ]);
+    mockAgentsApi.navigation.mockResolvedValue({
+      ...createNavigation(),
+      sharedServices: [
+        {
+          key: "custom",
+          name: "Enablement",
+          leaders: [
+            createMember({
+              id: "enablement-lead",
+              name: "Enablement Lead",
+              urlKey: "enablement-lead",
+              role: "general",
+              operatingClass: "shared_service_lead",
+              departmentKey: "custom",
+              departmentName: "Enablement",
+            }),
+          ],
+          clusters: [],
+          projects: [],
+        },
+        {
+          key: "research",
+          name: "Research",
+          leaders: [
+            createMember({
+              id: "research-specialist",
+              name: "Research Specialist",
+              urlKey: "research-specialist",
+              role: "researcher",
+              operatingClass: "consultant",
+              departmentKey: "research",
+            }),
+          ],
+          clusters: [],
+          projects: [],
+        },
+        {
+          key: "marketing",
+          name: "Marketing",
+          leaders: [],
+          clusters: [],
+          projects: [
+            {
+              projectId: "project-1",
+              projectName: "Onboarding",
+              color: null,
+              leaders: [],
+              teams: [
+                {
+                  key: "marketing",
+                  label: "Marketing",
+                  leaders: [],
+                  workers: [
+                    createMember({
+                      id: "growth-specialist",
+                      name: "Growth Specialist",
+                      urlKey: "growth-specialist",
+                      role: "general",
+                      operatingClass: "consultant",
+                      departmentKey: "marketing",
+                    }),
+                  ],
+                },
+              ],
+              workers: [],
+            },
+          ],
+        },
+      ],
+      unassigned: [
+        createMember({
+          id: "ops-floater",
+          name: "Ops Floater",
+          urlKey: "ops-floater",
+          role: "general",
+          departmentKey: "operations",
+        }),
+      ],
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Agents />
+        </QueryClientProvider>,
+      );
+    });
+
+    await flush();
+    await flush();
+
+    expect(container.textContent).toContain("Shared Services");
+    expect(container.textContent).toContain("Shared Specialists");
+    expect(container.textContent).toContain("Enablement Lead");
+    expect(container.textContent).toContain("Growth Specialist");
+    expect(container.textContent).toContain("Research Specialist");
+    expect(container.textContent).toContain("Marketing");
+    expect(container.textContent).toContain("Research");
+    expect(container.textContent).toContain("Needs Scope");
+    expect(container.textContent).toContain("Not yet placed");
+    expect(container.textContent).toContain("Ops Floater");
+    expect(container.textContent).toContain("6 agents visible in browse tree");
+    expect(container.textContent).not.toContain("Unassigned");
 
     act(() => root.unmount());
   });

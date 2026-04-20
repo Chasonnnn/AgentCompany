@@ -5,6 +5,10 @@ import type { AccountabilityProjectNode, AgentHierarchyMemberSummary, CompanyAge
 import { agentsApi } from "../api/agents";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import {
+  buildSharedServiceLeadDepartmentsFromAccountability,
+  buildSharedSpecialistGroupsFromAccountability,
+} from "../lib/shared-specialists";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -91,16 +95,26 @@ function AccountabilityView({
 }: {
   accountability: CompanyAgentAccountability;
 }) {
+  const sharedSpecialists = buildSharedSpecialistGroupsFromAccountability(accountability);
+  const sharedServiceDepartments = buildSharedServiceLeadDepartmentsFromAccountability(accountability);
   return (
     <div className="space-y-6">
       <MemberList label="Executive Office" members={accountability.executiveOffice} />
       {accountability.projects.map((project) => (
         <AccountabilityProject key={project.projectId ?? project.projectName} project={project} />
       ))}
-      {accountability.sharedServices.map((group) => (
+      {sharedSpecialists.length > 0 ? (
+        <section className="space-y-4">
+          <h2 className="text-sm font-semibold text-foreground">Shared Specialists</h2>
+          {sharedSpecialists.map((group) => (
+            <MemberList key={group.key} label={group.label} members={group.members} />
+          ))}
+        </section>
+      ) : null}
+      {sharedServiceDepartments.map((group) => (
         <MemberList key={`${group.key}:${group.name}`} label={group.name} members={group.leaders} />
       ))}
-      <MemberList label="Unassigned" members={accountability.unassigned} />
+      <MemberList label="Needs Scope" members={accountability.unassigned} />
     </div>
   );
 }
@@ -127,10 +141,18 @@ export function Org() {
     return <PageSkeleton variant="list" />;
   }
 
+  const sharedSpecialists = data ? buildSharedSpecialistGroupsFromAccountability(data) : [];
+  const sharedServiceDepartments = data ? buildSharedServiceLeadDepartmentsFromAccountability(data) : [];
+
   return (
     <div className="space-y-4">
       {error ? <p className="text-sm text-destructive">{error.message}</p> : null}
-      {data && data.projects.length === 0 && data.executiveOffice.length === 0 && data.unassigned.length === 0 ? (
+      {data
+        && data.projects.length === 0
+        && data.executiveOffice.length === 0
+        && sharedSpecialists.length === 0
+        && sharedServiceDepartments.length === 0
+        && data.unassigned.length === 0 ? (
         <EmptyState
           icon={GitBranch}
           message="No accountability graph yet. Create agents and assign issue ownership to build it."
