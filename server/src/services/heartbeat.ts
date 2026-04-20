@@ -737,7 +737,10 @@ export function shouldResetTaskSessionForWake(
     wakeReason === "issue_assigned" ||
     wakeReason === "execution_review_requested" ||
     wakeReason === "execution_approval_requested" ||
-    wakeReason === "execution_changes_requested"
+    wakeReason === "execution_changes_requested" ||
+    wakeReason === "approval_approved" ||
+    wakeReason === "approval_revision_requested" ||
+    wakeReason === "approval_resubmitted"
   ) {
     return true;
   }
@@ -783,6 +786,9 @@ function describeSessionResetReason(
   if (wakeReason === "execution_review_requested") return "wake reason is execution_review_requested";
   if (wakeReason === "execution_approval_requested") return "wake reason is execution_approval_requested";
   if (wakeReason === "execution_changes_requested") return "wake reason is execution_changes_requested";
+  if (wakeReason === "approval_approved") return "wake reason is approval_approved";
+  if (wakeReason === "approval_revision_requested") return "wake reason is approval_revision_requested";
+  if (wakeReason === "approval_resubmitted") return "wake reason is approval_resubmitted";
   return null;
 }
 
@@ -1038,6 +1044,7 @@ async function buildPaperclipWakePayload(input: {
       : null;
   const commentIds = extractWakeCommentIds(input.contextSnapshot);
   const issueId = readNonEmptyString(input.contextSnapshot.issueId);
+  const planApproval = parseObject(input.contextSnapshot.paperclipPlanApproval);
   const conferenceRoomId = readNonEmptyString(input.contextSnapshot.conferenceRoomId);
   const conferenceRoomCommentId = readNonEmptyString(input.contextSnapshot.conferenceRoomCommentId);
   const issueSummary =
@@ -1254,6 +1261,23 @@ async function buildPaperclipWakePayload(input: {
     openDecisionQuestionCount,
     blockingDecisionQuestionCount,
     decisionQuestion,
+    planApproval: Object.keys(planApproval).length > 0
+      ? {
+          approvalId: readNonEmptyString(planApproval.approvalId),
+          status: readNonEmptyString(planApproval.status),
+          currentPlanRevisionId: readNonEmptyString(planApproval.currentPlanRevisionId),
+          requestedPlanRevisionId: readNonEmptyString(planApproval.requestedPlanRevisionId),
+          approvedPlanRevisionId: readNonEmptyString(planApproval.approvedPlanRevisionId),
+          decisionNote:
+            readNonEmptyString(input.contextSnapshot.approvalDecisionNote)
+            ?? readNonEmptyString(planApproval.decisionNote),
+          currentRevisionApproved: planApproval.currentRevisionApproved === true,
+          requiresApproval: planApproval.requiresApproval === true,
+          requiresResubmission: planApproval.requiresResubmission === true,
+          lastRequestedAt: readNonEmptyString(planApproval.lastRequestedAt),
+          lastDecidedAt: readNonEmptyString(planApproval.lastDecidedAt),
+        }
+      : null,
     checkedOutByHarness: input.contextSnapshot[PAPERCLIP_HARNESS_CHECKOUT_KEY] === true,
     executionStage: Object.keys(executionStage).length > 0 ? executionStage : null,
     commentIds,
@@ -3020,8 +3044,14 @@ export function heartbeatService(db: Db) {
           issueContext.continuityState.status !== "planning"
         );
       if (invalidContinuity) {
+        const planApprovalBlocked =
+          issueContext.continuityState.planApproval.status === "pending" ||
+          issueContext.continuityState.planApproval.status === "revision_requested" ||
+          issueContext.continuityState.planApproval.requiresApproval;
         throw conflict(
-          issueContext.continuityState.status === "awaiting_decision"
+          issueContext.continuityState.status === "awaiting_decision" && planApprovalBlocked
+            ? "Issue planning is waiting on board plan approval"
+            : issueContext.continuityState.status === "awaiting_decision"
             ? "Issue planning or execution is waiting on a blocking decision question"
             : issueContext.continuityState.health === "invalid_handoff"
             ? "Issue continuity is invalid: complete a valid handoff before starting execution"
@@ -3056,6 +3086,7 @@ export function heartbeatService(db: Db) {
         answer: question.answer,
         linkedApprovalId: question.linkedApprovalId,
       }));
+      context.paperclipPlanApproval = issueContext.continuityState.planApproval;
       if (continuityChanged) {
         context.forceFreshSession = true;
         context.continuityInvalidated = true;

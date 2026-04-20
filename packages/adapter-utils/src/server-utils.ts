@@ -471,6 +471,20 @@ type PaperclipWakeDecisionQuestion = {
   answer: PaperclipWakeDecisionAnswer | null;
 };
 
+type PaperclipWakePlanApproval = {
+  approvalId: string | null;
+  status: string | null;
+  currentPlanRevisionId: string | null;
+  requestedPlanRevisionId: string | null;
+  approvedPlanRevisionId: string | null;
+  decisionNote: string | null;
+  currentRevisionApproved: boolean;
+  requiresApproval: boolean;
+  requiresResubmission: boolean;
+  lastRequestedAt: string | null;
+  lastDecidedAt: string | null;
+};
+
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
@@ -479,6 +493,7 @@ type PaperclipWakePayload = {
   openDecisionQuestionCount: number;
   blockingDecisionQuestionCount: number;
   decisionQuestion: PaperclipWakeDecisionQuestion | null;
+  planApproval: PaperclipWakePlanApproval | null;
   checkedOutByHarness: boolean;
   executionStage: PaperclipWakeExecutionStage | null;
   commentIds: string[];
@@ -636,6 +651,43 @@ function normalizePaperclipWakeDecisionQuestion(value: unknown): PaperclipWakeDe
   };
 }
 
+function normalizePaperclipWakePlanApproval(value: unknown): PaperclipWakePlanApproval | null {
+  const approval = parseObject(value);
+  const approvalId = asString(approval.approvalId, "").trim() || null;
+  const status = asString(approval.status, "").trim() || null;
+  const currentPlanRevisionId = asString(approval.currentPlanRevisionId, "").trim() || null;
+  const requestedPlanRevisionId = asString(approval.requestedPlanRevisionId, "").trim() || null;
+  const approvedPlanRevisionId = asString(approval.approvedPlanRevisionId, "").trim() || null;
+  const decisionNote = asString(approval.decisionNote, "").trim() || null;
+  const lastRequestedAt = asString(approval.lastRequestedAt, "").trim() || null;
+  const lastDecidedAt = asString(approval.lastDecidedAt, "").trim() || null;
+
+  if (
+    !approvalId &&
+    !status &&
+    !currentPlanRevisionId &&
+    !requestedPlanRevisionId &&
+    !approvedPlanRevisionId &&
+    !decisionNote
+  ) {
+    return null;
+  }
+
+  return {
+    approvalId,
+    status,
+    currentPlanRevisionId,
+    requestedPlanRevisionId,
+    approvedPlanRevisionId,
+    decisionNote,
+    currentRevisionApproved: asBoolean(approval.currentRevisionApproved, false),
+    requiresApproval: asBoolean(approval.requiresApproval, false),
+    requiresResubmission: asBoolean(approval.requiresResubmission, false),
+    lastRequestedAt,
+    lastDecidedAt,
+  };
+}
+
 function normalizePaperclipWakeExecutionPrincipal(value: unknown): PaperclipWakeExecutionPrincipal | null {
   const principal = parseObject(value);
   const typeRaw = asString(principal.type, "").trim().toLowerCase();
@@ -727,6 +779,7 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     openDecisionQuestionCount: asNumber(payload.openDecisionQuestionCount, 0),
     blockingDecisionQuestionCount: asNumber(payload.blockingDecisionQuestionCount, 0),
     decisionQuestion: normalizePaperclipWakeDecisionQuestion(payload.decisionQuestion),
+    planApproval: normalizePaperclipWakePlanApproval(payload.planApproval),
     checkedOutByHarness: asBoolean(payload.checkedOutByHarness, false),
     executionStage,
     commentIds,
@@ -994,6 +1047,59 @@ export function renderPaperclipWakePrompt(
       lines.push(
         "A blocking decision question is open for this issue.",
         "Do not continue blocked execution work until the board answers or dismisses it.",
+        "",
+      );
+    }
+  }
+
+  if (normalized.planApproval) {
+    const planApproval = normalized.planApproval;
+    lines.push(
+      "",
+      "Plan approval context:",
+      `- approval id: ${planApproval.approvalId ?? "none"}`,
+      `- status: ${planApproval.status ?? "none"}`,
+      `- current plan revision: ${planApproval.currentPlanRevisionId ?? "none"}`,
+      `- requested revision: ${planApproval.requestedPlanRevisionId ?? "none"}`,
+      `- approved revision: ${planApproval.approvedPlanRevisionId ?? "none"}`,
+      `- current revision approved: ${planApproval.currentRevisionApproved ? "yes" : "no"}`,
+    );
+    if (planApproval.decisionNote) {
+      lines.push(`- board note: ${planApproval.decisionNote}`);
+    }
+    if (planApproval.lastRequestedAt) {
+      lines.push(`- last requested at: ${planApproval.lastRequestedAt}`);
+    }
+    if (planApproval.lastDecidedAt) {
+      lines.push(`- last decided at: ${planApproval.lastDecidedAt}`);
+    }
+
+    lines.push("");
+    if (normalized.reason === "approval_revision_requested") {
+      lines.push(
+        "The board requested revisions on your plan approval.",
+        "Open the linked issue, inspect the board note, revise the plan document and any supporting planning docs, then resubmit the approval.",
+        "",
+      );
+    } else if (normalized.reason === "approval_resubmitted") {
+      lines.push(
+        "The plan approval was resubmitted and is pending board review again.",
+        "Do not continue execution until the current plan revision is approved.",
+        "",
+      );
+    } else if (normalized.reason === "approval_approved") {
+      lines.push(
+        "The current plan revision is approved.",
+        "Proceed on the linked issue using the approved plan as the source of truth.",
+        "",
+      );
+    } else if (
+      normalized.continuityStatus === "awaiting_decision" &&
+      (planApproval.status === "pending" || planApproval.status === "revision_requested" || planApproval.requiresApproval)
+    ) {
+      lines.push(
+        "Issue planning is blocked on board plan approval.",
+        "Revise and resubmit or wait for board approval before starting execution work.",
         "",
       );
     }

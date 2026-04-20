@@ -24,9 +24,20 @@ export type CompanyConferenceRoomApprovalPayload = BaseRequestBoardApprovalPaylo
   roomKind: "company_conference_room";
 };
 
+export type IssuePlanApprovalPayload = BaseRequestBoardApprovalPayload & {
+  kind: "issue_plan_approval";
+  issueId: string;
+  identifier?: string | null;
+  issueTitle: string;
+  planRevisionId: string;
+  specRevisionId?: string | null;
+  testPlanRevisionId?: string | null;
+};
+
 export type RequestBoardApprovalPayload =
   | LegacyIssueBoardRoomApprovalPayload
-  | CompanyConferenceRoomApprovalPayload;
+  | CompanyConferenceRoomApprovalPayload
+  | IssuePlanApprovalPayload;
 
 export interface Approval {
   id: string;

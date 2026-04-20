@@ -16,6 +16,7 @@ import {
   handoffCancelIssueContinuitySchema,
   handoffRepairIssueContinuitySchema,
   issueDecisionQuestionSchema,
+  issuePlanApprovalSummarySchema,
   issueContinuityBundleSchema,
   issueContinuityRemediationSchema,
   issueContinuityStateSchema,
@@ -39,6 +40,7 @@ import {
   type IssueContinuityBundle,
   type IssueContinuityDocumentSnapshot,
   type IssueContinuityHealth,
+  type IssuePlanApprovalPayload,
   type IssueContinuityRemediationAction,
   type IssueContinuityRemediation,
   type IssueDecisionQuestion,
@@ -228,7 +230,108 @@ type LinkedApprovalSummary = {
   status: string;
   type: string;
   payload: Record<string, unknown>;
+  decisionNote?: string | null;
+  createdAt?: Date | string | null;
+  decidedAt?: Date | string | null;
 };
+
+type LinkedPlanApprovalSummary = {
+  approval: LinkedApprovalSummary;
+  payload: IssuePlanApprovalPayload;
+};
+
+function parseIssuePlanApprovalPayload(payload: Record<string, unknown> | null | undefined): IssuePlanApprovalPayload | null {
+  if (!payload || payload.kind !== "issue_plan_approval") return null;
+  if (
+    typeof payload.title !== "string" ||
+    typeof payload.summary !== "string" ||
+    typeof payload.issueId !== "string" ||
+    typeof payload.issueTitle !== "string" ||
+    typeof payload.planRevisionId !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    kind: "issue_plan_approval",
+    title: payload.title,
+    summary: payload.summary,
+    issueId: payload.issueId,
+    issueTitle: payload.issueTitle,
+    planRevisionId: payload.planRevisionId,
+    decisionTier: "board",
+    ...(typeof payload.identifier === "string" ? { identifier: payload.identifier } : {}),
+    ...(typeof payload.specRevisionId === "string" ? { specRevisionId: payload.specRevisionId } : {}),
+    ...(typeof payload.testPlanRevisionId === "string" ? { testPlanRevisionId: payload.testPlanRevisionId } : {}),
+    ...(typeof payload.recommendedAction === "string" ? { recommendedAction: payload.recommendedAction } : {}),
+    ...(typeof payload.nextActionOnApproval === "string" ? { nextActionOnApproval: payload.nextActionOnApproval } : {}),
+    ...(Array.isArray(payload.risks) ? { risks: payload.risks.filter((entry): entry is string => typeof entry === "string") } : {}),
+    ...(typeof payload.proposedComment === "string" ? { proposedComment: payload.proposedComment } : {}),
+  };
+}
+
+function buildIssuePlanApprovalState(input: {
+  linkedApprovals: LinkedApprovalSummary[];
+  currentPlanRevisionId: string | null;
+  specRevisionId: string | null;
+  testPlanRevisionId: string | null;
+  requirePlanApproval: boolean;
+}) {
+  const linkedPlanApprovals: LinkedPlanApprovalSummary[] = input.linkedApprovals
+    .filter((approval) => approval.type === "request_board_approval")
+    .map((approval) => {
+      const payload = parseIssuePlanApprovalPayload(approval.payload);
+      return payload ? { approval, payload } : null;
+    })
+    .filter((value): value is LinkedPlanApprovalSummary => Boolean(value));
+
+  const latestPlanApproval = linkedPlanApprovals[0] ?? null;
+  const latestCurrentRevisionPlanApproval =
+    input.currentPlanRevisionId == null
+      ? null
+      : linkedPlanApprovals.find((entry) => entry.payload.planRevisionId === input.currentPlanRevisionId) ?? null;
+  const latestApprovedPlanApproval = linkedPlanApprovals.find((entry) => entry.approval.status === "approved") ?? null;
+  const currentRevisionApproved = latestCurrentRevisionPlanApproval?.approval.status === "approved";
+  const latestRequestedRevisionId = latestPlanApproval?.payload.planRevisionId ?? null;
+  const approvedPlanRevisionId = latestApprovedPlanApproval?.payload.planRevisionId ?? null;
+  const latestStatus = latestPlanApproval?.approval.status ?? null;
+  const approvedRevisionIsStale = Boolean(
+    input.currentPlanRevisionId &&
+    approvedPlanRevisionId &&
+    approvedPlanRevisionId !== input.currentPlanRevisionId,
+  );
+  const requiresResubmission =
+    input.requirePlanApproval &&
+    Boolean(
+      latestStatus === "revision_requested" ||
+      approvedRevisionIsStale,
+    );
+
+  const summary = issuePlanApprovalSummarySchema.parse({
+    approvalId: latestPlanApproval?.approval.id ?? null,
+    status: latestStatus,
+    currentPlanRevisionId: input.currentPlanRevisionId,
+    requestedPlanRevisionId: latestRequestedRevisionId,
+    approvedPlanRevisionId,
+    specRevisionId: input.specRevisionId,
+    testPlanRevisionId: input.testPlanRevisionId,
+    decisionNote:
+      typeof latestPlanApproval?.approval.decisionNote === "string" && latestPlanApproval.approval.decisionNote.trim().length > 0
+        ? latestPlanApproval.approval.decisionNote
+        : null,
+    lastRequestedAt: toIsoString(latestPlanApproval?.approval.createdAt ?? null),
+    lastDecidedAt: toIsoString(latestPlanApproval?.approval.decidedAt ?? null),
+    currentRevisionApproved,
+    requiresApproval: Boolean(input.requirePlanApproval && input.currentPlanRevisionId && !currentRevisionApproved),
+    requiresResubmission,
+  });
+
+  return {
+    summary,
+    latestPlanApproval,
+    latestApprovedPlanApproval,
+  };
+}
 
 export function issueContinuityService(db: Db) {
   const docsSvc = documentService(db);
@@ -377,6 +480,9 @@ export function issueContinuityService(db: Db) {
       parsedReviewFindings && parsedReviewFindings.document.resolutionState === "open"
         ? reviewFindingsDoc?.latestRevisionId ?? null
         : null;
+    const currentPlanRevisionId = input.issueDocsByKey.get("plan")?.latestRevisionId ?? null;
+    const currentSpecRevisionId = input.issueDocsByKey.get("spec")?.latestRevisionId ?? null;
+    const currentTestPlanRevisionId = input.issueDocsByKey.get("test-plan")?.latestRevisionId ?? null;
 
     let specState: IssueContinuityState["specState"] = input.forceSpecState
       ?? existingState?.specState
@@ -416,6 +522,20 @@ export function issueContinuityService(db: Db) {
       }
     }
 
+    const requirePlanApproval =
+      tier === "normal"
+      && !isContinuityExecuting(input.issue)
+      && branchRole === "none"
+      && openReviewFindingsRevisionId == null
+      && !(existingState?.status === "handoff_pending" && parsedHandoff && handoffTargetMatchesOwner && !progressAfterHandoff);
+    const planApproval = buildIssuePlanApprovalState({
+      linkedApprovals: input.linkedApprovals,
+      currentPlanRevisionId,
+      specRevisionId: currentSpecRevisionId,
+      testPlanRevisionId: currentTestPlanRevisionId,
+      requirePlanApproval,
+    }).summary;
+
     let health: IssueContinuityHealth = "healthy";
     let healthReason: string | null = null;
     let healthDetails: string[] = [];
@@ -450,6 +570,11 @@ export function issueContinuityService(db: Db) {
       status = "active";
     } else if (missingDocumentKeys.length > 0) {
       status = "planning";
+    } else if (requirePlanApproval && !planApproval.currentRevisionApproved) {
+      status =
+        planApproval.status === "pending" || planApproval.status === "revision_requested"
+          ? "awaiting_decision"
+          : "planning";
     } else if (
       (input.lastPreparedAt ?? existingState?.lastPreparedAt)
       || input.issueDocsByKey.has("spec")
@@ -485,6 +610,7 @@ export function issueContinuityService(db: Db) {
       lastBranchReturnAt,
       lastPreparedAt: input.lastPreparedAt ?? existingState?.lastPreparedAt ?? null,
       lastBundleHash: existingState?.lastBundleHash ?? null,
+      planApproval,
     });
   }
 
@@ -565,6 +691,7 @@ export function issueContinuityService(db: Db) {
       continuityState,
       executionState: parseIssueExecutionState(material.issue.executionState ?? null),
       decisionQuestions,
+      planApproval: continuityState.planApproval,
       issueDocuments,
       projectDocuments,
       referencedRevisionIds,
@@ -574,6 +701,7 @@ export function issueContinuityService(db: Db) {
         continuityState,
         executionState: bundleInput.executionState,
         decisionQuestions,
+        planApproval: bundleInput.planApproval,
         issueDocuments,
         projectDocuments,
         referencedRevisionIds,
@@ -790,7 +918,15 @@ export function issueContinuityService(db: Db) {
   }
 
   function remediationAction(input: {
-    id: "prepare_execution" | "progress_checkpoint" | "handoff_repair" | "handoff_cancel" | "review_resubmit" | "branch_merge";
+    id:
+      | "prepare_execution"
+      | "request_plan_approval"
+      | "resubmit_plan_approval"
+      | "progress_checkpoint"
+      | "handoff_repair"
+      | "handoff_cancel"
+      | "review_resubmit"
+      | "branch_merge";
     label: string;
     description: string;
     actor: "continuity_owner" | "active_gate_participant" | "branch_owner" | "board";
@@ -841,6 +977,34 @@ export function issueContinuityService(db: Db) {
         eligible: ownerEligible,
         blockedReason: ownerEligible ? null : "Only the continuity owner or board can prepare execution.",
       }));
+    }
+
+    if (
+      input.continuityState.missingDocumentKeys.length === 0 &&
+      input.continuityState.planApproval.requiresApproval
+    ) {
+      if (input.continuityState.planApproval.status === "revision_requested") {
+        push(remediationAction({
+          id: "resubmit_plan_approval",
+          label: "Revise plan and resubmit",
+          description: "Update the current plan revision, then resubmit it for board approval.",
+          actor: "continuity_owner",
+          eligible: ownerEligible,
+          blockedReason: ownerEligible ? null : "Only the continuity owner or board can resubmit plan approval.",
+        }));
+      } else if (
+        input.continuityState.planApproval.status !== "pending" &&
+        !input.continuityState.planApproval.currentRevisionApproved
+      ) {
+        push(remediationAction({
+          id: "request_plan_approval",
+          label: "Request plan approval",
+          description: "Create a board approval request for the current plan revision before execution begins.",
+          actor: "continuity_owner",
+          eligible: ownerEligible,
+          blockedReason: ownerEligible ? null : "Only the continuity owner or board can request plan approval.",
+        }));
+      }
     }
 
     if (input.continuityState.health === "stale_progress") {
@@ -910,6 +1074,29 @@ export function issueContinuityService(db: Db) {
     return issueContinuityRemediationSchema.parse({ suggestedActions, blockedActions });
   }
 
+  function buildIssuePlanApprovalPayload(input: {
+    issue: ContinuityIssueRecord;
+    currentPlanRevisionId: string;
+    currentSpecRevisionId: string | null;
+    currentTestPlanRevisionId: string | null;
+  }): IssuePlanApprovalPayload {
+    const issueLabel = input.issue.identifier ?? input.issue.id;
+    return {
+      kind: "issue_plan_approval",
+      title: `Approve plan for ${issueLabel}`,
+      summary: `Review the current plan revision for ${issueLabel} before execution begins.`,
+      issueId: input.issue.id,
+      issueTitle: input.issue.title,
+      planRevisionId: input.currentPlanRevisionId,
+      decisionTier: "board",
+      recommendedAction: "Approve the current plan revision and allow execution to begin.",
+      nextActionOnApproval: `Continue ${issueLabel} from planning into execution against the approved plan revision.`,
+      ...(input.issue.identifier ? { identifier: input.issue.identifier } : {}),
+      ...(input.currentSpecRevisionId ? { specRevisionId: input.currentSpecRevisionId } : {}),
+      ...(input.currentTestPlanRevisionId ? { testPlanRevisionId: input.currentTestPlanRevisionId } : {}),
+    };
+  }
+
   return {
     recomputeIssueContinuityState,
 
@@ -972,6 +1159,93 @@ export function issueContinuityService(db: Db) {
       });
       const continuityBundle = await buildContinuityBundle(issueId);
       return { continuityState, continuityBundle };
+    },
+
+    requestPlanApproval: async (
+      issueId: string,
+      actor: { agentId?: string | null; userId?: string | null } = {},
+    ) => {
+      const material = await getContinuityMaterial(issueId);
+      const currentState = await recomputeIssueContinuityState(issueId);
+      if (isContinuityExecuting(material.issue)) {
+        throw unprocessable("Plan approval is only available before execution begins");
+      }
+      if (currentState.branchRole === "branch") {
+        throw unprocessable("Branch issues do not request a fresh plan approval");
+      }
+      if (currentState.tier !== "normal") {
+        throw unprocessable("Plan approval only applies to normal planning issues");
+      }
+      if (currentState.missingDocumentKeys.length > 0) {
+        throw unprocessable("Plan approval requires all required planning docs");
+      }
+
+      const currentPlanRevisionId = material.issueDocsByKey.get("plan")?.latestRevisionId ?? null;
+      if (!currentPlanRevisionId) {
+        throw unprocessable("Plan approval requires a current plan document revision");
+      }
+      const currentSpecRevisionId = material.issueDocsByKey.get("spec")?.latestRevisionId ?? null;
+      const currentTestPlanRevisionId = material.issueDocsByKey.get("test-plan")?.latestRevisionId ?? null;
+      const planApprovalState = buildIssuePlanApprovalState({
+        linkedApprovals: material.linkedApprovals,
+        currentPlanRevisionId,
+        specRevisionId: currentSpecRevisionId,
+        testPlanRevisionId: currentTestPlanRevisionId,
+        requirePlanApproval: true,
+      });
+      const payload = buildIssuePlanApprovalPayload({
+        issue: material.issue,
+        currentPlanRevisionId,
+        currentSpecRevisionId,
+        currentTestPlanRevisionId,
+      });
+
+      let approvalId = planApprovalState.latestPlanApproval?.approval.id ?? null;
+      let approvalStatus = planApprovalState.latestPlanApproval?.approval.status ?? null;
+
+      if (planApprovalState.summary.currentRevisionApproved && approvalId) {
+        const continuityState = await recomputeIssueContinuityState(issueId);
+        const continuityBundle = await buildContinuityBundle(issueId);
+        return { approvalId, approvalStatus, continuityState, continuityBundle };
+      }
+
+      if (
+        planApprovalState.latestPlanApproval &&
+        planApprovalState.latestPlanApproval.approval.status === "revision_requested"
+      ) {
+        const resubmitted = await approvalsSvc.resubmit(planApprovalState.latestPlanApproval.approval.id, payload as unknown as Record<string, unknown>);
+        approvalId = resubmitted.id;
+        approvalStatus = resubmitted.status;
+      } else if (
+        planApprovalState.latestPlanApproval &&
+        planApprovalState.latestPlanApproval.payload.planRevisionId === currentPlanRevisionId &&
+        planApprovalState.latestPlanApproval.approval.status === "pending"
+      ) {
+        approvalId = planApprovalState.latestPlanApproval.approval.id;
+        approvalStatus = planApprovalState.latestPlanApproval.approval.status;
+      } else {
+        const approval = await approvalsSvc.create(material.issue.companyId, {
+          type: "request_board_approval",
+          requestedByAgentId: actor.agentId ?? null,
+          requestedByUserId: actor.userId ?? null,
+          status: "pending",
+          payload: payload as unknown as Record<string, unknown>,
+          decisionNote: null,
+          decidedByUserId: null,
+          decidedAt: null,
+          updatedAt: new Date(),
+        });
+        approvalId = approval.id;
+        approvalStatus = approval.status;
+        await issueApprovalsSvc.link(issueId, approval.id, {
+          agentId: actor.agentId ?? null,
+          userId: actor.userId ?? null,
+        });
+      }
+
+      const continuityState = await recomputeIssueContinuityState(issueId);
+      const continuityBundle = await buildContinuityBundle(issueId);
+      return { approvalId, approvalStatus, continuityState, continuityBundle };
     },
 
     handoff: async (

@@ -123,4 +123,57 @@ describe("Paperclip room wake prompts", () => {
     expect(prompt).toContain("board answer: Start with runtime hardening first.");
     expect(prompt).toContain("The board answered your decision question.");
   });
+
+  it("renders plan approval revision guidance for issue wakes", () => {
+    const payload = {
+      reason: "approval_revision_requested",
+      issue: {
+        id: "issue-1",
+        identifier: "AIW-5",
+        title: "Deep audit of the architecture",
+        status: "todo",
+        priority: "high",
+      },
+      planningMode: true,
+      continuityStatus: "awaiting_decision",
+      openDecisionQuestionCount: 0,
+      blockingDecisionQuestionCount: 0,
+      decisionQuestion: null,
+      planApproval: {
+        approvalId: "approval-1",
+        status: "revision_requested",
+        currentPlanRevisionId: "plan-revision-2",
+        requestedPlanRevisionId: "plan-revision-2",
+        approvedPlanRevisionId: "plan-revision-1",
+        decisionNote: "Tighten the rollout and clarify ownership.",
+        currentRevisionApproved: false,
+        requiresApproval: true,
+        requiresResubmission: true,
+        lastRequestedAt: "2026-04-20T01:00:00.000Z",
+        lastDecidedAt: "2026-04-20T01:05:00.000Z",
+      },
+      checkedOutByHarness: false,
+      executionStage: null,
+      commentIds: [],
+      latestCommentId: null,
+      comments: [],
+      requestedCount: 0,
+      includedCount: 0,
+      missingCount: 0,
+      truncated: false,
+      fallbackFetchNeeded: false,
+      conferenceRoom: null,
+      conferenceRoomMessage: null,
+      conferenceRoomThread: [],
+      conferenceRoomPendingResponses: [],
+    };
+
+    const prompt = renderPaperclipWakePrompt(payload);
+
+    expect(prompt).toContain("Plan approval context:");
+    expect(prompt).toContain("status: revision_requested");
+    expect(prompt).toContain("board note: Tighten the rollout and clarify ownership.");
+    expect(prompt).toContain("The board requested revisions on your plan approval.");
+    expect(prompt).toContain("revise the plan document");
+  });
 });

@@ -262,6 +262,8 @@ export {
   issueDecisionOptionSchema,
   issueDecisionAnswerSchema,
   issueDecisionQuestionSchema,
+  issueDecisionQuestionListItemSchema,
+  issuePlanApprovalSummarySchema,
   issueContinuityStateSchema,
   issueContinuityBundleSchema,
   issueContinuitySummarySchema,

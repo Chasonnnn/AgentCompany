@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  APPROVAL_STATUSES,
   ISSUE_BRANCH_ROLES,
   ISSUE_BRANCH_STATUSES,
   ISSUE_CONTINUITY_HEALTHS,
@@ -164,6 +165,35 @@ export const issueDecisionQuestionSchema = z.object({
   updatedAt: z.coerce.date(),
 });
 
+export const issueDecisionQuestionListItemSchema = z.object({
+  question: issueDecisionQuestionSchema,
+  issue: z.object({
+    id: z.string().uuid(),
+    identifier: z.string().trim().min(1).nullable(),
+    title: z.string().trim().min(1),
+    status: z.enum(ISSUE_STATUSES),
+    priority: z.enum(ISSUE_PRIORITIES),
+    assigneeAgentId: z.string().uuid().nullable(),
+    assigneeUserId: z.string().nullable(),
+  }),
+});
+
+export const issuePlanApprovalSummarySchema = z.object({
+  approvalId: z.string().uuid().nullable().optional().default(null),
+  status: z.enum(APPROVAL_STATUSES).nullable().optional().default(null),
+  currentPlanRevisionId: z.string().uuid().nullable().optional().default(null),
+  requestedPlanRevisionId: z.string().uuid().nullable().optional().default(null),
+  approvedPlanRevisionId: z.string().uuid().nullable().optional().default(null),
+  specRevisionId: z.string().uuid().nullable().optional().default(null),
+  testPlanRevisionId: z.string().uuid().nullable().optional().default(null),
+  decisionNote: z.string().trim().min(1).nullable().optional().default(null),
+  lastRequestedAt: z.string().datetime().nullable().optional().default(null),
+  lastDecidedAt: z.string().datetime().nullable().optional().default(null),
+  currentRevisionApproved: z.boolean().optional().default(false),
+  requiresApproval: z.boolean().optional().default(false),
+  requiresResubmission: z.boolean().optional().default(false),
+});
+
 export const issueContinuityStateSchema = z.object({
   tier: issueContinuityTierSchema,
   status: issueContinuityStatusSchema,
@@ -189,6 +219,7 @@ export const issueContinuityStateSchema = z.object({
   lastBranchReturnAt: z.string().datetime().nullable().optional(),
   lastPreparedAt: z.string().datetime().nullable(),
   lastBundleHash: z.string().nullable(),
+  planApproval: issuePlanApprovalSummarySchema.optional().default({}),
 });
 
 const issueContinuityDocumentSnapshotSchema = z.object({
@@ -207,6 +238,7 @@ export const issueContinuityBundleSchema = z.object({
   continuityState: issueContinuityStateSchema.nullable(),
   executionState: issueExecutionStateSchema.nullable(),
   decisionQuestions: z.array(issueDecisionQuestionSchema).default([]),
+  planApproval: issuePlanApprovalSummarySchema.optional().default({}),
   issueDocuments: z.object({
     spec: issueContinuityDocumentSnapshotSchema.nullable(),
     plan: issueContinuityDocumentSnapshotSchema.nullable(),
@@ -269,6 +301,8 @@ export const escalateIssueDecisionQuestionSchema = z.object({
 export const issueContinuityRemediationActionSchema = z.object({
   id: z.enum([
     "prepare_execution",
+    "request_plan_approval",
+    "resubmit_plan_approval",
     "progress_checkpoint",
     "handoff_repair",
     "handoff_cancel",

@@ -1,4 +1,5 @@
 import type {
+  ApprovalStatus,
   IssueBranchRole,
   IssueBranchStatus,
   IssueContinuityHealth,
@@ -215,6 +216,27 @@ export interface IssueDecisionQuestion {
   updatedAt: Date;
 }
 
+export interface IssueDecisionQuestionListItem {
+  question: IssueDecisionQuestion;
+  issue: IssueRelationIssueSummary;
+}
+
+export interface IssuePlanApprovalSummary {
+  approvalId: string | null;
+  status: ApprovalStatus | null;
+  currentPlanRevisionId: string | null;
+  requestedPlanRevisionId: string | null;
+  approvedPlanRevisionId: string | null;
+  specRevisionId: string | null;
+  testPlanRevisionId: string | null;
+  decisionNote: string | null;
+  lastRequestedAt: string | null;
+  lastDecidedAt: string | null;
+  currentRevisionApproved: boolean;
+  requiresApproval: boolean;
+  requiresResubmission: boolean;
+}
+
 export interface IssueContinuityState {
   tier: IssueContinuityTier;
   status: IssueContinuityStatus;
@@ -240,6 +262,7 @@ export interface IssueContinuityState {
   lastBranchReturnAt?: string | null;
   lastPreparedAt: string | null;
   lastBundleHash: string | null;
+  planApproval: IssuePlanApprovalSummary;
 }
 
 export interface IssueContinuityDocumentSnapshot {
@@ -258,6 +281,7 @@ export interface IssueContinuityBundle {
   continuityState: IssueContinuityState | null;
   executionState: IssueExecutionState | null;
   decisionQuestions: IssueDecisionQuestion[];
+  planApproval: IssuePlanApprovalSummary;
   issueDocuments: {
     spec: IssueContinuityDocumentSnapshot | null;
     plan: IssueContinuityDocumentSnapshot | null;
@@ -290,6 +314,8 @@ export interface IssueContinuitySummary {
 
 export type IssueContinuityRemediationActionId =
   | "prepare_execution"
+  | "request_plan_approval"
+  | "resubmit_plan_approval"
   | "progress_checkpoint"
   | "handoff_repair"
   | "handoff_cancel"

@@ -3,7 +3,7 @@ import { APPROVAL_TYPES } from "../constants.js";
 import type { RequestBoardApprovalPayload } from "../types/approval.js";
 import { conferenceContextSchema } from "./conference-context.js";
 
-function normalizeOptionalText(value: string | undefined): string | undefined {
+function normalizeOptionalText(value: string | null | undefined): string | undefined {
   if (value == null) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -94,9 +94,47 @@ const companyConferenceRoomApprovalPayloadSchema = baseRequestBoardApprovalPaylo
   };
 });
 
+const issuePlanApprovalPayloadSchema = baseRequestBoardApprovalPayloadSchema.extend({
+  kind: z.literal("issue_plan_approval"),
+  issueId: z.string().uuid(),
+  identifier: z.string().trim().min(1).optional().nullable(),
+  issueTitle: z.string().trim().min(1),
+  planRevisionId: z.string().uuid(),
+  specRevisionId: z.string().uuid().optional().nullable(),
+  testPlanRevisionId: z.string().uuid().optional().nullable(),
+}).transform((payload): RequestBoardApprovalPayload => {
+  const recommendedAction = normalizeOptionalText(payload.recommendedAction);
+  const nextActionOnApproval = normalizeOptionalText(payload.nextActionOnApproval);
+  const proposedComment = normalizeOptionalText(payload.proposedComment);
+  const risks = normalizeRisks(payload.risks);
+  const repoContext = payload.repoContext;
+  const identifier = normalizeOptionalText(payload.identifier);
+  const specRevisionId = normalizeOptionalText(payload.specRevisionId);
+  const testPlanRevisionId = normalizeOptionalText(payload.testPlanRevisionId);
+
+  return {
+    kind: "issue_plan_approval",
+    title: payload.title.trim(),
+    summary: payload.summary.trim(),
+    issueId: payload.issueId,
+    issueTitle: payload.issueTitle.trim(),
+    planRevisionId: payload.planRevisionId,
+    ...(identifier ? { identifier } : {}),
+    ...(specRevisionId ? { specRevisionId } : {}),
+    ...(testPlanRevisionId ? { testPlanRevisionId } : {}),
+    ...(recommendedAction ? { recommendedAction } : {}),
+    ...(nextActionOnApproval ? { nextActionOnApproval } : {}),
+    ...(risks ? { risks } : {}),
+    ...(proposedComment ? { proposedComment } : {}),
+    ...(repoContext ? { repoContext } : {}),
+    decisionTier: "board",
+  };
+});
+
 export const requestBoardApprovalPayloadSchema = z.union([
   companyConferenceRoomApprovalPayloadSchema,
   legacyIssueBoardRoomApprovalPayloadSchema,
+  issuePlanApprovalPayloadSchema,
 ]);
 
 export function normalizeRequestBoardApprovalPayload(

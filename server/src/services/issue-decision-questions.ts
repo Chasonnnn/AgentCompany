@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { issueDecisionQuestions, issues } from "@paperclipai/db";
 import {
@@ -7,12 +7,14 @@ import {
   dismissIssueDecisionQuestionSchema,
   escalateIssueDecisionQuestionSchema,
   issueDecisionQuestionSchema,
+  issueDecisionQuestionListItemSchema,
   normalizeRequestBoardApprovalPayload,
   type AnswerIssueDecisionQuestion,
   type CreateIssueDecisionQuestion,
   type DismissIssueDecisionQuestion,
   type EscalateIssueDecisionQuestion,
   type IssueDecisionQuestion,
+  type IssueDecisionQuestionListItem,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { approvalService } from "./approvals.js";
@@ -66,6 +68,24 @@ export function issueDecisionQuestionService(db: Db) {
     return { continuityState, continuityBundle };
   }
 
+  function toListItem(row: {
+    question: typeof issueDecisionQuestions.$inferSelect;
+    issue: {
+      id: string;
+      identifier: string | null;
+      title: string;
+      status: typeof issues.$inferSelect.status;
+      priority: typeof issues.$inferSelect.priority;
+      assigneeAgentId: string | null;
+      assigneeUserId: string | null;
+    };
+  }): IssueDecisionQuestionListItem {
+    return issueDecisionQuestionListItemSchema.parse({
+      question: toDecisionQuestion(row.question),
+      issue: row.issue,
+    });
+  }
+
   return {
     listForIssue: async (issueId: string) => {
       const issue = await getIssueOrThrow(issueId);
@@ -85,6 +105,34 @@ export function issueDecisionQuestionService(db: Db) {
         .orderBy(desc(issueDecisionQuestions.createdAt))
         .limit(limit);
       return rows.map(toDecisionQuestion);
+    },
+
+    listOpenForCompanyWithIssues: async (companyId: string, limit = 25) => {
+      const rows = await db
+        .select({
+          question: issueDecisionQuestions,
+          issue: {
+            id: issues.id,
+            identifier: issues.identifier,
+            title: issues.title,
+            status: issues.status,
+            priority: issues.priority,
+            assigneeAgentId: issues.assigneeAgentId,
+            assigneeUserId: issues.assigneeUserId,
+          },
+        })
+        .from(issueDecisionQuestions)
+        .innerJoin(issues, eq(issueDecisionQuestions.issueId, issues.id))
+        .where(
+          and(
+            eq(issueDecisionQuestions.companyId, companyId),
+            eq(issueDecisionQuestions.status, "open"),
+            isNull(issues.hiddenAt),
+          ),
+        )
+        .orderBy(desc(issueDecisionQuestions.createdAt))
+        .limit(limit);
+      return rows.map(toListItem);
     },
 
     create: async (

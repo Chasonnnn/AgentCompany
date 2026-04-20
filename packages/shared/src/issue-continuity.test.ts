@@ -59,6 +59,21 @@ describe("issue continuity schemas", () => {
       lastBranchReturnAt: null,
       lastPreparedAt: "2026-04-14T09:00:00.000Z",
       lastBundleHash: "abc123",
+      planApproval: {
+        approvalId: null,
+        status: null,
+        currentPlanRevisionId: null,
+        requestedPlanRevisionId: null,
+        approvedPlanRevisionId: null,
+        specRevisionId: null,
+        testPlanRevisionId: null,
+        decisionNote: null,
+        lastRequestedAt: null,
+        lastDecidedAt: null,
+        currentRevisionApproved: false,
+        requiresApproval: false,
+        requiresResubmission: false,
+      },
     });
   });
 

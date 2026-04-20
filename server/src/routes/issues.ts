@@ -158,6 +158,12 @@ function createFallbackIssueContinuityService() {
       continuityState: null,
       continuityBundle: null,
     }),
+    requestPlanApproval: async () => ({
+      approvalId: null,
+      approvalStatus: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
     progressCheckpoint: async () => ({
       continuityState: null,
       continuityBundle: null,
@@ -205,6 +211,7 @@ function createFallbackIssueDecisionQuestionService() {
   return {
     listForIssue: async () => [],
     listOpenForCompany: async () => [],
+    listOpenForCompanyWithIssues: async () => [],
     create: async () => ({
       question: null,
       continuityState: null,
@@ -302,8 +309,19 @@ function describeExecutionReadinessBlock(input: {
   health?: string | null;
   missingDocumentKeys?: string[] | null;
   blockingDecisionQuestionCount?: number | null;
+  planApproval?: {
+    status?: string | null;
+    requiresApproval?: boolean | null;
+  } | null;
 } | null) {
   if (!input) return "Issue continuity has not been prepared yet";
+  const planApprovalBlocked =
+    input.planApproval?.requiresApproval === true ||
+    input.planApproval?.status === "pending" ||
+    input.planApproval?.status === "revision_requested";
+  if (input.status === "awaiting_decision" && planApprovalBlocked) {
+    return "Issue planning is waiting on board plan approval";
+  }
   if (input.status === "awaiting_decision" || (input.blockingDecisionQuestionCount ?? 0) > 0) {
     return "Issue planning is waiting on a blocking decision question";
   }
@@ -894,6 +912,27 @@ export function issueRoutes(
     res.json(result.map((issue) => withIssueContinuitySummary(issue)));
   });
 
+  router.get("/companies/:companyId/issue-questions", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    if (req.actor.type !== "board") {
+      res.status(403).json({ error: "Board user context required" });
+      return;
+    }
+    const status = (req.query.status as string | undefined) ?? "open";
+    if (status !== "open") {
+      res.status(400).json({ error: "Only status=open is supported" });
+      return;
+    }
+    const rawLimit = req.query.limit as string | undefined;
+    const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : 25;
+    if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {
+      res.status(400).json({ error: "limit must be a positive integer" });
+      return;
+    }
+    res.json(await decisionQuestionsSvc.listOpenForCompanyWithIssues(companyId, parsedLimit));
+  });
+
   router.get("/companies/:companyId/labels", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -1064,6 +1103,41 @@ export function issueRoutes(
         runId: actor.runId ?? null,
       }),
     );
+  });
+
+  router.post("/issues/:id/continuity/plan-approval", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!isContinuityOwnerActor(req, issue)) {
+      res.status(403).json({ error: "Only the continuity owner can request plan approval" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const result = await continuitySvc.requestPlanApproval(issue.id, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+    });
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.plan_approval_requested",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        approvalId: result.approvalId,
+        approvalStatus: result.approvalStatus,
+        planRevisionId: result.continuityState?.planApproval.currentPlanRevisionId ?? null,
+      },
+    });
+    res.json(result);
   });
 
   router.post("/issues/:id/continuity/handoff", validate(handoffIssueContinuitySchema), async (req, res) => {
