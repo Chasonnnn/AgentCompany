@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { portfolioClusterRoutes } from "../routes/portfolio-clusters.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 function makeCluster(overrides: Record<string, unknown> = {}) {
   return {
@@ -21,7 +19,7 @@ function makeCluster(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createHarness(
+async function createHarness(
   actor: Record<string, unknown> = {
     type: "board",
     userId: "board-user",
@@ -30,6 +28,10 @@ function createHarness(
     isInstanceAdmin: false,
   },
 ) {
+  const [{ errorHandler }, { portfolioClusterRoutes }] = await Promise.all([
+    import("../middleware/index.js"),
+    import("../routes/portfolio-clusters.js"),
+  ]);
   const portfolioClusterService = {
     listForCompany: vi.fn().mockResolvedValue([makeCluster()]),
     create: vi.fn().mockResolvedValue(makeCluster()),
@@ -54,8 +56,15 @@ function createHarness(
 }
 
 describe("portfolio cluster routes", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    vi.unmock("../services/index.js");
+    vi.unmock("../middleware/validate.js");
+  });
+
   it("lists clusters for an authorized company actor", async () => {
-    const { app } = createHarness();
+    const { app } = await createHarness();
     const res = await request(app).get("/api/companies/company-1/portfolio-clusters");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -63,7 +72,7 @@ describe("portfolio cluster routes", () => {
   });
 
   it("creates a cluster for board actors", async () => {
-    const { app } = createHarness();
+    const { app } = await createHarness();
     const res = await request(app)
       .post("/api/companies/company-1/portfolio-clusters")
       .send({
@@ -77,7 +86,7 @@ describe("portfolio cluster routes", () => {
   });
 
   it("rejects cluster creation for non-board actors", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "agent",
       companyId: "company-1",
       companyIds: ["company-1"],
@@ -95,7 +104,7 @@ describe("portfolio cluster routes", () => {
   });
 
   it("updates a cluster for board actors", async () => {
-    const { app } = createHarness();
+    const { app } = await createHarness();
     const res = await request(app)
       .patch("/api/portfolio-clusters/cluster-1")
       .send({
