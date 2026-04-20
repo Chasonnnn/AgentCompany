@@ -8,6 +8,7 @@ describe("shouldTrackDevServerPath", () => {
         ".paperclip/worktrees/PAP-712-for-project-configuration-get-rid-of-the-overview-tab-for-now/.agents/skills/paperclip",
       ),
     ).toBe(false);
+    expect(shouldTrackDevServerPath("report.20260420.030215.11111.0.001.json")).toBe(false);
     expect(shouldTrackDevServerPath("server/src/__tests__/health.test.ts")).toBe(false);
     expect(shouldTrackDevServerPath("packages/shared/src/lib/foo.test.ts")).toBe(false);
     expect(shouldTrackDevServerPath("packages/shared/src/lib/foo.spec.tsx")).toBe(false);
