@@ -62,6 +62,7 @@ import {
 } from "./issue-execution-policy.js";
 import { approvalService } from "./approvals.js";
 import { documentService } from "./documents.js";
+import { normalizeBundledOpenDecisionQuestions } from "./issue-decision-question-bundles.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 
@@ -358,6 +359,7 @@ export function issueContinuityService(db: Db) {
 
   async function getContinuityMaterial(issueId: string) {
     const issue = await getIssueOrThrow(issueId);
+    await normalizeBundledOpenDecisionQuestions(db, { issueId: issue.id, companyId: issue.companyId });
     const [issueDocs, projectContext, projectRunbook, linkedApprovals, childRows, questionRows] = await Promise.all([
       docsSvc.listIssueDocuments(issue.id),
       issue.projectId ? docsSvc.getProjectDocumentByKey(issue.projectId, "context") : Promise.resolve(null),

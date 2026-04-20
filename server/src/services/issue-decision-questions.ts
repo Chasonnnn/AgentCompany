@@ -19,6 +19,10 @@ import {
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { approvalService } from "./approvals.js";
 import { issueApprovalService } from "./issue-approvals.js";
+import {
+  normalizeBundledOpenDecisionQuestions,
+  splitBundledDecisionQuestionInput,
+} from "./issue-decision-question-bundles.js";
 import { issueContinuityService } from "./issue-continuity.js";
 import { issueService } from "./issues.js";
 
@@ -89,6 +93,7 @@ export function issueDecisionQuestionService(db: Db) {
   return {
     listForIssue: async (issueId: string) => {
       const issue = await getIssueOrThrow(issueId);
+      await normalizeBundledOpenDecisionQuestions(db, { issueId: issue.id, companyId: issue.companyId });
       const rows = await db
         .select()
         .from(issueDecisionQuestions)
@@ -98,6 +103,7 @@ export function issueDecisionQuestionService(db: Db) {
     },
 
     listOpenForCompany: async (companyId: string, limit = 25) => {
+      await normalizeBundledOpenDecisionQuestions(db, { companyId });
       const rows = await db
         .select()
         .from(issueDecisionQuestions)
@@ -108,6 +114,7 @@ export function issueDecisionQuestionService(db: Db) {
     },
 
     listOpenForCompanyWithIssues: async (companyId: string, limit = 25) => {
+      await normalizeBundledOpenDecisionQuestions(db, { companyId });
       const rows = await db
         .select({
           question: issueDecisionQuestions,
@@ -142,6 +149,43 @@ export function issueDecisionQuestionService(db: Db) {
     ) => {
       const parsed = createIssueDecisionQuestionSchema.parse(input);
       const issue = await getIssueOrThrow(issueId);
+      const splitQuestions = splitBundledDecisionQuestionInput(parsed);
+      if (splitQuestions) {
+        const now = new Date();
+        const createdRows = await db.transaction(async (tx) =>
+          tx
+            .insert(issueDecisionQuestions)
+            .values(
+              splitQuestions.map((questionInput) => ({
+                companyId: issue.companyId,
+                issueId: issue.id,
+                target: "board",
+                requestedByAgentId: actor.agentId ?? null,
+                requestedByUserId: actor.userId ?? null,
+                status: "open",
+                blocking: questionInput.blocking ?? true,
+                title: questionInput.title,
+                question: questionInput.question,
+                whyBlocked: questionInput.whyBlocked ?? null,
+                recommendedOptions: questionInput.recommendedOptions ?? [],
+                suggestedDefault: questionInput.suggestedDefault ?? null,
+                linkedApprovalId: questionInput.linkedApprovalId ?? null,
+                updatedAt: now,
+              })),
+            )
+            .returning(),
+        );
+        const primaryQuestion = createdRows[0] ?? null;
+        if (!primaryQuestion) throw conflict("Failed to create decision question");
+        await touchIssue(issue.id);
+        const { continuityState, continuityBundle } = await recompute(issue.id);
+        return {
+          question: toDecisionQuestion(primaryQuestion),
+          continuityState,
+          continuityBundle,
+        };
+      }
+
       const inserted = await db
         .insert(issueDecisionQuestions)
         .values({
