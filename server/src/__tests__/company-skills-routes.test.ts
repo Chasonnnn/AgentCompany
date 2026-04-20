@@ -168,6 +168,9 @@ function applyDefaultMocks() {
 
 async function createApp(actor: Record<string, unknown>) {
   vi.resetModules();
+  vi.doUnmock("../routes/company-skills.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../errors.js");
   registerRouteMocks();
   applyDefaultMocks();
   const [{ companySkillRoutes }, { errorHandler }, errors] = await Promise.all([
@@ -189,7 +192,11 @@ async function createApp(actor: Record<string, unknown>) {
 describe("company skill mutation permissions", () => {
   beforeEach(() => {
     vi.useRealTimers();
-    vi.clearAllMocks();
+    vi.resetModules();
+    vi.resetAllMocks();
+    vi.doUnmock("../routes/company-skills.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../errors.js");
     applyDefaultMocks();
   });
 
@@ -197,6 +204,13 @@ describe("company skill mutation permissions", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    vi.doUnmock("../routes/company-skills.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../errors.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../services/agent-permissions.js");
+    vi.doUnmock("@paperclipai/shared/telemetry");
+    vi.doUnmock("../telemetry.js");
   });
 
   it("allows local board operators to mutate company skills", async () => {

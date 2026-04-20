@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockFeedbackService = vi.hoisted(() => ({
   getFeedbackTraceById: vi.fn(),
@@ -94,6 +94,8 @@ vi.mock("../services/index.js", () => ({
 }));
 
 async function createApp(actor: Record<string, unknown>) {
+  vi.doUnmock("../routes/issues.js");
+  vi.doUnmock("../middleware/index.js");
   const [{ issueRoutes }, { errorHandler }] = await Promise.all([
     import("../routes/issues.js"),
     import("../middleware/index.js"),
@@ -133,6 +135,11 @@ describe("issue feedback trace routes", () => {
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1"]);
     mockRoutineService.syncRunStatusForIssue.mockResolvedValue(undefined);
     mockLogActivity.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.doUnmock("../routes/issues.js");
+    vi.doUnmock("../middleware/index.js");
   });
 
   it("flushes a newly shared feedback trace immediately after saving the vote", async () => {

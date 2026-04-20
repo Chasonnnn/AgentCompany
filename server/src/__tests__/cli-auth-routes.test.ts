@@ -26,6 +26,8 @@ const mockBoardAuthService = vi.hoisted(() => ({
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 async function createApp(actor: any) {
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../board-claim.js");
   const [{ accessRoutes }, { errorHandler }] = await Promise.all([
     import("../routes/access.js"),
     import("../middleware/index.js"),
@@ -58,6 +60,8 @@ async function createApp(actor: any) {
 afterEach(() => {
   vi.doUnmock("../routes/access.js");
   vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../board-claim.js");
 });
 
 describe("cli auth routes", () => {
@@ -66,6 +70,8 @@ describe("cli auth routes", () => {
     vi.resetAllMocks();
     vi.doUnmock("../routes/access.js");
     vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../board-claim.js");
   });
 
   it("creates a CLI auth challenge with approval metadata", async () => {

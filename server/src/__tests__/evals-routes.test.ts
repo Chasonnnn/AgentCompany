@@ -1,9 +1,12 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 async function createHarness(actor: any) {
   vi.resetModules();
+  vi.doUnmock("../routes/evals.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../services/evals.js");
   const evalService = {
     getSummary: vi.fn().mockResolvedValue({
       artifactSchemaVersion: 1,
@@ -67,6 +70,12 @@ async function createHarness(actor: any) {
 describe("eval routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.doUnmock("../routes/evals.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../services/evals.js");
   });
 
   it("allows instance admins to read summary and run detail", async () => {

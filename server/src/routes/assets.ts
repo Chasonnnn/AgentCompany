@@ -125,9 +125,16 @@ export function assetRoutes(db: Db, storage: StorageService) {
       throw err;
     }
 
-    const file = (req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string } }).file;
+    const file = (
+      req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string; size?: number } }
+    ).file;
     if (!file) {
       res.status(400).json({ error: "Missing file field 'file'" });
+      return;
+    }
+    const uploadedByteSize = typeof file.size === "number" ? file.size : file.buffer.length;
+    if (uploadedByteSize > MAX_ATTACHMENT_BYTES) {
+      res.status(422).json({ error: `File exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
       return;
     }
 
@@ -154,6 +161,10 @@ export function assetRoutes(db: Db, storage: StorageService) {
     }
     if (fileBody.length <= 0) {
       res.status(422).json({ error: "Image is empty" });
+      return;
+    }
+    if (fileBody.length > MAX_ATTACHMENT_BYTES) {
+      res.status(422).json({ error: `File exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
       return;
     }
 
@@ -228,9 +239,16 @@ export function assetRoutes(db: Db, storage: StorageService) {
       throw err;
     }
 
-    const file = (req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string } }).file;
+    const file = (
+      req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string; size?: number } }
+    ).file;
     if (!file) {
       res.status(400).json({ error: "Missing file field 'file'" });
+      return;
+    }
+    const uploadedByteSize = typeof file.size === "number" ? file.size : file.buffer.length;
+    if (uploadedByteSize > MAX_ATTACHMENT_BYTES) {
+      res.status(422).json({ error: `Image exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
       return;
     }
 
@@ -252,6 +270,10 @@ export function assetRoutes(db: Db, storage: StorageService) {
 
     if (fileBody.length <= 0) {
       res.status(422).json({ error: "Image is empty" });
+      return;
+    }
+    if (fileBody.length > MAX_ATTACHMENT_BYTES) {
+      res.status(422).json({ error: `Image exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
       return;
     }
 

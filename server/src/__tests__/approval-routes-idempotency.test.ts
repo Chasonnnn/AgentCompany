@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockApprovalService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -34,6 +34,9 @@ const mockSecretService = vi.hoisted(() => ({
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 async function createApp(actorOverrides: Record<string, unknown> = {}) {
+  vi.doUnmock("../routes/approvals.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../services/index.js");
   vi.doMock("../services/index.js", () => ({
     approvalService: () => mockApprovalService,
     conferenceApprovalService: () => mockConferenceApprovalService,
@@ -68,6 +71,9 @@ async function createApp(actorOverrides: Record<string, unknown> = {}) {
 }
 
 async function createAgentApp() {
+  vi.doUnmock("../routes/approvals.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../services/index.js");
   vi.doMock("../services/index.js", () => ({
     approvalService: () => mockApprovalService,
     conferenceApprovalService: () => mockConferenceApprovalService,
@@ -107,6 +113,12 @@ describe("approval routes idempotent retries", () => {
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
     mockLogActivity.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.doUnmock("../routes/approvals.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../services/index.js");
   });
 
   it("does not emit duplicate approval side effects when approve is already resolved", async () => {
