@@ -30,7 +30,10 @@ export function approvalSubject(payload?: Record<string, unknown> | null): strin
 
 /** Build a contextual label for an approval, e.g. "Hire Agent: Designer" */
 export function approvalLabel(type: string, payload?: Record<string, unknown> | null): string {
-  const base = typeLabel[type] ?? type;
+  const base =
+    type === "request_board_approval" && payload?.kind === "issue_plan_approval"
+      ? "Plan Approval"
+      : typeLabel[type] ?? type;
   const subject = approvalSubject(payload);
   if (subject) {
     return `${base}: ${subject}`;
@@ -164,6 +167,83 @@ export function BoardApprovalPayload({
 }
 
 function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unknown> }) {
+  if (payload.kind === "issue_plan_approval") {
+    const issueTitle = firstNonEmptyString(payload.issueTitle);
+    const identifier = firstNonEmptyString(payload.identifier);
+    const summary = firstNonEmptyString(payload.summary);
+    const recommendedAction = firstNonEmptyString(payload.recommendedAction);
+    const nextActionOnApproval = firstNonEmptyString(payload.nextActionOnApproval);
+    const proposedComment = firstNonEmptyString(payload.proposedComment);
+    const planRevisionId = firstNonEmptyString(payload.planRevisionId);
+    const specRevisionId = firstNonEmptyString(payload.specRevisionId);
+    const testPlanRevisionId = firstNonEmptyString(payload["testPlanRevisionId"]);
+    const risks = Array.isArray(payload.risks)
+      ? payload.risks
+          .filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : [];
+
+    return (
+      <div className="mt-4 space-y-3.5 text-sm">
+        <div className="space-y-1">
+          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Issue</p>
+          <p className="font-medium leading-6 text-foreground">
+            {identifier ? `${identifier} ` : ""}{issueTitle ?? "Untitled issue"}
+          </p>
+        </div>
+        {summary ? (
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Summary</p>
+            <p className="leading-6 text-foreground/90">{summary}</p>
+          </div>
+        ) : null}
+        <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+          <div><span className="font-medium text-foreground">Plan revision:</span> {planRevisionId ?? "none"}</div>
+          <div><span className="font-medium text-foreground">Spec revision:</span> {specRevisionId ?? "none"}</div>
+          <div><span className="font-medium text-foreground">Test-plan revision:</span> {testPlanRevisionId ?? "none"}</div>
+        </div>
+        {recommendedAction && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3.5 py-3">
+            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-amber-700 dark:text-amber-300">
+              Recommended action
+            </p>
+            <p className="mt-1 leading-6 text-foreground">{recommendedAction}</p>
+          </div>
+        )}
+        {nextActionOnApproval && (
+          <div className="rounded-lg border border-border/60 bg-background/60 px-3.5 py-3">
+            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">On approval</p>
+            <p className="mt-1 leading-6 text-foreground">{nextActionOnApproval}</p>
+          </div>
+        )}
+        {risks.length > 0 ? (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Risks</p>
+            <ul className="space-y-1 text-sm text-muted-foreground">
+              {risks.map((risk) => (
+                <li key={risk} className="flex items-start gap-2">
+                  <span className="mt-2 h-1.5 w-1.5 rounded-full bg-muted-foreground/60" />
+                  <span className="leading-6">{risk}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {proposedComment ? (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+              Proposed comment
+            </p>
+            <pre className="max-h-48 overflow-auto rounded-lg border border-border/60 bg-muted/50 px-3.5 py-3 font-mono text-xs leading-5 text-muted-foreground whitespace-pre-wrap">
+              {proposedComment}
+            </pre>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   const risks = Array.isArray(payload.risks)
     ? payload.risks
         .filter((value): value is string => typeof value === "string")

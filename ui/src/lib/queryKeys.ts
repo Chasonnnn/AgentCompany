@@ -70,6 +70,7 @@ export const queryKeys = {
     documents: (issueId: string) => ["issues", "documents", issueId] as const,
     continuity: (issueId: string) => ["issues", "continuity", issueId] as const,
     questions: (issueId: string) => ["issues", "questions", issueId] as const,
+    openQuestions: (companyId: string) => ["issues", companyId, "open-questions"] as const,
     documentRevisions: (issueId: string, key: string) => ["issues", "document-revisions", issueId, key] as const,
     activity: (issueId: string) => ["issues", "activity", issueId] as const,
     runs: (issueId: string) => ["issues", "runs", issueId] as const,

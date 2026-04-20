@@ -16,6 +16,15 @@ describe("approvalLabel", () => {
       }),
     ).toBe("Conference Room: Reply with an ASCII frog");
   });
+
+  it("labels issue plan approvals explicitly", () => {
+    expect(
+      approvalLabel("request_board_approval", {
+        kind: "issue_plan_approval",
+        title: "Approve onboarding plan",
+      }),
+    ).toBe("Plan Approval: Approve onboarding plan");
+  });
 });
 
 describe("ApprovalPayloadRenderer", () => {
@@ -138,6 +147,41 @@ describe("ApprovalPayloadRenderer", () => {
 
     expect(container.textContent).toContain("Board asked for approval before posting the frog.");
     expect(container.textContent).not.toContain("TitleReply with an ASCII frog");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("renders issue plan approval payloads as plan reviews", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <ApprovalPayloadRenderer
+          type="request_board_approval"
+          payload={{
+            kind: "issue_plan_approval",
+            title: "Approve onboarding plan",
+            issueTitle: "Enterprise readiness audit",
+            identifier: "AIW-5",
+            summary: "The plan is ready for board review.",
+            planRevisionId: "plan-revision-1",
+            specRevisionId: "spec-revision-1",
+            testPlanRevisionId: "test-plan-revision-1",
+            recommendedAction: "Approve the plan and start execution.",
+            nextActionOnApproval: "Begin the first remediation lane.",
+            risks: ["The rollout remains cross-functional."],
+          }}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("AIW-5 Enterprise readiness audit");
+    expect(container.textContent).toContain("The plan is ready for board review.");
+    expect(container.textContent).toContain("plan-revision-1");
+    expect(container.textContent).toContain("Approve the plan and start execution.");
+    expect(container.textContent).not.toContain("Conference");
 
     act(() => {
       root.unmount();

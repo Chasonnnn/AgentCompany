@@ -748,6 +748,25 @@ export function Inbox() {
     retry: false,
   });
 
+  const {
+    data: openIssueQuestions = [],
+    isLoading: isOpenQuestionsLoading,
+  } = useQuery({
+    queryKey: queryKeys.issues.openQuestions(selectedCompanyId!),
+    queryFn: async () => {
+      try {
+        return await issuesApi.listOpenQuestions(selectedCompanyId!);
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 403 || err.status === 401)) {
+          return [];
+        }
+        throw err;
+      }
+    },
+    enabled: !!selectedCompanyId,
+    retry: false,
+  });
+
   const { data: dashboard, isLoading: isDashboardLoading } = useQuery({
     queryKey: queryKeys.dashboard(selectedCompanyId!),
     queryFn: () => dashboardApi.summary(selectedCompanyId!),
@@ -835,6 +854,19 @@ export function Inbox() {
     for (const issue of issues ?? []) map.set(issue.id, issue);
     return map;
   }, [issues]);
+  const filteredOpenIssueQuestions = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return openIssueQuestions;
+    return openIssueQuestions.filter(({ question, issue }) =>
+      [
+        question.title,
+        question.question,
+        question.whyBlocked,
+        issue.identifier,
+        issue.title,
+      ].some((value) => value?.toLowerCase().includes(query)),
+    );
+  }, [openIssueQuestions, searchQuery]);
   const projectById = useMemo(() => {
     const map = new Map<string, { name: string; color: string | null }>();
     for (const project of projects ?? []) {
@@ -1646,6 +1678,7 @@ export function Inbox() {
   ].filter((key): key is SectionKey => key !== null);
 
   const allLoaded =
+    !isOpenQuestionsLoading &&
     !isJoinRequestsLoading &&
     !isApprovalsLoading &&
     !isDashboardLoading &&
@@ -1885,6 +1918,65 @@ export function Inbox() {
 
       {approvalsError && <p className="text-sm text-destructive">{approvalsError.message}</p>}
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+
+      {filteredOpenIssueQuestions.length > 0 ? (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold">Open Issue Questions</h2>
+              <p className="text-xs text-muted-foreground">
+                Structured board asks that still need an answer.
+              </p>
+            </div>
+            <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+              {filteredOpenIssueQuestions.length}
+            </span>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-background/70">
+            {filteredOpenIssueQuestions.map(({ question, issue }, index) => (
+              <div
+                key={question.id}
+                className={cn(
+                  "flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:justify-between",
+                  index > 0 && "border-t border-border/70",
+                )}
+              >
+                <div className="min-w-0 space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      to={createIssueDetailPath(issue.identifier ?? issue.id)}
+                      state={issueLinkState}
+                      className="text-sm font-medium text-foreground underline-offset-2 hover:underline"
+                    >
+                      {issue.identifier ?? issue.id}
+                    </Link>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
+                      {question.blocking ? "blocking" : "discussion"}
+                    </span>
+                  </div>
+                  <div className="text-sm font-medium text-foreground">{question.title}</div>
+                  <p className="text-sm text-muted-foreground">{question.question}</p>
+                  {question.whyBlocked ? (
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">Why blocked:</span> {question.whyBlocked}
+                    </p>
+                  ) : null}
+                  <p className="text-xs text-muted-foreground">
+                    {issue.title}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button asChild variant="outline" size="sm">
+                    <Link to={createIssueDetailPath(issue.identifier ?? issue.id)} state={issueLinkState}>
+                      Review question
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {!allLoaded && visibleSections.length === 0 && (
         <PageSkeleton variant="inbox" />

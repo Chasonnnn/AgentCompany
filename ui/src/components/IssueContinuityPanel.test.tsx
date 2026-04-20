@@ -31,6 +31,7 @@ const mockIssuesApi = vi.hoisted(() => ({
   mutateContinuityBranch: vi.fn(),
   returnContinuityBranch: vi.fn(),
   mergeContinuityBranch: vi.fn(),
+  requestPlanApproval: vi.fn(),
   createQuestion: vi.fn(),
   answerQuestion: vi.fn(),
   dismissQuestion: vi.fn(),
@@ -201,6 +202,21 @@ function createContinuityState(overrides: Partial<IssueContinuityState> = {}): I
     lastBranchReturnAt: null,
     lastPreparedAt: "2026-04-17T12:00:00.000Z",
     lastBundleHash: "bundle-1",
+    planApproval: {
+      approvalId: null,
+      status: null,
+      currentPlanRevisionId: "plan-revision-1",
+      requestedPlanRevisionId: null,
+      approvedPlanRevisionId: null,
+      specRevisionId: null,
+      testPlanRevisionId: null,
+      decisionNote: null,
+      lastRequestedAt: null,
+      lastDecidedAt: null,
+      currentRevisionApproved: false,
+      requiresApproval: false,
+      requiresResubmission: false,
+    },
     ...overrides,
   };
 }
@@ -227,6 +243,7 @@ function createContinuityBundle(
     bundleHash: "bundle-1",
     continuityState: state,
     executionState: null,
+    planApproval: state.planApproval,
     decisionQuestions: [],
     issueDocuments: {
       spec: issueDocumentBodies.spec ? createSnapshot("spec", issueDocumentBodies.spec) : null,
@@ -462,5 +479,44 @@ describe("IssueContinuityPanel", () => {
 
     expect(container.textContent).toContain("Gate: CEO");
     expect(container.querySelector("[data-testid='continuity-advanced-panel']")).toBeTruthy();
+  });
+
+  it("shows plan approval actions for planning issues waiting on board review", async () => {
+    const issue = createIssue();
+    const response = createContinuityResponse({
+      issue,
+      state: createContinuityState({
+        status: "awaiting_decision",
+        planApproval: {
+          approvalId: "11111111-1111-4111-8111-111111111111",
+          status: "revision_requested",
+          currentPlanRevisionId: "22222222-2222-4222-8222-222222222222",
+          requestedPlanRevisionId: "22222222-2222-4222-8222-222222222222",
+          approvedPlanRevisionId: "33333333-3333-4333-8333-333333333333",
+          specRevisionId: null,
+          testPlanRevisionId: null,
+          decisionNote: "Tighten the rollout plan before execution.",
+          lastRequestedAt: "2026-04-17T12:00:00.000Z",
+          lastDecidedAt: "2026-04-17T12:10:00.000Z",
+          currentRevisionApproved: false,
+          requiresApproval: true,
+          requiresResubmission: true,
+        },
+      }),
+      issueDocumentBodies: {
+        spec: "Spec started",
+        plan: "Plan started",
+        progress: "Progress started",
+        "test-plan": "Test plan started",
+      },
+    });
+
+    await renderPanel({ issue, response });
+
+    expect(container.textContent).toContain("Plan approval");
+    expect(container.textContent).toContain("Revision requested");
+    expect(container.textContent).toContain("Tighten the rollout plan before execution.");
+    expect(container.textContent).toContain("Open plan approval");
+    expect(container.textContent).toContain("Revise plan and resubmit");
   });
 });

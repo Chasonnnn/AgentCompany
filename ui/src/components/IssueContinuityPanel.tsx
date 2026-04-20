@@ -109,6 +109,30 @@ function docStatusTone(status: PlanningDocStatus): "default" | "warn" | "success
   }
 }
 
+function planApprovalStatusLabel(input: {
+  status: string | null;
+  currentRevisionApproved: boolean;
+  requiresResubmission: boolean;
+  requiresApproval: boolean;
+}) {
+  if (input.currentRevisionApproved) return "Approved";
+  if (input.status === "revision_requested" || input.requiresResubmission) return "Revision requested";
+  if (input.status === "pending") return "Pending";
+  if (input.requiresApproval) return "Approval needed";
+  return "Not requested";
+}
+
+function planApprovalStatusTone(input: {
+  status: string | null;
+  currentRevisionApproved: boolean;
+  requiresResubmission: boolean;
+  requiresApproval: boolean;
+}): "default" | "warn" | "success" {
+  if (input.currentRevisionApproved) return "success";
+  if (input.status === "revision_requested" || input.requiresResubmission || input.requiresApproval) return "warn";
+  return "default";
+}
+
 function lifecycleMeta(input: {
   hasPlanningScaffolds: boolean;
   hasMissingDocs: boolean;
@@ -299,6 +323,8 @@ export function IssueContinuityPanel({
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issue.id) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.continuity(issue.id) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.questions(issue.id) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.openQuestions(issue.companyId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(issue.companyId) }),
       issue.parentId
         ? queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.parentId) })
         : Promise.resolve(),
@@ -545,6 +571,18 @@ export function IssueContinuityPanel({
     onError: (err) => setError(err instanceof Error ? err.message : "Failed to merge branch return"),
   });
 
+  const requestPlanApprovalMutation = useMutation({
+    mutationFn: () => issuesApi.requestPlanApproval(issue.id),
+    onSuccess: async (result) => {
+      setError(null);
+      if (result.approvalId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.approvals.detail(result.approvalId) });
+      }
+      await invalidate();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed to request plan approval"),
+  });
+
   const createQuestionMutation = useMutation({
     mutationFn: () =>
       issuesApi.createQuestion(issue.id, {
@@ -628,6 +666,21 @@ export function IssueContinuityPanel({
   const state = continuity?.continuityState ?? issue.continuityState ?? null;
   const bundle = continuity?.continuityBundle ?? null;
   const remediation = continuity?.remediation ?? null;
+  const planApproval = state?.planApproval ?? {
+    approvalId: null,
+    status: null,
+    currentPlanRevisionId: null,
+    requestedPlanRevisionId: null,
+    approvedPlanRevisionId: null,
+    specRevisionId: null,
+    testPlanRevisionId: null,
+    decisionNote: null,
+    lastRequestedAt: null,
+    lastDecidedAt: null,
+    currentRevisionApproved: false,
+    requiresApproval: false,
+    requiresResubmission: false,
+  };
   const progressDoc = bundle?.issueDocuments.progress?.body
     ? parseIssueProgressMarkdown(bundle.issueDocuments.progress.body)
     : null;
@@ -704,6 +757,22 @@ export function IssueContinuityPanel({
     state.missingDocumentKeys.length === 0 &&
     startedPlanningDocCount === planningDocuments.length;
   const showCheckpointShortcut = state?.status === "active" || progressMeaningfullyStarted;
+  const showPlanApprovalCard = Boolean(
+    planApproval.approvalId
+    || planApproval.requiresApproval
+    || planApproval.requiresResubmission
+    || planApproval.currentRevisionApproved
+    || planApproval.status === "pending"
+    || planApproval.status === "revision_requested",
+  );
+  const planApprovalActionLabel =
+    planApproval.currentRevisionApproved
+      ? null
+      : planApproval.status === "revision_requested" || planApproval.requiresResubmission
+        ? "Revise plan and resubmit"
+        : planApproval.requiresApproval
+          ? "Request plan approval"
+          : null;
   const shouldAutoExpandAdvanced = Boolean(
     state
     && (
@@ -755,6 +824,10 @@ export function IssueContinuityPanel({
         switch (topSuggestedAction.id) {
           case "prepare_execution":
             prepareMutation.mutate();
+            break;
+          case "request_plan_approval":
+          case "resubmit_plan_approval":
+            requestPlanApprovalMutation.mutate();
             break;
           case "progress_checkpoint":
             setShowCheckpointForm(true);
@@ -875,6 +948,88 @@ export function IssueContinuityPanel({
           ))}
         </div>
       </SectionCard>
+
+      {showPlanApprovalCard ? (
+        <SectionCard
+          title="Plan approval"
+          subtitle={
+            planApproval.currentRevisionApproved
+              ? "The current plan revision is approved for execution."
+              : planApproval.status === "pending"
+                ? "Board review is pending before execution can start."
+                : planApproval.status === "revision_requested"
+                  ? "Board requested revisions on the current plan approval."
+                  : planApproval.requiresResubmission
+                    ? "The approved revision is stale. Resubmit the current plan before execution."
+                    : "Execution starts only after the current plan revision is approved."
+          }
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-[11px]",
+                  chipClass(planApprovalStatusTone(planApproval)),
+                )}
+              >
+                {planApprovalStatusLabel(planApproval)}
+              </span>
+              {planApproval.approvalId ? (
+                <span className="text-xs text-muted-foreground">
+                  Approval {planApproval.approvalId.slice(0, 8)}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => openArtifacts("plan")}>
+                Open plan
+              </Button>
+              {planApproval.approvalId ? (
+                <Link
+                  to={`/approvals/${planApproval.approvalId}`}
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  Open plan approval
+                </Link>
+              ) : null}
+              {planApprovalActionLabel ? (
+                <Button
+                  size="sm"
+                  onClick={() => requestPlanApprovalMutation.mutate()}
+                  disabled={requestPlanApprovalMutation.isPending}
+                >
+                  {requestPlanApprovalMutation.isPending ? "Submitting…" : planApprovalActionLabel}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+            <div>
+              <span className="font-medium text-foreground">Current plan revision:</span>{" "}
+              {planApproval.currentPlanRevisionId?.slice(0, 8) ?? "none"}
+            </div>
+            <div>
+              <span className="font-medium text-foreground">Requested revision:</span>{" "}
+              {planApproval.requestedPlanRevisionId?.slice(0, 8) ?? "none"}
+            </div>
+            <div>
+              <span className="font-medium text-foreground">Approved revision:</span>{" "}
+              {planApproval.approvedPlanRevisionId?.slice(0, 8) ?? "none"}
+            </div>
+            <div>
+              <span className="font-medium text-foreground">Last board decision:</span>{" "}
+              {planApproval.lastDecidedAt ? relativeTime(planApproval.lastDecidedAt) : "none"}
+            </div>
+          </div>
+
+          {planApproval.decisionNote ? (
+            <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
+              <span className="font-medium">Board note:</span> {planApproval.decisionNote}
+            </div>
+          ) : null}
+        </SectionCard>
+      ) : null}
 
       {showQuestionForm ? (
         <SectionCard title="Ask a decision question" subtitle="Use a typed question artifact when the board needs to unblock planning or execution.">
@@ -1516,6 +1671,10 @@ export function IssueContinuityPanel({
                 <span className="font-medium text-foreground">Open decisions:</span>{" "}
                 {state.openDecisionQuestionCount ?? 0}
                 {state.blockingDecisionQuestionCount ? ` (${state.blockingDecisionQuestionCount} blocking)` : ""}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Plan approval:</span>{" "}
+                {planApprovalStatusLabel(planApproval).toLowerCase()}
               </div>
               <div>
                 <span className="font-medium text-foreground">Last answered decision:</span>{" "}

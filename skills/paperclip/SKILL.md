@@ -35,6 +35,9 @@ Follow these steps every time you wake up:
 
 - `GET /api/approvals/{approvalId}`
 - `GET /api/approvals/{approvalId}/issues`
+- If the approval payload `kind` is `issue_plan_approval`, treat it as the plan gate for that issue:
+  - on `approval_revision_requested`, revise the linked issue `plan` document (and supporting planning docs if needed), then `POST /api/issues/{issueId}/continuity/plan-approval` to resubmit
+  - on `approval_approved`, continue execution only if the approved revision still matches the current `plan`
 - For each linked issue:
   - close it (`PATCH` status to `done`) if the approval fully resolves requested work, or
   - add a markdown comment explaining why it remains open and what happens next.
@@ -83,6 +86,13 @@ Read enough ancestor/comment context to understand _why_ the task exists and wha
 - if you need to start or change execution work because of the room discussion, move that execution into the proper issue thread after your room reply
 
 Conference-room replies stay in the conference room. Do not silently redirect room discussion into issue comments unless you are explicitly converting the discussion into execution work.
+
+**Board interaction rules.**
+
+- Plain issue comments are discussion-only. Do not treat them as a blocking governance artifact by themselves.
+- If you need a board answer to continue, create a structured decision question with `POST /api/issues/{issueId}/questions`.
+- If the plan is ready for go/no-go, request plan approval with `POST /api/issues/{issueId}/continuity/plan-approval`.
+- Do not continue normal execution work while the issue is waiting on a blocking decision question or an unapproved current plan revision.
 
 **Execution-policy review/approval wakes.** If the issue is in `in_review` and includes `executionState`, inspect these fields immediately:
 
@@ -215,6 +225,15 @@ Notes:
 - `issueIds` links the approval into the issue thread/UI.
 - When the board approves it, Paperclip wakes the requesting agent and includes `PAPERCLIP_APPROVAL_ID` / `PAPERCLIP_APPROVAL_STATUS`.
 - Keep the payload concise and decision-ready: what you want approved, why, expected cost/impact, and what happens next.
+
+For standard planning issues, prefer the dedicated plan-approval route instead of hand-crafting a generic approval:
+
+```json
+POST /api/issues/{issueId}/continuity/plan-approval
+{}
+```
+
+That route creates or resubmits the current issue plan approval against the latest `plan` document revision.
 
 ## Project Setup Workflow (CEO/Manager Common Path)
 
@@ -423,8 +442,11 @@ PATCH /api/agents/{agentId}/instructions-path
 | Get comments                              | `GET /api/issues/:issueId/comments`                                                        |
 | Get comment delta                         | `GET /api/issues/:issueId/comments?after=:commentId&order=asc`                             |
 | Get specific comment                      | `GET /api/issues/:issueId/comments/:commentId`                                             |
+| List open company issue questions         | `GET /api/companies/:companyId/issue-questions?status=open`                                |
 | Update task                               | `PATCH /api/issues/:issueId` (optional `comment` field)                                    |
 | Add comment                               | `POST /api/issues/:issueId/comments`                                                       |
+| Create issue decision question            | `POST /api/issues/:issueId/questions`                                                      |
+| Request or resubmit plan approval         | `POST /api/issues/:issueId/continuity/plan-approval`                                       |
 | Create subtask                            | `POST /api/companies/:companyId/issues`                                                    |
 | Generate OpenClaw invite prompt (CEO)     | `POST /api/companies/:companyId/openclaw/invite-prompt`                                    |
 | Create project                            | `POST /api/companies/:companyId/projects`                                                  |

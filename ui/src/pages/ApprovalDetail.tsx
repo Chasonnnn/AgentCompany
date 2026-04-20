@@ -66,11 +66,20 @@ export function ApprovalDetail() {
   useEffect(() => {
     const conferenceRoomId =
       typeof approval?.payload?.conferenceRoomId === "string" ? approval.payload.conferenceRoomId : null;
-    const listLabel = approval?.type === "request_board_approval" ? "Conference Room" : "Approvals";
+    const isIssuePlanApproval =
+      approval?.type === "request_board_approval" && approval.payload?.kind === "issue_plan_approval";
+    const listLabel =
+      isIssuePlanApproval
+        ? "Approvals"
+        : approval?.type === "request_board_approval"
+          ? "Conference Room"
+          : "Approvals";
     const listHref = approval?.type === "request_board_approval"
-      ? conferenceRoomId
-        ? `/conference-room/rooms/${conferenceRoomId}`
-        : "/conference-room"
+      ? isIssuePlanApproval
+        ? "/approvals"
+        : conferenceRoomId
+          ? `/conference-room/rooms/${conferenceRoomId}`
+          : "/conference-room"
       : "/approvals";
     setBreadcrumbs([
       { label: listLabel, href: listHref },

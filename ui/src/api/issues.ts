@@ -6,6 +6,7 @@ import type {
   IssueBranchReturnDocument,
   IssueContinuityRemediation,
   IssueDecisionQuestion,
+  IssueDecisionQuestionListItem,
   FeedbackTargetType,
   FeedbackTrace,
   FeedbackVote,
@@ -87,6 +88,10 @@ export const issuesApi = {
   get: (id: string) => api.get<Issue>(`/issues/${id}`),
   getContinuity: (id: string) => api.get<IssueContinuityResponse>(`/issues/${id}/continuity`),
   listQuestions: (id: string) => api.get<IssueDecisionQuestion[]>(`/issues/${id}/questions`),
+  listOpenQuestions: (companyId: string, limit = 25) =>
+    api.get<IssueDecisionQuestionListItem[]>(
+      `/companies/${companyId}/issue-questions?status=open&limit=${encodeURIComponent(String(limit))}`,
+    ),
   createQuestion: (
     id: string,
     data: {
@@ -221,6 +226,13 @@ export const issuesApi = {
       `/issues/${id}/continuity/prepare`,
       data,
     ),
+  requestPlanApproval: (id: string) =>
+    api.post<{
+      approvalId: string | null;
+      approvalStatus: string | null;
+      continuityState: IssueContinuityState;
+      continuityBundle: IssueContinuityBundle;
+    }>(`/issues/${id}/continuity/plan-approval`, {}),
   addProgressCheckpoint: (
     id: string,
     data: {
