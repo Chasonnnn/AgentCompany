@@ -43,20 +43,20 @@ vi.mock("detect-port", () => ({
   default: detectPortMock,
 }));
 
-vi.mock("@paperclipai/db", () => ({
-  createDb: createDbMock,
-  ensurePostgresDatabase: vi.fn(),
-  getPostgresDataDirectory: vi.fn(),
-  inspectMigrations: vi.fn(async () => ({ status: "upToDate" })),
-  applyPendingMigrations: vi.fn(),
-  reconcilePendingMigrationHistory: vi.fn(async () => ({ repairedMigrations: [] })),
-  formatDatabaseBackupResult: vi.fn(() => "ok"),
-  runDatabaseBackup: vi.fn(),
-  authUsers: {},
-  companies: {},
-  companyMemberships: {},
-  instanceUserRoles: {},
-}));
+vi.mock("@paperclipai/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@paperclipai/db")>();
+  return {
+    ...actual,
+    createDb: createDbMock,
+    ensurePostgresDatabase: vi.fn(),
+    getPostgresDataDirectory: vi.fn(),
+    inspectMigrations: vi.fn(async () => ({ status: "upToDate" })),
+    applyPendingMigrations: vi.fn(),
+    reconcilePendingMigrationHistory: vi.fn(async () => ({ repairedMigrations: [] })),
+    formatDatabaseBackupResult: vi.fn(() => "ok"),
+    runDatabaseBackup: vi.fn(),
+  };
+});
 
 vi.mock("../app.js", () => ({
   createApp: createAppMock,
@@ -114,18 +114,28 @@ vi.mock("../realtime/live-events-ws.js", () => ({
   setupLiveEventsWebSocketServer: vi.fn(),
 }));
 
-vi.mock("../services/index.js", () => ({
-  feedbackService: feedbackServiceFactoryMock,
-  heartbeatService: vi.fn(() => ({
-    reapOrphanedRuns: vi.fn(async () => undefined),
-    resumeQueuedRuns: vi.fn(async () => undefined),
-    tickTimers: vi.fn(async () => ({ enqueued: 0 })),
-  })),
-  reconcilePersistedRuntimeServicesOnStartup: vi.fn(async () => ({ reconciled: 0 })),
-  routineService: vi.fn(() => ({
-    tickScheduledTriggers: vi.fn(async () => ({ triggered: 0 })),
-  })),
-}));
+vi.mock("../services/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/index.js")>();
+  return {
+    ...actual,
+    feedbackService: feedbackServiceFactoryMock,
+    heartbeatService: vi.fn(() => ({
+      reapOrphanedRuns: vi.fn(async () => undefined),
+      resumeQueuedRuns: vi.fn(async () => undefined),
+      tickTimers: vi.fn(async () => ({ enqueued: 0 })),
+    })),
+    instanceSettingsService: vi.fn(() => ({
+      getGeneral: vi.fn(async () => ({
+        backupRetention: { daily: 7, weekly: 4, monthly: 6 },
+      })),
+      listCompanyIds: vi.fn(async () => []),
+    })),
+    reconcilePersistedRuntimeServicesOnStartup: vi.fn(async () => ({ reconciled: 0 })),
+    routineService: vi.fn(() => ({
+      tickScheduledTriggers: vi.fn(async () => ({ triggered: 0 })),
+    })),
+  };
+});
 
 vi.mock("../storage/index.js", () => ({
   createStorageServiceFromConfig: vi.fn(() => ({ id: "storage-service" })),

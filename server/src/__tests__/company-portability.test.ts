@@ -2477,11 +2477,12 @@ describe("company portability", () => {
     expect(agentSvc.create).toHaveBeenCalledTimes(1);
     expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
       name: "CMO",
-      runtimeConfig: {
-        heartbeat: {
+      runtimeConfig: expect.objectContaining({
+        heartbeat: expect.objectContaining({
           enabled: false,
-        },
-      },
+          maxConcurrentRuns: 1,
+        }),
+      }),
     }));
     expect(result.company.action).toBe("unchanged");
     expect(result.agents).toEqual([

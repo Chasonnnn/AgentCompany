@@ -117,6 +117,7 @@ async function createHarness() {
       } as any,
       documentService: {
         getIssueDocumentPayload: vi.fn(async () => ({})),
+        getIssueDocumentByKey: vi.fn(async () => null),
       } as any,
       executionWorkspaceService: {
         getById: vi.fn(),

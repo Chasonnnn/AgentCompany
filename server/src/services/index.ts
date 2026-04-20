@@ -10,10 +10,21 @@ export { agentInstructionsService, syncInstructionsBundleConfigFromFilePath } fr
 export { assetService } from "./assets.js";
 export { documentService, extractLegacyPlanBody } from "./documents.js";
 export { projectService } from "./projects.js";
-export { issueService, type IssueFilters } from "./issues.js";
+export {
+  issueService,
+  ISSUE_LIST_DEFAULT_LIMIT,
+  ISSUE_LIST_MAX_LIMIT,
+  clampIssueListLimit,
+  type IssueFilters,
+} from "./issues.js";
 export { issueContinuityService } from "./issue-continuity.js";
 export { issueDecisionQuestionService } from "./issue-decision-questions.js";
 export { issueApprovalService } from "./issue-approvals.js";
+export {
+  getIssueContinuationSummaryDocument,
+  ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
+  refreshIssueContinuationSummary,
+} from "./issue-continuation-summary.js";
 export { conferenceRoomService } from "./conference-rooms.js";
 export { sharedServiceEngagementService } from "./shared-service-engagements.js";
 export {
@@ -33,6 +44,14 @@ export { routineService } from "./routines.js";
 export { costService } from "./costs.js";
 export { financeService } from "./finance.js";
 export { heartbeatService } from "./heartbeat.js";
+export { classifyRunLiveness } from "./run-liveness.js";
+export {
+  buildRunLivenessContinuationIdempotencyKey,
+  decideRunLivenessContinuation,
+  findExistingRunLivenessContinuationWake,
+  readContinuationAttempt,
+  RUN_LIVENESS_CONTINUATION_REASON,
+} from "./run-continuations.js";
 export { dashboardService } from "./dashboard.js";
 export { evalService } from "./evals.js";
 export { sidebarBadgeService } from "./sidebar-badges.js";

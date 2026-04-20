@@ -4,7 +4,14 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import type { BillingType, ExecutionWorkspace, ExecutionWorkspaceConfig } from "@paperclipai/shared";
+import {
+  AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
+  ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
+  type BillingType,
+  type ExecutionWorkspace,
+  type ExecutionWorkspaceConfig,
+  type RunLivenessState,
+} from "@paperclipai/shared";
 import {
   agents,
   agentRuntimeState,
@@ -16,10 +23,15 @@ import {
   conferenceRooms,
   heartbeatRunEvents,
   heartbeatRuns,
+  activityLog,
+  documentRevisions,
   issueComments,
+  issueDocuments,
+  issueWorkProducts,
   issues,
   projects,
   projectWorkspaces,
+  workspaceOperations,
 } from "@paperclipai/db";
 import { conflict, HttpError, notFound } from "../errors.js";
 import { logger } from "../middleware/logger.js";
@@ -28,7 +40,7 @@ import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
 import { getServerAdapter, runningProcesses } from "../adapters/index.js";
 import type { AdapterExecutionResult, AdapterInvocationMeta, AdapterSessionCodec, UsageSummary } from "../adapters/index.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
-import { parseObject, asBoolean, asNumber, appendWithCap, MAX_EXCERPT_BYTES } from "../adapters/utils.js";
+import { parseObject, asBoolean, asNumber, appendWithByteCap, MAX_EXCERPT_BYTES } from "../adapters/utils.js";
 import { costService } from "./costs.js";
 import { trackAgentFirstHeartbeat } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
@@ -54,11 +66,17 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
+import { refreshIssueContinuationSummary } from "./issue-continuation-summary.js";
 import { issueContinuityService } from "./issue-continuity.js";
 import { issueDecisionQuestionService } from "./issue-decision-questions.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
+import {
+  buildHeartbeatRunStopMetadata,
+  mergeHeartbeatRunStopMetadata,
+} from "./heartbeat-stop-metadata.js";
 import { isProcessGroupAlive, terminateLocalService } from "./local-service-supervisor.js";
+import { classifyRunLiveness } from "./run-liveness.js";
 import {
   buildExecutionWorkspaceAdapterConfig,
   gateProjectExecutionWorkspacePolicy,
@@ -68,6 +86,12 @@ import {
   resolveExecutionWorkspaceMode,
 } from "./execution-workspace-policy.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import {
+  buildRunLivenessContinuationIdempotencyKey,
+  decideRunLivenessContinuation,
+  findExistingRunLivenessContinuationWake,
+  RUN_LIVENESS_CONTINUATION_REASON,
+} from "./run-continuations.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
 import {
   hasSessionCompactionThresholds,
@@ -76,7 +100,11 @@ import {
 } from "@paperclipai/adapter-utils";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
-const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = 1;
+const MAX_RUN_EVENT_PAYLOAD_STRING_CHARS = 16 * 1024;
+const MAX_RUN_EVENT_PAYLOAD_ARRAY_ITEMS = 50;
+const MAX_RUN_EVENT_PAYLOAD_OBJECT_KEYS = 100;
+const MAX_RUN_EVENT_PAYLOAD_DEPTH = 6;
+const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 10;
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
 const WAKE_COMMENT_IDS_KEY = "wakeCommentIds";
@@ -90,6 +118,7 @@ const MAX_INLINE_WAKE_COMMENTS = 8;
 const MAX_INLINE_WAKE_COMMENT_BODY_CHARS = 4_000;
 const MAX_INLINE_WAKE_COMMENT_BODY_TOTAL_CHARS = 12_000;
 const execFile = promisify(execFileCallback);
+const RUNNING_ISSUE_WAKE_REASONS_REQUIRING_FOLLOWUP = new Set(["approval_approved"]);
 const SESSIONED_LOCAL_ADAPTERS = new Set([
   "claude_local",
   "codex_local",
@@ -309,6 +338,11 @@ const heartbeatRunListColumns = {
   processStartedAt: heartbeatRuns.processStartedAt,
   retryOfRunId: heartbeatRuns.retryOfRunId,
   processLossRetryCount: heartbeatRuns.processLossRetryCount,
+  livenessState: heartbeatRuns.livenessState,
+  livenessReason: heartbeatRuns.livenessReason,
+  continuationAttempt: heartbeatRuns.continuationAttempt,
+  lastUsefulActionAt: heartbeatRuns.lastUsefulActionAt,
+  nextAction: heartbeatRuns.nextAction,
   contextSnapshot: heartbeatRuns.contextSnapshot,
   createdAt: heartbeatRuns.createdAt,
   updatedAt: heartbeatRuns.updatedAt,
@@ -330,11 +364,69 @@ const heartbeatRunIssueSummaryColumns = {
   finishedAt: heartbeatRuns.finishedAt,
   createdAt: heartbeatRuns.createdAt,
   agentId: heartbeatRuns.agentId,
+  livenessState: heartbeatRuns.livenessState,
+  livenessReason: heartbeatRuns.livenessReason,
+  continuationAttempt: heartbeatRuns.continuationAttempt,
+  lastUsefulActionAt: heartbeatRuns.lastUsefulActionAt,
+  nextAction: heartbeatRuns.nextAction,
   issueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`.as("issueId"),
 } as const;
 
 function appendExcerpt(prev: string, chunk: string) {
-  return appendWithCap(prev, chunk, MAX_EXCERPT_BYTES);
+  return appendWithByteCap(prev, chunk, MAX_EXCERPT_BYTES);
+}
+
+function truncateRunEventString(value: string) {
+  if (value.length <= MAX_RUN_EVENT_PAYLOAD_STRING_CHARS) return value;
+  const omittedChars = value.length - MAX_RUN_EVENT_PAYLOAD_STRING_CHARS;
+  return `${value.slice(0, MAX_RUN_EVENT_PAYLOAD_STRING_CHARS)}\n[truncated ${omittedChars} chars]`;
+}
+
+function boundRunEventValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
+  if (typeof value === "string") return truncateRunEventString(value);
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) {
+    if (depth >= MAX_RUN_EVENT_PAYLOAD_DEPTH) {
+      return { _truncated: true, type: "array", originalLength: value.length };
+    }
+    const bounded = value
+      .slice(0, MAX_RUN_EVENT_PAYLOAD_ARRAY_ITEMS)
+      .map((entry) => boundRunEventValue(entry, depth + 1, seen));
+    if (value.length > MAX_RUN_EVENT_PAYLOAD_ARRAY_ITEMS) {
+      bounded.push({ _truncated: true, omittedItems: value.length - MAX_RUN_EVENT_PAYLOAD_ARRAY_ITEMS });
+    }
+    return bounded;
+  }
+  if (typeof value !== "object" || value === undefined) return null;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (depth >= MAX_RUN_EVENT_PAYLOAD_DEPTH) {
+    const bounded = {
+      _truncated: true,
+      type: "object",
+      keys: entries.map(([key]) => key).slice(0, 20),
+    };
+    seen.delete(value);
+    return bounded;
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [key, entryValue] of entries.slice(0, MAX_RUN_EVENT_PAYLOAD_OBJECT_KEYS)) {
+    out[key] = boundRunEventValue(entryValue, depth + 1, seen);
+  }
+  if (entries.length > MAX_RUN_EVENT_PAYLOAD_OBJECT_KEYS) {
+    out._truncated = true;
+    out._omittedKeys = entries.length - MAX_RUN_EVENT_PAYLOAD_OBJECT_KEYS;
+  }
+  seen.delete(value);
+  return out;
+}
+
+export function boundHeartbeatRunEventPayloadForStorage(payload: Record<string, unknown>): Record<string, unknown> {
+  const bounded = boundRunEventValue(payload, 0, new WeakSet());
+  return parseObject(bounded) ?? { _truncated: true };
 }
 
 function normalizeMaxConcurrentRuns(value: unknown) {
@@ -816,6 +908,15 @@ function shouldAutoCheckoutIssueForWake(input: {
   if (wakeReason.startsWith("execution_")) return false;
 
   return true;
+}
+
+function shouldQueueFollowupForRunningIssueWake(input: {
+  contextSnapshot: Record<string, unknown> | null | undefined;
+  wakeCommentId: string | null;
+}) {
+  if (input.wakeCommentId) return true;
+  const wakeReason = readNonEmptyString(input.contextSnapshot?.wakeReason);
+  return Boolean(wakeReason && RUNNING_ISSUE_WAKE_REASONS_REQUIRING_FOLLOWUP.has(wakeReason));
 }
 
 function isCheckoutConflictError(error: unknown): boolean {
@@ -2201,9 +2302,12 @@ export function heartbeatService(db: Db) {
     const sanitizedMessage = event.message
       ? redactCurrentUserText(event.message, currentUserRedactionOptions)
       : event.message;
-    const sanitizedPayload = event.payload
-      ? redactCurrentUserValue(event.payload, currentUserRedactionOptions)
+    const boundedPayload = event.payload
+      ? boundHeartbeatRunEventPayloadForStorage(event.payload)
       : event.payload;
+    const sanitizedPayload = boundedPayload
+      ? redactCurrentUserValue(boundedPayload, currentUserRedactionOptions)
+      : boundedPayload;
 
     await db.insert(heartbeatRunEvents).values({
       companyId: run.companyId,
@@ -2241,6 +2345,332 @@ export function heartbeatService(db: Db) {
       .from(heartbeatRunEvents)
       .where(eq(heartbeatRunEvents.runId, runId));
     return Number(row?.maxSeq ?? 0) + 1;
+  }
+
+  function mergeRunStopMetadataForAgent(
+    agent: Pick<typeof agents.$inferSelect, "adapterType" | "adapterConfig">,
+    outcome: "succeeded" | "failed" | "cancelled" | "timed_out",
+    options?: {
+      resultJson?: Record<string, unknown> | null;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    },
+  ) {
+    const stopMetadata = buildHeartbeatRunStopMetadata({
+      adapterType: agent.adapterType,
+      adapterConfig: parseObject(agent.adapterConfig),
+      outcome,
+      errorCode: options?.errorCode ?? null,
+      errorMessage: options?.errorMessage ?? null,
+    });
+    return mergeHeartbeatRunStopMetadata(options?.resultJson ?? null, stopMetadata);
+  }
+
+  function countValue(value: unknown) {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+  }
+
+  function dateValue(value: unknown) {
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+    if (typeof value === "string" || typeof value === "number") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    return null;
+  }
+
+  function latestDate(...values: unknown[]) {
+    let latest: Date | null = null;
+    for (const value of values) {
+      const parsed = dateValue(value);
+      if (!parsed) continue;
+      if (!latest || parsed.getTime() > latest.getTime()) latest = parsed;
+    }
+    return latest;
+  }
+
+  async function classifyAndPersistRunLiveness(
+    run: typeof heartbeatRuns.$inferSelect,
+    agent: typeof agents.$inferSelect,
+  ) {
+    const contextSnapshot = parseObject(run.contextSnapshot);
+    const issueId = readNonEmptyString(contextSnapshot.issueId);
+    if (!issueId) return null;
+
+    const issue = await db
+      .select({
+        id: issues.id,
+        companyId: issues.companyId,
+        identifier: issues.identifier,
+        title: issues.title,
+        description: issues.description,
+        status: issues.status,
+        priority: issues.priority,
+        assigneeAgentId: issues.assigneeAgentId,
+        executionState: issues.executionState,
+        projectId: issues.projectId,
+      })
+      .from(issues)
+      .where(and(eq(issues.companyId, run.companyId), eq(issues.id, issueId)))
+      .then((rows) => rows[0] ?? null);
+    if (!issue) return null;
+
+    const [commentStats, documentStats, workProductStats, workspaceOperationStats, activityStats, eventStats] = await Promise.all([
+      db
+        .select({
+          count: sql<number>`count(*)::int`,
+          latestAt: sql<Date | null>`max(${issueComments.createdAt})`,
+        })
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.companyId, run.companyId),
+            eq(issueComments.issueId, issueId),
+            eq(issueComments.createdByRunId, run.id),
+          ),
+        )
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({
+          count: sql<number>`count(*)::int`,
+          planCount: sql<number>`count(*) filter (where ${issueDocuments.key} = 'plan')::int`,
+          latestAt: sql<Date | null>`max(${documentRevisions.createdAt})`,
+        })
+        .from(documentRevisions)
+        .innerJoin(issueDocuments, eq(documentRevisions.documentId, issueDocuments.documentId))
+        .where(
+          and(
+            eq(documentRevisions.companyId, run.companyId),
+            eq(documentRevisions.createdByRunId, run.id),
+            eq(issueDocuments.companyId, run.companyId),
+            eq(issueDocuments.issueId, issueId),
+            sql`${issueDocuments.key} != ${ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY}`,
+          ),
+        )
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({
+          count: sql<number>`count(*)::int`,
+          latestAt: sql<Date | null>`max(${issueWorkProducts.createdAt})`,
+        })
+        .from(issueWorkProducts)
+        .where(
+          and(
+            eq(issueWorkProducts.companyId, run.companyId),
+            eq(issueWorkProducts.issueId, issueId),
+            eq(issueWorkProducts.createdByRunId, run.id),
+          ),
+        )
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({
+          count: sql<number>`count(*)::int`,
+          latestAt: sql<Date | null>`max(${workspaceOperations.startedAt})`,
+        })
+        .from(workspaceOperations)
+        .where(and(eq(workspaceOperations.companyId, run.companyId), eq(workspaceOperations.heartbeatRunId, run.id)))
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({
+          count: sql<number>`count(*)::int`,
+          latestAt: sql<Date | null>`max(${activityLog.createdAt})`,
+        })
+        .from(activityLog)
+        .where(and(eq(activityLog.companyId, run.companyId), eq(activityLog.runId, run.id)))
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({
+          count: sql<number>`count(*) filter (where ${heartbeatRunEvents.eventType} not in ('lifecycle', 'adapter.invoke', 'error'))::int`,
+          latestAt: sql<Date | null>`max(${heartbeatRunEvents.createdAt}) filter (where ${heartbeatRunEvents.eventType} not in ('lifecycle', 'adapter.invoke', 'error'))`,
+        })
+        .from(heartbeatRunEvents)
+        .where(and(eq(heartbeatRunEvents.companyId, run.companyId), eq(heartbeatRunEvents.runId, run.id)))
+        .then((rows) => rows[0] ?? null),
+    ]);
+
+    const classification = classifyRunLiveness({
+      runStatus: run.status,
+      issue,
+      resultJson: parseObject(run.resultJson),
+      stdoutExcerpt: run.stdoutExcerpt,
+      stderrExcerpt: run.stderrExcerpt,
+      error: run.error,
+      errorCode: run.errorCode,
+      continuationAttempt: run.continuationAttempt,
+      evidence: {
+        issueCommentsCreated: countValue(commentStats?.count),
+        documentRevisionsCreated: countValue(documentStats?.count),
+        planDocumentRevisionsCreated: countValue(documentStats?.planCount),
+        workProductsCreated: countValue(workProductStats?.count),
+        workspaceOperationsCreated: countValue(workspaceOperationStats?.count),
+        activityEventsCreated: countValue(activityStats?.count),
+        toolOrActionEventsCreated: countValue(eventStats?.count),
+        latestEvidenceAt: latestDate(
+          commentStats?.latestAt,
+          documentStats?.latestAt,
+          workProductStats?.latestAt,
+          workspaceOperationStats?.latestAt,
+          activityStats?.latestAt,
+          eventStats?.latestAt,
+        ),
+      },
+    });
+
+    const updatedRun = await db
+      .update(heartbeatRuns)
+      .set({
+        livenessState: classification.livenessState,
+        livenessReason: classification.livenessReason,
+        continuationAttempt: classification.continuationAttempt,
+        lastUsefulActionAt: classification.lastUsefulActionAt,
+        nextAction: classification.nextAction,
+        updatedAt: new Date(),
+      })
+      .where(eq(heartbeatRuns.id, run.id))
+      .returning()
+      .then((rows) => rows[0] ?? run);
+
+    return { classification, run: updatedRun, issue };
+  }
+
+  async function refreshContinuationSummaryForRun(
+    run: typeof heartbeatRuns.$inferSelect,
+    agent: typeof agents.$inferSelect,
+  ) {
+    const contextSnapshot = parseObject(run.contextSnapshot);
+    const issueId = readNonEmptyString(contextSnapshot.issueId);
+    if (!issueId) return null;
+    try {
+      return await refreshIssueContinuationSummary({
+        db,
+        issueId,
+        run: {
+          id: run.id,
+          status: run.status,
+          error: run.error,
+          errorCode: run.errorCode,
+          resultJson: parseObject(run.resultJson),
+          stdoutExcerpt: run.stdoutExcerpt,
+          stderrExcerpt: run.stderrExcerpt,
+          finishedAt: run.finishedAt,
+        },
+        agent: {
+          id: agent.id,
+          name: agent.name,
+          adapterType: agent.adapterType,
+        },
+      });
+    } catch (err) {
+      logger.warn({ err, runId: run.id, issueId, agentId: agent.id }, "failed to refresh issue continuation summary");
+      return null;
+    }
+  }
+
+  async function addContinuationExhaustedCommentOnce(input: {
+    run: typeof heartbeatRuns.$inferSelect;
+    issueId: string;
+    comment: string;
+  }) {
+    const existing = await db
+      .select({ id: issueComments.id })
+      .from(issueComments)
+      .where(
+        and(
+          eq(issueComments.companyId, input.run.companyId),
+          eq(issueComments.issueId, input.issueId),
+          eq(issueComments.createdByRunId, input.run.id),
+          sql`${issueComments.body} like 'Bounded liveness continuation exhausted%'`,
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (existing) return;
+    await issuesSvc.addComment(input.issueId, input.comment, {
+      agentId: input.run.agentId,
+      runId: input.run.id,
+    });
+  }
+
+  async function handleRunLivenessContinuation(
+    run: typeof heartbeatRuns.$inferSelect,
+    issue:
+      | {
+          id: string;
+          companyId: string;
+          identifier: string | null;
+          title: string;
+          status: string;
+          assigneeAgentId: string | null;
+          executionState: Record<string, unknown> | null;
+          projectId: string | null;
+        }
+      | null,
+    agent: typeof agents.$inferSelect,
+  ) {
+    const livenessState = run.livenessState as RunLivenessState | null;
+    if (livenessState !== "plan_only" && livenessState !== "empty_response") return;
+    if (!issue) return;
+
+    const budgetBlock = await budgets.getInvocationBlock(issue.companyId, agent.id, {
+      issueId: issue.id,
+      projectId: issue.projectId,
+    });
+
+    const nextAttempt = (run.continuationAttempt ?? 0) + 1;
+    const idempotencyKey = buildRunLivenessContinuationIdempotencyKey({
+      issueId: issue.id,
+      sourceRunId: run.id,
+      livenessState,
+      nextAttempt,
+    });
+    const existingWake = await findExistingRunLivenessContinuationWake(db, {
+      companyId: run.companyId,
+      idempotencyKey,
+    });
+
+    const decision = decideRunLivenessContinuation({
+      run,
+      issue,
+      agent,
+      livenessState,
+      livenessReason: run.livenessReason,
+      nextAction: run.nextAction,
+      budgetBlocked: Boolean(budgetBlock),
+      idempotentWakeExists: Boolean(existingWake),
+    });
+
+    if (decision.kind === "exhausted") {
+      await addContinuationExhaustedCommentOnce({
+        run,
+        issueId: issue.id,
+        comment: decision.comment,
+      });
+      return;
+    }
+
+    if (decision.kind !== "enqueue") return;
+
+    const continuationRun = await enqueueWakeup(run.agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: RUN_LIVENESS_CONTINUATION_REASON,
+      payload: decision.payload,
+      contextSnapshot: decision.contextSnapshot,
+      idempotencyKey: decision.idempotencyKey,
+      requestedByActorType: "system",
+      requestedByActorId: "heartbeat",
+    });
+
+    if (continuationRun) {
+      await db
+        .update(heartbeatRuns)
+        .set({
+          continuationAttempt: decision.nextAttempt,
+          updatedAt: new Date(),
+        })
+        .where(eq(heartbeatRuns.id, continuationRun.id));
+    }
   }
 
   async function persistRunProcessMetadata(
@@ -3853,6 +4283,18 @@ export function heartbeatService(db: Db) {
         adapterResult.resultJson ?? null,
         adapterResult.summary ?? null,
       );
+      const persistedResultWithStopMetadata = mergeRunStopMetadataForAgent(agent, outcome, {
+        resultJson: persistedResultJson,
+        errorCode:
+          outcome === "timed_out"
+            ? "timeout"
+            : outcome === "cancelled"
+              ? "cancelled"
+              : outcome === "failed"
+                ? (adapterResult.errorCode ?? "adapter_failed")
+                : null,
+        errorMessage: adapterResult.errorMessage ?? null,
+      });
 
       await setRunStatus(run.id, status, {
         finishedAt: new Date(),
@@ -3874,7 +4316,7 @@ export function heartbeatService(db: Db) {
         exitCode: adapterResult.exitCode,
         signal: adapterResult.signal,
         usageJson,
-        resultJson: persistedResultJson,
+        resultJson: persistedResultWithStopMetadata,
         sessionIdAfter: nextSessionState.displayId ?? nextSessionState.legacySessionId,
         stdoutExcerpt,
         stderrExcerpt,
@@ -3890,6 +4332,8 @@ export function heartbeatService(db: Db) {
 
       const finalizedRun = await getRun(run.id);
       if (finalizedRun) {
+        const liveness = await classifyAndPersistRunLiveness(finalizedRun, agent);
+        const finalizedWithLiveness = liveness?.run ?? finalizedRun;
         await appendRunEvent(finalizedRun, seq++, {
           eventType: "lifecycle",
           stream: "system",
@@ -3902,12 +4346,12 @@ export function heartbeatService(db: Db) {
         });
         if (issueId && outcome === "succeeded") {
           try {
-            const existingRunComment = await findRunIssueComment(finalizedRun.id, finalizedRun.companyId, issueId);
+            const existingRunComment = await findRunIssueComment(finalizedWithLiveness.id, finalizedWithLiveness.companyId, issueId);
             const issueComment = existingRunComment
               ? null
               : buildHeartbeatRunIssueComment(persistedResultJson);
             if (issueComment && !existingRunComment) {
-              await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: finalizedRun.id });
+              await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: finalizedWithLiveness.id });
             }
           } catch (err) {
             await onLog(
@@ -3916,8 +4360,10 @@ export function heartbeatService(db: Db) {
             );
           }
         }
-        await finalizeIssueCommentPolicy(finalizedRun, agent);
-        await releaseIssueExecutionAndPromote(finalizedRun);
+        await finalizeIssueCommentPolicy(finalizedWithLiveness, agent);
+        await refreshContinuationSummaryForRun(finalizedWithLiveness, agent);
+        await handleRunLivenessContinuation(finalizedWithLiveness, liveness?.issue ?? null, agent);
+        await releaseIssueExecutionAndPromote(finalizedWithLiveness);
       }
 
       if (finalizedRun) {
@@ -3967,6 +4413,11 @@ export function heartbeatService(db: Db) {
         finishedAt: new Date(),
         stdoutExcerpt,
         stderrExcerpt,
+        resultJson: mergeRunStopMetadataForAgent(agent, "failed", {
+          resultJson: null,
+          errorCode: "adapter_failed",
+          errorMessage: message,
+        }),
         logBytes: logSummary?.bytes,
         logSha256: logSummary?.sha256,
         logCompressed: logSummary?.compressed ?? false,
@@ -3977,16 +4428,20 @@ export function heartbeatService(db: Db) {
       });
 
       if (failedRun) {
+        const liveness = await classifyAndPersistRunLiveness(failedRun, agent);
+        const failedWithLiveness = liveness?.run ?? failedRun;
         await appendRunEvent(failedRun, seq++, {
           eventType: "error",
           stream: "system",
           level: "error",
           message,
         });
-        await finalizeIssueCommentPolicy(failedRun, agent);
-        await releaseIssueExecutionAndPromote(failedRun);
+        await finalizeIssueCommentPolicy(failedWithLiveness, agent);
+        await refreshContinuationSummaryForRun(failedWithLiveness, agent);
+        await handleRunLivenessContinuation(failedWithLiveness, liveness?.issue ?? null, agent);
+        await releaseIssueExecutionAndPromote(failedWithLiveness);
 
-        await updateRuntimeState(agent, failedRun, {
+        await updateRuntimeState(agent, failedWithLiveness, {
           exitCode: null,
           signal: null,
           timedOut: false,
@@ -4416,12 +4871,12 @@ export function heartbeatService(db: Db) {
             normalizeAgentNameKey(executionAgent?.name);
           const isSameExecutionAgent =
             Boolean(executionAgentNameKey) && executionAgentNameKey === agentNameKey;
-          const shouldQueueFollowupForCommentWake =
-            Boolean(wakeCommentId) &&
+          const shouldQueueFollowupForRunningWake =
             activeExecutionRun.status === "running" &&
-            isSameExecutionAgent;
+            isSameExecutionAgent &&
+            shouldQueueFollowupForRunningIssueWake({ contextSnapshot: enrichedContextSnapshot, wakeCommentId });
 
-          if (isSameExecutionAgent && !shouldQueueFollowupForCommentWake) {
+          if (isSameExecutionAgent && !shouldQueueFollowupForRunningWake) {
             const mergedContextSnapshot = mergeCoalescedContextSnapshot(
               activeExecutionRun.contextSnapshot,
               enrichedContextSnapshot,
@@ -4597,12 +5052,14 @@ export function heartbeatService(db: Db) {
     const sameScopeRunningRun = activeRuns.find(
       (candidate) => candidate.status === "running" && isSameTaskScope(runTaskKey(candidate), taskKey),
     );
-    const shouldQueueFollowupForCommentWake =
-      Boolean(wakeCommentId) && Boolean(sameScopeRunningRun) && !sameScopeQueuedRun;
+    const shouldQueueFollowupForRunningWake =
+      Boolean(sameScopeRunningRun) &&
+      !sameScopeQueuedRun &&
+      shouldQueueFollowupForRunningIssueWake({ contextSnapshot, wakeCommentId });
 
     const coalescedTargetRun =
       sameScopeQueuedRun ??
-      (shouldQueueFollowupForCommentWake ? null : sameScopeRunningRun ?? null);
+      (shouldQueueFollowupForRunningWake ? null : sameScopeRunningRun ?? null);
 
     if (coalescedTargetRun) {
       const mergedContextSnapshot = mergeCoalescedContextSnapshot(
@@ -4797,6 +5254,8 @@ export function heartbeatService(db: Db) {
     const run = await getRun(runId);
     if (!run) throw notFound("Heartbeat run not found");
     if (run.status !== "running" && run.status !== "queued") return run;
+    const agent = await getAgent(run.agentId);
+    if (!agent) throw notFound("Agent not found");
 
     const running = runningProcesses.get(run.id);
     if (running) {
@@ -4816,6 +5275,11 @@ export function heartbeatService(db: Db) {
       finishedAt: new Date(),
       error: reason,
       errorCode: "cancelled",
+      resultJson: mergeRunStopMetadataForAgent(agent, "cancelled", {
+        resultJson: parseObject(run.resultJson),
+        errorCode: "cancelled",
+        errorMessage: reason,
+      }),
     });
 
     await setWakeupStatus(run.wakeupRequestId, "cancelled", {
@@ -4824,13 +5288,17 @@ export function heartbeatService(db: Db) {
     });
 
     if (cancelled) {
+      const liveness = await classifyAndPersistRunLiveness(cancelled, agent);
+      const cancelledWithLiveness = liveness?.run ?? cancelled;
       await appendRunEvent(cancelled, 1, {
         eventType: "lifecycle",
         stream: "system",
         level: "warn",
         message: "run cancelled",
       });
-      await releaseIssueExecutionAndPromote(cancelled);
+      await refreshContinuationSummaryForRun(cancelledWithLiveness, agent);
+      await handleRunLivenessContinuation(cancelledWithLiveness, liveness?.issue ?? null, agent);
+      await releaseIssueExecutionAndPromote(cancelledWithLiveness);
     }
 
     runningProcesses.delete(run.id);
@@ -5030,7 +5498,7 @@ export function heartbeatService(db: Db) {
         store: run.logStore,
         logRef: run.logRef,
         ...result,
-        content: redactCurrentUserText(result.content, await getCurrentUserRedactionOptions()),
+        content: result.content,
       };
     },
 

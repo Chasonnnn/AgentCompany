@@ -21,6 +21,7 @@ import {
   feedbackVoteValueSchema,
   upsertIssueFeedbackVoteSchema,
   linkIssueApprovalSchema,
+  ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
   issueDocumentKeySchema,
   parseIssueBranchCharterMarkdown,
   parseIssueBranchReturnMarkdown,
@@ -59,8 +60,11 @@ import {
   heartbeatService,
   instanceSettingsService,
   issueApprovalService,
+  ISSUE_LIST_DEFAULT_LIMIT,
+  ISSUE_LIST_MAX_LIMIT,
   issueContinuityService,
   issueService,
+  clampIssueListLimit,
   documentService,
   logActivity as baseLogActivity,
   projectService,
@@ -866,8 +870,10 @@ export function issueRoutes(
         ? req.actor.userId
         : unreadForUserFilterRaw;
     const rawLimit = req.query.limit as string | undefined;
-    const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : null;
-    const limit = parsedLimit ?? undefined;
+    const parsedLimit = rawLimit !== undefined && /^\d+$/.test(rawLimit)
+      ? Number.parseInt(rawLimit, 10)
+      : null;
+    const limit = parsedLimit === null ? ISSUE_LIST_DEFAULT_LIMIT : clampIssueListLimit(parsedLimit);
 
     if (assigneeUserFilterRaw === "me" && (!assigneeUserId || req.actor.type !== "board")) {
       res.status(403).json({ error: "assigneeUserId=me requires board authentication" });
@@ -886,7 +892,7 @@ export function issueRoutes(
       return;
     }
     if (rawLimit !== undefined && (parsedLimit === null || !Number.isInteger(parsedLimit) || parsedLimit <= 0)) {
-      res.status(400).json({ error: "limit must be a positive integer" });
+      res.status(400).json({ error: `limit must be a positive integer up to ${ISSUE_LIST_MAX_LIMIT}` });
       return;
     }
 
@@ -995,13 +1001,14 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const [continuityState, { project, goal }, ancestors, mentionedProjectIds, documentPayload, relations] = await Promise.all([
+    const [continuityState, { project, goal }, ancestors, mentionedProjectIds, documentPayload, relations, continuationSummary] = await Promise.all([
       continuitySvc.recomputeIssueContinuityState(issue.id),
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.findMentionedProjectIds(issue.id),
       documentsSvc.getIssueDocumentPayload(issue),
       svc.getRelationSummaries(issue.id),
+      documentsSvc.getIssueDocumentByKey(issue.id, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
     ]);
     const mentionedProjects = mentionedProjectIds.length > 0
       ? await projectsSvc.listByIds(issue.companyId, mentionedProjectIds)
@@ -1023,6 +1030,16 @@ export function issueRoutes(
       mentionedProjects,
       currentExecutionWorkspace,
       workProducts,
+      continuationSummary: continuationSummary
+        ? {
+            key: continuationSummary.key,
+            title: continuationSummary.title,
+            body: continuationSummary.body,
+            latestRevisionId: continuationSummary.latestRevisionId,
+            latestRevisionNumber: continuationSummary.latestRevisionNumber,
+            updatedAt: continuationSummary.updatedAt,
+          }
+        : null,
     }));
   });
 

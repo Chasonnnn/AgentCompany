@@ -31,6 +31,9 @@ import {
   collectProjectWorkspaceCommandPaths,
 } from "./workspace-command-authz.js";
 import { assertCanManageProjectWorkspaceRuntimeServices } from "./workspace-runtime-service-authz.js";
+import { appendWithCap } from "../adapters/utils.js";
+
+const WORKSPACE_CONTROL_OUTPUT_MAX_CHARS = 256 * 1024;
 
 type ProjectRouteDeps = {
   documentService: ReturnType<typeof documentService>;
@@ -548,8 +551,8 @@ export function projectRoutes(
     const actor = getActorInfo(req);
     const recorder = workspaceOperations.createRecorder({ companyId: project.companyId });
     let runtimeServiceCount = workspace.runtimeServices?.length ?? 0;
-    const stdout: string[] = [];
-    const stderr: string[] = [];
+    let stdout = "";
+    let stderr = "";
 
     const operation = await recorder.recordOperation({
       phase: action === "stop" ? "workspace_teardown" : "workspace_provision",
@@ -562,8 +565,8 @@ export function projectRoutes(
       },
       run: async () => {
         const onLog = async (stream: "stdout" | "stderr", chunk: string) => {
-          if (stream === "stdout") stdout.push(chunk);
-          else stderr.push(chunk);
+          if (stream === "stdout") stdout = appendWithCap(stdout, chunk, WORKSPACE_CONTROL_OUTPUT_MAX_CHARS);
+          else stderr = appendWithCap(stderr, chunk, WORKSPACE_CONTROL_OUTPUT_MAX_CHARS);
         };
 
         if (action === "stop" || action === "restart") {
@@ -613,8 +616,8 @@ export function projectRoutes(
 
         return {
           status: "succeeded",
-          stdout: stdout.join(""),
-          stderr: stderr.join(""),
+          stdout,
+          stderr,
           system:
             action === "stop"
               ? "Stopped project workspace runtime services.\n"

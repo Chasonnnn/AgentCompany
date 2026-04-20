@@ -5,6 +5,7 @@ import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
+  AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
   AGENT_NAVIGATION_LAYOUTS,
   agentProjectPlacementInputSchema,
   agentTemplateSnapshotSchema,
@@ -77,6 +78,7 @@ import {
 } from "../services/default-agent-instructions.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
+import { ISSUE_LIST_DEFAULT_LIMIT } from "../services/issues.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectAgentAdapterWorkspaceCommandPaths,
@@ -99,6 +101,15 @@ type AgentRouteDeps = {
   workspaceOperationService: ReturnType<typeof workspaceOperationService>;
   instanceSettingsService: ReturnType<typeof instanceSettingsService>;
 };
+
+const RUN_LOG_DEFAULT_LIMIT_BYTES = 256_000;
+const RUN_LOG_MAX_LIMIT_BYTES = 1024 * 1024;
+
+function readRunLogLimitBytes(value: unknown) {
+  const parsed = Number(value ?? RUN_LOG_DEFAULT_LIMIT_BYTES);
+  if (!Number.isFinite(parsed)) return RUN_LOG_DEFAULT_LIMIT_BYTES;
+  return Math.max(1, Math.min(RUN_LOG_MAX_LIMIT_BYTES, Math.trunc(parsed)));
+}
 
 export function agentRoutes(
   db: Db,
@@ -529,6 +540,9 @@ export function agentRoutes(
 
     if (parseBooleanLike(heartbeat.enabled) == null) {
       heartbeat.enabled = false;
+    }
+    if (parseNumberLike(heartbeat.maxConcurrentRuns) == null) {
+      heartbeat.maxConcurrentRuns = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
     }
 
     normalizedRuntimeConfig.heartbeat = heartbeat;

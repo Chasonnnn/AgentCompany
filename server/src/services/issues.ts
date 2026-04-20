@@ -39,6 +39,9 @@ import { getDefaultCompanyGoal } from "./goals.js";
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const EXECUTING_ISSUE_STATUSES = new Set(["in_progress", "in_review", "blocked"]);
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
+export const ISSUE_LIST_DEFAULT_LIMIT = 500;
+export const ISSUE_LIST_MAX_LIMIT = 1000;
+const ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE = 500;
 
 function assertTransition(from: string, to: string) {
   if (from === to) return;
@@ -103,6 +106,10 @@ type IssueUserCommentStats = {
   myLastCommentAt: Date | null;
   lastExternalCommentAt: Date | null;
 };
+type IssueReadStat = {
+  issueId: string;
+  myLastReadAt: Date | null;
+};
 type IssueLastActivityStat = {
   issueId: string;
   latestCommentAt: Date | null;
@@ -135,6 +142,18 @@ const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "failed", "cancell
 
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
+}
+
+export function clampIssueListLimit(limit: number): number {
+  return Math.min(ISSUE_LIST_MAX_LIMIT, Math.max(1, Math.floor(limit)));
+}
+
+function chunkList<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
 }
 
 async function getProjectDefaultGoalId(
@@ -459,20 +478,22 @@ function latestIssueActivityAt(...values: Array<Date | string | null | undefined
 async function labelMapForIssues(dbOrTx: any, issueIds: string[]): Promise<Map<string, IssueLabelRow[]>> {
   const map = new Map<string, IssueLabelRow[]>();
   if (issueIds.length === 0) return map;
-  const rows = await dbOrTx
-    .select({
-      issueId: issueLabels.issueId,
-      label: labels,
-    })
-    .from(issueLabels)
-    .innerJoin(labels, eq(issueLabels.labelId, labels.id))
-    .where(inArray(issueLabels.issueId, issueIds))
-    .orderBy(asc(labels.name), asc(labels.id));
+  for (const issueIdChunk of chunkList(issueIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const rows = await dbOrTx
+      .select({
+        issueId: issueLabels.issueId,
+        label: labels,
+      })
+      .from(issueLabels)
+      .innerJoin(labels, eq(issueLabels.labelId, labels.id))
+      .where(inArray(issueLabels.issueId, issueIdChunk))
+      .orderBy(asc(labels.name), asc(labels.id));
 
-  for (const row of rows) {
-    const existing = map.get(row.issueId);
-    if (existing) existing.push(row.label);
-    else map.set(row.issueId, [row.label]);
+    for (const row of rows) {
+      const existing = map.get(row.issueId);
+      if (existing) existing.push(row.label);
+      else map.set(row.issueId, [row.label]);
+    }
   }
   return map;
 }
@@ -502,27 +523,29 @@ async function activeRunMapForIssues(
     .filter((id): id is string => id != null);
   if (runIds.length === 0) return map;
 
-  const rows = await dbOrTx
-    .select({
-      id: heartbeatRuns.id,
-      status: heartbeatRuns.status,
-      agentId: heartbeatRuns.agentId,
-      invocationSource: heartbeatRuns.invocationSource,
-      triggerDetail: heartbeatRuns.triggerDetail,
-      startedAt: heartbeatRuns.startedAt,
-      finishedAt: heartbeatRuns.finishedAt,
-      createdAt: heartbeatRuns.createdAt,
-    })
-    .from(heartbeatRuns)
-    .where(
-      and(
-        inArray(heartbeatRuns.id, runIds),
-        inArray(heartbeatRuns.status, ACTIVE_RUN_STATUSES),
-      ),
-    );
+  for (const runIdChunk of chunkList([...new Set(runIds)], ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const rows = await dbOrTx
+      .select({
+        id: heartbeatRuns.id,
+        status: heartbeatRuns.status,
+        agentId: heartbeatRuns.agentId,
+        invocationSource: heartbeatRuns.invocationSource,
+        triggerDetail: heartbeatRuns.triggerDetail,
+        startedAt: heartbeatRuns.startedAt,
+        finishedAt: heartbeatRuns.finishedAt,
+        createdAt: heartbeatRuns.createdAt,
+      })
+      .from(heartbeatRuns)
+      .where(
+        and(
+          inArray(heartbeatRuns.id, runIdChunk),
+          inArray(heartbeatRuns.status, ACTIVE_RUN_STATUSES),
+        ),
+      );
 
-  for (const row of rows) {
-    map.set(row.id, row);
+    for (const row of rows) {
+      map.set(row.id, row);
+    }
   }
   return map;
 }
@@ -535,6 +558,131 @@ function withActiveRuns(
     ...row,
     activeRun: row.executionRunId ? (runMap.get(row.executionRunId) ?? null) : null,
   }));
+}
+
+async function userCommentStatsForIssues(
+  dbOrTx: any,
+  companyId: string,
+  userId: string,
+  issueIds: string[],
+): Promise<IssueUserCommentStats[]> {
+  const stats: IssueUserCommentStats[] = [];
+  for (const issueIdChunk of chunkList(issueIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const rows = await dbOrTx
+      .select({
+        issueId: issueComments.issueId,
+        myLastCommentAt: sql<Date | null>`
+          MAX(CASE WHEN ${issueComments.authorUserId} = ${userId} THEN ${issueComments.createdAt} END)
+        `,
+        lastExternalCommentAt: sql<Date | null>`
+          MAX(
+            CASE
+              WHEN ${issueComments.authorUserId} IS NULL OR ${issueComments.authorUserId} <> ${userId}
+              THEN ${issueComments.createdAt}
+            END
+          )
+        `,
+      })
+      .from(issueComments)
+      .where(
+        and(
+          eq(issueComments.companyId, companyId),
+          inArray(issueComments.issueId, issueIdChunk),
+        ),
+      )
+      .groupBy(issueComments.issueId);
+    stats.push(...rows);
+  }
+  return stats;
+}
+
+async function userReadStatsForIssues(
+  dbOrTx: any,
+  companyId: string,
+  userId: string,
+  issueIds: string[],
+): Promise<IssueReadStat[]> {
+  const stats: IssueReadStat[] = [];
+  for (const issueIdChunk of chunkList(issueIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const rows = await dbOrTx
+      .select({
+        issueId: issueReadStates.issueId,
+        myLastReadAt: issueReadStates.lastReadAt,
+      })
+      .from(issueReadStates)
+      .where(
+        and(
+          eq(issueReadStates.companyId, companyId),
+          eq(issueReadStates.userId, userId),
+          inArray(issueReadStates.issueId, issueIdChunk),
+        ),
+      );
+    stats.push(...rows);
+  }
+  return stats;
+}
+
+async function lastActivityStatsForIssues(
+  dbOrTx: any,
+  companyId: string,
+  issueIds: string[],
+): Promise<IssueLastActivityStat[]> {
+  const byIssueId = new Map<string, IssueLastActivityStat>();
+  for (const issueIdChunk of chunkList(issueIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const [commentRows, logRows] = await Promise.all([
+      dbOrTx
+        .select({
+          issueId: issueComments.issueId,
+          latestCommentAt: sql<Date | null>`MAX(${issueComments.createdAt})`,
+        })
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.companyId, companyId),
+            inArray(issueComments.issueId, issueIdChunk),
+          ),
+        )
+        .groupBy(issueComments.issueId),
+      dbOrTx
+        .select({
+          issueId: activityLog.entityId,
+          latestLogAt: sql<Date | null>`MAX(${activityLog.createdAt})`,
+        })
+        .from(activityLog)
+        .where(
+          and(
+            eq(activityLog.companyId, companyId),
+            eq(activityLog.entityType, "issue"),
+            inArray(activityLog.entityId, issueIdChunk),
+            sql`${activityLog.action} NOT IN (${sql.join(
+              ISSUE_LOCAL_INBOX_ACTIVITY_ACTIONS.map((action) => sql`${action}`),
+              sql`, `,
+            )})`,
+          ),
+        )
+        .groupBy(activityLog.entityId),
+    ]);
+
+    for (const row of commentRows) {
+      byIssueId.set(row.issueId, {
+        issueId: row.issueId,
+        latestCommentAt: row.latestCommentAt,
+        latestLogAt: null,
+      });
+    }
+    for (const row of logRows) {
+      const existing = byIssueId.get(row.issueId);
+      if (existing) existing.latestLogAt = row.latestLogAt;
+      else {
+        byIssueId.set(row.issueId, {
+          issueId: row.issueId,
+          latestCommentAt: null,
+          latestLogAt: row.latestLogAt,
+        });
+      }
+    }
+  }
+  return [...byIssueId.values()];
 }
 
 export function issueService(db: Db) {
@@ -914,7 +1062,7 @@ export function issueService(db: Db) {
     list: async (companyId: string, filters?: IssueFilters) => {
       const conditions = [eq(issues.companyId, companyId)];
       const limit = typeof filters?.limit === "number" && Number.isFinite(filters.limit)
-        ? Math.max(1, Math.floor(filters.limit))
+        ? clampIssueListLimit(filters.limit)
         : undefined;
       const touchedByUserId = filters?.touchedByUserId?.trim() || undefined;
       const inboxArchivedByUserId = filters?.inboxArchivedByUserId?.trim() || undefined;
@@ -1025,99 +1173,12 @@ export function issueService(db: Db) {
       const issueIds = withRuns.map((row) => row.id);
       const [statsRows, readRows, lastActivityRows] = await Promise.all([
         contextUserId
-          ? db
-            .select({
-              issueId: issueComments.issueId,
-              myLastCommentAt: sql<Date | null>`
-                MAX(CASE WHEN ${issueComments.authorUserId} = ${contextUserId} THEN ${issueComments.createdAt} END)
-              `,
-              lastExternalCommentAt: sql<Date | null>`
-                MAX(
-                  CASE
-                    WHEN ${issueComments.authorUserId} IS NULL OR ${issueComments.authorUserId} <> ${contextUserId}
-                    THEN ${issueComments.createdAt}
-                  END
-                )
-              `,
-            })
-            .from(issueComments)
-            .where(
-              and(
-                eq(issueComments.companyId, companyId),
-                inArray(issueComments.issueId, issueIds),
-              ),
-            )
-            .groupBy(issueComments.issueId)
+          ? userCommentStatsForIssues(db, companyId, contextUserId, issueIds)
           : Promise.resolve([]),
         contextUserId
-          ? db
-            .select({
-              issueId: issueReadStates.issueId,
-              myLastReadAt: issueReadStates.lastReadAt,
-            })
-            .from(issueReadStates)
-            .where(
-              and(
-                eq(issueReadStates.companyId, companyId),
-                eq(issueReadStates.userId, contextUserId),
-                inArray(issueReadStates.issueId, issueIds),
-              ),
-            )
+          ? userReadStatsForIssues(db, companyId, contextUserId, issueIds)
           : Promise.resolve([]),
-        Promise.all([
-          db
-            .select({
-              issueId: issueComments.issueId,
-              latestCommentAt: sql<Date | null>`MAX(${issueComments.createdAt})`,
-            })
-            .from(issueComments)
-            .where(
-              and(
-                eq(issueComments.companyId, companyId),
-                inArray(issueComments.issueId, issueIds),
-              ),
-            )
-            .groupBy(issueComments.issueId),
-          db
-            .select({
-              issueId: activityLog.entityId,
-              latestLogAt: sql<Date | null>`MAX(${activityLog.createdAt})`,
-            })
-            .from(activityLog)
-            .where(
-              and(
-                eq(activityLog.companyId, companyId),
-                eq(activityLog.entityType, "issue"),
-                inArray(activityLog.entityId, issueIds),
-                sql`${activityLog.action} NOT IN (${sql.join(
-                  ISSUE_LOCAL_INBOX_ACTIVITY_ACTIONS.map((action) => sql`${action}`),
-                  sql`, `,
-                )})`,
-              ),
-            )
-            .groupBy(activityLog.entityId),
-        ]).then(([commentRows, logRows]) => {
-          const byIssueId = new Map<string, IssueLastActivityStat>();
-          for (const row of commentRows) {
-            byIssueId.set(row.issueId, {
-              issueId: row.issueId,
-              latestCommentAt: row.latestCommentAt,
-              latestLogAt: null,
-            });
-          }
-          for (const row of logRows) {
-            const existing = byIssueId.get(row.issueId);
-            if (existing) existing.latestLogAt = row.latestLogAt;
-            else {
-              byIssueId.set(row.issueId, {
-                issueId: row.issueId,
-                latestCommentAt: null,
-                latestLogAt: row.latestLogAt,
-              });
-            }
-          }
-          return [...byIssueId.values()];
-        }),
+        lastActivityStatsForIssues(db, companyId, issueIds),
       ]);
       const statsByIssueId = new Map(statsRows.map((row) => [row.issueId, row]));
       const lastActivityByIssueId = new Map(lastActivityRows.map((row) => [row.issueId, row]));

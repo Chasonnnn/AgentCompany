@@ -641,20 +641,22 @@ describe("issue comment reopen routes", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
-      "22222222-2222-4222-8222-222222222222",
-      expect.objectContaining({
-        reason: "execution_changes_requested",
-        payload: expect.objectContaining({
-          issueId: "11111111-1111-4111-8111-111111111111",
-          executionStage: expect.objectContaining({
-            wakeRole: "executor",
-            stageType: "review",
-            lastDecisionOutcome: "changes_requested",
-            allowedActions: ["address_changes", "resubmit"],
+    await vi.waitFor(() => {
+      expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+        "22222222-2222-4222-8222-222222222222",
+        expect.objectContaining({
+          reason: "execution_changes_requested",
+          payload: expect.objectContaining({
+            issueId: "11111111-1111-4111-8111-111111111111",
+            executionStage: expect.objectContaining({
+              wakeRole: "executor",
+              stageType: "review",
+              lastDecisionOutcome: "changes_requested",
+              allowedActions: ["address_changes", "resubmit"],
+            }),
           }),
         }),
-      }),
-    );
+      );
+    });
   });
 });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { ApiError } from "../api/client";
 import { issuesApi } from "../api/issues";
 import { approvalsApi } from "../api/approvals";
 import { activityApi, type RunForIssue } from "../api/activity";
@@ -49,10 +50,12 @@ import {
 } from "../lib/optimistic-issue-comments";
 import { removeLiveRunById, upsertInterruptedRun } from "../lib/optimistic-issue-runs";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
+import { relativeTime, cn } from "../lib/utils";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
+import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
+import { IssueRunLedger } from "../components/IssueRunLedger";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueContinuityPanel } from "../components/IssueContinuityPanel";
@@ -93,6 +96,7 @@ import {
 } from "lucide-react";
 import {
   getClosedIsolatedExecutionWorkspaceMessage,
+  ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
   isClosedIsolatedExecutionWorkspace,
   type ActivityEvent,
   type Agent,
@@ -116,25 +120,6 @@ const ISSUE_COMMENT_PAGE_SIZE = 50;
 
 function keepPreviousData<T>(previousData: T | undefined) {
   return previousData;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function usageNumber(usage: Record<string, unknown> | null, ...keys: string[]) {
-  if (!usage) return 0;
-  for (const key of keys) {
-    const value = usage[key];
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-  }
-  return 0;
-}
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return text.slice(0, max - 1) + "\u2026";
 }
 
 function isMarkdownFile(file: File) {
@@ -380,6 +365,7 @@ export function IssueDetail() {
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("chat");
+  const [handoffFocusSignal, setHandoffFocusSignal] = useState(0);
   const [executionSurfaceTab, setExecutionSurfaceTab] = useState<"continuity" | "artifacts">("continuity");
   const [pendingApprovalAction, setPendingApprovalAction] = useState<{
     approvalId: string;
@@ -477,6 +463,20 @@ export function IssueDetail() {
     queryKey: queryKeys.issues.approvals(issueId!),
     queryFn: () => issuesApi.listApprovals(issueId!),
     enabled: !!issueId,
+    placeholderData: keepPreviousData,
+  });
+  const { data: continuationHandoff } = useQuery({
+    queryKey: queryKeys.issues.document(issueId!, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
+    queryFn: async () => {
+      try {
+        return await issuesApi.getDocument(issueId!, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: !!issueId,
+    retry: false,
     placeholderData: keepPreviousData,
   });
 
@@ -785,45 +785,6 @@ export function IssueDetail() {
     () => extractIssueTimelineEvents(activity),
     [activity],
   );
-
-  const issueCostSummary = useMemo(() => {
-    let input = 0;
-    let output = 0;
-    let cached = 0;
-    let cost = 0;
-    let hasCost = false;
-    let hasTokens = false;
-
-    for (const run of linkedRuns ?? []) {
-      const usage = asRecord(run.usageJson);
-      const result = asRecord(run.resultJson);
-      const runInput = usageNumber(usage, "inputTokens", "input_tokens");
-      const runOutput = usageNumber(usage, "outputTokens", "output_tokens");
-      const runCached = usageNumber(
-        usage,
-        "cachedInputTokens",
-        "cached_input_tokens",
-        "cache_read_input_tokens",
-      );
-      const runCost = visibleRunCostUsd(usage, result);
-      if (runCost > 0) hasCost = true;
-      if (runInput + runOutput + runCached > 0) hasTokens = true;
-      input += runInput;
-      output += runOutput;
-      cached += runCached;
-      cost += runCost;
-    }
-
-    return {
-      input,
-      output,
-      cached,
-      cost,
-      totalTokens: input + output,
-      hasCost,
-      hasTokens,
-    };
-  }, [linkedRuns]);
 
   const invalidateIssueDetail = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
@@ -1527,6 +1488,15 @@ export function IssueDetail() {
     if (detailTab !== "chat") return;
     commentComposerRef.current?.focus();
   }, [detailTab, pendingCommentComposerFocusKey]);
+
+  useEffect(() => {
+    const hash = location.hash;
+    if (!hash.startsWith("#document-")) return;
+    const documentKey = decodeURIComponent(hash.slice("#document-".length));
+    if (documentKey !== ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY) return;
+    setDetailTab("activity");
+    setHandoffFocusSignal((current) => current + 1);
+  }, [location.hash]);
 
   const isImageAttachment = (attachment: IssueAttachment) => attachment.contentType.startsWith("image/");
   const attachmentList = attachments ?? [];
@@ -2257,6 +2227,16 @@ export function IssueDetail() {
             <IssueSectionSkeleton titleWidth="w-20" rows={4} />
           ) : (
             <>
+              <div className="mb-3">
+                <IssueRunLedger
+                  issueId={issue.id}
+                  issueStatus={issue.status}
+                  childIssues={childIssues}
+                  agentMap={agentMap}
+                  hasLiveRuns={hasLiveRuns}
+                />
+              </div>
+              <IssueContinuationHandoff document={continuationHandoff} focusSignal={handoffFocusSignal} />
               {linkedApprovals && linkedApprovals.length > 0 && (
                 <div className="mb-3 space-y-3">
                   {linkedApprovals.map((approval) => (
@@ -2275,30 +2255,6 @@ export function IssueDetail() {
                       }
                     />
                   ))}
-                </div>
-              )}
-              {linkedRuns && linkedRuns.length > 0 && (
-                <div className="mb-3 px-3 py-2 rounded-lg border border-border">
-                  <div className="text-sm font-medium text-muted-foreground mb-1">Cost Summary</div>
-                  {!issueCostSummary.hasCost && !issueCostSummary.hasTokens ? (
-                    <div className="text-xs text-muted-foreground">No cost data yet.</div>
-                  ) : (
-                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
-                      {issueCostSummary.hasCost && (
-                        <span className="font-medium text-foreground">
-                          ${issueCostSummary.cost.toFixed(4)}
-                        </span>
-                      )}
-                      {issueCostSummary.hasTokens && (
-                        <span>
-                          Tokens {formatTokens(issueCostSummary.totalTokens)}
-                          {issueCostSummary.cached > 0
-                            ? ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)}, cached ${formatTokens(issueCostSummary.cached)})`
-                            : ` (in ${formatTokens(issueCostSummary.input)}, out ${formatTokens(issueCostSummary.output)})`}
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
               {!activity || activity.length === 0 ? (

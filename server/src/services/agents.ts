@@ -27,6 +27,7 @@ import {
   workspaceOperations,
 } from "@paperclipai/db";
 import {
+  AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
   AGENT_ROLES,
   AGENT_DEPARTMENT_LABELS,
   inferAgentExecutionModel,
@@ -430,6 +431,25 @@ function containsRedactedMarker(value: unknown): boolean {
 
 function hasConfigPatchFields(data: Partial<typeof agents.$inferInsert>) {
   return CONFIG_REVISION_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(data, field));
+}
+
+function parseFiniteNumberLike(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return null;
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeRuntimeConfigForNewAgent(runtimeConfig: unknown): Record<string, unknown> {
+  const normalizedRuntimeConfig = isPlainRecord(runtimeConfig) ? { ...runtimeConfig } : {};
+  const heartbeat = isPlainRecord(normalizedRuntimeConfig.heartbeat)
+    ? { ...normalizedRuntimeConfig.heartbeat }
+    : {};
+  if (parseFiniteNumberLike(heartbeat.maxConcurrentRuns) == null) {
+    heartbeat.maxConcurrentRuns = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
+  }
+  normalizedRuntimeConfig.heartbeat = heartbeat;
+  return normalizedRuntimeConfig;
 }
 
 function diffConfigSnapshot(
@@ -1856,6 +1876,7 @@ export function agentService(db: Db) {
         operatingClass: hierarchyState.operatingClass,
         orgLevel: hierarchyState.orgLevel,
       });
+      const runtimeConfig = normalizeRuntimeConfigForNewAgent(data.runtimeConfig);
       const created = await db.transaction(async (tx) => {
         const inserted = await tx
           .insert(agents)
@@ -1864,6 +1885,7 @@ export function agentService(db: Db) {
             name: uniqueName,
             companyId,
             role,
+            runtimeConfig,
             permissions: normalizedPermissions,
             orgLevel: hierarchyState.orgLevel,
             operatingClass: hierarchyState.operatingClass,
@@ -1988,18 +2010,19 @@ export function agentService(db: Db) {
     },
 
     activatePendingApproval: async (id: string) => {
-      const existing = await getById(id);
-      if (!existing) return null;
-      if (existing.status !== "pending_approval") return existing;
-
       const updated = await db
         .update(agents)
         .set({ status: "idle", updatedAt: new Date() })
-        .where(eq(agents.id, id))
+        .where(and(eq(agents.id, id), eq(agents.status, "pending_approval")))
         .returning()
         .then((rows) => rows[0] ?? null);
 
-      return updated ? normalizeAgentRow(updated) : null;
+      if (updated) {
+        return { agent: normalizeAgentRow(updated), activated: true };
+      }
+
+      const existing = await getById(id);
+      return existing ? { agent: existing, activated: false } : null;
     },
 
     updatePermissions: async (id: string, permissions: { canCreateAgents: boolean }) => {

@@ -68,6 +68,7 @@ export const queryKeys = {
     feedbackVotes: (issueId: string) => ["issues", "feedback-votes", issueId] as const,
     attachments: (issueId: string) => ["issues", "attachments", issueId] as const,
     documents: (issueId: string) => ["issues", "documents", issueId] as const,
+    document: (issueId: string, key: string) => ["issues", "documents", issueId, key] as const,
     continuity: (issueId: string) => ["issues", "continuity", issueId] as const,
     questions: (issueId: string) => ["issues", "questions", issueId] as const,
     openQuestions: (companyId: string) => ["issues", companyId, "open-questions"] as const,
