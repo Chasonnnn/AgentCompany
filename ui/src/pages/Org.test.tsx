@@ -192,7 +192,7 @@ describe("Org page", () => {
     document.body.innerHTML = "";
   });
 
-  it("renders pooled shared specialists separately from shared-service leads", async () => {
+  it("renders a flat consulting team separately from shared-service leads", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -212,13 +212,16 @@ describe("Org page", () => {
     await flush();
 
     expect(mockAgentsApi.accountability).toHaveBeenCalledWith("company-1");
-    expect(container.textContent).toContain("Shared Specialists");
+    expect(container.textContent).toContain("Consulting Team");
     expect(container.textContent).toContain("Research Specialist");
     expect(container.textContent).toContain("Growth Specialist");
+    expect(container.textContent).toContain("Researcher · Research");
+    expect(container.textContent).toContain("General · Marketing");
     expect(container.textContent).toContain("Enablement Lead");
     expect(container.textContent).toContain("Needs Scope");
     expect(container.textContent).toContain("Ops Floater");
     expect(container.textContent).not.toContain("Unassigned");
+    expect(container.textContent).not.toContain("Shared Specialists");
 
     act(() => root.unmount());
   });

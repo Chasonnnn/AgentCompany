@@ -2,13 +2,14 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, FolderTree, Plus } from "lucide-react";
-import type {
-  AccountabilityProjectNode,
-  Agent,
-  AgentHierarchyMemberSummary,
-  CompanyAgentAccountability,
-  OperatingHierarchyDepartmentSummary,
-  OperatingHierarchyProjectSummary,
+import {
+  AGENT_ROLE_LABELS,
+  type AccountabilityProjectNode,
+  type Agent,
+  type AgentHierarchyMemberSummary,
+  type CompanyAgentAccountability,
+  type OperatingHierarchyDepartmentSummary,
+  type OperatingHierarchyProjectSummary,
 } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -19,8 +20,9 @@ import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
 import {
   buildSharedServiceLeadDepartmentsFromAccountability,
-  buildSharedSpecialistGroupsFromAccountability,
+  buildSharedSpecialistPoolFromAccountability,
   countSharedSpecialists,
+  type SharedSpecialistPoolEntry,
 } from "../lib/shared-specialists";
 import { agentRouteRef, agentUrl, cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
@@ -93,6 +95,7 @@ function SidebarAgentLink({
   activeAgentId,
   activeTab,
   runCount,
+  subtitle,
   depth = 0,
 }: {
   summary: AgentHierarchyMemberSummary;
@@ -100,10 +103,12 @@ function SidebarAgentLink({
   activeAgentId: string | null;
   activeTab: string | null;
   runCount: number;
+  subtitle?: string | null;
   depth?: number;
 }) {
   const { isMobile, setSidebarOpen } = useSidebar();
   const target = agent ?? summary;
+  const hasSubtitle = Boolean(subtitle);
   return (
     <NavLink
       to={activeTab ? `${agentUrl(target)}/${activeTab}` : agentUrl(target)}
@@ -112,17 +117,28 @@ function SidebarAgentLink({
         if (isMobile) setSidebarOpen(false);
       }}
       className={cn(
-        "flex items-center gap-2.5 py-1.5 pr-3 text-[13px] font-medium transition-colors",
+        "flex gap-2.5 py-1.5 pr-3 text-[13px] font-medium transition-colors",
+        hasSubtitle ? "items-start" : "items-center",
         activeAgentId === agentRouteRef(target)
           ? "bg-accent text-foreground"
           : "text-foreground/80 hover:bg-accent/50 hover:text-foreground",
       )}
       style={{ paddingLeft: 12 + depth * 16 }}
     >
-      <AgentIcon icon={agent?.icon ?? summary.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="flex-1 truncate">{summary.name}</span>
+      <AgentIcon
+        icon={agent?.icon ?? summary.icon}
+        className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground", hasSubtitle && "mt-0.5")}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate">{summary.name}</div>
+        {subtitle ? (
+          <div className="truncate text-[11px] font-normal text-muted-foreground">
+            {subtitle}
+          </div>
+        ) : null}
+      </div>
       {((agent?.pauseReason ?? null) === "budget" || runCount > 0) && (
-        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+        <span className={cn("ml-auto flex shrink-0 items-center gap-1.5", hasSubtitle && "pt-0.5")}>
           {(agent?.pauseReason ?? null) === "budget" ? (
             <BudgetSidebarMarker title="Agent paused by budget" />
           ) : null}
@@ -149,6 +165,7 @@ function MemberList({
   liveCountByAgent,
   activeAgentId,
   activeTab,
+  subtitleByAgentId,
   depth = 0,
 }: {
   members: AgentHierarchyMemberSummary[];
@@ -156,6 +173,7 @@ function MemberList({
   liveCountByAgent: Map<string, number>;
   activeAgentId: string | null;
   activeTab: string | null;
+  subtitleByAgentId?: ReadonlyMap<string, string>;
   depth?: number;
 }) {
   if (members.length === 0) return null;
@@ -169,6 +187,7 @@ function MemberList({
           activeAgentId={activeAgentId}
           activeTab={activeTab}
           runCount={liveCountByAgent.get(summary.id) ?? 0}
+          subtitle={subtitleByAgentId?.get(summary.id) ?? null}
           depth={depth}
         />
       ))}
@@ -190,6 +209,14 @@ function hasActiveMember(
 
 function countMembers(members: AgentHierarchyMemberSummary[]) {
   return members.length;
+}
+
+function memberRoleSubtitle(member: Pick<AgentHierarchyMemberSummary, "role" | "title">) {
+  return `${AGENT_ROLE_LABELS[member.role] ?? member.role}${member.title ? ` - ${member.title}` : ""}`;
+}
+
+function sharedSpecialistSubtitle(entry: SharedSpecialistPoolEntry) {
+  return `${memberRoleSubtitle(entry.member)} · ${entry.homeTeamLabel}`;
 }
 
 function operatingProjectHasActiveMember(
@@ -532,44 +559,6 @@ function SharedServiceDepartmentSection({
   );
 }
 
-function SharedSpecialistGroupSection({
-  group,
-  agentMap,
-  liveCountByAgent,
-  activeAgentId,
-  activeTab,
-  open,
-  onOpenChange,
-}: {
-  group: ReturnType<typeof buildSharedSpecialistGroupsFromAccountability>[number];
-  agentMap: Map<string, Agent>;
-  liveCountByAgent: Map<string, number>;
-  activeAgentId: string | null;
-  activeTab: string | null;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-}) {
-  return (
-    <HierarchyFolder
-      label={group.label}
-      count={group.members.length}
-      depth={1}
-      autoOpen={hasActiveMember(group.members, activeAgentId)}
-      open={open}
-      onOpenChange={onOpenChange}
-    >
-      <MemberList
-        members={group.members}
-        agentMap={agentMap}
-        liveCountByAgent={liveCountByAgent}
-        activeAgentId={activeAgentId}
-        activeTab={activeTab}
-        depth={2}
-      />
-    </HierarchyFolder>
-  );
-}
-
 function AccountabilityContent({
   accountability,
   agentMap,
@@ -583,24 +572,20 @@ function AccountabilityContent({
   activeAgentId: string | null;
   activeTab: string | null;
 }) {
-  const sharedSpecialists = buildSharedSpecialistGroupsFromAccountability(accountability);
+  const sharedSpecialists = buildSharedSpecialistPoolFromAccountability(accountability);
   const sharedServiceDepartments = buildSharedServiceLeadDepartmentsFromAccountability(accountability);
+  const sharedSpecialistMembers = sharedSpecialists.map((entry) => entry.member);
+  const sharedSpecialistSubtitleByAgentId = new Map(
+    sharedSpecialists.map((entry) => [entry.member.id, sharedSpecialistSubtitle(entry)]),
+  );
   const activeProject = accountability.projects.find((project) =>
     accountabilityProjectHasActiveMember(project, activeAgentId),
-  );
-  const activeSharedSpecialistGroup = sharedSpecialists.find((group) =>
-    hasActiveMember(group.members, activeAgentId),
   );
   const activeSharedService = sharedServiceDepartments.find((department) =>
     sharedServiceDepartmentHasActiveMember(department, activeAgentId),
   );
   const activeProjectKey = activeProject ? activeProject.projectId ?? activeProject.projectName : null;
   const { openKey: projectOpenKey, setOpenKey: setProjectOpenKey } = useSingleOpenBranch(activeProjectKey);
-  const activeSharedSpecialistKey = activeSharedSpecialistGroup?.key ?? null;
-  const {
-    openKey: sharedSpecialistOpenKey,
-    setOpenKey: setSharedSpecialistOpenKey,
-  } = useSingleOpenBranch(activeSharedSpecialistKey);
   const activeSharedServiceKey = activeSharedService ? `${activeSharedService.key}:${activeSharedService.name}` : null;
   const { openKey: sharedServiceOpenKey, setOpenKey: setSharedServiceOpenKey } = useSingleOpenBranch(activeSharedServiceKey);
 
@@ -638,22 +623,20 @@ function AccountabilityContent({
 
       {sharedSpecialists.length > 0 ? (
         <HierarchyFolder
-          label="Shared Specialists"
+          label="Consulting Team"
           count={countSharedSpecialists(sharedSpecialists)}
           defaultOpen={false}
-          autoOpen={sharedSpecialists.some((group) => hasActiveMember(group.members, activeAgentId))}
+          autoOpen={hasActiveMember(sharedSpecialistMembers, activeAgentId)}
         >
-          {sharedSpecialists.map((group) => (
-            <SharedSpecialistGroupSection
-              key={group.key}
-              group={group}
-              agentMap={agentMap}
-              liveCountByAgent={liveCountByAgent}
-              activeAgentId={activeAgentId}
-              activeTab={activeTab}
-              {...accordionFolderControl(group.key, sharedSpecialistOpenKey, setSharedSpecialistOpenKey)}
-            />
-          ))}
+          <MemberList
+            members={sharedSpecialistMembers}
+            agentMap={agentMap}
+            liveCountByAgent={liveCountByAgent}
+            activeAgentId={activeAgentId}
+            activeTab={activeTab}
+            subtitleByAgentId={sharedSpecialistSubtitleByAgentId}
+            depth={1}
+          />
         </HierarchyFolder>
       ) : null}
 

@@ -1,13 +1,19 @@
 import { useEffect } from "react";
 import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
-import type { AccountabilityProjectNode, AgentHierarchyMemberSummary, CompanyAgentAccountability } from "@paperclipai/shared";
+import {
+  AGENT_ROLE_LABELS,
+  type AccountabilityProjectNode,
+  type AgentHierarchyMemberSummary,
+  type CompanyAgentAccountability,
+} from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import {
   buildSharedServiceLeadDepartmentsFromAccountability,
-  buildSharedSpecialistGroupsFromAccountability,
+  buildSharedSpecialistPoolFromAccountability,
+  type SharedSpecialistPoolEntry,
 } from "../lib/shared-specialists";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
@@ -18,14 +24,18 @@ import { GitBranch } from "lucide-react";
 function MemberList({
   label,
   members,
+  subtitleByAgentId,
 }: {
-  label: string;
+  label?: string;
   members: AgentHierarchyMemberSummary[];
+  subtitleByAgentId?: ReadonlyMap<string, string>;
 }) {
   if (members.length === 0) return null;
   return (
     <section className="space-y-2">
-      <h3 className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</h3>
+      {label ? (
+        <h3 className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</h3>
+      ) : null}
       <div className="border border-border divide-y divide-border overflow-hidden">
         {members.map((member) => (
           <Link
@@ -34,13 +44,23 @@ function MemberList({
             className="flex items-center gap-3 px-3 py-2 text-sm no-underline text-inherit transition-colors hover:bg-accent/50"
           >
             <span className="font-medium flex-1">{member.name}</span>
-            <span className="text-xs text-muted-foreground">{member.title ?? member.role}</span>
+            <span className="text-xs text-muted-foreground">
+              {subtitleByAgentId?.get(member.id) ?? (member.title ?? member.role)}
+            </span>
             <StatusBadge status={member.status} />
           </Link>
         ))}
       </div>
     </section>
   );
+}
+
+function memberRoleSubtitle(member: Pick<AgentHierarchyMemberSummary, "role" | "title">) {
+  return `${AGENT_ROLE_LABELS[member.role] ?? member.role}${member.title ? ` - ${member.title}` : ""}`;
+}
+
+function sharedSpecialistSubtitle(entry: SharedSpecialistPoolEntry) {
+  return `${memberRoleSubtitle(entry.member)} · ${entry.homeTeamLabel}`;
 }
 
 function AccountabilityProject({
@@ -95,8 +115,12 @@ function AccountabilityView({
 }: {
   accountability: CompanyAgentAccountability;
 }) {
-  const sharedSpecialists = buildSharedSpecialistGroupsFromAccountability(accountability);
+  const sharedSpecialists = buildSharedSpecialistPoolFromAccountability(accountability);
   const sharedServiceDepartments = buildSharedServiceLeadDepartmentsFromAccountability(accountability);
+  const sharedSpecialistMembers = sharedSpecialists.map((entry) => entry.member);
+  const sharedSpecialistSubtitleByAgentId = new Map(
+    sharedSpecialists.map((entry) => [entry.member.id, sharedSpecialistSubtitle(entry)]),
+  );
   return (
     <div className="space-y-6">
       <MemberList label="Executive Office" members={accountability.executiveOffice} />
@@ -105,10 +129,11 @@ function AccountabilityView({
       ))}
       {sharedSpecialists.length > 0 ? (
         <section className="space-y-4">
-          <h2 className="text-sm font-semibold text-foreground">Shared Specialists</h2>
-          {sharedSpecialists.map((group) => (
-            <MemberList key={group.key} label={group.label} members={group.members} />
-          ))}
+          <h2 className="text-sm font-semibold text-foreground">Consulting Team</h2>
+          <MemberList
+            members={sharedSpecialistMembers}
+            subtitleByAgentId={sharedSpecialistSubtitleByAgentId}
+          />
         </section>
       ) : null}
       {sharedServiceDepartments.map((group) => (
@@ -141,7 +166,7 @@ export function Org() {
     return <PageSkeleton variant="list" />;
   }
 
-  const sharedSpecialists = data ? buildSharedSpecialistGroupsFromAccountability(data) : [];
+  const sharedSpecialists = data ? buildSharedSpecialistPoolFromAccountability(data) : [];
   const sharedServiceDepartments = data ? buildSharedServiceLeadDepartmentsFromAccountability(data) : [];
 
   return (

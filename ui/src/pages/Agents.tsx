@@ -21,8 +21,9 @@ import { useSidebar } from "../context/SidebarContext";
 import { queryKeys } from "../lib/queryKeys";
 import {
   buildSharedServiceLeadDepartmentsFromNavigation,
-  buildSharedSpecialistGroupsFromNavigation,
+  buildSharedSpecialistPoolFromNavigation,
   countSharedSpecialists,
+  type SharedSpecialistPoolEntry,
 } from "../lib/shared-specialists";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
@@ -205,14 +206,26 @@ function levelLabel(level: string) {
   return "Staff";
 }
 
+function memberRoleSubtitle(member: Pick<AgentHierarchyMemberSummary, "role" | "title">) {
+  return `${AGENT_ROLE_LABELS[member.role] ?? member.role}${member.title ? ` - ${member.title}` : ""}`;
+}
+
+function sharedSpecialistSubtitle(entry: SharedSpecialistPoolEntry) {
+  return `${memberRoleSubtitle(entry.member)} · ${entry.homeTeamLabel}`;
+}
+
 function NavigationMemberRow({
   member,
   agent,
   liveRunByAgent,
+  subtitleOverride,
+  hideDepartment = false,
 }: {
   member: AgentHierarchyMemberSummary;
   agent: Agent | null;
   liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+  subtitleOverride?: string;
+  hideDepartment?: boolean;
 }) {
   const resolvedAgent = agent ?? ({
     ...member,
@@ -234,7 +247,7 @@ function NavigationMemberRow({
   return (
     <EntityRow
       title={member.name}
-      subtitle={`${AGENT_ROLE_LABELS[member.role] ?? member.role}${member.title ? ` - ${member.title}` : ""}`}
+      subtitle={subtitleOverride ?? memberRoleSubtitle(member)}
       to={agentUrl(resolvedAgent)}
       leading={
         <span className="relative flex h-2.5 w-2.5">
@@ -255,11 +268,13 @@ function NavigationMemberRow({
           <span className="hidden min-w-24 text-right text-[11px] text-muted-foreground sm:inline">
             {levelLabel(member.orgLevel)}
           </span>
-          <span className="hidden min-w-28 text-right text-[11px] text-muted-foreground sm:inline">
-            {member.departmentKey === "custom"
-              ? member.departmentName ?? "Custom"
-              : AGENT_DEPARTMENT_LABELS[member.departmentKey]}
-          </span>
+          {!hideDepartment ? (
+            <span className="hidden min-w-28 text-right text-[11px] text-muted-foreground sm:inline">
+              {member.departmentKey === "custom"
+                ? member.departmentName ?? "Custom"
+                : AGENT_DEPARTMENT_LABELS[member.departmentKey]}
+            </span>
+          ) : null}
           {agent ? (
             <>
               <span className="hidden w-16 text-right font-mono text-xs text-muted-foreground sm:inline">
@@ -284,18 +299,24 @@ function MemberBlock({
   members,
   agentMap,
   liveRunByAgent,
+  subtitleByAgentId,
+  hideDepartmentForAgentIds,
 }: {
-  label: string;
+  label?: string;
   members: AgentHierarchyMemberSummary[];
   agentMap: Map<string, Agent>;
   liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+  subtitleByAgentId?: ReadonlyMap<string, string>;
+  hideDepartmentForAgentIds?: ReadonlySet<string>;
 }) {
   if (members.length === 0) return null;
   return (
     <div className="space-y-2">
-      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-        {label}
-      </div>
+      {label ? (
+        <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+          {label}
+        </div>
+      ) : null}
       <div className="border border-border">
         {members.map((member) => (
           <NavigationMemberRow
@@ -303,6 +324,8 @@ function MemberBlock({
             member={member}
             agent={agentMap.get(member.id) ?? null}
             liveRunByAgent={liveRunByAgent}
+            subtitleOverride={subtitleByAgentId?.get(member.id)}
+            hideDepartment={hideDepartmentForAgentIds?.has(member.id)}
           />
         ))}
       </div>
@@ -518,11 +541,16 @@ export function Agents() {
   const filteredAgents = filterAgents(agents ?? [], tab, showTerminated);
   const filteredNavigation = navigation ? filterNavigation(navigation, tab, showTerminated) : null;
   const sharedSpecialists = filteredNavigation
-    ? buildSharedSpecialistGroupsFromNavigation(filteredNavigation)
+    ? buildSharedSpecialistPoolFromNavigation(filteredNavigation)
     : [];
   const sharedServiceDepartments = filteredNavigation
     ? buildSharedServiceLeadDepartmentsFromNavigation(filteredNavigation)
     : [];
+  const sharedSpecialistMembers = sharedSpecialists.map((entry) => entry.member);
+  const sharedSpecialistSubtitleByAgentId = new Map(
+    sharedSpecialists.map((entry) => [entry.member.id, sharedSpecialistSubtitle(entry)]),
+  );
+  const sharedSpecialistIds = new Set(sharedSpecialists.map((entry) => entry.member.id));
   const filteredNavigationCount = filteredNavigation
     ? navigationCount(filteredNavigation, countSharedSpecialists(sharedSpecialists), sharedServiceDepartments)
     : 0;
@@ -718,17 +746,15 @@ export function Agents() {
           {sharedSpecialists.length > 0 ? (
             <section className="space-y-4">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                Shared Specialists
+                Consulting Team
               </div>
-              {sharedSpecialists.map((group) => (
-                <MemberBlock
-                  key={group.key}
-                  label={group.label}
-                  members={group.members}
-                  agentMap={agentMap}
-                  liveRunByAgent={liveRunByAgent}
-                />
-              ))}
+              <MemberBlock
+                members={sharedSpecialistMembers}
+                agentMap={agentMap}
+                liveRunByAgent={liveRunByAgent}
+                subtitleByAgentId={sharedSpecialistSubtitleByAgentId}
+                hideDepartmentForAgentIds={sharedSpecialistIds}
+              />
             </section>
           ) : null}
 

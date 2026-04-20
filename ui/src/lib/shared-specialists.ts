@@ -11,10 +11,10 @@ import {
   type OperatingHierarchyDepartmentSummary,
 } from "@paperclipai/shared";
 
-export interface SharedSpecialistGroup<T extends AgentHierarchyMemberSummary = AgentHierarchyMemberSummary> {
+export interface SharedSpecialistPoolEntry<T extends AgentHierarchyMemberSummary = AgentHierarchyMemberSummary> {
   key: string;
-  label: string;
-  members: T[];
+  member: T;
+  homeTeamLabel: string;
 }
 
 function departmentLabel(
@@ -61,19 +61,14 @@ function collectNavigationConsultantsFromCluster(cluster: AgentNavigationCluster
   return cluster.projects.flatMap(collectNavigationConsultantsFromProject);
 }
 
-function groupSharedSpecialists<T extends AgentHierarchyMemberSummary>(members: T[]): SharedSpecialistGroup<T>[] {
-  const grouped = new Map<string, SharedSpecialistGroup<T>>();
-  for (const member of dedupeMembers(members).filter(isConsultant)) {
-    const key = `${member.departmentKey}:${member.departmentName ?? ""}`;
-    const group = grouped.get(key) ?? {
-      key,
-      label: departmentLabel(member.departmentKey, member.departmentName),
-      members: [],
-    };
-    group.members.push(member);
-    grouped.set(key, group);
-  }
-  return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label));
+function buildSharedSpecialistPool<T extends AgentHierarchyMemberSummary>(members: T[]): SharedSpecialistPoolEntry<T>[] {
+  return dedupeMembers(members)
+    .filter(isConsultant)
+    .map((member) => ({
+      key: member.id,
+      member,
+      homeTeamLabel: departmentLabel(member.departmentKey, member.departmentName),
+    }));
 }
 
 function filterSharedServiceTeam(team: AgentNavigationTeamNode): AgentNavigationTeamNode | null {
@@ -101,15 +96,15 @@ function filterSharedServiceCluster(cluster: AgentNavigationClusterNode): AgentN
   return { ...cluster, projects };
 }
 
-export function buildSharedSpecialistGroupsFromNavigation(
+export function buildSharedSpecialistPoolFromNavigation(
   navigation: CompanyAgentNavigation,
-): SharedSpecialistGroup[] {
+): SharedSpecialistPoolEntry[] {
   const consultants = navigation.sharedServices.flatMap((department) => [
     ...department.leaders.filter(isConsultant),
     ...department.projects.flatMap(collectNavigationConsultantsFromProject),
     ...(department.clusters ?? []).flatMap(collectNavigationConsultantsFromCluster),
   ]);
-  return groupSharedSpecialists(consultants);
+  return buildSharedSpecialistPool(consultants);
 }
 
 export function buildSharedServiceLeadDepartmentsFromNavigation(
@@ -135,14 +130,14 @@ export function buildSharedServiceLeadDepartmentsFromNavigation(
   return departments;
 }
 
-export function buildSharedSpecialistGroupsFromAccountability(
+export function buildSharedSpecialistPoolFromAccountability(
   accountability: CompanyAgentAccountability,
-): SharedSpecialistGroup[] {
+): SharedSpecialistPoolEntry[] {
   const consultants = [
     ...accountability.sharedServices.flatMap((department) => department.leaders.filter(isConsultant)),
     ...accountability.projects.flatMap((project) => project.sharedServices.filter(isConsultant)),
   ];
-  return groupSharedSpecialists(consultants);
+  return buildSharedSpecialistPool(consultants);
 }
 
 export function buildSharedServiceLeadDepartmentsFromAccountability(
@@ -157,6 +152,6 @@ export function buildSharedServiceLeadDepartmentsFromAccountability(
     .filter((department): department is OperatingHierarchyDepartmentSummary => Boolean(department));
 }
 
-export function countSharedSpecialists(groups: SharedSpecialistGroup[]) {
-  return groups.reduce((sum, group) => sum + group.members.length, 0);
+export function countSharedSpecialists(pool: SharedSpecialistPoolEntry[]) {
+  return pool.length;
 }

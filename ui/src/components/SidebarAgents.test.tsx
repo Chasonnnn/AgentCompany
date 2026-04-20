@@ -426,41 +426,28 @@ describe("SidebarAgents", () => {
     await flush();
     await flush();
 
-    expect(container.textContent).toContain("Shared Specialists");
+    expect(container.textContent).toContain("Consulting Team");
     expect(container.textContent).toContain("Shared Services");
     expect(container.textContent).toContain("Needs Scope");
     expect(container.textContent).not.toContain("Unassigned");
+    expect(container.textContent).not.toContain("Shared Specialists");
 
-    const sharedSpecialistsButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Shared Specialists"));
-    expect(sharedSpecialistsButton).toBeTruthy();
-
-    await act(async () => {
-      sharedSpecialistsButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-
-    const researchButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Research"));
-    expect(researchButton).toBeTruthy();
+    const consultingTeamButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Consulting Team"));
+    expect(consultingTeamButton).toBeTruthy();
+    expect(consultingTeamButton?.textContent).toContain("2");
 
     await act(async () => {
-      researchButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      consultingTeamButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flush();
 
     expect(container.textContent).toContain("Research Specialist");
-
-    const marketingButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Marketing"));
-    expect(marketingButton).toBeTruthy();
-
-    await act(async () => {
-      marketingButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-
+    expect(container.textContent).toContain("Researcher · Research");
     expect(container.textContent).toContain("Growth Specialist");
+    expect(container.textContent).toContain("General · Marketing");
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Research")).toBe(false);
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Marketing")).toBe(false);
 
     const sharedServicesButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Shared Services"));

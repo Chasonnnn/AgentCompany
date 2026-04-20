@@ -451,10 +451,12 @@ describe("Agents page", () => {
     await flush();
 
     expect(container.textContent).toContain("Shared Services");
-    expect(container.textContent).toContain("Shared Specialists");
+    expect(container.textContent).toContain("Consulting Team");
     expect(container.textContent).toContain("Enablement Lead");
     expect(container.textContent).toContain("Growth Specialist");
     expect(container.textContent).toContain("Research Specialist");
+    expect(container.textContent).toContain("General · Marketing");
+    expect(container.textContent).toContain("Researcher · Research");
     expect(container.textContent).toContain("Marketing");
     expect(container.textContent).toContain("Research");
     expect(container.textContent).toContain("Needs Scope");
@@ -462,6 +464,7 @@ describe("Agents page", () => {
     expect(container.textContent).toContain("Ops Floater");
     expect(container.textContent).toContain("6 agents visible in browse tree");
     expect(container.textContent).not.toContain("Unassigned");
+    expect(container.textContent).not.toContain("Shared Specialists");
 
     act(() => root.unmount());
   });
