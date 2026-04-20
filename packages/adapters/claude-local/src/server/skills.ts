@@ -28,6 +28,48 @@ function resolveClaudeSharedSkillsHome(config: Record<string, unknown>) {
   return path.join(resolveSharedLocalAdapterHomeDir(runtimeEnv), ".claude", "skills");
 }
 
+export interface ClaudeSharedHostSkillEntry {
+  key: string;
+  runtimeName: string;
+  sourcePath: string;
+  targetPath: string | null;
+  state: "external" | "blocked";
+  originLabel: string;
+  detail: string;
+  locationLabel: string;
+}
+
+function buildClaudeSharedHostSkillKey(runtimeName: string) {
+  return `host/claude/${runtimeName}`;
+}
+
+export async function listClaudeSharedHostSkillEntries(
+  config: Record<string, unknown>,
+  managedRuntimeNames: Iterable<string> = [],
+): Promise<ClaudeSharedHostSkillEntry[]> {
+  const sharedSkillsHome = resolveClaudeSharedSkillsHome(config);
+  const managedNames = new Set(managedRuntimeNames);
+  const installed = await readInstalledSkillTargets(sharedSkillsHome);
+
+  return Array.from(installed.entries())
+    .map(([runtimeName, installedEntry]) => {
+      const shadowed = managedNames.has(runtimeName);
+      return {
+        key: buildClaudeSharedHostSkillKey(runtimeName),
+        runtimeName,
+        sourcePath: path.join(sharedSkillsHome, runtimeName),
+        targetPath: installedEntry.targetPath ?? path.join(sharedSkillsHome, runtimeName),
+        state: shadowed ? ("blocked" as const) : ("external" as const),
+        originLabel: shadowed ? "Shadowed host skill" : "Shared host skill",
+        detail: shadowed
+          ? "Detected in ~/.claude/skills, but a Paperclip-managed Claude skill with the same runtime name takes precedence."
+          : "Loaded automatically from the shared Claude skills home.",
+        locationLabel: "~/.claude/skills",
+      };
+    })
+    .sort((left, right) => left.runtimeName.localeCompare(right.runtimeName));
+}
+
 async function buildClaudeSkillSnapshot(
   config: Record<string, unknown>,
 ): Promise<AdapterSkillSnapshot> {
@@ -35,8 +77,6 @@ async function buildClaudeSkillSnapshot(
   const availableByKey = new Map(availableEntries.map((entry) => [entry.key, entry]));
   const desiredSkills = resolvePaperclipDesiredSkillNames(config, availableEntries);
   const desiredSet = new Set(desiredSkills);
-  const sharedSkillsHome = resolveClaudeSharedSkillsHome(config);
-  const installed = await readInstalledSkillTargets(sharedSkillsHome);
   const entries: AdapterSkillEntry[] = availableEntries.map((entry) => ({
     key: entry.key,
     runtimeName: entry.runtimeName,
@@ -55,6 +95,10 @@ async function buildClaudeSkillSnapshot(
     requiredReason: entry.requiredReason ?? null,
   }));
   const warnings: string[] = [];
+  const managedRuntimeNames = availableEntries
+    .filter((entry) => desiredSet.has(entry.key))
+    .map((entry) => entry.runtimeName);
+  const sharedHostEntries = await listClaudeSharedHostSkillEntries(config, managedRuntimeNames);
 
   for (const desiredSkill of desiredSkills) {
     if (availableByKey.has(desiredSkill)) continue;
@@ -74,21 +118,20 @@ async function buildClaudeSkillSnapshot(
     });
   }
 
-  for (const [name, installedEntry] of installed.entries()) {
-    if (availableEntries.some((entry) => entry.runtimeName === name)) continue;
+  for (const sharedHostEntry of sharedHostEntries) {
     entries.push({
-      key: name,
-      runtimeName: name,
+      key: sharedHostEntry.key,
+      runtimeName: sharedHostEntry.runtimeName,
       desired: false,
       managed: false,
-      state: "blocked",
+      state: sharedHostEntry.state,
       origin: "user_installed",
-      originLabel: "Blocked unmanaged skill",
-      locationLabel: "~/.claude/skills",
+      originLabel: sharedHostEntry.originLabel,
+      locationLabel: sharedHostEntry.locationLabel,
       readOnly: true,
       sourcePath: null,
-      targetPath: installedEntry.targetPath ?? path.join(sharedSkillsHome, name),
-      detail: "Detected in the shared Claude skills home, but blocked from this agent.",
+      targetPath: sharedHostEntry.targetPath,
+      detail: sharedHostEntry.detail,
     });
   }
 
@@ -99,12 +142,7 @@ async function buildClaudeSkillSnapshot(
     supported: true,
     mode: "ephemeral",
     desiredSkills,
-    warnings: installed.size > 0
-      ? [
-          ...warnings,
-          "Claude runs use Paperclip-managed skillsPaths; shared host skills under ~/.claude/skills are blocked unless explicitly granted through Paperclip.",
-        ]
-      : warnings,
+    warnings,
     entries,
   };
 }

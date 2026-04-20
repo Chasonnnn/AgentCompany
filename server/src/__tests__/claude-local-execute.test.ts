@@ -24,6 +24,13 @@ const payload = {
   instructionsFilePath,
   instructionsContents: instructionsFilePath ? fs.readFileSync(instructionsFilePath, "utf8") : null,
   skillEntries: addDir ? fs.readdirSync(path.join(addDir, ".claude", "skills")).sort() : [],
+  skillTargets: addDir
+    ? Object.fromEntries(
+        fs.readdirSync(path.join(addDir, ".claude", "skills"))
+          .sort()
+          .map((name) => [name, fs.realpathSync(path.join(addDir, ".claude", "skills", name))]),
+      )
+    : {},
   claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || null,
   appendedSystemPromptFilePath,
   appendedSystemPromptFileContents: appendedSystemPromptFilePath ? fs.readFileSync(appendedSystemPromptFilePath, "utf8") : null,
@@ -46,6 +53,7 @@ type CapturePayload = {
   instructionsFilePath: string | null;
   instructionsContents: string | null;
   skillEntries: string[];
+  skillTargets: Record<string, string>;
   claudeConfigDir: string | null;
   appendedSystemPromptFilePath?: string | null;
   appendedSystemPromptFileContents?: string | null;
@@ -400,6 +408,82 @@ describe("claude execute", () => {
     }
   });
 
+  it("includes host-only shared Claude skills in the merged runtime bundle", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-host-skills-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    const hostSkillDir = path.join(root, ".claude", "skills", "crack-python");
+    await fs.mkdir(hostSkillDir, { recursive: true });
+    await fs.writeFile(path.join(hostSkillDir, "SKILL.md"), "---\nname: crack-python\n---\n", "utf8");
+
+    try {
+      const result = await execute({
+        runId: "run-host-skills",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      const resolvedHostSkillDir = await fs.realpath(hostSkillDir);
+      expect(captured.skillEntries).toContain("paperclip");
+      expect(captured.skillEntries).toContain("crack-python");
+      expect(captured.skillTargets["crack-python"]).toBe(resolvedHostSkillDir);
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the Paperclip-managed skill authoritative when a host Claude skill uses the same runtime name", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-shadowed-host-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    const hostPaperclipSkillDir = path.join(root, ".claude", "skills", "paperclip");
+    const hostExtraSkillDir = path.join(root, ".claude", "skills", "crack-python");
+    await fs.mkdir(hostPaperclipSkillDir, { recursive: true });
+    await fs.writeFile(path.join(hostPaperclipSkillDir, "SKILL.md"), "---\nname: paperclip\n---\n# host override\n", "utf8");
+    await fs.mkdir(hostExtraSkillDir, { recursive: true });
+    await fs.writeFile(path.join(hostExtraSkillDir, "SKILL.md"), "---\nname: crack-python\n---\n", "utf8");
+
+    try {
+      const result = await execute({
+        runId: "run-shadowed-host-skill",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      const resolvedHostExtraSkillDir = await fs.realpath(hostExtraSkillDir);
+      expect(captured.skillEntries).toContain("paperclip");
+      expect(captured.skillEntries).toContain("crack-python");
+      expect(captured.skillTargets["paperclip"]).not.toBe(hostPaperclipSkillDir);
+      expect(captured.skillTargets["crack-python"]).toBe(resolvedHostExtraSkillDir);
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("reuses a stable Paperclip-managed Claude prompt bundle across equivalent runs", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-bundle-"));
     const workspace = path.join(root, "workspace");
@@ -643,6 +727,106 @@ describe("claude execute", () => {
       const after = JSON.parse(await fs.readFile(capturePath2, "utf8")) as CapturePayload;
 
       expect(before.instructionsFilePath).not.toBe(after.instructionsFilePath);
+      expect(after.argv).not.toContain("--resume");
+      expect(after.prompt).toContain("Follow the paperclip heartbeat.");
+      expect(logs.join("")).toContain("will not be resumed with");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("starts a fresh Claude session when an included host skill changes", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-host-skill-reset-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "claude");
+    const capturePath1 = path.join(root, "capture-before.json");
+    const capturePath2 = path.join(root, "capture-after.json");
+    const paperclipHome = path.join(root, "paperclip-home");
+    const hostSkillDir = path.join(root, ".claude", "skills", "crack-python");
+    const logs: string[] = [];
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(hostSkillDir, { recursive: true });
+    await fs.writeFile(path.join(hostSkillDir, "SKILL.md"), "---\nname: crack-python\n---\nVersion one\n", "utf8");
+    await writeFakeClaudeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
+    process.env.HOME = root;
+    process.env.PAPERCLIP_HOME = paperclipHome;
+
+    try {
+      const first = await execute({
+        runId: "run-host-before",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Claude Coder",
+          adapterType: "claude_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath1,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      await fs.writeFile(path.join(hostSkillDir, "SKILL.md"), "---\nname: crack-python\n---\nVersion two\n", "utf8");
+
+      const second = await execute({
+        runId: "run-host-after",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Claude Coder",
+          adapterType: "claude_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: first.sessionParams ?? null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath2,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (_stream, chunk) => {
+          logs.push(chunk);
+        },
+      });
+
+      expect(first.exitCode).toBe(0);
+      expect(second.exitCode).toBe(0);
+      expect(second.errorMessage).toBeNull();
+
+      const before = JSON.parse(await fs.readFile(capturePath1, "utf8")) as CapturePayload;
+      const after = JSON.parse(await fs.readFile(capturePath2, "utf8")) as CapturePayload;
+
+      expect(before.addDir).not.toBe(after.addDir);
       expect(after.argv).not.toContain("--resume");
       expect(after.prompt).toContain("Follow the paperclip heartbeat.");
       expect(logs.join("")).toContain("will not be resumed with");

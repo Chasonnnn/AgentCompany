@@ -86,7 +86,7 @@ describe("claude local skill sync", () => {
     expect(snapshot.entries.find((entry) => entry.key === "paperclip")).toBeUndefined();
   });
 
-  it("shows host-level user-installed Claude skills as blocked unmanaged diagnostics", async () => {
+  it("shows host-level user-installed Claude skills as shared unmanaged runtime skills", async () => {
     const home = await makeTempDir("paperclip-claude-user-skills-");
     cleanupDirs.add(home);
     await createSkillDir(path.join(home, ".claude", "skills"), "crack-python");
@@ -103,19 +103,48 @@ describe("claude local skill sync", () => {
       },
     });
 
-    expect(snapshot.warnings).toContain(
-      "Claude runs use Paperclip-managed skillsPaths; shared host skills under ~/.claude/skills are blocked unless explicitly granted through Paperclip.",
-    );
+    expect(snapshot.warnings).toEqual([]);
     expect(snapshot.entries).toContainEqual(expect.objectContaining({
-      key: "crack-python",
+      key: "host/claude/crack-python",
       runtimeName: "crack-python",
+      state: "external",
+      managed: false,
+      origin: "user_installed",
+      originLabel: "Shared host skill",
+      locationLabel: "~/.claude/skills",
+      readOnly: true,
+      detail: "Loaded automatically from the shared Claude skills home.",
+    }));
+  });
+
+  it("keeps a conflicting host Claude skill visible but shadowed when Paperclip already provides that runtime name", async () => {
+    const home = await makeTempDir("paperclip-claude-shadowed-user-skills-");
+    cleanupDirs.add(home);
+    await createSkillDir(path.join(home, ".claude", "skills"), "paperclip");
+
+    const snapshot = await listClaudeSkills({
+      agentId: "agent-5",
+      companyId: "company-1",
+      adapterType: "claude_local",
+      config: {
+        env: {
+          HOME: home,
+          PAPERCLIP_HOME: path.join(home, "paperclip-home"),
+        },
+      },
+    });
+
+    expect(snapshot.warnings).toEqual([]);
+    expect(snapshot.entries).toContainEqual(expect.objectContaining({
+      key: "host/claude/paperclip",
+      runtimeName: "paperclip",
       state: "blocked",
       managed: false,
       origin: "user_installed",
-      originLabel: "Blocked unmanaged skill",
+      originLabel: "Shadowed host skill",
       locationLabel: "~/.claude/skills",
       readOnly: true,
-      detail: "Detected in the shared Claude skills home, but blocked from this agent.",
+      detail: "Detected in ~/.claude/skills, but a Paperclip-managed Claude skill with the same runtime name takes precedence.",
     }));
   });
 });

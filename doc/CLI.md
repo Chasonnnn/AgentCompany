@@ -125,6 +125,7 @@ pnpm paperclipai agent local-cli <agent-id-or-shortname> --company-id <company-i
 
 - creates a new long-lived agent API key
 - installs missing Paperclip skills into `~/.codex/skills` and `~/.claude/skills`
+- shared `~/.claude/skills` content is also visible to `claude_local` runs inside Paperclip, with Paperclip-managed Claude skills taking precedence on duplicate names
 - prints `export ...` lines for `PAPERCLIP_API_URL`, `PAPERCLIP_COMPANY_ID`, `PAPERCLIP_AGENT_ID`, and `PAPERCLIP_API_KEY`
 
 Example for shortname-based local setup:

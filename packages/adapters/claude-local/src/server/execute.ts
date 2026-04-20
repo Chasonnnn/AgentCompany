@@ -30,7 +30,7 @@ import {
   isClaudeMaxTurnsResult,
   isClaudeUnknownSessionError,
 } from "./parse.js";
-import { resolveClaudeDesiredSkillNames } from "./skills.js";
+import { listClaudeSharedHostSkillEntries, resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
 import { prepareClaudePromptBundle } from "./prompt-cache.js";
 
@@ -344,6 +344,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const billingType = resolveClaudeBillingType(effectiveEnv);
   const claudeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredSkillNames = new Set(resolveClaudeDesiredSkillNames(config, claudeSkillEntries));
+  const managedClaudeSkillEntries = claudeSkillEntries.filter((entry) => desiredSkillNames.has(entry.key));
+  const managedClaudeRuntimeNames = new Set(managedClaudeSkillEntries.map((entry) => entry.runtimeName));
+  const sharedHostClaudeSkills = await listClaudeSharedHostSkillEntries(config, managedClaudeRuntimeNames);
+  const mergedClaudeSkillEntries = [
+    ...managedClaudeSkillEntries,
+    ...sharedHostClaudeSkills
+      .filter((entry) => entry.state !== "blocked")
+      .map((entry) => ({
+        key: entry.key,
+        runtimeName: entry.runtimeName,
+        source: entry.sourcePath,
+      })),
+  ];
   // When instructionsFilePath is configured, build a stable content-addressed
   // file that includes both the file content and the path directive, so we only
   // need --append-system-prompt-file (Claude CLI forbids using both flags together).
@@ -367,7 +380,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   const promptBundle = await prepareClaudePromptBundle({
     companyId: agent.companyId,
-    skills: claudeSkillEntries.filter((entry) => desiredSkillNames.has(entry.key)),
+    skills: mergedClaudeSkillEntries,
     instructionsContents: combinedInstructionsContents,
     onLog,
   });

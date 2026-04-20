@@ -45,7 +45,12 @@ If resume fails with an unknown session error, the adapter automatically retries
 
 ## Skills Injection
 
-The adapter creates a temporary directory with symlinks to Paperclip skills and passes it via `--add-dir`. This makes skills discoverable without polluting the agent's working directory.
+The adapter creates a stable Paperclip-managed Claude prompt bundle and passes it via `--add-dir`. That bundle includes:
+
+- Paperclip-managed required and granted skills for the agent
+- shared host Claude skills from `~/.claude/skills`
+
+If the same Claude runtime skill name exists in both places, the Paperclip-managed skill wins and the host duplicate stays visible as a shadowed diagnostic in the skill UI.
 
 For manual local CLI usage outside heartbeat runs (for example running as `claudecoder` directly), use:
 
@@ -53,7 +58,7 @@ For manual local CLI usage outside heartbeat runs (for example running as `claud
 pnpm paperclipai agent local-cli claudecoder --company-id <company-id>
 ```
 
-This installs Paperclip skills in `~/.claude/skills`, creates an agent API key, and prints shell exports to run as that agent.
+This installs Paperclip skills in `~/.claude/skills`, creates an agent API key, and prints shell exports to run as that agent. The same shared Claude skills home is also visible to `claude_local` runs inside Paperclip.
 
 ## Environment Test
 
