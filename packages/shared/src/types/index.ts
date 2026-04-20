@@ -134,6 +134,7 @@ export type {
   AccessUserProfile,
   CompanyMemberRecord,
   CompanyMembersResponse,
+  ArchiveCompanyMemberResponse,
   Invite,
   InviteState,
   CompanyInviteRecord,
