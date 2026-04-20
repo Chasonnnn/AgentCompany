@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { routineRoutes } from "../routes/routines.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const companyId = "22222222-2222-4222-8222-222222222222";
 const agentId = "11111111-1111-4111-8111-111111111111";
@@ -61,7 +59,11 @@ const trigger = {
   updatedAt: new Date("2026-03-20T00:00:00.000Z"),
 };
 
-function createHarness(actor: Record<string, unknown>) {
+async function createHarness(actor: Record<string, unknown>) {
+  const [{ errorHandler }, { routineRoutes }] = await Promise.all([
+    import("../middleware/index.js"),
+    import("../routes/routines.js"),
+  ]);
   const routineService = {
     list: vi.fn(),
     get: vi.fn().mockResolvedValue(routine),
@@ -106,9 +108,21 @@ function createHarness(actor: Record<string, unknown>) {
   return { accessService, app, logActivity, routineService, trackRoutineCreated };
 }
 
+afterEach(() => {
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/routines.js");
+});
+
 describe("routine routes", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.resetAllMocks();
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/routines.js");
+  });
+
   it("requires tasks:assign permission for non-admin board routine creation", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -129,7 +143,7 @@ describe("routine routes", () => {
   });
 
   it("requires tasks:assign permission to retarget a routine assignee", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -148,7 +162,7 @@ describe("routine routes", () => {
   });
 
   it("requires tasks:assign permission to reactivate a routine", async () => {
-    const { app, routineService } = createHarness({
+    const { app, routineService } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -168,7 +182,7 @@ describe("routine routes", () => {
   });
 
   it("requires tasks:assign permission to create a trigger", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -189,7 +203,7 @@ describe("routine routes", () => {
   });
 
   it("requires tasks:assign permission to update a trigger", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -208,7 +222,7 @@ describe("routine routes", () => {
   });
 
   it("requires tasks:assign permission to manually run a routine", async () => {
-    const { app } = createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
@@ -225,7 +239,7 @@ describe("routine routes", () => {
   });
 
   it("allows routine creation when the board user has tasks:assign", async () => {
-    const { accessService, app } = createHarness({
+    const { accessService, app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",

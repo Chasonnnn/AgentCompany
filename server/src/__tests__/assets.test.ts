@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
@@ -70,17 +70,30 @@ async function createApp(storage: ReturnType<typeof createStorageService>) {
   return app;
 }
 
+function mockServicesModule() {
+  vi.doUnmock("../routes/assets.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../services/index.js");
+  vi.doMock("../services/index.js", () => ({
+    assetService: vi.fn(() => ({
+      create: createAssetMock,
+      getById: getAssetByIdMock,
+    })),
+    logActivity: logActivityMock,
+  }));
+}
+
+afterEach(() => {
+  vi.doUnmock("../routes/assets.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../services/index.js");
+});
+
 describe("POST /api/companies/:companyId/assets/images", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.resetAllMocks();
-    vi.doMock("../services/index.js", () => ({
-      assetService: vi.fn(() => ({
-        create: createAssetMock,
-        getById: getAssetByIdMock,
-      })),
-      logActivity: logActivityMock,
-    }));
+    mockServicesModule();
   });
 
   it("accepts PNG image uploads and returns an asset path", async () => {
@@ -136,13 +149,7 @@ describe("POST /api/companies/:companyId/logo", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.resetAllMocks();
-    vi.doMock("../services/index.js", () => ({
-      assetService: vi.fn(() => ({
-        create: createAssetMock,
-        getById: getAssetByIdMock,
-      })),
-      logActivity: logActivityMock,
-    }));
+    mockServicesModule();
   });
 
   it("accepts PNG logo uploads and returns an asset path", async () => {
