@@ -63,6 +63,14 @@ function sharedSpecialistSubtitle(entry: SharedSpecialistPoolEntry) {
   return `${memberRoleSubtitle(entry.member)} · ${entry.homeTeamLabel}`;
 }
 
+function executiveContinuityOwnerSubtitle(member: {
+  role: AgentHierarchyMemberSummary["role"];
+  title: AgentHierarchyMemberSummary["title"];
+  activeIssueCount: number;
+}) {
+  return `${memberRoleSubtitle(member)} · ${member.activeIssueCount} active issue${member.activeIssueCount === 1 ? "" : "s"}`;
+}
+
 function AccountabilityProject({
   project,
 }: {
@@ -96,14 +104,15 @@ function AccountabilityProject({
           </span>
         ) : null}
       </div>
-      {project.executiveIssueOwners.length > 0 ? (
-        <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          Executive-owned execution issues: {project.executiveIssueOwners.map((owner) => owner.name).join(", ")}. Hand
-          off to Project Lead or the correct continuity owner.
-        </div>
-      ) : null}
       <MemberList label="Project Lead" members={projectLeadMembers} />
       <MemberList label="Project Leadership" members={fallbackLeadershipMembers} />
+      <MemberList
+        label="Executive Continuity Owners"
+        members={project.executiveIssueOwners}
+        subtitleByAgentId={new Map(
+          project.executiveIssueOwners.map((owner) => [owner.id, executiveContinuityOwnerSubtitle(owner)]),
+        )}
+      />
       <MemberList label="Continuity Owners" members={project.continuityOwners} />
       <MemberList label="Shared Services" members={project.sharedServices} />
     </section>

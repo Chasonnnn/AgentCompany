@@ -248,20 +248,41 @@ function sharedServiceDepartmentHasActiveMember(
 }
 
 function accountabilityProjectHasActiveMember(project: AccountabilityProjectNode, activeAgentId: string | null) {
-  const primaryMembers = flattenAccountabilityProjectMembers(project);
-  return hasActiveMember(primaryMembers, activeAgentId);
+  return hasActiveMember(flattenAllAccountabilityProjectMembers(project), activeAgentId);
 }
 
 function countAccountabilityProjectMembers(project: AccountabilityProjectNode) {
-  return flattenAccountabilityProjectMembers(project).length;
+  return flattenAllAccountabilityProjectMembers(project).length;
 }
 
 function flattenAccountabilityProjectMembers(project: AccountabilityProjectNode): AgentHierarchyMemberSummary[] {
-  const members: AgentHierarchyMemberSummary[] = [];
-  const seen = new Set<string>();
   const primaryLead = project.projectLead ? [project.projectLead] : [];
   const fallbackLeadership = project.projectLead ? [] : project.leadership;
-  for (const group of [primaryLead, fallbackLeadership, project.continuityOwners, project.sharedServices]) {
+  return flattenAccountabilityMemberGroups([
+    primaryLead,
+    fallbackLeadership,
+    project.continuityOwners,
+    project.sharedServices,
+  ]);
+}
+
+function flattenAllAccountabilityProjectMembers(project: AccountabilityProjectNode): AgentHierarchyMemberSummary[] {
+  const members: AgentHierarchyMemberSummary[] = [];
+  const primaryLead = project.projectLead ? [project.projectLead] : [];
+  const fallbackLeadership = project.projectLead ? [] : project.leadership;
+  return flattenAccountabilityMemberGroups([
+    primaryLead,
+    fallbackLeadership,
+    project.continuityOwners,
+    project.executiveIssueOwners,
+    project.sharedServices,
+  ]);
+}
+
+function flattenAccountabilityMemberGroups(groups: readonly AgentHierarchyMemberSummary[][]) {
+  const members: AgentHierarchyMemberSummary[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
     for (const member of group) {
       if (seen.has(member.id)) continue;
       seen.add(member.id);
@@ -269,6 +290,10 @@ function flattenAccountabilityProjectMembers(project: AccountabilityProjectNode)
     }
   }
   return members;
+}
+
+function formatActiveIssueCount(count: number) {
+  return `${count} active issue${count === 1 ? "" : "s"}`;
 }
 
 function useSingleOpenBranch(activeKey: string | null) {
@@ -476,12 +501,22 @@ function AccountabilityProjectSection({
       ) : null}
       {project.executiveIssueOwners.length > 0 ? (
         <div
-          className="px-3 py-1.5 text-[11px] text-amber-600 dark:text-amber-400"
+          className="px-3 py-1.5 text-[11px] text-muted-foreground/80"
           style={{ paddingLeft: 12 + (depth + 1) * 16 }}
         >
-          Executive-owned execution issue{project.executiveIssueOwners.length === 1 ? "" : "s"}:{" "}
-          {project.executiveIssueOwners.map((owner) => owner.name).join(", ")}. Hand off to Project Lead or the right
-          lane owner.
+          <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+            Executive continuity owners
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {project.executiveIssueOwners.map((owner) => (
+              <span
+                key={owner.id}
+                className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 text-[10px] text-foreground/80"
+              >
+                {owner.name} · {formatActiveIssueCount(owner.activeIssueCount)}
+              </span>
+            ))}
+          </div>
         </div>
       ) : null}
       {members.length > 0 ? (

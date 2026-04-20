@@ -482,4 +482,71 @@ describe("SidebarAgents", () => {
 
     act(() => root.unmount());
   });
+
+  it("renders executive continuity ownership as neutral metadata instead of a warning", async () => {
+    mockAgentsApi.accountability.mockResolvedValue({
+      ...createAccountability(),
+      projects: [
+        {
+          ...createAccountability().projects[0]!,
+          executiveIssueOwners: [
+            {
+              ...createMember({
+                id: "ceo",
+                name: "CEO",
+                urlKey: "ceo",
+                role: "ceo",
+                orgLevel: "executive",
+                operatingClass: "executive",
+                departmentKey: "executive",
+              }),
+              activeIssueCount: 2,
+              blockedContinuityIssueCount: 0,
+              openReviewFindingsCount: 0,
+              returnedBranchCount: 0,
+              issues: [],
+            },
+          ],
+          issueCounts: {
+            active: 2,
+            blockedMissingDocs: 0,
+            staleProgress: 0,
+            invalidHandoff: 0,
+            openReviewFindings: 0,
+            returnedBranches: 0,
+            handoffPending: 0,
+          },
+        },
+      ],
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidebarAgents />
+        </QueryClientProvider>,
+      );
+    });
+
+    await flush();
+    await flush();
+
+    const onboardingButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Onboarding"));
+    expect(onboardingButton?.textContent).toContain("3");
+
+    expect(container.textContent).toContain("Executive continuity owners");
+    expect(container.textContent).toContain("CEO · 2 active issues");
+    expect(container.textContent).not.toContain("Executive-owned execution issue");
+    expect(container.textContent).not.toContain("Hand off to Project Lead");
+
+    act(() => root.unmount());
+  });
 });
