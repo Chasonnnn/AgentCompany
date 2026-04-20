@@ -3,6 +3,7 @@ import { asString, asNumber, parseObject, parseJson } from "@paperclipai/adapter
 
 const CLAUDE_AUTH_REQUIRED_RE = /(?:not\s+logged\s+in|please\s+log\s+in|please\s+run\s+`?claude\s+login`?|login\s+required|requires\s+login|unauthorized|authentication\s+required)/i;
 const URL_RE = /(https?:\/\/[^\s'"`<>()[\]{};,!?]+[^\s'"`<>()[\]{};,!.?:]+)/gi;
+const CLAUDE_NATIVE_QUESTION_TOOL_NAME = "AskUserQuestion";
 
 function normalizeChoiceKey(input: string, index: number): string {
   const normalized = input
@@ -117,7 +118,11 @@ export function parseClaudeStreamJson(stdout: string) {
           if (text) assistantTexts.push(text);
           continue;
         }
-        if (!question && asString(block.type, "") === "tool_use" && asString(block.name, "") === "SendUserMessage") {
+        if (
+          !question &&
+          asString(block.type, "") === "tool_use" &&
+          asString(block.name, "") === CLAUDE_NATIVE_QUESTION_TOOL_NAME
+        ) {
           question = normalizeClaudeQuestionInput(block.input);
         }
       }

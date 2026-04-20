@@ -135,7 +135,7 @@ describe("claude_local server parser", () => {
     });
   });
 
-  it("captures SendUserMessage tool_use blocks as decision questions", () => {
+  it("captures AskUserQuestion tool_use blocks as decision questions", () => {
     const parsed = parseClaudeStreamJson([
       JSON.stringify({
         type: "system",
@@ -151,7 +151,7 @@ describe("claude_local server parser", () => {
             {
               type: "tool_use",
               id: "tool_1",
-              name: "SendUserMessage",
+              name: "AskUserQuestion",
               input: {
                 question: "Which audit slice should I start with?",
                 options: [
@@ -172,6 +172,38 @@ describe("claude_local server parser", () => {
         { key: "governance", label: "Governance", description: "Start with instructions and approval flows." },
       ],
     });
+  });
+
+  it("ignores SendUserMessage tool_use blocks for native decision capture", () => {
+    const parsed = parseClaudeStreamJson([
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        model: "claude-sonnet-4-6",
+        session_id: "claude-session-1",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        session_id: "claude-session-1",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tool_1",
+              name: "SendUserMessage",
+              input: {
+                question: "Which audit slice should I start with?",
+                options: [
+                  { key: "runtime", label: "Runtime" },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    ].join("\n"));
+
+    expect(parsed.question).toBeNull();
   });
 });
 

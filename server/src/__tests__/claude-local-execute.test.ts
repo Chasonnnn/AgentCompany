@@ -113,7 +113,7 @@ console.log(JSON.stringify({
       {
         type: "tool_use",
         id: "tool_1",
-        name: "SendUserMessage",
+        name: "AskUserQuestion",
         input: {
           question: "Which path should I take?",
           options: [
@@ -189,7 +189,7 @@ describe("claude execute", () => {
       });
       const captured = JSON.parse(await fs.readFile(capturePath, "utf-8"));
       expect(captured.argv).toContain("--append-system-prompt-file");
-      expect(captured.argv).toContain("--brief");
+      expect(captured.argv).not.toContain("--brief");
       expect(captured.nativeDecisionQuestions).toBe("1");
     } finally {
       restore();
@@ -440,7 +440,7 @@ describe("claude execute", () => {
     }
   });
 
-  it("returns structured decision questions even when Claude exits after SendUserMessage without a result event", async () => {
+  it("returns structured decision questions even when Claude exits after AskUserQuestion without a result event", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-question-only-"));
     const { workspace, commandPath, restore } = await setupExecuteEnv(root, {
       commandWriter: writeQuestionOnlyClaudeCommand,
