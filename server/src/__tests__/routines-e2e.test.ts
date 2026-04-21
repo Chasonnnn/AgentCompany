@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import express from "express";
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
   agentWakeupRequests,
@@ -26,9 +26,6 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
-import { routineRoutes } from "../routes/routines.js";
-import { accessService } from "../services/access.js";
-import { routineService } from "../services/routines.js";
 
 async function wakeQueuedRunForIssue(db: ReturnType<typeof createDb>, agentId: string, wakeupOpts: any) {
   const issueId =
@@ -77,6 +74,17 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
 
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doUnmock("../routes/routines.js");
+    vi.doUnmock("../services/access.js");
+    vi.doUnmock("../services/routines.js");
+    vi.doUnmock("../services/activity-log.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("@paperclipai/shared/telemetry");
+  });
+
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-routines-e2e-");
     db = createDb(tempDb.connectionString);
@@ -106,6 +114,17 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   });
 
   async function createApp(actor: Record<string, unknown>) {
+    const [
+      { routineRoutes },
+      { accessService },
+      { routineService },
+      { logActivity },
+    ] = await Promise.all([
+      import("../routes/routines.js"),
+      import("../services/access.js"),
+      import("../services/routines.js"),
+      import("../services/activity-log.js"),
+    ]);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -116,11 +135,14 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       "/api",
       routineRoutes(db, {
         accessService: accessService(db),
+        logActivity,
         routineService: routineService(db, {
           heartbeat: {
             wakeup: async (agentId: string, wakeupOpts: any) => wakeQueuedRunForIssue(db, agentId, wakeupOpts),
           },
         }),
+        getTelemetryClient: () => null,
+        trackRoutineCreated: () => {},
       }),
     );
     app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -130,6 +152,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   }
 
   async function seedFixture() {
+    const { accessService } = await import("../services/access.js");
     const companyId = randomUUID();
     const agentId = randomUUID();
     const projectId = randomUUID();

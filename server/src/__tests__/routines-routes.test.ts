@@ -65,30 +65,30 @@ async function createHarness(actor: Record<string, unknown>) {
     import("../routes/routines.js"),
   ]);
   const routineService = {
-    list: vi.fn(),
-    get: vi.fn().mockResolvedValue(routine),
-    getDetail: vi.fn(),
-    update: vi.fn().mockResolvedValue({ ...routine, assigneeAgentId: otherAgentId }),
-    create: vi.fn().mockResolvedValue(routine),
-    listRuns: vi.fn(),
-    createTrigger: vi.fn(),
-    getTrigger: vi.fn().mockResolvedValue(trigger),
-    updateTrigger: vi.fn(),
-    deleteTrigger: vi.fn(),
-    rotateTriggerSecret: vi.fn(),
-    runRoutine: vi.fn().mockResolvedValue({
+    list: async () => [],
+    get: async () => routine,
+    getDetail: async () => null,
+    update: async () => ({ ...routine, assigneeAgentId: otherAgentId }),
+    create: async () => routine,
+    listRuns: async () => [],
+    createTrigger: async () => trigger,
+    getTrigger: async () => trigger,
+    updateTrigger: async () => trigger,
+    deleteTrigger: async () => undefined,
+    rotateTriggerSecret: async () => trigger,
+    runRoutine: async () => ({
       id: "run-1",
       source: "manual",
       status: "issue_created",
     }),
-    firePublicTrigger: vi.fn(),
+    firePublicTrigger: async () => undefined,
   };
   const accessService = {
-    canUser: vi.fn().mockResolvedValue(false),
+    canUser: async () => false,
   };
-  const logActivity = vi.fn().mockResolvedValue(undefined);
-  const trackRoutineCreated = vi.fn();
-  const getTelemetryClient = vi.fn().mockReturnValue({ track: vi.fn() });
+  const logActivity = async () => undefined;
+  const trackRoutineCreated = () => {};
+  const getTelemetryClient = () => ({ track: () => {} });
 
   const app = express();
   app.use(express.json());
@@ -116,7 +116,6 @@ afterEach(() => {
 describe("routine routes", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.resetAllMocks();
     vi.doUnmock("../middleware/index.js");
     vi.doUnmock("../routes/routines.js");
   });
@@ -169,7 +168,7 @@ describe("routine routes", () => {
       isInstanceAdmin: false,
       companyIds: [companyId],
     });
-    routineService.get.mockResolvedValue(pausedRoutine);
+    routineService.get = async () => pausedRoutine;
 
     const res = await request(app)
       .patch(`/api/routines/${routineId}`)
@@ -246,7 +245,7 @@ describe("routine routes", () => {
       isInstanceAdmin: false,
       companyIds: [companyId],
     });
-    accessService.canUser.mockResolvedValue(true);
+    accessService.canUser = async () => true;
 
     const res = await request(app)
       .post(`/api/companies/${companyId}/routines`)
