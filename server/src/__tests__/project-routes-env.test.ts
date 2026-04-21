@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { projectRoutes } from "../routes/projects.js";
 
 const mockProjectService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -22,28 +24,7 @@ const mockDocumentService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
-function registerModuleMocks() {
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
-
-  vi.doMock("../services/index.js", () => ({
-    documentService: () => mockDocumentService,
-    logActivity: mockLogActivity,
-    projectService: () => mockProjectService,
-    secretService: () => mockSecretService,
-    workspaceOperationService: () => mockWorkspaceOperationService,
-  }));
-
-  vi.doMock("../services/workspace-runtime.js", () => ({
-    startRuntimeServicesForWorkspaceControl: vi.fn(),
-    stopRuntimeServicesForProjectWorkspace: vi.fn(),
-  }));
-}
-
 async function createApp() {
-  const { projectRoutes } = await import("../routes/projects.js");
-  const { errorHandler } = await import("../middleware/index.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -56,7 +37,18 @@ async function createApp() {
     };
     next();
   });
-  app.use("/api", projectRoutes({} as any));
+  app.use("/api", projectRoutes({} as any, {
+    services: {
+      documentService: mockDocumentService as any,
+      logActivity: mockLogActivity as any,
+      projectService: mockProjectService as any,
+      secretService: mockSecretService as any,
+      workspaceOperationService: mockWorkspaceOperationService as any,
+    },
+    telemetry: {
+      getTelemetryClient: mockGetTelemetryClient as any,
+    },
+  }));
   app.use(errorHandler);
   return app;
 }
@@ -101,8 +93,6 @@ function buildProject(overrides: Record<string, unknown> = {}) {
 
 describe("project env routes", () => {
   beforeEach(() => {
-    vi.resetModules();
-    registerModuleMocks();
     vi.clearAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });

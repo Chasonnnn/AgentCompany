@@ -18,6 +18,11 @@ const ALLOWED_COMPANY_LOGO_CONTENT_TYPES = new Set([
   SVG_CONTENT_TYPE,
 ]);
 
+type AssetRouteDeps = {
+  assetService: ReturnType<typeof assetService>;
+  logActivity: typeof logActivity;
+};
+
 function sanitizeSvgBuffer(input: Buffer): Buffer | null {
   const raw = input.toString("utf8").trim();
   if (!raw) return null;
@@ -82,9 +87,16 @@ function sanitizeSvgBuffer(input: Buffer): Buffer | null {
   }
 }
 
-export function assetRoutes(db: Db, storage: StorageService) {
+export function assetRoutes(
+  db: Db,
+  storage: StorageService,
+  opts?: {
+    services?: Partial<AssetRouteDeps>;
+  },
+) {
   const router = Router();
-  const svc = assetService(db);
+  const svc = opts?.services?.assetService ?? assetService(db);
+  const logActivityFn = opts?.services?.logActivity ?? logActivity;
   const assetUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
@@ -188,7 +200,7 @@ export function assetRoutes(db: Db, storage: StorageService) {
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
 
-    await logActivity(db, {
+    await logActivityFn(db, {
       companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
@@ -297,7 +309,7 @@ export function assetRoutes(db: Db, storage: StorageService) {
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
 
-    await logActivity(db, {
+    await logActivityFn(db, {
       companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { errorHandler } from "../middleware/index.js";
+import { assetRoutes } from "../routes/assets.js";
 import type { StorageService } from "../storage/types.js";
 
 const { createAssetMock, getAssetByIdMock, logActivityMock } = vi.hoisted(() => ({
@@ -56,7 +58,6 @@ function createStorageService(contentType = "image/png"): StorageService {
 }
 
 async function createApp(storage: ReturnType<typeof createStorageService>) {
-  const { assetRoutes } = await import("../routes/assets.js");
   const app = express();
   app.use((req, _res, next) => {
     req.actor = {
@@ -66,34 +67,22 @@ async function createApp(storage: ReturnType<typeof createStorageService>) {
     };
     next();
   });
-  app.use("/api", assetRoutes({} as any, storage));
+  app.use("/api", assetRoutes({} as any, storage, {
+    services: {
+      assetService: {
+        create: createAssetMock,
+        getById: getAssetByIdMock,
+      } as any,
+      logActivity: logActivityMock as any,
+    },
+  }));
+  app.use(errorHandler);
   return app;
 }
 
-function mockServicesModule() {
-  vi.doUnmock("../routes/assets.js");
-  vi.doUnmock("../routes/authz.js");
-  vi.doUnmock("../services/index.js");
-  vi.doMock("../services/index.js", () => ({
-    assetService: vi.fn(() => ({
-      create: createAssetMock,
-      getById: getAssetByIdMock,
-    })),
-    logActivity: logActivityMock,
-  }));
-}
-
-afterEach(() => {
-  vi.doUnmock("../routes/assets.js");
-  vi.doUnmock("../routes/authz.js");
-  vi.doUnmock("../services/index.js");
-});
-
 describe("POST /api/companies/:companyId/assets/images", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.resetAllMocks();
-    mockServicesModule();
   });
 
   it("accepts PNG image uploads and returns an asset path", async () => {
@@ -147,9 +136,7 @@ describe("POST /api/companies/:companyId/assets/images", () => {
 
 describe("POST /api/companies/:companyId/logo", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.resetAllMocks();
-    mockServicesModule();
   });
 
   it("accepts PNG logo uploads and returns an asset path", async () => {

@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { sharedServiceEngagementRoutes } from "../routes/shared-service-engagements.js";
 
 const mockSharedServiceEngagementService = {
   listForCompany: vi.fn(),
@@ -13,7 +15,7 @@ const mockSharedServiceEngagementService = {
 
 const mockLogActivity = vi.fn();
 
-async function createApp(
+function createApp(
   actor: Record<string, unknown> = {
     type: "board",
     userId: "board-user",
@@ -22,13 +24,6 @@ async function createApp(
     isInstanceAdmin: false,
   },
 ) {
-  vi.doUnmock("../routes/shared-service-engagements.js");
-  vi.doUnmock("../middleware/index.js");
-  vi.doUnmock("../services/index.js");
-  const [{ errorHandler }, { sharedServiceEngagementRoutes }] = await Promise.all([
-    import("../middleware/index.js"),
-    import("../routes/shared-service-engagements.js"),
-  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -84,7 +79,6 @@ function makeEngagement(overrides: Record<string, unknown> = {}) {
 
 describe("shared-service engagement routes", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.resetAllMocks();
     mockSharedServiceEngagementService.listForCompany.mockResolvedValue([makeEngagement()]);
     mockSharedServiceEngagementService.create.mockResolvedValue(makeEngagement());
@@ -106,12 +100,6 @@ describe("shared-service engagement routes", () => {
       }),
     );
     mockLogActivity.mockResolvedValue(undefined);
-  });
-
-  afterEach(() => {
-    vi.doUnmock("../routes/shared-service-engagements.js");
-    vi.doUnmock("../middleware/index.js");
-    vi.doUnmock("../services/index.js");
   });
 
   it("lists engagements for an authorized company actor", async () => {
