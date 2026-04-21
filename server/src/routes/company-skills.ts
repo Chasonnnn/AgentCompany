@@ -26,12 +26,35 @@ type SkillTelemetryInput = {
   metadata: Record<string, unknown> | null;
 };
 
-export function companySkillRoutes(db: Db) {
+type CompanySkillRouteDeps = {
+  accessService: ReturnType<typeof accessService>;
+  agentService: ReturnType<typeof agentService>;
+  agentSkillService: ReturnType<typeof agentSkillService>;
+  companySkillService: ReturnType<typeof companySkillService>;
+  logActivity: typeof logActivity;
+};
+
+export function companySkillRoutes(
+  db: Db,
+  opts?: {
+    services?: Partial<CompanySkillRouteDeps>;
+    telemetry?: {
+      getTelemetryClient?: typeof getTelemetryClient;
+      trackSkillImported?: typeof trackSkillImported;
+      agentHasCreatePermission?: typeof agentHasCreatePermission;
+    };
+  },
+) {
   const router = Router();
-  const agents = agentService(db);
-  const access = accessService(db);
-  const svc = companySkillService(db);
-  const skillGrants = agentSkillService(db);
+  const agents = opts?.services?.agentService ?? agentService(db);
+  const access = opts?.services?.accessService ?? accessService(db);
+  const svc = opts?.services?.companySkillService ?? companySkillService(db);
+  const skillGrants = opts?.services?.agentSkillService ?? agentSkillService(db);
+  const logActivityFn = opts?.services?.logActivity ?? logActivity;
+  const getTelemetryClientFn = opts?.telemetry?.getTelemetryClient ?? getTelemetryClient;
+  const trackSkillImportedFn = opts?.telemetry?.trackSkillImported ?? trackSkillImported;
+  const agentHasCreatePermissionFn =
+    opts?.telemetry?.agentHasCreatePermission ?? agentHasCreatePermission;
 
   function asString(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -75,7 +98,7 @@ export function companySkillRoutes(db: Db) {
     }
 
     const allowedByGrant = await access.hasPermission(companyId, "agent", actorAgent.id, "agents:create");
-    if (allowedByGrant || agentHasCreatePermission(actorAgent)) {
+    if (allowedByGrant || agentHasCreatePermissionFn(actorAgent)) {
       return;
     }
 
@@ -121,7 +144,7 @@ export function companySkillRoutes(db: Db) {
       const actor = getActorInfo(req);
       const result = await skillGrants.applyCoverageRepair(companyId, req.body, actor);
 
-      await logActivity(db, {
+      await logActivityFn(db, {
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -178,7 +201,7 @@ export function companySkillRoutes(db: Db) {
       const actor = getActorInfo(req);
       const result = await skillGrants.applyBulkSkillGrant(companyId, skillId, req.body, actor);
 
-      await logActivity(db, {
+      await logActivityFn(db, {
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -238,7 +261,7 @@ export function companySkillRoutes(db: Db) {
       const result = await svc.createLocalSkill(companyId, req.body);
 
       const actor = getActorInfo(req);
-      await logActivity(db, {
+      await logActivityFn(db, {
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -272,7 +295,7 @@ export function companySkillRoutes(db: Db) {
       );
 
       const actor = getActorInfo(req);
-      await logActivity(db, {
+      await logActivityFn(db, {
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -300,7 +323,7 @@ export function companySkillRoutes(db: Db) {
       const result = await svc.installGlobalCatalogSkill(companyId, req.body);
 
       const actor = getActorInfo(req);
-      await logActivity(db, {
+      await logActivityFn(db, {
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -331,7 +354,7 @@ export function companySkillRoutes(db: Db) {
       const result = await svc.installAllGlobalCatalogSkills(companyId);
 
       const actor = getActorInfo(req);
-      await logActivity(db, {
+      await logActivityFn(db, {
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -364,7 +387,7 @@ export function companySkillRoutes(db: Db) {
       const result = await svc.importFromSource(companyId, source);
 
       const actor = getActorInfo(req);
-      await logActivity(db, {
+      await logActivityFn(db, {
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -380,10 +403,10 @@ export function companySkillRoutes(db: Db) {
           warningCount: result.warnings.length,
         },
       });
-      const telemetryClient = getTelemetryClient();
+      const telemetryClient = getTelemetryClientFn();
       if (telemetryClient) {
         for (const skill of result.imported) {
-          trackSkillImported(telemetryClient, {
+          trackSkillImportedFn(telemetryClient, {
             sourceType: skill.sourceType,
             skillRef: deriveTrackedSkillRef(skill),
           });
@@ -403,7 +426,7 @@ export function companySkillRoutes(db: Db) {
       const result = await svc.scanProjectWorkspaces(companyId, req.body);
 
       const actor = getActorInfo(req);
-      await logActivity(db, {
+      await logActivityFn(db, {
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -438,7 +461,7 @@ export function companySkillRoutes(db: Db) {
     }
 
     const actor = getActorInfo(req);
-    await logActivity(db, {
+    await logActivityFn(db, {
       companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
@@ -467,7 +490,7 @@ export function companySkillRoutes(db: Db) {
     }
 
     const actor = getActorInfo(req);
-    await logActivity(db, {
+    await logActivityFn(db, {
       companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,

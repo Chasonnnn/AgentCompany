@@ -1,6 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentRoutes } from "../routes/agents.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -77,28 +78,6 @@ vi.mock("../telemetry.js", () => ({
   getTelemetryClient: mockGetTelemetryClient,
 }));
 
-vi.mock("../services/index.js", () => ({
-  agentService: () => mockAgentService,
-  agentProjectPlacementService: () => ({
-    previewForInput: vi.fn(),
-    applyPrimaryPlacement: vi.fn(),
-  }),
-  agentTemplateService: () => mockAgentTemplateService,
-  agentInstructionsService: () => mockAgentInstructionsService,
-  accessService: () => mockAccessService,
-  approvalService: () => mockApprovalService,
-  agentSkillService: () => mockAgentSkillService,
-  companySkillService: () => mockCompanySkillService,
-  budgetService: () => mockBudgetService,
-  heartbeatService: () => mockHeartbeatService,
-  issueApprovalService: () => mockIssueApprovalService,
-  issueService: () => ({}),
-  logActivity: mockLogActivity,
-  secretService: () => mockSecretService,
-  syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
-  workspaceOperationService: () => mockWorkspaceOperationService,
-}));
-
 vi.mock("../adapters/index.js", () => ({
   findServerAdapter: vi.fn(() => mockAdapter),
   findActiveServerAdapter: vi.fn(() => mockAdapter),
@@ -130,14 +109,40 @@ async function createApp(
     isInstanceAdmin: false,
   },
 ) {
-  const { agentRoutes } = await import("../routes/agents.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes(db as any));
+  app.use("/api", agentRoutes(db as any, {
+    services: {
+      agentService: mockAgentService as any,
+      accessService: mockAccessService as any,
+      agentProjectPlacementService: {
+        previewForInput: vi.fn(),
+        applyPrimaryPlacement: vi.fn(),
+      } as any,
+      agentTemplateService: mockAgentTemplateService as any,
+      approvalService: mockApprovalService as any,
+      agentSkillService: mockAgentSkillService as any,
+      budgetService: mockBudgetService as any,
+      heartbeatService: mockHeartbeatService as any,
+      issueApprovalService: mockIssueApprovalService as any,
+      issueService: {} as any,
+      logActivity: mockLogActivity as any,
+      secretService: mockSecretService as any,
+      agentInstructionsService: mockAgentInstructionsService as any,
+      workspaceOperationService: mockWorkspaceOperationService as any,
+      instanceSettingsService: {
+        getGeneral: vi.fn(async () => ({ censorUsernameInLogs: false })),
+      } as any,
+    },
+    telemetry: {
+      getTelemetryClient: mockGetTelemetryClient as any,
+      trackAgentCreated: mockTrackAgentCreated as any,
+    },
+  }));
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(err?.status ?? 500).json({ error: err?.message ?? "Internal server error" });
   });
@@ -202,7 +207,6 @@ function makeTemplateResolution(
 
 describe("agent skill routes", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.clearAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);

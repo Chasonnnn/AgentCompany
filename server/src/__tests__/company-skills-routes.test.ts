@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { companySkillRoutes } from "../routes/company-skills.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -33,28 +35,6 @@ const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockAgentHasCreatePermission = vi.hoisted(() =>
   vi.fn((agent: Record<string, unknown> | null | undefined) => agent?.permissions?.canCreateAgents === true),
 );
-
-function registerRouteMocks() {
-  vi.doMock("../services/index.js", () => ({
-    accessService: () => mockAccessService,
-    agentService: () => mockAgentService,
-    agentSkillService: () => mockAgentSkillService,
-    companySkillService: () => mockCompanySkillService,
-    logActivity: mockLogActivity,
-  }));
-
-  vi.doMock("../services/agent-permissions.js", () => ({
-    agentHasCreatePermission: mockAgentHasCreatePermission,
-  }));
-
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackSkillImported: mockTrackSkillImported,
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
-}
 
 function testMocks() {
   return {
@@ -211,24 +191,28 @@ function applyDefaultMocks() {
 }
 
 async function createApp(actor: Record<string, unknown>) {
-  vi.resetModules();
-  vi.doUnmock("../routes/company-skills.js");
-  vi.doUnmock("../middleware/index.js");
-  vi.doUnmock("../errors.js");
-  registerRouteMocks();
   applyDefaultMocks();
-  const [{ companySkillRoutes }, { errorHandler }, errors] = await Promise.all([
-    import("../routes/company-skills.js"),
-    import("../middleware/index.js"),
-    import("../errors.js"),
-  ]);
+  const errors = await import("../errors.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", companySkillRoutes({} as any));
+  app.use("/api", companySkillRoutes({} as any, {
+    services: {
+      accessService: mockAccessService as any,
+      agentService: mockAgentService as any,
+      agentSkillService: mockAgentSkillService as any,
+      companySkillService: mockCompanySkillService as any,
+      logActivity: mockLogActivity as any,
+    },
+    telemetry: {
+      getTelemetryClient: mockGetTelemetryClient as any,
+      trackSkillImported: mockTrackSkillImported as any,
+      agentHasCreatePermission: mockAgentHasCreatePermission as any,
+    },
+  }));
   app.use(errorHandler);
   return { app, mocks: testMocks(), errors };
 }
@@ -236,11 +220,7 @@ async function createApp(actor: Record<string, unknown>) {
 describe("company skill mutation permissions", () => {
   beforeEach(() => {
     vi.useRealTimers();
-    vi.resetModules();
     vi.resetAllMocks();
-    vi.doUnmock("../routes/company-skills.js");
-    vi.doUnmock("../middleware/index.js");
-    vi.doUnmock("../errors.js");
     applyDefaultMocks();
   });
 
@@ -248,13 +228,6 @@ describe("company skill mutation permissions", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.clearAllMocks();
-    vi.doUnmock("../routes/company-skills.js");
-    vi.doUnmock("../middleware/index.js");
-    vi.doUnmock("../errors.js");
-    vi.doUnmock("../services/index.js");
-    vi.doUnmock("../services/agent-permissions.js");
-    vi.doUnmock("@paperclipai/shared/telemetry");
-    vi.doUnmock("../telemetry.js");
   });
 
   it("allows local board operators to mutate company skills", async () => {

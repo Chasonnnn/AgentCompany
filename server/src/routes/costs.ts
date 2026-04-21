@@ -41,17 +41,35 @@ export function parseCostLimit(query: Record<string, unknown>) {
   return limit;
 }
 
-export function costRoutes(db: Db) {
+type CostRouteDeps = {
+  heartbeatService: ReturnType<typeof heartbeatService>;
+  budgetService: ReturnType<typeof budgetService>;
+  costService: ReturnType<typeof costService>;
+  financeService: ReturnType<typeof financeService>;
+  companyService: ReturnType<typeof companyService>;
+  agentService: ReturnType<typeof agentService>;
+  logActivity: typeof logActivity;
+};
+
+export function costRoutes(
+  db: Db,
+  opts?: {
+    services?: Partial<CostRouteDeps>;
+    fetchAllQuotaWindows?: typeof fetchAllQuotaWindows;
+  },
+) {
   const router = Router();
-  const heartbeat = heartbeatService(db);
+  const heartbeat = opts?.services?.heartbeatService ?? heartbeatService(db);
   const budgetHooks = {
     cancelWorkForScope: heartbeat.cancelBudgetScopeWork,
   };
-  const costs = costService(db, budgetHooks);
-  const finance = financeService(db);
-  const budgets = budgetService(db, budgetHooks);
-  const companies = companyService(db);
-  const agents = agentService(db);
+  const costs = opts?.services?.costService ?? costService(db, budgetHooks);
+  const finance = opts?.services?.financeService ?? financeService(db);
+  const budgets = opts?.services?.budgetService ?? budgetService(db, budgetHooks);
+  const companies = opts?.services?.companyService ?? companyService(db);
+  const agents = opts?.services?.agentService ?? agentService(db);
+  const logActivityFn = opts?.services?.logActivity ?? logActivity;
+  const fetchAllQuotaWindowsFn = opts?.fetchAllQuotaWindows ?? fetchAllQuotaWindows;
 
   router.post("/companies/:companyId/cost-events", validate(createCostEventSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -68,7 +86,7 @@ export function costRoutes(db: Db) {
     });
 
     const actor = getActorInfo(req);
-    await logActivity(db, {
+    await logActivityFn(db, {
       companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
@@ -93,7 +111,7 @@ export function costRoutes(db: Db) {
     });
 
     const actor = getActorInfo(req);
-    await logActivity(db, {
+    await logActivityFn(db, {
       companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
@@ -203,7 +221,7 @@ export function costRoutes(db: Db) {
       res.status(404).json({ error: "Company not found" });
       return;
     }
-    const results = await fetchAllQuotaWindows();
+    const results = await fetchAllQuotaWindowsFn();
     res.json(results);
   });
 
@@ -257,7 +275,7 @@ export function costRoutes(db: Db) {
       return;
     }
 
-    await logActivity(db, {
+    await logActivityFn(db, {
       companyId,
       actorType: "user",
       actorId: req.actor.userId ?? "board",
@@ -305,7 +323,7 @@ export function costRoutes(db: Db) {
     }
 
     const actor = getActorInfo(req);
-    await logActivity(db, {
+    await logActivityFn(db, {
       companyId: updated.companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,

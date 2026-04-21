@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { costRoutes } from "../routes/costs.js";
 
 function makeDb(overrides: Record<string, unknown> = {}) {
   const selectChain = {
@@ -71,57 +73,53 @@ const mockBudgetService = vi.hoisted(() => ({
   resolveIncident: vi.fn(),
 }));
 
-function registerRouteMocks() {
-  vi.doMock("../services/index.js", () => ({
-    budgetService: () => mockBudgetService,
-    costService: () => mockCostService,
-    financeService: () => mockFinanceService,
-    companyService: () => mockCompanyService,
-    agentService: () => mockAgentService,
-    heartbeatService: () => mockHeartbeatService,
-    logActivity: mockLogActivity,
-  }));
-
-  vi.doMock("../services/quota-windows.js", () => ({
-    fetchAllQuotaWindows: mockFetchAllQuotaWindows,
-  }));
-}
-
 async function createApp() {
-  const [{ costRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/costs.js"),
-    import("../middleware/index.js"),
-  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     req.actor = { type: "board", userId: "board-user", source: "local_implicit" };
     next();
   });
-  app.use("/api", costRoutes(makeDb() as any));
+  app.use("/api", costRoutes(makeDb() as any, {
+    services: {
+      budgetService: mockBudgetService as any,
+      costService: mockCostService as any,
+      financeService: mockFinanceService as any,
+      companyService: mockCompanyService as any,
+      agentService: mockAgentService as any,
+      heartbeatService: mockHeartbeatService as any,
+      logActivity: mockLogActivity as any,
+    },
+    fetchAllQuotaWindows: mockFetchAllQuotaWindows as any,
+  }));
   app.use(errorHandler);
   return app;
 }
 
 async function createAppWithActor(actor: any) {
-  const [{ costRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/costs.js"),
-    import("../middleware/index.js"),
-  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     req.actor = actor;
     next();
   });
-  app.use("/api", costRoutes(makeDb() as any));
+  app.use("/api", costRoutes(makeDb() as any, {
+    services: {
+      budgetService: mockBudgetService as any,
+      costService: mockCostService as any,
+      financeService: mockFinanceService as any,
+      companyService: mockCompanyService as any,
+      agentService: mockAgentService as any,
+      heartbeatService: mockHeartbeatService as any,
+      logActivity: mockLogActivity as any,
+    },
+    fetchAllQuotaWindows: mockFetchAllQuotaWindows as any,
+  }));
   app.use(errorHandler);
   return app;
 }
 
 beforeEach(() => {
-  vi.resetModules();
-  registerRouteMocks();
   vi.resetAllMocks();
   mockCostService.createEvent.mockResolvedValue(undefined);
   mockCostService.summary.mockResolvedValue({ spendCents: 0 });

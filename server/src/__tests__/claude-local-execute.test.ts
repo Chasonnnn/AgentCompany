@@ -190,7 +190,7 @@ describe("claude execute", () => {
       const captured = JSON.parse(await fs.readFile(capturePath, "utf-8"));
       expect(captured.argv).toContain("--append-system-prompt-file");
       expect(captured.argv).not.toContain("--brief");
-      expect(captured.nativeDecisionQuestions).toBe("1");
+      expect(captured.nativeDecisionQuestions).toBeNull();
     } finally {
       restore();
       await fs.rm(root, { recursive: true, force: true });

@@ -100,7 +100,10 @@ const claudeLocalAdapter: ServerAdapterModule = {
   supportsInstructionsBundle: true,
   instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: false,
-  nativeDecisionQuestions: true,
+  // Claude Code's non-interactive --print runner currently rejects
+  // AskUserQuestion calls with "Answer questions?" even under bypass mode, so
+  // Paperclip must fall back to persisted decision-question artifacts here.
+  nativeDecisionQuestions: false,
   agentConfigurationDoc: claudeAgentConfigurationDoc,
   getQuotaWindows: claudeGetQuotaWindows,
 };

@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { issueRoutes } from "../routes/issues.js";
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -22,98 +24,85 @@ const mockIssueApprovalService = vi.hoisted(() => ({
 const mockResolveConferenceContext = vi.hoisted(() => vi.fn());
 
 async function createApp(actor: Record<string, unknown>) {
-  vi.doMock("../services/index.js", () => ({
-    accessService: () => ({
-      canUser: vi.fn(),
-      hasPermission: vi.fn(),
-    }),
-    agentService: () => ({
-      getById: vi.fn(),
-    }),
-    documentService: () => ({
-      getIssueDocumentPayload: vi.fn(async () => ({})),
-    }),
-    executionWorkspaceService: () => ({
-      getById: vi.fn(),
-    }),
-    feedbackService: () => ({
-      listIssueVotesForUser: vi.fn(async () => []),
-      saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
-    }),
-    goalService: () => ({
-      getById: vi.fn(async () => null),
-      getDefaultCompanyGoal: vi.fn(async () => null),
-    }),
-    heartbeatService: () => ({
-      wakeup: vi.fn(async () => undefined),
-      reportRunActivity: vi.fn(async () => undefined),
-    }),
-    instanceSettingsService: () => ({
-      get: vi.fn(async () => ({
-        id: "instance-settings-1",
-        general: {
-          censorUsernameInLogs: false,
-          feedbackDataSharingPreference: "prompt",
-        },
-      })),
-      listCompanyIds: vi.fn(async () => ["company-1"]),
-    }),
-    issueApprovalService: () => mockIssueApprovalService,
-    issueContinuityService: () => ({
-      recomputeIssueContinuityState: vi.fn(async () => ({
-        tier: "normal",
-        status: "draft",
-        health: "healthy",
-        requiredDocumentKeys: [],
-        missingDocumentKeys: [],
-        specState: "editable",
-        branchRole: "none",
-        branchStatus: "none",
-        unresolvedBranchIssueIds: [],
-        lastProgressAt: null,
-        lastHandoffAt: null,
-        lastPreparedAt: null,
-        lastBundleHash: null,
-      })),
-    }),
-    issueService: () => mockIssueService,
-    logActivity: vi.fn(async () => undefined),
-    projectService: () => ({
-      getById: vi.fn(async () => null),
-      listByIds: vi.fn(async () => []),
-    }),
-    routineService: () => ({
-      syncRunStatusForIssue: vi.fn(async () => undefined),
-    }),
-    workProductService: () => ({
-      listForIssue: vi.fn(async () => []),
-    }),
-  }));
-  vi.doMock("../services/conference-context.js", async () => {
-    const actual = await vi.importActual<typeof import("../services/conference-context.js")>(
-      "../services/conference-context.js",
-    );
-    return {
-      ...actual,
-      conferenceContextService: () => ({
-        resolveForIssueRecord: mockResolveConferenceContext,
-        resolveForIssue: vi.fn(),
-      }),
-    };
-  });
-
-  const [{ issueRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/issues.js"),
-    import("../middleware/index.js"),
-  ]);
-
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", issueRoutes({} as any, {} as any));
+  app.use("/api", issueRoutes({} as any, {} as any, {
+    services: {
+      accessService: {
+        canUser: vi.fn(),
+        hasPermission: vi.fn(),
+      } as any,
+      agentService: {
+        getById: vi.fn(),
+      } as any,
+      documentService: {
+        getIssueDocumentPayload: vi.fn(async () => ({})),
+      } as any,
+      executionWorkspaceService: {
+        getById: vi.fn(),
+      } as any,
+      feedbackService: {
+        listIssueVotesForUser: vi.fn(async () => []),
+        saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
+      } as any,
+      goalService: {
+        getById: vi.fn(async () => null),
+        getDefaultCompanyGoal: vi.fn(async () => null),
+      } as any,
+      heartbeatService: {
+        wakeup: vi.fn(async () => undefined),
+        reportRunActivity: vi.fn(async () => undefined),
+      } as any,
+      instanceSettingsService: {
+        get: vi.fn(async () => ({
+          id: "instance-settings-1",
+          general: {
+            censorUsernameInLogs: false,
+            feedbackDataSharingPreference: "prompt",
+          },
+        })),
+        listCompanyIds: vi.fn(async () => ["company-1"]),
+      } as any,
+      issueApprovalService: mockIssueApprovalService as any,
+      issueContinuityService: {
+        recomputeIssueContinuityState: vi.fn(async () => ({
+          tier: "normal",
+          status: "draft",
+          health: "healthy",
+          requiredDocumentKeys: [],
+          missingDocumentKeys: [],
+          specState: "editable",
+          branchRole: "none",
+          branchStatus: "none",
+          unresolvedBranchIssueIds: [],
+          lastProgressAt: null,
+          lastHandoffAt: null,
+          lastPreparedAt: null,
+          lastBundleHash: null,
+        })),
+      } as any,
+      issueService: mockIssueService as any,
+      logActivity: vi.fn(async () => undefined),
+      projectService: {
+        getById: vi.fn(async () => null),
+        listByIds: vi.fn(async () => []),
+      } as any,
+      routineService: {
+        syncRunStatusForIssue: vi.fn(async () => undefined),
+      } as any,
+      workProductService: {
+        listForIssue: vi.fn(async () => []),
+      } as any,
+      conferenceContextService: {
+        resolveForIssueRecord: mockResolveConferenceContext,
+        resolveForIssue: vi.fn(),
+      } as any,
+    },
+  }));
   app.use(errorHandler);
   return app;
 }
@@ -176,7 +165,6 @@ function createApproval() {
 
 describe("issue conference context routes", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.resetAllMocks();
     mockIssueService.getById.mockResolvedValue({
       id: "issue-1",
