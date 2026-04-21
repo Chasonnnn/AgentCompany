@@ -13,11 +13,20 @@ describe("vitest process guard", () => {
       ),
     ).toBe(true);
     expect(isTrackedProcessCommand("/opt/homebrew/bin/codex exec --json -")).toBe(true);
+    expect(isTrackedProcessCommand("/opt/homebrew/bin/codex app-server")).toBe(true);
     expect(isTrackedProcessCommand("/usr/local/bin/gemini --output-format stream-json --prompt hello")).toBe(true);
     expect(isTrackedProcessCommand("/usr/local/bin/agent -p --mode ask --output-format json hello")).toBe(true);
     expect(isTrackedProcessCommand("/usr/local/bin/opencode run --format json")).toBe(true);
     expect(isTrackedProcessCommand("/usr/local/bin/pi --mode json -p hello")).toBe(true);
     expect(isTrackedProcessCommand("/usr/bin/node unrelated-script.js")).toBe(false);
+  });
+
+  it("ignores codex desktop chronicle memgen processes", () => {
+    expect(
+      isTrackedProcessCommand(
+        '/opt/homebrew/bin/codex exec - --config model_provider="openai-memgen" --cd /var/folders/c7/6l609_kn28g79m0_9klfr8z80000gn/T/chronicle/screen_recording',
+      ),
+    ).toBe(false);
   });
 
   it("reports only newly introduced tracked processes", () => {

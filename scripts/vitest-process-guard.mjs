@@ -6,12 +6,17 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_SETTLE_MS = 1_500;
 const POLL_INTERVAL_MS = 100;
 
+const IGNORED_PROCESS_PATTERNS = [
+  /\bopenai-memgen\b/i,
+  /(?:\/|\\)chronicle(?:\/|\\)screen_recording\b/i,
+];
+
 const TRACKED_PROCESS_PATTERNS = [
   /\bpaperclipai run\b/,
   /\bcli\/src\/index\.ts run --config\b/,
   /(?:^|\s)(?:[^ ]+\/)?server\/(?:dist\/index\.js|src\/index\.ts)\b/,
   /\bclaude\s+(?:--print\b.*\b--output-format\s+(?:stream-json|json)\b|auth\s+status\b|login\b)/,
-  /\bcodex\s+(?:--search\s+)?(?:exec\s+--json\b|resume\s+\S+\s+-\b)/,
+  /\bcodex\s+(?:--search\s+)?(?:app-server\b|exec\s+--json\b|resume\s+\S+\s+-\b)/,
   /\bgemini\b.*(?:^|\s)--output-format\s+(?:stream-json|json)\b/,
   /\bagent\s+-p\b.*(?:^|\s)--output-format\s+(?:stream-json|json)\b/,
   /\bopencode\s+run\s+--format\s+json\b/,
@@ -39,6 +44,7 @@ function parseProcessLine(line) {
 
 export function isTrackedProcessCommand(command) {
   const normalized = command.replace(/\s+/g, " ").trim();
+  if (IGNORED_PROCESS_PATTERNS.some((pattern) => pattern.test(normalized))) return false;
   return TRACKED_PROCESS_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
