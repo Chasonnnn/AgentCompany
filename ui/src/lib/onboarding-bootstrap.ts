@@ -8,15 +8,14 @@ export const DEFAULT_COMPANY_BUDGET_CENTS = 5_000;
 export const DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS = 2_500;
 export const DEFAULT_STARTER_AGENT_BUDGET_CENTS = 0;
 export const DEFAULT_WORKER_HEARTBEAT_INTERVAL_SEC = 300;
+export const DEFAULT_OFFICE_OPERATOR_HEARTBEAT_INTERVAL_SEC = 300;
 
 export const STARTER_AGENT_NAMES = {
   ceo: "CEO",
+  officeOperator: "Chief of Staff",
   technicalProjectLead: "Technical Project Lead",
-  continuityOwner: "Continuity Owner",
-  auditReviewer: "Audit Reviewer",
-  researchSpecialist: "Research Specialist",
-  growthSpecialist: "Growth Specialist",
-  consultingSpecialist: "Consulting Specialist",
+  backendContinuityOwner: "Backend/API Continuity Owner",
+  qaEvalsContinuityOwner: "QA/Evals Continuity Owner",
 } as const;
 
 export const ONBOARDING_ROUTINE_TITLES = {
@@ -36,35 +35,25 @@ export const ONBOARDING_KICKOFF_ROOM_TITLE = "Onboarding Kickoff";
 export const ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS = [...DEFAULT_COMPANY_SKILL_IMPORT_SLUGS];
 export const ONBOARDING_STARTER_SKILL_ASSIGNMENTS = {
   ceo: getDefaultDesiredSkillSlugsForAgent({ role: "ceo" }),
+  officeOperator: getDefaultDesiredSkillSlugsForAgent({
+    role: "coo",
+    operatingClass: "executive",
+    archetypeKey: "chief_of_staff",
+  }),
   technicalProjectLead: getDefaultDesiredSkillSlugsForAgent({
     role: "engineer",
     operatingClass: "project_leadership",
     archetypeKey: "project_lead",
   }),
-  continuityOwner: getDefaultDesiredSkillSlugsForAgent({
+  backendContinuityOwner: getDefaultDesiredSkillSlugsForAgent({
     role: "engineer",
     operatingClass: "worker",
     archetypeKey: "backend_api_continuity_owner",
   }),
-  auditReviewer: getDefaultDesiredSkillSlugsForAgent({
+  qaEvalsContinuityOwner: getDefaultDesiredSkillSlugsForAgent({
     role: "qa",
-    operatingClass: "consultant",
-    archetypeKey: "audit_reviewer",
-  }),
-  researchSpecialist: getDefaultDesiredSkillSlugsForAgent({
-    role: "researcher",
-    operatingClass: "consultant",
-    archetypeKey: "research_specialist",
-  }),
-  growthSpecialist: getDefaultDesiredSkillSlugsForAgent({
-    role: "general",
-    operatingClass: "consultant",
-    archetypeKey: "growth_specialist",
-  }),
-  consultingSpecialist: getDefaultDesiredSkillSlugsForAgent({
-    role: "general",
-    operatingClass: "consultant",
-    archetypeKey: "consulting_specialist",
+    operatingClass: "worker",
+    archetypeKey: "qa_evals_continuity_owner",
   }),
 } as const;
 export const ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS = mergeDesiredSkillRefs(
@@ -152,6 +141,7 @@ export function buildCompanyDocumentBody(input: {
     "",
     "- Board: Strategic direction, staffing changes, trust posture, and budget regime changes.",
     "- CEO: Kickoff sponsorship, prioritization, and turning decisions into owned work.",
+    "- Chief of Staff: Company-wide routing, coordination, staffing-gap follow-up, and shared-skill proposal triage.",
     "- Project leadership: Break approved work into owned issues, dependencies, risks, and milestone intent.",
     "",
     "## Budget Regime",
@@ -192,7 +182,8 @@ export function buildEngineeringTeamDocumentBody() {
     "## Interfaces",
     "",
     "- Coordinate with the CEO on priorities and approvals.",
-    "- Coordinate with Operations on audit findings, risks, and release readiness.",
+    "- Coordinate with the Chief of Staff on intake routing, staffing gaps, and cross-project follow-up.",
+    "- Coordinate with Operations on governance, release readiness, and shared-service requests.",
   ].join("\n");
 }
 
@@ -202,16 +193,16 @@ export function buildOperationsTeamDocumentBody() {
     "",
     "## Charter",
     "",
-    "- Own audit/review coverage, governance checks, heartbeat hygiene, and evidence-based findings for the onboarding lane.",
+    "- Own company-wide coordination, routing, governance checks, heartbeat hygiene, and evidence-based operational follow-up for the onboarding lane.",
     "",
     "## Operating Rhythm",
     "",
-    "- Review planning readiness, budget posture, and worker heartbeat health on a fixed cadence.",
-    "- Return findings in durable review artifacts and route material issues to approvals when needed.",
+    "- Sweep untriaged intake, blocked work, staffing gaps, engagement requests, and shared-skill proposal queues on a fixed cadence.",
+    "- Route work through existing issue, engagement, and proposal artifacts rather than taking continuity ownership by default.",
     "",
     "## Interfaces",
     "",
-    "- Work with Engineering on review findings and handoff repair.",
+    "- Work with Engineering on intake routing, staffing gaps, and blocked-work recovery.",
     "- Escalate company-level risk or policy drift to the CEO and board.",
   ].join("\n");
 }

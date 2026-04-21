@@ -69,6 +69,9 @@ export { sharedServiceEngagementAssignments } from "./shared_service_engagement_
 export { activityLog } from "./activity_log.js";
 export { companySecrets } from "./company_secrets.js";
 export { companySecretVersions } from "./company_secret_versions.js";
+export { sharedSkills } from "./shared_skills.js";
+export { sharedSkillProposals } from "./shared_skill_proposals.js";
+export { sharedSkillProposalComments } from "./shared_skill_proposal_comments.js";
 export { companySkills } from "./company_skills.js";
 export { plugins } from "./plugins.js";
 export { pluginConfig } from "./plugin_config.js";

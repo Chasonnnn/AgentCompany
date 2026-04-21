@@ -54,9 +54,10 @@ Hard rule:
 - reviewers and approvers are gates, not baton-pass owners
 - subagents are for bounded branch work or adversarial review, not default relay chains
 - the default org-facing UI is an accountability map, not an execution tree
-- the recommended default company is lean: 1-2 executive sponsors, 1-3 project leads, 4-6 continuity owners, and optional shared-service leads only when justified
+- the recommended default company is lean: 1-2 executive sponsors, one company-wide office operator, 1-3 project leads, 4-6 continuity owners, and optional shared-service leads only when justified
 - executive sponsors are governance-only by default; they are sponsor metadata for projects, not normal project execution members
-- each active project should have one primary Project Lead as the default intake and routing owner for project-scoped issues when no lane owner is yet explicit
+- the office operator owns company-wide intake routing, follow-up, and staffing-gap detection; project leads own project-local decomposition and sequencing once work is routed into a project lane
+- each active project should have one primary Project Lead for project-local delivery coordination
 
 ## 3. Authority Rules
 

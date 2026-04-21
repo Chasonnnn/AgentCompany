@@ -1,12 +1,12 @@
 import type { AgentDepartmentKey, AgentRole } from "../constants.js";
 
-export type CompanySkillSourceType = "local_path" | "github" | "url" | "catalog" | "skills_sh";
+export type CompanySkillSourceType = "local_path" | "github" | "url" | "catalog" | "skills_sh" | "shared_mirror";
 
 export type CompanySkillTrustLevel = "markdown_only" | "assets" | "scripts_executables";
 
 export type CompanySkillCompatibility = "compatible" | "unknown" | "invalid";
 
-export type CompanySkillSourceBadge = "paperclip" | "github" | "local" | "url" | "catalog" | "skills_sh";
+export type CompanySkillSourceBadge = "paperclip" | "github" | "local" | "url" | "catalog" | "skills_sh" | "shared_mirror";
 
 export type GlobalSkillCatalogSourceRoot = "codex" | "claude" | "agents";
 export type BulkSkillGrantTier = "all" | "leaders" | "workers";
@@ -25,6 +25,7 @@ export interface CompanySkillFileInventoryEntry {
 export interface CompanySkill {
   id: string;
   companyId: string;
+  sharedSkillId: string | null;
   key: string;
   slug: string;
   name: string;
@@ -44,6 +45,7 @@ export interface CompanySkill {
 export interface CompanySkillListItem {
   id: string;
   companyId: string;
+  sharedSkillId: string | null;
   key: string;
   slug: string;
   name: string;

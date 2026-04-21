@@ -206,12 +206,10 @@ function OnboardingReadinessCard({
   );
   const starterAgentNames = [
     STARTER_AGENT_NAMES.ceo,
+    STARTER_AGENT_NAMES.officeOperator,
     STARTER_AGENT_NAMES.technicalProjectLead,
-    STARTER_AGENT_NAMES.continuityOwner,
-    STARTER_AGENT_NAMES.auditReviewer,
-    STARTER_AGENT_NAMES.researchSpecialist,
-    STARTER_AGENT_NAMES.growthSpecialist,
-    STARTER_AGENT_NAMES.consultingSpecialist,
+    STARTER_AGENT_NAMES.backendContinuityOwner,
+    STARTER_AGENT_NAMES.qaEvalsContinuityOwner,
   ] as const;
   const starterAgents = agents.filter((agent) => starterAgentNames.some((name) => name === agent.name));
 

@@ -4,6 +4,7 @@ These reusable templates seed new companies with the lean shared-state role libr
 
 They are intentionally smaller than the old relay-style org packs:
 
+- one company-wide chief of staff / office operator
 - one project lead
 - continuity owners for real execution lanes
 - specialist templates for scoped shared-service or reviewer work

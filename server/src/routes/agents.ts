@@ -10,6 +10,7 @@ import {
   agentProjectPlacementInputSchema,
   agentTemplateSnapshotSchema,
   agentSkillSyncSchema,
+  companyOfficeOperatorAdoptionSchema,
   agentMineInboxQuerySchema,
   orgSimplificationArchiveRequestSchema,
   orgSimplificationConvertSharedServiceRequestSchema,
@@ -530,6 +531,25 @@ export function agentRoutes(
       enabled: parseBooleanLike(heartbeat.enabled) ?? false,
       intervalSec: Math.max(0, parseNumberLike(heartbeat.intervalSec) ?? 0),
     };
+  }
+
+  function isProjectLeadAgent(agent: {
+    role?: string | null;
+    archetypeKey?: string | null;
+    operatingClass?: string | null;
+    status?: string | null;
+  }) {
+    if (agent.status === "terminated") return false;
+    return agent.archetypeKey === "project_lead" || agent.operatingClass === "project_leadership";
+  }
+
+  function isOfficeOperatorAgent(agent: {
+    role?: string | null;
+    archetypeKey?: string | null;
+    status?: string | null;
+  }) {
+    if (agent.status === "terminated") return false;
+    return agent.role === "coo" || agent.archetypeKey === "chief_of_staff";
   }
 
   function normalizeNewAgentRuntimeConfig(runtimeConfig: unknown): Record<string, unknown> {
@@ -1747,6 +1767,157 @@ export function agentRoutes(
 
     res.status(201).json({ agent, approval });
   });
+
+  router.post(
+    "/companies/:companyId/office-operator-adoption",
+    validate(companyOfficeOperatorAdoptionSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      await assertCanCreateAgentsForCompany(req, companyId);
+
+      const actor = getActorInfo(req);
+      const agents = await svc.list(companyId);
+      const existingOfficeOperator = agents.find((agent) => isOfficeOperatorAgent(agent)) ?? null;
+      const ceo = agents.find((agent) => agent.role === "ceo" && agent.status !== "terminated") ?? null;
+      const seedFromAgentId =
+        typeof req.body.seedFromAgentId === "string" && req.body.seedFromAgentId.trim().length > 0
+          ? req.body.seedFromAgentId.trim()
+          : null;
+      const seedAgent =
+        (seedFromAgentId ? agents.find((agent) => agent.id === seedFromAgentId) ?? null : null)
+        ?? ceo
+        ?? agents.find((agent) => agent.status !== "terminated") ?? null;
+
+      if (seedFromAgentId && (!seedAgent || seedAgent.id !== seedFromAgentId)) {
+        throw notFound("Seed agent not found");
+      }
+
+      let officeOperator = existingOfficeOperator;
+      let created = false;
+
+      if (!officeOperator) {
+        if (!seedAgent) {
+          throw unprocessable("Office-operator adoption requires a seed agent or an existing active agent.");
+        }
+
+        const chiefOfStaffTemplate = (await templateSvc.list(companyId)).find(
+          (template) => template.archetypeKey === "chief_of_staff",
+        );
+        if (!chiefOfStaffTemplate) {
+          throw notFound("Chief of Staff template not found");
+        }
+
+        const templateResolved = await resolveTemplateBackedAgentInput(companyId, {
+          templateId: chiefOfStaffTemplate.id,
+          reportsTo: ceo?.id ?? null,
+        });
+        const createInput = { ...templateResolved.mergedInput };
+        const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
+          seedAgent.adapterType,
+          ((seedAgent.adapterConfig ?? {}) as Record<string, unknown>),
+        );
+        const mergedDesiredSkillRefs = mergeDefaultDesiredSkills(
+          undefined,
+          {
+            role: typeof createInput.role === "string" ? createInput.role : "coo",
+            operatingClass:
+              typeof createInput.operatingClass === "string" ? createInput.operatingClass : "executive",
+            archetypeKey:
+              typeof createInput.archetypeKey === "string" ? createInput.archetypeKey : "chief_of_staff",
+          },
+          { resolvedFromTemplate: true },
+        );
+        const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
+          companyId,
+          seedAgent.adapterType,
+          requestedAdapterConfig,
+          mergedDesiredSkillRefs,
+        );
+        const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+          companyId,
+          desiredSkillAssignment.adapterConfig,
+          { strictMode: strictSecretsMode },
+        );
+        await assertAdapterConfigConstraints(companyId, seedAgent.adapterType, normalizedAdapterConfig);
+
+        const seedHeartbeat = asRecord(seedAgent.runtimeConfig)?.heartbeat;
+        const templateHeartbeat = asRecord(createInput.runtimeConfig)?.heartbeat;
+        const runtimeConfig = normalizeNewAgentRuntimeConfig({
+          ...((seedAgent.runtimeConfig ?? {}) as Record<string, unknown>),
+          ...((createInput.runtimeConfig ?? {}) as Record<string, unknown>),
+          heartbeat: {
+            ...(asRecord(seedHeartbeat) ?? {}),
+            ...(asRecord(templateHeartbeat) ?? {}),
+            enabled: true,
+            intervalSec:
+              parseNumberLike(asRecord(templateHeartbeat)?.intervalSec)
+              ?? parseNumberLike(asRecord(seedHeartbeat)?.intervalSec)
+              ?? 300,
+          },
+        });
+
+        const createdAgent = await svc.create(companyId, buildAgentCreatePayload({
+          ...createInput,
+          reportsTo: ceo?.id ?? null,
+          adapterType: seedAgent.adapterType,
+          adapterConfig: normalizedAdapterConfig,
+          runtimeConfig,
+          budgetMonthlyCents:
+            typeof createInput.budgetMonthlyCents === "number" ? createInput.budgetMonthlyCents : 0,
+        }, {
+          status: "idle",
+          spentMonthlyCents: 0,
+          lastHeartbeatAt: null,
+        }));
+        officeOperator = await materializeDefaultInstructionsBundleForNewAgent(createdAgent, {
+          instructionsBody: templateResolved.instructionsBody,
+        });
+        await applyDefaultAgentTaskAssignGrant(
+          companyId,
+          officeOperator.id,
+          actor.actorType === "user" ? actor.actorId : null,
+        );
+        created = true;
+      }
+
+      const shouldReparent = req.body.reparentProjectLeads !== false;
+      const projectLeads = agents.filter((agent) => isProjectLeadAgent(agent) && agent.id !== officeOperator.id);
+      const reparentedProjectLeadIds: string[] = [];
+      if (shouldReparent) {
+        for (const projectLead of projectLeads) {
+          if (projectLead.reportsTo === officeOperator.id) continue;
+          const updated = await svc.update(projectLead.id, { reportsTo: officeOperator.id });
+          if (updated) {
+            reparentedProjectLeadIds.push(projectLead.id);
+          }
+        }
+      }
+
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "agent.office_operator_adopted",
+        entityType: "agent",
+        entityId: officeOperator.id,
+        details: {
+          created,
+          reparentedProjectLeadIds,
+          seedFromAgentId: seedAgent?.id ?? null,
+        },
+      });
+
+      res.status(created ? 201 : 200).json({
+        officeOperator,
+        created,
+        reparentedProjectLeadIds,
+        managerId: officeOperator.reportsTo ?? null,
+        seedFromAgentId: seedAgent?.id ?? null,
+      });
+    },
+  );
 
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
     const companyId = req.params.companyId as string;

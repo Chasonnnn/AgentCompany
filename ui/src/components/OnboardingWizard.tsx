@@ -56,6 +56,7 @@ import {
   buildOperationsTeamDocumentBody,
   buildResearchTeamDocumentBody,
   DEFAULT_COMPANY_BUDGET_CENTS,
+  DEFAULT_OFFICE_OPERATOR_HEARTBEAT_INTERVAL_SEC,
   DEFAULT_ONBOARDING_PROJECT_BUDGET_CENTS,
   DEFAULT_STARTER_AGENT_BUDGET_CENTS,
   DEFAULT_WORKER_HEARTBEAT_INTERVAL_SEC,
@@ -97,9 +98,9 @@ type AdapterType = string;
 
 const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the company.
 
-- create one lean execution lane
-- hire a project lead or continuity owner only if needed
-- break the first milestone into concrete issue continuity work`;
+- route company-wide coordination through the Chief of Staff
+- keep the project lead focused on the first execution lane
+- break the first milestone into concrete continuity-owned work`;
 
 function findTemplateIdByArchetype(templates: Array<{ id: string; archetypeKey: string }>, archetypeKey: string) {
   return templates.find((template) => template.archetypeKey === archetypeKey)?.id ?? null;
@@ -721,19 +722,15 @@ export function OnboardingWizard() {
       const skillKeyBySlug = new Map(companySkills.map((skill) => [skill.slug, skill.key] as const));
 
       const templates = await agentTemplatesApi.list(companyId);
+      const officeOperatorTemplateId = findTemplateIdByArchetype(templates, "chief_of_staff");
       const technicalProjectLeadTemplateId = findTemplateIdByArchetype(templates, "project_lead");
-      const continuityOwnerTemplateId = findTemplateIdByArchetype(templates, "backend_api_continuity_owner");
-      const auditReviewerTemplateId = findTemplateIdByArchetype(templates, "audit_reviewer");
-      const researchSpecialistTemplateId = findTemplateIdByArchetype(templates, "research_specialist");
-      const growthSpecialistTemplateId = findTemplateIdByArchetype(templates, "growth_specialist");
-      const consultingSpecialistTemplateId = findTemplateIdByArchetype(templates, "consulting_specialist");
+      const backendContinuityOwnerTemplateId = findTemplateIdByArchetype(templates, "backend_api_continuity_owner");
+      const qaEvalsContinuityOwnerTemplateId = findTemplateIdByArchetype(templates, "qa_evals_continuity_owner");
       if (
+        !officeOperatorTemplateId ||
         !technicalProjectLeadTemplateId ||
-        !continuityOwnerTemplateId ||
-        !auditReviewerTemplateId ||
-        !researchSpecialistTemplateId ||
-        !growthSpecialistTemplateId ||
-        !consultingSpecialistTemplateId
+        !backendContinuityOwnerTemplateId ||
+        !qaEvalsContinuityOwnerTemplateId
       ) {
         throw new Error("Required onboarding agent templates are missing.");
       }
@@ -754,6 +751,10 @@ export function OnboardingWizard() {
       const workerRuntimeConfig = buildNewAgentRuntimeConfig({
         heartbeatEnabled: true,
         intervalSec: DEFAULT_WORKER_HEARTBEAT_INTERVAL_SEC,
+      });
+      const officeRuntimeConfig = buildNewAgentRuntimeConfig({
+        heartbeatEnabled: true,
+        intervalSec: DEFAULT_OFFICE_OPERATOR_HEARTBEAT_INTERVAL_SEC,
       });
 
       async function ensureStarterAgent(input: {
@@ -803,12 +804,23 @@ export function OnboardingWizard() {
         return created;
       }
 
+      const officeOperator = await ensureStarterAgent({
+        templateId: officeOperatorTemplateId,
+        name: STARTER_AGENT_NAMES.officeOperator,
+        title: STARTER_AGENT_NAMES.officeOperator,
+        departmentKey: "operations",
+        reportsTo: ceo.id,
+        archetypeKey: "chief_of_staff",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.officeOperator,
+        runtimeConfig: officeRuntimeConfig,
+      });
+
       const technicalProjectLead = await ensureStarterAgent({
         templateId: technicalProjectLeadTemplateId,
         name: STARTER_AGENT_NAMES.technicalProjectLead,
         title: STARTER_AGENT_NAMES.technicalProjectLead,
         departmentKey: "engineering",
-        reportsTo: ceo.id,
+        reportsTo: officeOperator.id,
         archetypeKey: "project_lead",
         desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.technicalProjectLead,
         runtimeConfig: workerRuntimeConfig,
@@ -824,14 +836,14 @@ export function OnboardingWizard() {
         },
       });
 
-      const continuityOwner = await ensureStarterAgent({
-        templateId: continuityOwnerTemplateId,
-        name: STARTER_AGENT_NAMES.continuityOwner,
-        title: STARTER_AGENT_NAMES.continuityOwner,
+      const backendContinuityOwner = await ensureStarterAgent({
+        templateId: backendContinuityOwnerTemplateId,
+        name: STARTER_AGENT_NAMES.backendContinuityOwner,
+        title: STARTER_AGENT_NAMES.backendContinuityOwner,
         departmentKey: "engineering",
         reportsTo: technicalProjectLead.id,
         archetypeKey: "backend_api_continuity_owner",
-        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.continuityOwner,
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.backendContinuityOwner,
         runtimeConfig: workerRuntimeConfig,
         projectPlacement: {
           projectId: project.id,
@@ -845,45 +857,25 @@ export function OnboardingWizard() {
         },
       });
 
-      const auditReviewer = await ensureStarterAgent({
-        templateId: auditReviewerTemplateId,
-        name: STARTER_AGENT_NAMES.auditReviewer,
-        title: STARTER_AGENT_NAMES.auditReviewer,
+      const qaEvalsContinuityOwner = await ensureStarterAgent({
+        templateId: qaEvalsContinuityOwnerTemplateId,
+        name: STARTER_AGENT_NAMES.qaEvalsContinuityOwner,
+        title: STARTER_AGENT_NAMES.qaEvalsContinuityOwner,
         departmentKey: "operations",
         reportsTo: technicalProjectLead.id,
-        archetypeKey: "audit_reviewer",
-        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer,
+        archetypeKey: "qa_evals_continuity_owner",
+        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.qaEvalsContinuityOwner,
         runtimeConfig: workerRuntimeConfig,
-      });
-
-      const researchSpecialist = await ensureStarterAgent({
-        templateId: researchSpecialistTemplateId,
-        name: STARTER_AGENT_NAMES.researchSpecialist,
-        title: STARTER_AGENT_NAMES.researchSpecialist,
-        departmentKey: "research",
-        reportsTo: ceo.id,
-        archetypeKey: "research_specialist",
-        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.researchSpecialist,
-      });
-
-      const growthSpecialist = await ensureStarterAgent({
-        templateId: growthSpecialistTemplateId,
-        name: STARTER_AGENT_NAMES.growthSpecialist,
-        title: STARTER_AGENT_NAMES.growthSpecialist,
-        departmentKey: "marketing",
-        reportsTo: ceo.id,
-        archetypeKey: "growth_specialist",
-        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.growthSpecialist,
-      });
-
-      const consultingSpecialist = await ensureStarterAgent({
-        templateId: consultingSpecialistTemplateId,
-        name: STARTER_AGENT_NAMES.consultingSpecialist,
-        title: STARTER_AGENT_NAMES.consultingSpecialist,
-        departmentKey: "operations",
-        reportsTo: ceo.id,
-        archetypeKey: "consulting_specialist",
-        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.consultingSpecialist,
+        projectPlacement: {
+          projectId: project.id,
+          projectRole: "worker",
+          scopeMode: "execution",
+          teamFunctionKey: "operations",
+          teamFunctionLabel: "Operations",
+          workstreamKey: "onboarding",
+          workstreamLabel: "Onboarding bootstrap",
+          requestedReason: "Onboarding starter team",
+        },
       });
 
       await ensureAgentDesiredSkills(
@@ -894,38 +886,26 @@ export function OnboardingWizard() {
       );
       await ensureAgentDesiredSkills(
         companyId,
+        officeOperator.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.officeOperator,
+        skillKeyBySlug,
+      );
+      await ensureAgentDesiredSkills(
+        companyId,
         technicalProjectLead.id,
         ONBOARDING_STARTER_SKILL_ASSIGNMENTS.technicalProjectLead,
         skillKeyBySlug,
       );
       await ensureAgentDesiredSkills(
         companyId,
-        continuityOwner.id,
-        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.continuityOwner,
+        backendContinuityOwner.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.backendContinuityOwner,
         skillKeyBySlug,
       );
       await ensureAgentDesiredSkills(
         companyId,
-        auditReviewer.id,
-        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer,
-        skillKeyBySlug,
-      );
-      await ensureAgentDesiredSkills(
-        companyId,
-        researchSpecialist.id,
-        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.researchSpecialist,
-        skillKeyBySlug,
-      );
-      await ensureAgentDesiredSkills(
-        companyId,
-        growthSpecialist.id,
-        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.growthSpecialist,
-        skillKeyBySlug,
-      );
-      await ensureAgentDesiredSkills(
-        companyId,
-        consultingSpecialist.id,
-        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.consultingSpecialist,
+        qaEvalsContinuityOwner.id,
+        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.qaEvalsContinuityOwner,
         skillKeyBySlug,
       );
 
@@ -1040,14 +1020,14 @@ export function OnboardingWizard() {
       await ensureRoutine({
         title: ONBOARDING_ROUTINE_TITLES.dailyReadiness,
         description: "Review onboarding readiness, open questions, and next actions for the governed bootstrap lane.",
-        assigneeAgentId: ceo.id,
+        assigneeAgentId: officeOperator.id,
         cronExpression: "0 9 * * 1-5",
         label: "Weekdays at 9:00",
       });
       await ensureRoutine({
         title: ONBOARDING_ROUTINE_TITLES.weeklyBudgetAudit,
         description: "Audit budget posture, heartbeat defaults, and runtime health for the onboarding starter team.",
-        assigneeAgentId: continuityOwner.id,
+        assigneeAgentId: qaEvalsContinuityOwner.id,
         cronExpression: "0 10 * * 1",
         label: "Mondays at 10:00",
       });
@@ -1091,7 +1071,13 @@ export function OnboardingWizard() {
         queryKey: queryKeys.issues.list(companyId)
       });
 
-      const roomParticipants = [ceo.id, technicalProjectLead.id, continuityOwner.id, auditReviewer.id];
+      const roomParticipants = [
+        ceo.id,
+        officeOperator.id,
+        technicalProjectLead.id,
+        backendContinuityOwner.id,
+        qaEvalsContinuityOwner.id,
+      ];
       let kickoffRoom = (await conferenceRoomsApi.list(companyId)).find((room) => room.title === ONBOARDING_KICKOFF_ROOM_TITLE) ?? null;
       if (!kickoffRoom) {
         kickoffRoom = await conferenceRoomsApi.create(companyId, {
@@ -1136,7 +1122,7 @@ export function OnboardingWizard() {
             "Record branch-return updates explicitly",
             "Keep parent continuity docs current",
           ],
-          assigneeAgentId: continuityOwner.id,
+          assigneeAgentId: backendContinuityOwner.id,
           priority: "medium",
         });
         branchIssue = "branchIssue" in createdBranch ? createdBranch.branchIssue : null;
@@ -1181,7 +1167,7 @@ export function OnboardingWizard() {
         reviewIssue = await issuesApi.create(companyId, {
           title: ONBOARDING_DEMO_TITLES.review,
           description: "Demonstrate review-return findings on onboarding readiness.",
-          assigneeAgentId: auditReviewer.id,
+          assigneeAgentId: qaEvalsContinuityOwner.id,
           projectId: project.id,
           goalId: onboardingProjectGoal.id,
           status: "todo",
@@ -1224,7 +1210,7 @@ export function OnboardingWizard() {
       const handoffDocuments = await issuesApi.listDocuments(handoffIssue.id);
       if (!handoffDocuments.some((document) => document.key === "handoff")) {
         await issuesApi.handoffContinuity(handoffIssue.id, {
-          assigneeAgentId: continuityOwner.id,
+          assigneeAgentId: backendContinuityOwner.id,
           reasonCode: "reassignment",
           exactNextAction: "Review the kickoff room, project docs, and demo findings, then continue the next onboarding improvement slice.",
           unresolvedBranches: [],

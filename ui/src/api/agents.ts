@@ -68,6 +68,14 @@ export interface AgentHireResponse {
   approval: Approval | null;
 }
 
+export interface OfficeOperatorAdoptionResponse {
+  officeOperator: Agent;
+  created: boolean;
+  reparentedProjectLeadIds: string[];
+  managerId: string | null;
+  seedFromAgentId: string | null;
+}
+
 export interface AgentPermissionUpdate {
   canCreateAgents: boolean;
   canAssignTasks: boolean;
@@ -150,6 +158,10 @@ export const agentsApi = {
     api.post<Agent>(`/companies/${companyId}/agents`, data),
   hire: (companyId: string, data: Record<string, unknown>) =>
     api.post<AgentHireResponse>(`/companies/${companyId}/agent-hires`, data),
+  adoptOfficeOperator: (
+    companyId: string,
+    data: { reparentProjectLeads?: boolean; seedFromAgentId?: string | null } = {},
+  ) => api.post<OfficeOperatorAdoptionResponse>(`/companies/${companyId}/office-operator-adoption`, data),
   update: (id: string, data: Record<string, unknown>, companyId?: string) =>
     api.patch<Agent>(agentPath(id, companyId), data),
   updatePermissions: (id: string, data: AgentPermissionUpdate, companyId?: string) =>

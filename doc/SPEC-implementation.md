@@ -284,7 +284,7 @@ Wave 4 default UX rules:
 - raw issue documents remain available as artifacts, but they are no longer the default first view
 - org/accountability surfaces must group by responsibility and continuity ownership rather than implying a baton-passing relay chain
 - legacy relay archetypes remain loadable and editable, but default role pickers and onboarding flows should prefer governance, shared-service, and shared-state execution roles
-- the recommended default company shape is lean: for a single-project internal company, start around 4 live agents and expand toward 6 only when additional execution lanes become real; larger companies should still size the org by active execution lanes rather than a full department tree
+- the recommended default company shape is lean: for a single-project internal company, start around 5 live agents with one sponsor, one company-wide office operator, one project lead, one Backend/API continuity owner, and one QA/Evals continuity owner; expand only when additional execution lanes become real
 - dashboard and accountability payloads should lead with execution-relevant counts rather than raw org breadth alone
 
 ## 7.8 `heartbeat_runs`
@@ -548,7 +548,7 @@ Project routing defaults:
 
 - executive sponsors remain governance actors by default and should not be the normal assignees for project execution
 - each active project has one primary Project Lead
-- project-scoped issues with no explicit lane owner default to the Project Lead for intake and triage before reassignment to the correct continuity owner
+- project-scoped issues with no explicit lane owner default to the company office operator for intake and triage when that role exists; otherwise they may fall back to the Project Lead before reassignment to the correct continuity owner
 
 Invariants:
 

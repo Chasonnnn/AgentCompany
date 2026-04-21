@@ -82,6 +82,7 @@ export interface PaperclipSkillEntry {
   key: string;
   runtimeName: string;
   source: string;
+  sharedSkillId?: string | null;
   required?: boolean;
   requiredReason?: string | null;
 }
@@ -513,6 +514,109 @@ type PaperclipWakePlanApproval = {
   lastDecidedAt: string | null;
 };
 
+type PaperclipWakeSharedSkillOpenProposal = {
+  id: string;
+  kind: string;
+  status: string;
+  summary: string;
+  createdAt: string;
+};
+
+type PaperclipWakeSharedSkill = {
+  sharedSkillId: string;
+  key: string;
+  name: string;
+  mirrorState: string | null;
+  sourceDriftState: string | null;
+  proposalAllowed: boolean;
+  applyAllowed: boolean;
+  openProposal: PaperclipWakeSharedSkillOpenProposal | null;
+};
+
+type PaperclipWakeSharedSkillReview = {
+  sourceRunId: string | null;
+  sourceRunStatus: string | null;
+  sourceIssueId: string | null;
+  sharedSkillIds: string[];
+};
+
+type PaperclipWakeOfficeCoordinationTrigger = {
+  reason: string | null;
+  entityType: string | null;
+  entityId: string | null;
+  summary: string | null;
+};
+
+type PaperclipWakeOfficeIssueItem = {
+  id: string | null;
+  identifier: string | null;
+  title: string | null;
+  status: string | null;
+  priority: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  updatedAt: string | null;
+};
+
+type PaperclipWakeOfficeStaffingGap = {
+  projectId: string | null;
+  projectName: string | null;
+  missingRoles: string[];
+  openIssueCount: number;
+};
+
+type PaperclipWakeOfficeEngagementItem = {
+  id: string | null;
+  title: string | null;
+  serviceAreaKey: string | null;
+  status: string | null;
+  targetProjectId: string | null;
+  targetProjectName: string | null;
+  updatedAt: string | null;
+};
+
+type PaperclipWakeOfficeSharedSkillItem = {
+  sharedSkillId: string | null;
+  key: string | null;
+  name: string | null;
+  mirrorState: string | null;
+  sourceDriftState: string | null;
+  openProposalId: string | null;
+  openProposalStatus: string | null;
+  openProposalSummary: string | null;
+};
+
+type PaperclipWakeOfficeRecentAction = {
+  action: string | null;
+  entityType: string | null;
+  entityId: string | null;
+  summary: string | null;
+  createdAt: string | null;
+};
+
+type PaperclipWakeOfficeCoordination = {
+  companyId: string | null;
+  officeAgentId: string | null;
+  trigger: PaperclipWakeOfficeCoordinationTrigger | null;
+  queueCounts: {
+    untriagedIntake: number;
+    unassignedIssues: number;
+    blockedIssues: number;
+    staleIssues: number;
+    staffingGaps: number;
+    engagementsNeedingAttention: number;
+    sharedSkillItems: number;
+  };
+  untriagedIntake: PaperclipWakeOfficeIssueItem[];
+  unassignedIssues: PaperclipWakeOfficeIssueItem[];
+  blockedIssues: PaperclipWakeOfficeIssueItem[];
+  staleIssues: PaperclipWakeOfficeIssueItem[];
+  staffingGaps: PaperclipWakeOfficeStaffingGap[];
+  engagementsNeedingAttention: PaperclipWakeOfficeEngagementItem[];
+  sharedSkillItems: PaperclipWakeOfficeSharedSkillItem[];
+  recentActions: PaperclipWakeOfficeRecentAction[];
+};
+
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
@@ -532,11 +636,241 @@ type PaperclipWakePayload = {
   missingCount: number;
   truncated: boolean;
   fallbackFetchNeeded: boolean;
+  sharedSkills: PaperclipWakeSharedSkill[];
+  sharedSkillReview: PaperclipWakeSharedSkillReview | null;
+  officeCoordination: PaperclipWakeOfficeCoordination | null;
   conferenceRoom: PaperclipWakeConferenceRoom | null;
   conferenceRoomMessage: PaperclipWakeConferenceRoomMessage | null;
   conferenceRoomThread: PaperclipWakeConferenceRoomMessage[];
   conferenceRoomPendingResponses: PaperclipWakeConferenceRoomPendingResponse[];
 };
+
+function normalizePaperclipWakeSharedSkill(value: unknown): PaperclipWakeSharedSkill | null {
+  const skill = parseObject(value);
+  const openProposalObject = parseObject(skill.openProposal);
+  const sharedSkillId = asString(skill.sharedSkillId, "").trim();
+  const key = asString(skill.key, "").trim();
+  const name = asString(skill.name, "").trim();
+  if (!sharedSkillId || !key || !name) return null;
+  const openProposal =
+    Object.keys(openProposalObject).length > 0
+      ? {
+          id: asString(openProposalObject.id, "").trim(),
+          kind: asString(openProposalObject.kind, "").trim(),
+          status: asString(openProposalObject.status, "").trim(),
+          summary: asString(openProposalObject.summary, "").trim(),
+          createdAt: asString(openProposalObject.createdAt, "").trim(),
+        }
+      : null;
+  return {
+    sharedSkillId,
+    key,
+    name,
+    mirrorState: asString(skill.mirrorState, "").trim() || null,
+    sourceDriftState: asString(skill.sourceDriftState, "").trim() || null,
+    proposalAllowed: asBoolean(skill.proposalAllowed, false),
+    applyAllowed: asBoolean(skill.applyAllowed, false),
+    openProposal:
+      openProposal?.id && openProposal.kind && openProposal.status && openProposal.summary && openProposal.createdAt
+        ? openProposal
+        : null,
+  };
+}
+
+function normalizePaperclipWakeSharedSkillReview(value: unknown): PaperclipWakeSharedSkillReview | null {
+  const review = parseObject(value);
+  const sharedSkillIds = Array.isArray(review.sharedSkillIds)
+    ? review.sharedSkillIds
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .map((entry) => entry.trim())
+    : [];
+  const sourceRunId = asString(review.sourceRunId, "").trim() || null;
+  const sourceRunStatus = asString(review.sourceRunStatus, "").trim() || null;
+  const sourceIssueId = asString(review.sourceIssueId, "").trim() || null;
+  if (!sourceRunId && !sourceRunStatus && !sourceIssueId && sharedSkillIds.length === 0) return null;
+  return {
+    sourceRunId,
+    sourceRunStatus,
+    sourceIssueId,
+    sharedSkillIds,
+  };
+}
+
+function normalizePaperclipWakeOfficeIssueItem(value: unknown): PaperclipWakeOfficeIssueItem | null {
+  const item = parseObject(value);
+  const id = asString(item.id, "").trim() || null;
+  const title = asString(item.title, "").trim() || null;
+  if (!id && !title) return null;
+  return {
+    id,
+    identifier: asString(item.identifier, "").trim() || null,
+    title,
+    status: asString(item.status, "").trim() || null,
+    priority: asString(item.priority, "").trim() || null,
+    projectId: asString(item.projectId, "").trim() || null,
+    projectName: asString(item.projectName, "").trim() || null,
+    updatedAt: asString(item.updatedAt, "").trim() || null,
+  };
+}
+
+function normalizePaperclipWakeOfficeCoordination(value: unknown): PaperclipWakeOfficeCoordination | null {
+  const office = parseObject(value);
+  const triggerObject = parseObject(office.trigger);
+  const queueCounts = parseObject(office.queueCounts);
+  const untriagedIntake = Array.isArray(office.untriagedIntake)
+    ? office.untriagedIntake
+        .map((entry) => normalizePaperclipWakeOfficeIssueItem(entry))
+        .filter((entry): entry is PaperclipWakeOfficeIssueItem => Boolean(entry))
+    : [];
+  const unassignedIssues = Array.isArray(office.unassignedIssues)
+    ? office.unassignedIssues
+        .map((entry) => normalizePaperclipWakeOfficeIssueItem(entry))
+        .filter((entry): entry is PaperclipWakeOfficeIssueItem => Boolean(entry))
+    : [];
+  const blockedIssues = Array.isArray(office.blockedIssues)
+    ? office.blockedIssues
+        .map((entry) => normalizePaperclipWakeOfficeIssueItem(entry))
+        .filter((entry): entry is PaperclipWakeOfficeIssueItem => Boolean(entry))
+    : [];
+  const staleIssues = Array.isArray(office.staleIssues)
+    ? office.staleIssues
+        .map((entry) => normalizePaperclipWakeOfficeIssueItem(entry))
+        .filter((entry): entry is PaperclipWakeOfficeIssueItem => Boolean(entry))
+    : [];
+  const staffingGaps = Array.isArray(office.staffingGaps)
+    ? office.staffingGaps
+        .map((entry) => {
+          const gap = parseObject(entry);
+          const projectId = asString(gap.projectId, "").trim() || null;
+          const projectName = asString(gap.projectName, "").trim() || null;
+          const missingRoles = Array.isArray(gap.missingRoles)
+            ? gap.missingRoles
+                .filter((role): role is string => typeof role === "string" && role.trim().length > 0)
+                .map((role) => role.trim())
+            : [];
+          if (!projectId && !projectName && missingRoles.length === 0) return null;
+          return {
+            projectId,
+            projectName,
+            missingRoles,
+            openIssueCount: asNumber(gap.openIssueCount, 0),
+          };
+        })
+        .filter((entry): entry is PaperclipWakeOfficeStaffingGap => Boolean(entry))
+    : [];
+  const engagementsNeedingAttention = Array.isArray(office.engagementsNeedingAttention)
+    ? office.engagementsNeedingAttention
+        .map((entry) => {
+          const item = parseObject(entry);
+          const id = asString(item.id, "").trim() || null;
+          const title = asString(item.title, "").trim() || null;
+          if (!id && !title) return null;
+          return {
+            id,
+            title,
+            serviceAreaKey: asString(item.serviceAreaKey, "").trim() || null,
+            status: asString(item.status, "").trim() || null,
+            targetProjectId: asString(item.targetProjectId, "").trim() || null,
+            targetProjectName: asString(item.targetProjectName, "").trim() || null,
+            updatedAt: asString(item.updatedAt, "").trim() || null,
+          };
+        })
+        .filter((entry): entry is PaperclipWakeOfficeEngagementItem => Boolean(entry))
+    : [];
+  const sharedSkillItems = Array.isArray(office.sharedSkillItems)
+    ? office.sharedSkillItems
+        .map((entry) => {
+          const item = parseObject(entry);
+          const sharedSkillId = asString(item.sharedSkillId, "").trim() || null;
+          const key = asString(item.key, "").trim() || null;
+          const name = asString(item.name, "").trim() || null;
+          if (!sharedSkillId && !key && !name) return null;
+          return {
+            sharedSkillId,
+            key,
+            name,
+            mirrorState: asString(item.mirrorState, "").trim() || null,
+            sourceDriftState: asString(item.sourceDriftState, "").trim() || null,
+            openProposalId: asString(item.openProposalId, "").trim() || null,
+            openProposalStatus: asString(item.openProposalStatus, "").trim() || null,
+            openProposalSummary: asString(item.openProposalSummary, "").trim() || null,
+          };
+        })
+        .filter((entry): entry is PaperclipWakeOfficeSharedSkillItem => Boolean(entry))
+    : [];
+  const recentActions = Array.isArray(office.recentActions)
+    ? office.recentActions
+        .map((entry) => {
+          const action = parseObject(entry);
+          const actionName = asString(action.action, "").trim() || null;
+          const entityType = asString(action.entityType, "").trim() || null;
+          const entityId = asString(action.entityId, "").trim() || null;
+          if (!actionName && !entityType && !entityId) return null;
+          return {
+            action: actionName,
+            entityType,
+            entityId,
+            summary: asString(action.summary, "").trim() || null,
+            createdAt: asString(action.createdAt, "").trim() || null,
+          };
+        })
+        .filter((entry): entry is PaperclipWakeOfficeRecentAction => Boolean(entry))
+    : [];
+
+  const companyId = asString(office.companyId, "").trim() || null;
+  const officeAgentId = asString(office.officeAgentId, "").trim() || null;
+  const trigger =
+    Object.keys(triggerObject).length > 0
+      ? {
+          reason: asString(triggerObject.reason, "").trim() || null,
+          entityType: asString(triggerObject.entityType, "").trim() || null,
+          entityId: asString(triggerObject.entityId, "").trim() || null,
+          summary: asString(triggerObject.summary, "").trim() || null,
+        }
+      : null;
+
+  if (
+    !companyId &&
+    !officeAgentId &&
+    !trigger &&
+    untriagedIntake.length === 0 &&
+    unassignedIssues.length === 0 &&
+    blockedIssues.length === 0 &&
+    staleIssues.length === 0 &&
+    staffingGaps.length === 0 &&
+    engagementsNeedingAttention.length === 0 &&
+    sharedSkillItems.length === 0 &&
+    recentActions.length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    companyId,
+    officeAgentId,
+    trigger,
+    queueCounts: {
+      untriagedIntake: asNumber(queueCounts.untriagedIntake, untriagedIntake.length),
+      unassignedIssues: asNumber(queueCounts.unassignedIssues, unassignedIssues.length),
+      blockedIssues: asNumber(queueCounts.blockedIssues, blockedIssues.length),
+      staleIssues: asNumber(queueCounts.staleIssues, staleIssues.length),
+      staffingGaps: asNumber(queueCounts.staffingGaps, staffingGaps.length),
+      engagementsNeedingAttention: asNumber(
+        queueCounts.engagementsNeedingAttention,
+        engagementsNeedingAttention.length,
+      ),
+      sharedSkillItems: asNumber(queueCounts.sharedSkillItems, sharedSkillItems.length),
+    },
+    untriagedIntake,
+    unassignedIssues,
+    blockedIssues,
+    staleIssues,
+    staffingGaps,
+    engagementsNeedingAttention,
+    sharedSkillItems,
+    recentActions,
+  };
+}
 
 function normalizePaperclipWakeIssue(value: unknown): PaperclipWakeIssue | null {
   const issue = parseObject(value);
@@ -786,12 +1120,21 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
         .map((entry) => normalizePaperclipWakeConferenceRoomPendingResponse(entry))
         .filter((entry): entry is PaperclipWakeConferenceRoomPendingResponse => Boolean(entry))
     : [];
+  const sharedSkills = Array.isArray(payload.sharedSkills)
+    ? payload.sharedSkills
+        .map((entry) => normalizePaperclipWakeSharedSkill(entry))
+        .filter((entry): entry is PaperclipWakeSharedSkill => Boolean(entry))
+    : [];
+  const sharedSkillReview = normalizePaperclipWakeSharedSkillReview(payload.sharedSkillReview);
+  const officeCoordination = normalizePaperclipWakeOfficeCoordination(payload.officeCoordination);
 
   if (
     comments.length === 0 &&
     commentIds.length === 0 &&
     !executionStage &&
     !normalizePaperclipWakeIssue(payload.issue) &&
+    sharedSkills.length === 0 &&
+    !officeCoordination &&
     !conferenceRoom &&
     !conferenceRoomMessage &&
     conferenceRoomThread.length === 0
@@ -818,6 +1161,9 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     missingCount: asNumber(commentWindow.missingCount, 0),
     truncated: asBoolean(payload.truncated, false),
     fallbackFetchNeeded: asBoolean(payload.fallbackFetchNeeded, false),
+    sharedSkills,
+    sharedSkillReview,
+    officeCoordination,
     conferenceRoom,
     conferenceRoomMessage,
     conferenceRoomThread,
@@ -950,6 +1296,119 @@ export function renderPaperclipWakePrompt(
     return lines.join("\n");
   }
 
+  if (normalized.officeCoordination && !normalized.issue) {
+    const office = normalized.officeCoordination;
+    const lines = resumedSession
+      ? [
+          "## Paperclip Resume Delta",
+          "",
+          "You are resuming a company-scoped office/logistics coordination session.",
+          "Handle the office coordination queue below before switching to project-local or issue-local work.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- company id: ${office.companyId ?? "unknown"}`,
+          `- office operator id: ${office.officeAgentId ?? "unknown"}`,
+        ]
+      : [
+          "## Paperclip Wake Payload",
+          "",
+          "Treat this wake payload as the highest-priority company coordination change for the current heartbeat.",
+          "You are acting as the company-wide office/logistics operator, not as an issue continuity owner.",
+          "Route, assign, nudge, request engagements, and draft proposals through existing Paperclip APIs and records.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- company id: ${office.companyId ?? "unknown"}`,
+          `- office operator id: ${office.officeAgentId ?? "unknown"}`,
+        ];
+
+    if (office.trigger) {
+      lines.push(
+        `- trigger reason: ${office.trigger.reason ?? "unknown"}`,
+        `- trigger entity: ${office.trigger.entityType ?? "unknown"} ${office.trigger.entityId ?? "unknown"}`,
+      );
+      if (office.trigger.summary) {
+        lines.push(`- trigger summary: ${office.trigger.summary}`);
+      }
+    }
+
+    lines.push(
+      "",
+      "Company coordination queue counts:",
+      `- untriaged intake: ${office.queueCounts.untriagedIntake}`,
+      `- unassigned issues: ${office.queueCounts.unassignedIssues}`,
+      `- blocked issues: ${office.queueCounts.blockedIssues}`,
+      `- stale issues: ${office.queueCounts.staleIssues}`,
+      `- staffing gaps: ${office.queueCounts.staffingGaps}`,
+      `- engagements needing attention: ${office.queueCounts.engagementsNeedingAttention}`,
+      `- shared skill items: ${office.queueCounts.sharedSkillItems}`,
+    );
+
+    const appendIssueQueue = (label: string, items: PaperclipWakeOfficeIssueItem[]) => {
+      if (items.length === 0) return;
+      lines.push("", `${label}:`);
+      for (const item of items) {
+        lines.push(
+          `- ${item.identifier ?? item.id ?? "unknown"}${item.title ? ` ${item.title}` : ""}${item.projectName ? ` [${item.projectName}]` : ""}${item.status ? ` (${item.status})` : ""}`,
+        );
+      }
+    };
+
+    appendIssueQueue("Untriaged Intake", office.untriagedIntake);
+    appendIssueQueue("Unassigned Issues", office.unassignedIssues);
+    appendIssueQueue("Blocked Issues", office.blockedIssues);
+    appendIssueQueue("Stale Issues", office.staleIssues);
+
+    if (office.staffingGaps.length > 0) {
+      lines.push("", "Project staffing gaps:");
+      for (const gap of office.staffingGaps) {
+        lines.push(
+          `- ${gap.projectName ?? gap.projectId ?? "unknown"}: missing ${gap.missingRoles.join(", ")}${gap.openIssueCount > 0 ? ` (${gap.openIssueCount} open issues)` : ""}`,
+        );
+      }
+    }
+
+    if (office.engagementsNeedingAttention.length > 0) {
+      lines.push("", "Shared-service engagements needing attention:");
+      for (const item of office.engagementsNeedingAttention) {
+        lines.push(
+          `- ${item.title ?? item.id ?? "unknown"}${item.targetProjectName ? ` [${item.targetProjectName}]` : ""}${item.status ? ` (${item.status})` : ""}`,
+        );
+      }
+    }
+
+    if (office.sharedSkillItems.length > 0) {
+      lines.push("", "Shared skill coordination items:");
+      for (const item of office.sharedSkillItems) {
+        lines.push(
+          `- ${item.name ?? item.key ?? item.sharedSkillId ?? "unknown"}${item.sourceDriftState ? ` (${item.sourceDriftState})` : ""}`,
+        );
+        if (item.openProposalId && item.openProposalStatus) {
+          lines.push(
+            `  open proposal: ${item.openProposalId} (${item.openProposalStatus})${item.openProposalSummary ? ` - ${item.openProposalSummary}` : ""}`,
+          );
+        }
+      }
+    }
+
+    if (office.recentActions.length > 0) {
+      lines.push("", "Recent coordination actions:");
+      for (const item of office.recentActions) {
+        lines.push(
+          `- ${item.action ?? "unknown"} on ${item.entityType ?? "unknown"} ${item.entityId ?? "unknown"}${item.summary ? ` - ${item.summary}` : ""}`,
+        );
+      }
+    }
+
+    lines.push(
+      "",
+      "You may assign or reassign issues within policy, request review, request shared-service engagements, draft shared-skill proposals, comment, summarize, and nudge.",
+      "Do not become the continuity owner by default, do not approve governed actions without authority, do not apply shared-skill proposals, and do not run instance-wide mirror sync.",
+      "For shared-skill items, decide between self-improvement, upstream adoption, or merge review, but route the actual mirror change through the proposal and approval flow.",
+    );
+
+    return lines.join("\n");
+  }
+
   const lines = resumedSession
       ? [
         "## Paperclip Resume Delta",
@@ -1005,12 +1464,53 @@ export function renderPaperclipWakePrompt(
   if (normalized.missingCount > 0) {
     lines.push(`- omitted comments: ${normalized.missingCount}`);
   }
+  if (normalized.sharedSkills.length > 0) {
+    lines.push(`- shared skills in runtime: ${normalized.sharedSkills.length}`);
+  }
 
   if (normalized.checkedOutByHarness) {
     lines.push(
       "",
       "The harness already checked out this issue for the current run.",
       "Do not call the checkout endpoint again unless you intentionally switch away and later need to reclaim the issue.",
+    );
+  }
+
+  if (normalized.reason === "shared_skill_review_requested" && normalized.sharedSkillReview) {
+    lines.push(
+      "",
+      "Shared skill review fallback:",
+      `- source run: ${normalized.sharedSkillReview.sourceRunId ?? "unknown"}`,
+      `- source run status: ${normalized.sharedSkillReview.sourceRunStatus ?? "unknown"}`,
+      `- reviewed shared skills: ${normalized.sharedSkillReview.sharedSkillIds.length}`,
+      "Review the completed run for reusable shared-skill improvements.",
+      "Create at most one proposal per mirrored skill if a concrete improvement is warranted; otherwise continue without forcing a proposal.",
+    );
+  }
+
+  if (normalized.sharedSkills.length > 0) {
+    lines.push("", "Shared skill mirror context:");
+    for (const skill of normalized.sharedSkills) {
+      lines.push(
+        `- ${skill.name} (${skill.key})`,
+        `  - shared skill id: ${skill.sharedSkillId}`,
+        `  - mirror state: ${skill.mirrorState ?? "unknown"}`,
+        `  - source drift: ${skill.sourceDriftState ?? "unknown"}`,
+        `  - proposal allowed: ${skill.proposalAllowed ? "yes" : "no"}`,
+        `  - apply allowed: ${skill.applyAllowed ? "yes" : "no"}`,
+      );
+      if (skill.openProposal) {
+        lines.push(
+          `  - open proposal: ${skill.openProposal.id} (${skill.openProposal.kind}, ${skill.openProposal.status})`,
+          `  - proposal summary: ${skill.openProposal.summary}`,
+        );
+      }
+    }
+    lines.push(
+      "",
+      "If a loaded mirrored skill is outdated, incomplete, or wrong, create a shared-skill proposal instead of editing the mirror directly.",
+      "If upstream source drift exists, decide whether to propose upstream adoption or a merge review; never auto-apply shared skill changes yourself.",
+      "Proposal route: POST /api/companies/:companyId/shared-skills/:sharedSkillId/proposals with Authorization: Bearer $PAPERCLIP_API_KEY and X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID.",
     );
   }
 

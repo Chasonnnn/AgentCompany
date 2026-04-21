@@ -8,12 +8,14 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
+import { sharedSkills } from "./shared_skills.js";
 
 export const companySkills = pgTable(
   "company_skills",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull().references(() => companies.id),
+    sharedSkillId: uuid("shared_skill_id").references(() => sharedSkills.id, { onDelete: "set null" }),
     key: text("key").notNull(),
     slug: text("slug").notNull(),
     name: text("name").notNull(),

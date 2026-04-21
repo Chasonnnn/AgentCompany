@@ -1,4 +1,5 @@
 import type { AgentDepartmentKey, CompanyStatus, PauseReason } from "../constants.js";
+import type { Agent } from "./agent.js";
 import type { DocumentFormat } from "./issue.js";
 
 export interface Company {
@@ -96,4 +97,17 @@ export interface TeamDocumentRevision {
   createdByAgentId: string | null;
   createdByUserId: string | null;
   createdAt: Date;
+}
+
+export interface CompanyOfficeOperatorAdoptionRequest {
+  reparentProjectLeads?: boolean;
+  seedFromAgentId?: string | null;
+}
+
+export interface CompanyOfficeOperatorAdoptionResult {
+  officeOperator: Agent;
+  created: boolean;
+  reparentedProjectLeadIds: string[];
+  managerId: string | null;
+  seedFromAgentId: string | null;
 }

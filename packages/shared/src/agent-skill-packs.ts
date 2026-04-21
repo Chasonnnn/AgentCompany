@@ -198,6 +198,10 @@ export function getDefaultDesiredSkillSlugsForAgent(
 ) {
   const archetypeKey = input.archetypeKey?.trim().toLowerCase() ?? null;
 
+  if (archetypeKey === "chief_of_staff") {
+    return [...LEADERSHIP_GOVERNANCE_SKILL_SLUGS];
+  }
+
   if (archetypeKey === "project_lead" || archetypeKey === "technical_project_lead") {
     return [...PROJECT_LEAD_ENGINEERING_MANAGEMENT_SKILL_SLUGS];
   }
@@ -244,6 +248,10 @@ export function getDefaultDesiredSkillSlugsForAgent(
   }
 
   if (input.role === "ceo") {
+    return [...LEADERSHIP_GOVERNANCE_SKILL_SLUGS];
+  }
+
+  if (input.role === "coo") {
     return [...LEADERSHIP_GOVERNANCE_SKILL_SLUGS];
   }
 

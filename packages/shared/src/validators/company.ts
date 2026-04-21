@@ -1,9 +1,17 @@
 import { z } from "zod";
 import { COMPANY_STATUSES } from "../constants.js";
+import type { Agent } from "../types/agent.js";
+import type {
+  CompanyOfficeOperatorAdoptionRequest,
+  CompanyOfficeOperatorAdoptionResult,
+} from "../types/company.js";
 
 const logoAssetIdSchema = z.string().uuid().nullable().optional();
 const brandColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional();
 const feedbackDataSharingTermsVersionSchema = z.string().min(1).nullable().optional();
+const companyOfficeOperatorAgentSchema = z.custom<Agent>(
+  (value) => typeof value === "object" && value !== null,
+);
 
 export const createCompanySchema = z.object({
   name: z.string().min(1),
@@ -47,3 +55,26 @@ export const updateCompanyBrandingSchema = z
   );
 
 export type UpdateCompanyBranding = z.infer<typeof updateCompanyBrandingSchema>;
+
+export const companyOfficeOperatorAdoptionSchema = z
+  .object({
+    reparentProjectLeads: z.boolean().optional().default(true),
+    seedFromAgentId: z.string().uuid().nullable().optional(),
+  })
+  .strict() satisfies z.ZodType<CompanyOfficeOperatorAdoptionRequest>;
+
+export type CompanyOfficeOperatorAdoption = z.infer<typeof companyOfficeOperatorAdoptionSchema>;
+
+export const companyOfficeOperatorAdoptionResultSchema = z
+  .object({
+    officeOperator: companyOfficeOperatorAgentSchema,
+    created: z.boolean(),
+    reparentedProjectLeadIds: z.array(z.string().uuid()),
+    managerId: z.string().uuid().nullable(),
+    seedFromAgentId: z.string().uuid().nullable(),
+  })
+  .strict() satisfies z.ZodType<CompanyOfficeOperatorAdoptionResult>;
+
+export type CompanyOfficeOperatorAdoptionResultInput = z.infer<
+  typeof companyOfficeOperatorAdoptionResultSchema
+>;

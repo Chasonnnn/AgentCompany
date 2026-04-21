@@ -39,6 +39,7 @@ import { ghFetch, gitHubApiBase, resolveRawGitHubUrl } from "./github-fetch.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
 import { secretService } from "./secrets.js";
+import { sharedSkillService } from "./shared-skills.js";
 
 type CompanySkillRow = typeof companySkills.$inferSelect;
 
@@ -1231,6 +1232,7 @@ async function readUrlSkillImports(
 function toCompanySkill(row: CompanySkillRow): CompanySkill {
   return {
     ...row,
+    sharedSkillId: row.sharedSkillId ?? null,
     description: row.description ?? null,
     sourceType: row.sourceType as CompanySkillSourceType,
     sourceLocator: row.sourceLocator ?? null,
@@ -1354,7 +1356,10 @@ function resolveDesiredSkillKeys(
 }
 
 function normalizeSkillDirectory(skill: CompanySkill) {
-  if ((skill.sourceType !== "local_path" && skill.sourceType !== "catalog") || !skill.sourceLocator) return null;
+  if (
+    (skill.sourceType !== "local_path" && skill.sourceType !== "catalog" && skill.sourceType !== "shared_mirror")
+    || !skill.sourceLocator
+  ) return null;
   const resolved = path.resolve(skill.sourceLocator);
   if (path.basename(resolved).toLowerCase() === "skill.md") {
     return path.dirname(resolved);
@@ -1579,6 +1584,16 @@ function deriveSkillSourceInfo(skill: CompanySkill): {
     };
   }
 
+  if (skill.sourceType === "shared_mirror" && skill.sharedSkillId) {
+    return {
+      editable: false,
+      editableReason: "Shared mirrored skills are read-only. Create a shared-skill proposal instead.",
+      sourceLabel: "Paperclip shared mirror",
+      sourceBadge: "shared_mirror",
+      sourcePath: normalizeSkillDirectory(skill),
+    };
+  }
+
   if (skill.sourceType === "local_path") {
     const managedRoot = resolveManagedSkillsRoot(skill.companyId);
     const projectName = asString(metadata.projectName);
@@ -1630,6 +1645,7 @@ function toCompanySkillListItem(skill: CompanySkill, attachedAgentCount: number)
   return {
     id: skill.id,
     companyId: skill.companyId,
+    sharedSkillId: skill.sharedSkillId,
     key: skill.key,
     slug: skill.slug,
     name: skill.name,
@@ -1655,6 +1671,7 @@ export function companySkillService(db: Db) {
   const agents = agentService(db);
   const projects = projectService(db);
   const secretsSvc = secretService(db);
+  const sharedSkillsSvc = sharedSkillService(db);
 
   async function ensureBundledSkills(companyId: string) {
     for (const skillsRoot of resolveBundledSkillsRoot()) {
@@ -1745,36 +1762,7 @@ export function companySkillService(db: Db) {
   }
 
   async function listGlobalCatalog(companyId: string): Promise<GlobalSkillCatalogItem[]> {
-    const [installedSkills, discoveredSkills] = await Promise.all([
-      listFull(companyId),
-      discoverGlobalSkillCatalogEntries(companyId),
-    ]);
-    const installedByCatalogKey = new Map<string, CompanySkill>();
-
-    for (const skill of installedSkills) {
-      const metadata = getSkillMeta(skill);
-      if (metadata.sourceKind !== "global_catalog") continue;
-      const catalogKey = asString(metadata.catalogKey);
-      if (!catalogKey) continue;
-      installedByCatalogKey.set(catalogKey, skill);
-    }
-
-    return discoveredSkills.map((entry) => {
-      const installed = installedByCatalogKey.get(entry.catalogKey) ?? null;
-      return {
-        catalogKey: entry.catalogKey,
-        slug: entry.importedSkill.slug,
-        name: entry.importedSkill.name,
-        description: entry.importedSkill.description,
-        sourceRoot: entry.sourceRoot,
-        sourcePath: entry.sourcePath,
-        trustLevel: entry.importedSkill.trustLevel,
-        compatibility: entry.importedSkill.compatibility,
-        fileInventory: entry.importedSkill.fileInventory,
-        installedSkillId: installed?.id ?? null,
-        installedSkillKey: installed?.key ?? null,
-      };
-    });
+    return sharedSkillsSvc.listCatalogEntries(companyId);
   }
 
   async function getById(id: string) {
@@ -1804,72 +1792,9 @@ export function companySkillService(db: Db) {
     if (!catalogKey) {
       throw unprocessable("Catalog key is required.");
     }
-
-    const [existingSkills, discoveredSkills] = await Promise.all([
-      listFull(companyId),
-      discoverGlobalSkillCatalogEntries(companyId),
-    ]);
-    const catalogEntry = discoveredSkills.find((entry) => entry.catalogKey === catalogKey);
-    if (!catalogEntry) {
-      throw notFound("Global catalog skill not found.");
-    }
-
-    const existingInstalled = existingSkills.find((skill) => {
-      const metadata = getSkillMeta(skill);
-      return metadata.sourceKind === "global_catalog" && asString(metadata.catalogKey) === catalogKey;
-    }) ?? null;
-
-    const conflictingSkill = existingSkills.find((skill) => {
-      if (existingInstalled && skill.id === existingInstalled.id) return false;
-      return skill.key === catalogEntry.importedSkill.key;
-    });
-    if (conflictingSkill) {
-      throw conflict(
-        `Cannot install ${catalogEntry.importedSkill.name}: skill key ${catalogEntry.importedSkill.key} is already used by ${conflictingSkill.name}.`,
-        {
-          catalogKey,
-          conflictingSkillId: conflictingSkill.id,
-          conflictingSkillKey: conflictingSkill.key,
-        },
-      );
-    }
-
-    const nextSkill: ImportedSkill = {
-      ...catalogEntry.importedSkill,
-      key: existingInstalled?.key ?? catalogEntry.importedSkill.key,
-      sourceType: "catalog",
-      sourceLocator: null,
-      sourceRef: null,
-      metadata: {
-        ...(catalogEntry.importedSkill.metadata ?? {}),
-        sourceKind: "global_catalog",
-        catalogKey,
-        catalogSourceRoot: catalogEntry.sourceRoot,
-        catalogSourcePath: catalogEntry.sourcePath,
-      },
-    };
-    const materializedDir = await materializeCatalogSkillDirectory(
-      companyId,
-      nextSkill,
-      catalogEntry.sourcePath,
-    );
-    if (!materializedDir) {
-      throw unprocessable("Global catalog skill files could not be materialized.");
-    }
-    nextSkill.sourceLocator = materializedDir;
-
-    const persisted = await upsertImportedSkills(companyId, [nextSkill]);
-    const installedSkill = persisted[0];
-    if (!installedSkill) {
-      throw notFound("Failed to install global catalog skill.");
-    }
-
-    const previousCatalogDir = existingInstalled ? normalizeSkillDirectory(existingInstalled) : null;
-    const nextCatalogDir = normalizeSkillDirectory(installedSkill);
-    if (previousCatalogDir && nextCatalogDir && previousCatalogDir !== nextCatalogDir) {
-      await fs.rm(previousCatalogDir, { recursive: true, force: true });
-    }
-
+    const companySkillId = await sharedSkillsSvc.attachMirrorToCompany(companyId, catalogKey);
+    const installedSkill = await getById(companySkillId);
+    if (!installedSkill) throw notFound("Failed to install shared mirror skill.");
     return installedSkill;
   }
 
@@ -2034,7 +1959,7 @@ export function companySkillService(db: Db) {
     const source = deriveSkillSourceInfo(skill);
     let content = "";
 
-    if (skill.sourceType === "local_path" || skill.sourceType === "catalog") {
+    if (skill.sourceType === "local_path" || skill.sourceType === "catalog" || skill.sourceType === "shared_mirror") {
       const absolutePath = resolveLocalSkillFilePath(skill, normalizedPath);
       if (absolutePath) {
         content = await fs.readFile(absolutePath, "utf8");
@@ -2449,6 +2374,7 @@ export function companySkillService(db: Db) {
         key: skill.key,
         runtimeName: buildSkillRuntimeName(skill.key, skill.slug),
         source,
+        ...(skill.sharedSkillId ? { sharedSkillId: skill.sharedSkillId } : {}),
         required,
         requiredReason: required
           ? "Bundled Paperclip skills are always available for local adapters."

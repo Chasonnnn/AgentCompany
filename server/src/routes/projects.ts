@@ -16,6 +16,8 @@ import { trackProjectCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import {
   documentService,
+  heartbeatService,
+  officeCoordinationService,
   projectService,
   logActivity as baseLogActivity,
   secretService,
@@ -32,13 +34,16 @@ import {
 } from "./workspace-command-authz.js";
 import { assertCanManageProjectWorkspaceRuntimeServices } from "./workspace-runtime-service-authz.js";
 import { appendWithCap } from "../adapters/utils.js";
+import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination-wakeup.js";
 
 const WORKSPACE_CONTROL_OUTPUT_MAX_CHARS = 256 * 1024;
 
 type ProjectRouteDeps = {
   documentService: ReturnType<typeof documentService>;
+  heartbeatService: ReturnType<typeof heartbeatService>;
   projectService: ReturnType<typeof projectService>;
   logActivity: typeof baseLogActivity;
+  officeCoordinationService: ReturnType<typeof officeCoordinationService>;
   secretService: ReturnType<typeof secretService>;
   workspaceOperationService: ReturnType<typeof workspaceOperationService>;
 };
@@ -56,6 +61,9 @@ export function projectRoutes(
   const router = Router();
   const svc = opts?.services?.projectService ?? projectService(db);
   const documentsSvc = opts?.services?.documentService ?? documentService(db);
+  const heartbeat = opts?.services?.heartbeatService ?? heartbeatService(db);
+  const officeCoordinationSvc =
+    opts?.services?.officeCoordinationService ?? officeCoordinationService(db);
   const secretsSvc = opts?.services?.secretService ?? secretService(db);
   const workspaceOperations =
     opts?.services?.workspaceOperationService ?? workspaceOperationService(db);
@@ -362,6 +370,21 @@ export function projectRoutes(
     if (telemetryClient) {
       trackProjectCreatedFn(telemetryClient);
     }
+
+    void wakeCompanyOfficeOperatorSafely({
+      officeCoordination: officeCoordinationSvc,
+      heartbeat,
+      companyId,
+      reason: "project_created",
+      entityType: "project",
+      entityId: project.id,
+      summary: project.name,
+      requestedByActorType: actor.actorType,
+      requestedByActorId: actor.actorId,
+      skipIfActorAgentId: actor.agentId ?? null,
+      logContext: { projectId: project.id },
+    });
+
     res.status(201).json(hydratedProject ?? project);
   });
 
@@ -410,6 +433,22 @@ export function projectRoutes(
             : undefined,
       },
     });
+
+    if (!project.leadAgentId) {
+      void wakeCompanyOfficeOperatorSafely({
+        officeCoordination: officeCoordinationSvc,
+        heartbeat,
+        companyId: project.companyId,
+        reason: "project_staffing_gap_detected",
+        entityType: "project",
+        entityId: project.id,
+        summary: project.name,
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        skipIfActorAgentId: actor.agentId ?? null,
+        logContext: { projectId: project.id },
+      });
+    }
 
     res.json(project);
   });

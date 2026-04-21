@@ -45,6 +45,8 @@ import { costService } from "./costs.js";
 import { trackAgentFirstHeartbeat } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
 import { companySkillService } from "./company-skills.js";
+import { officeCoordinationService } from "./office-coordination.js";
+import { sharedSkillService } from "./shared-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
@@ -1159,6 +1161,177 @@ async function buildPaperclipWakePayload(input: {
   const commentIds = extractWakeCommentIds(input.contextSnapshot);
   const issueId = readNonEmptyString(input.contextSnapshot.issueId);
   const planApproval = parseObject(input.contextSnapshot.paperclipPlanApproval);
+  const sharedSkills = Array.isArray(input.contextSnapshot.paperclipSharedSkills)
+    ? input.contextSnapshot.paperclipSharedSkills
+        .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+        .map((entry) => ({
+          sharedSkillId: readNonEmptyString(entry.sharedSkillId),
+          key: readNonEmptyString(entry.key),
+          name: readNonEmptyString(entry.name),
+          mirrorState: readNonEmptyString(entry.mirrorState),
+          sourceDriftState: readNonEmptyString(entry.sourceDriftState),
+          proposalAllowed: entry.proposalAllowed === true,
+          applyAllowed: entry.applyAllowed === true,
+          openProposal:
+            typeof entry.openProposal === "object" && entry.openProposal !== null && !Array.isArray(entry.openProposal)
+              ? {
+                  id: readNonEmptyString((entry.openProposal as Record<string, unknown>).id),
+                  kind: readNonEmptyString((entry.openProposal as Record<string, unknown>).kind),
+                  status: readNonEmptyString((entry.openProposal as Record<string, unknown>).status),
+                  summary: readNonEmptyString((entry.openProposal as Record<string, unknown>).summary),
+                  createdAt: readNonEmptyString((entry.openProposal as Record<string, unknown>).createdAt),
+                }
+              : null,
+        }))
+        .filter((entry) => entry.sharedSkillId && entry.key && entry.name)
+    : [];
+  const sharedSkillReview = parseObject(input.contextSnapshot.sharedSkillReview);
+  const officeCoordination = parseObject(input.contextSnapshot.paperclipOfficeCoordination);
+  const officeCoordinationQueueCounts = parseObject(officeCoordination.queueCounts);
+  const normalizedOfficeCoordination =
+    Object.keys(officeCoordination).length > 0
+      ? {
+          companyId: readNonEmptyString(officeCoordination.companyId),
+          officeAgentId: readNonEmptyString(officeCoordination.officeAgentId),
+          trigger:
+            typeof officeCoordination.trigger === "object" &&
+            officeCoordination.trigger !== null &&
+            !Array.isArray(officeCoordination.trigger)
+              ? {
+                  reason: readNonEmptyString((officeCoordination.trigger as Record<string, unknown>).reason),
+                  entityType: readNonEmptyString((officeCoordination.trigger as Record<string, unknown>).entityType),
+                  entityId: readNonEmptyString((officeCoordination.trigger as Record<string, unknown>).entityId),
+                  summary: readNonEmptyString((officeCoordination.trigger as Record<string, unknown>).summary),
+                }
+              : null,
+          queueCounts: {
+            untriagedIntake: Math.max(0, Number(officeCoordinationQueueCounts.untriagedIntake ?? 0) || 0),
+            unassignedIssues: Math.max(0, Number(officeCoordinationQueueCounts.unassignedIssues ?? 0) || 0),
+            blockedIssues: Math.max(0, Number(officeCoordinationQueueCounts.blockedIssues ?? 0) || 0),
+            staleIssues: Math.max(0, Number(officeCoordinationQueueCounts.staleIssues ?? 0) || 0),
+            staffingGaps: Math.max(0, Number(officeCoordinationQueueCounts.staffingGaps ?? 0) || 0),
+            engagementsNeedingAttention: Math.max(
+              0,
+              Number(officeCoordinationQueueCounts.engagementsNeedingAttention ?? 0) || 0,
+            ),
+            sharedSkillItems: Math.max(0, Number(officeCoordinationQueueCounts.sharedSkillItems ?? 0) || 0),
+          },
+          untriagedIntake: Array.isArray(officeCoordination.untriagedIntake)
+            ? officeCoordination.untriagedIntake
+                .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+                .map((entry) => ({
+                  id: readNonEmptyString(entry.id),
+                  identifier: readNonEmptyString(entry.identifier),
+                  title: readNonEmptyString(entry.title),
+                  status: readNonEmptyString(entry.status),
+                  priority: readNonEmptyString(entry.priority),
+                  projectId: readNonEmptyString(entry.projectId),
+                  projectName: readNonEmptyString(entry.projectName),
+                  updatedAt: readNonEmptyString(entry.updatedAt),
+                }))
+                .filter((entry) => entry.id && entry.title)
+            : [],
+          unassignedIssues: Array.isArray(officeCoordination.unassignedIssues)
+            ? officeCoordination.unassignedIssues
+                .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+                .map((entry) => ({
+                  id: readNonEmptyString(entry.id),
+                  identifier: readNonEmptyString(entry.identifier),
+                  title: readNonEmptyString(entry.title),
+                  status: readNonEmptyString(entry.status),
+                  priority: readNonEmptyString(entry.priority),
+                  projectId: readNonEmptyString(entry.projectId),
+                  projectName: readNonEmptyString(entry.projectName),
+                  updatedAt: readNonEmptyString(entry.updatedAt),
+                }))
+                .filter((entry) => entry.id && entry.title)
+            : [],
+          blockedIssues: Array.isArray(officeCoordination.blockedIssues)
+            ? officeCoordination.blockedIssues
+                .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+                .map((entry) => ({
+                  id: readNonEmptyString(entry.id),
+                  identifier: readNonEmptyString(entry.identifier),
+                  title: readNonEmptyString(entry.title),
+                  status: readNonEmptyString(entry.status),
+                  priority: readNonEmptyString(entry.priority),
+                  projectId: readNonEmptyString(entry.projectId),
+                  projectName: readNonEmptyString(entry.projectName),
+                  updatedAt: readNonEmptyString(entry.updatedAt),
+                }))
+                .filter((entry) => entry.id && entry.title)
+            : [],
+          staleIssues: Array.isArray(officeCoordination.staleIssues)
+            ? officeCoordination.staleIssues
+                .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+                .map((entry) => ({
+                  id: readNonEmptyString(entry.id),
+                  identifier: readNonEmptyString(entry.identifier),
+                  title: readNonEmptyString(entry.title),
+                  status: readNonEmptyString(entry.status),
+                  priority: readNonEmptyString(entry.priority),
+                  projectId: readNonEmptyString(entry.projectId),
+                  projectName: readNonEmptyString(entry.projectName),
+                  updatedAt: readNonEmptyString(entry.updatedAt),
+                }))
+                .filter((entry) => entry.id && entry.title)
+            : [],
+          staffingGaps: Array.isArray(officeCoordination.staffingGaps)
+            ? officeCoordination.staffingGaps
+                .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+                .map((entry) => ({
+                  projectId: readNonEmptyString(entry.projectId),
+                  projectName: readNonEmptyString(entry.projectName),
+                  missingRoles: Array.isArray(entry.missingRoles)
+                    ? entry.missingRoles.filter((role): role is string => typeof role === "string" && role.trim().length > 0)
+                    : [],
+                  openIssueCount: Math.max(0, Number(entry.openIssueCount ?? 0) || 0),
+                }))
+                .filter((entry) => entry.projectId && entry.projectName)
+            : [],
+          engagementsNeedingAttention: Array.isArray(officeCoordination.engagementsNeedingAttention)
+            ? officeCoordination.engagementsNeedingAttention
+                .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+                .map((entry) => ({
+                  id: readNonEmptyString(entry.id),
+                  title: readNonEmptyString(entry.title),
+                  serviceAreaKey: readNonEmptyString(entry.serviceAreaKey),
+                  status: readNonEmptyString(entry.status),
+                  targetProjectId: readNonEmptyString(entry.targetProjectId),
+                  targetProjectName: readNonEmptyString(entry.targetProjectName),
+                  updatedAt: readNonEmptyString(entry.updatedAt),
+                }))
+                .filter((entry) => entry.id && entry.title)
+            : [],
+          sharedSkillItems: Array.isArray(officeCoordination.sharedSkillItems)
+            ? officeCoordination.sharedSkillItems
+                .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+                .map((entry) => ({
+                  sharedSkillId: readNonEmptyString(entry.sharedSkillId),
+                  key: readNonEmptyString(entry.key),
+                  name: readNonEmptyString(entry.name),
+                  mirrorState: readNonEmptyString(entry.mirrorState),
+                  sourceDriftState: readNonEmptyString(entry.sourceDriftState),
+                  openProposalId: readNonEmptyString(entry.openProposalId),
+                  openProposalStatus: readNonEmptyString(entry.openProposalStatus),
+                  openProposalSummary: readNonEmptyString(entry.openProposalSummary),
+                }))
+                .filter((entry) => entry.sharedSkillId && entry.key && entry.name)
+            : [],
+          recentActions: Array.isArray(officeCoordination.recentActions)
+            ? officeCoordination.recentActions
+                .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+                .map((entry) => ({
+                  action: readNonEmptyString(entry.action),
+                  entityType: readNonEmptyString(entry.entityType),
+                  entityId: readNonEmptyString(entry.entityId),
+                  summary: readNonEmptyString(entry.summary),
+                  createdAt: readNonEmptyString(entry.createdAt),
+                }))
+                .filter((entry) => entry.action && entry.entityType && entry.entityId)
+            : [],
+        }
+      : null;
   const conferenceRoomId = readNonEmptyString(input.contextSnapshot.conferenceRoomId);
   const conferenceRoomCommentId = readNonEmptyString(input.contextSnapshot.conferenceRoomCommentId);
   const issueSummary =
@@ -1289,6 +1462,8 @@ async function buildPaperclipWakePayload(input: {
     commentIds.length === 0 &&
     Object.keys(executionStage).length === 0 &&
     !issueSummary &&
+    sharedSkills.length === 0 &&
+    !normalizedOfficeCoordination &&
     !conferenceRoom &&
     !conferenceRoomMessage
   ) {
@@ -1404,6 +1579,18 @@ async function buildPaperclipWakePayload(input: {
     },
     truncated,
     fallbackFetchNeeded: truncated || missingCommentCount > 0,
+    sharedSkills,
+    sharedSkillReview: Object.keys(sharedSkillReview).length > 0
+      ? {
+          sourceRunId: readNonEmptyString(sharedSkillReview.sourceRunId),
+          sourceRunStatus: readNonEmptyString(sharedSkillReview.sourceRunStatus),
+          sourceIssueId: readNonEmptyString(sharedSkillReview.sourceIssueId),
+          sharedSkillIds: Array.isArray(sharedSkillReview.sharedSkillIds)
+            ? sharedSkillReview.sharedSkillIds.filter((entry): entry is string => typeof entry === "string")
+            : [],
+        }
+      : null,
+    officeCoordination: normalizedOfficeCoordination,
     conferenceRoom: conferenceRoom
       ? {
           id: conferenceRoom.id,
@@ -1626,6 +1813,8 @@ export function heartbeatService(db: Db) {
   const runLogStore = getRunLogStore();
   const secretsSvc = secretService(db);
   const companySkills = companySkillService(db);
+  const officeCoordinationSvc = officeCoordinationService(db);
+  const sharedSkillsSvc = sharedSkillService(db);
   const issuesSvc = issueService(db);
   const issueContinuitySvc = issueContinuityService(db);
   const decisionQuestionsSvc = issueDecisionQuestionService(db);
@@ -2686,6 +2875,48 @@ export function heartbeatService(db: Db) {
     }
   }
 
+  async function handleSharedSkillReviewContinuation(
+    run: typeof heartbeatRuns.$inferSelect,
+  ) {
+    if (run.status === "cancelled") return;
+    const contextSnapshot = parseObject(run.contextSnapshot);
+    if (readNonEmptyString(contextSnapshot.wakeReason) === "shared_skill_review_requested") return;
+    const sharedSkillContext = Array.isArray(contextSnapshot.paperclipSharedSkills)
+      ? contextSnapshot.paperclipSharedSkills
+          .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+      : [];
+    const sharedSkillIds = sharedSkillContext
+      .map((entry) => readNonEmptyString(entry.sharedSkillId))
+      .filter((entry): entry is string => Boolean(entry));
+    if (sharedSkillIds.length === 0) return;
+
+    const shouldEnqueue = await sharedSkillsSvc.shouldEnqueueFallbackReview(run.id, sharedSkillIds);
+    if (!shouldEnqueue) return;
+
+    await enqueueWakeup(run.agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "shared_skill_review_requested",
+      idempotencyKey: `shared-skill-review:${run.id}`,
+      requestedByActorType: "system",
+      requestedByActorId: "shared_skill_review",
+      payload: {
+        sourceRunId: run.id,
+        sharedSkillIds,
+      },
+      contextSnapshot: {
+        ...contextSnapshot,
+        wakeReason: "shared_skill_review_requested",
+        sharedSkillReview: {
+          sourceRunId: run.id,
+          sourceRunStatus: run.status,
+          sourceIssueId: readNonEmptyString(contextSnapshot.issueId),
+          sharedSkillIds,
+        },
+      },
+    });
+  }
+
   async function persistRunProcessMetadata(
     runId: string,
     meta: { pid: number; processGroupId: number | null; startedAt: string },
@@ -3686,6 +3917,35 @@ export function heartbeatService(db: Db) {
           continuityState: issueContext.continuityState,
         }
       : null;
+    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
+    const sharedRuntimeSkillIds = runtimeSkillEntries.flatMap((entry) =>
+      typeof entry.sharedSkillId === "string" && entry.sharedSkillId.trim().length > 0 ? [entry.sharedSkillId] : []);
+    if (sharedRuntimeSkillIds.length > 0) {
+      context.paperclipSharedSkills = await sharedSkillsSvc.buildRuntimeContext(sharedRuntimeSkillIds);
+    } else {
+      delete context.paperclipSharedSkills;
+    }
+    const officeCoordinationContext = parseObject(context.paperclipOfficeCoordination);
+    const officeTrigger =
+      typeof officeCoordinationContext.trigger === "object" &&
+      officeCoordinationContext.trigger !== null &&
+      !Array.isArray(officeCoordinationContext.trigger)
+        ? {
+            reason: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).reason) ?? "office_coordination_requested",
+            entityType: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).entityType),
+            entityId: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).entityId),
+            summary: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).summary),
+          }
+        : null;
+    if (await officeCoordinationSvc.isOfficeOperatorAgent(agent.id, agent.companyId)) {
+      context.paperclipOfficeCoordination = await officeCoordinationSvc.buildWakeSnapshot({
+        companyId: agent.companyId,
+        officeAgentId: agent.id,
+        trigger: officeTrigger,
+      });
+    } else {
+      delete context.paperclipOfficeCoordination;
+    }
     const paperclipWakePayload = await buildPaperclipWakePayload({
       db,
       companyId: agent.companyId,
@@ -3745,7 +4005,6 @@ export function heartbeatService(db: Db) {
       projectEnv: projectContext?.env ?? null,
       secretsSvc,
     });
-    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
     const runtimeConfig = {
       ...resolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
@@ -4458,6 +4717,7 @@ export function heartbeatService(db: Db) {
         await refreshContinuationSummaryForRun(finalizedWithLiveness, agent);
         await handleRunLivenessContinuation(finalizedWithLiveness, liveness?.issue ?? null, agent);
         await releaseIssueExecutionAndPromote(finalizedWithLiveness);
+        await handleSharedSkillReviewContinuation(finalizedWithLiveness);
       }
 
       if (finalizedRun) {

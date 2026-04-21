@@ -54,6 +54,7 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
+  officeCoordinationService,
   executionWorkspaceService,
   feedbackService,
   goalService,
@@ -71,6 +72,7 @@ import {
   routineService,
   workProductService,
 } from "../services/index.js";
+import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination-wakeup.js";
 import { issueDecisionQuestionService } from "../services/issue-decision-questions.js";
 import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
@@ -119,6 +121,7 @@ type IssueRouteDeps = {
   issueApprovalService: ReturnType<typeof issueApprovalService>;
   issueService: ReturnType<typeof issueService>;
   logActivity: typeof baseLogActivity;
+  officeCoordinationService: ReturnType<typeof officeCoordinationService>;
   projectService: ReturnType<typeof projectService>;
   routineService: ReturnType<typeof routineService>;
   workProductService: ReturnType<typeof workProductService>;
@@ -565,6 +568,8 @@ export function issueRoutes(
   const feedback = opts?.services?.feedbackService ?? feedbackService(db);
   const instanceSettings = opts?.services?.instanceSettingsService ?? instanceSettingsService(db);
   const agentsSvc = opts?.services?.agentService ?? agentService(db);
+  const officeCoordinationSvc =
+    opts?.services?.officeCoordinationService ?? officeCoordinationService(db);
   const projectsSvc = opts?.services?.projectService ?? projectService(db);
   const goalsSvc = opts?.services?.goalService ?? goalService(db);
   const issueApprovalsSvc = opts?.services?.issueApprovalService ?? issueApprovalService(db);
@@ -2365,8 +2370,11 @@ export function issueRoutes(
     const { continuityTier, prepareContinuity, ...createInput } = req.body;
     let defaultAssigneeAgentId = typeof req.body.assigneeAgentId === "string" ? req.body.assigneeAgentId : null;
     if (!defaultAssigneeAgentId && !req.body.assigneeUserId && req.body.projectId) {
-      const resolvedProjectLead = await agentsSvc.resolvePrimaryProjectLeadForProject(companyId, req.body.projectId);
-      defaultAssigneeAgentId = resolvedProjectLead.agent?.id ?? null;
+      const officeOperator = await officeCoordinationSvc.findOfficeOperator(companyId);
+      if (!officeOperator) {
+        const resolvedProjectLead = await agentsSvc.resolvePrimaryProjectLeadForProject(companyId, req.body.projectId);
+        defaultAssigneeAgentId = resolvedProjectLead.agent?.id ?? null;
+      }
     }
     const issue = await svc.create(companyId, {
       ...createInput,
@@ -2413,6 +2421,22 @@ export function issueRoutes(
       requestedByActorType: actor.actorType,
       requestedByActorId: actor.actorId,
     });
+
+    if (!issue.assigneeAgentId && !issue.assigneeUserId) {
+      void wakeCompanyOfficeOperatorSafely({
+        officeCoordination: officeCoordinationSvc,
+        heartbeat,
+        companyId,
+        reason: "issue_intake_created",
+        entityType: "issue",
+        entityId: issue.id,
+        summary: issue.identifier ?? issue.title,
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        skipIfActorAgentId: actor.agentId ?? null,
+        logContext: { issueId: issue.id },
+      });
+    }
 
     res.status(201).json(withIssueContinuitySummary({ ...issue, continuityState }));
   });
@@ -2847,6 +2871,24 @@ export function issueRoutes(
     }
     const assigneeChanged =
       issue.assigneeAgentId !== existing.assigneeAgentId || issue.assigneeUserId !== existing.assigneeUserId;
+    const currentContinuityStateRecord =
+      typeof continuityState === "object" && continuityState !== null && !Array.isArray(continuityState)
+        ? (continuityState as unknown as Record<string, unknown>)
+        : null;
+    const continuityHealth =
+      currentContinuityStateRecord && typeof currentContinuityStateRecord.health === "string"
+        ? currentContinuityStateRecord.health
+        : null;
+    const previousContinuityState =
+      typeof existing.continuityState === "object" &&
+      existing.continuityState !== null &&
+      !Array.isArray(existing.continuityState)
+        ? (existing.continuityState as unknown as Record<string, unknown>)
+        : null;
+    const previousContinuityHealth =
+      previousContinuityState && typeof previousContinuityState.health === "string"
+        ? previousContinuityState.health
+        : null;
     const blockCurrentIssueWakeups = isIssueWakeBlockedByContinuity(continuityState);
     const statusChangedFromBacklog =
       existing.status === "backlog" &&
@@ -3072,6 +3114,33 @@ export function issueRoutes(
         heartbeat
           .wakeup(agentId, wakeup)
           .catch((err) => logger.warn({ err, issueId: issue.id, agentId }, "failed to wake agent on issue update"));
+      }
+
+      const becameUnassigned =
+        !issue.assigneeAgentId &&
+        !issue.assigneeUserId &&
+        (!!existing.assigneeAgentId || !!existing.assigneeUserId);
+      const becameBlocked = existing.status !== "blocked" && issue.status === "blocked";
+      const becameStale = previousContinuityHealth !== "stale_progress" && continuityHealth === "stale_progress";
+      if (becameUnassigned || becameBlocked || becameStale) {
+        const reason = becameUnassigned
+          ? "issue_needs_routing"
+          : becameBlocked
+            ? "blocked_issue_detected"
+            : "stale_issue_detected";
+        void wakeCompanyOfficeOperatorSafely({
+          officeCoordination: officeCoordinationSvc,
+          heartbeat,
+          companyId: issue.companyId,
+          reason,
+          entityType: "issue",
+          entityId: issue.id,
+          summary: issue.identifier ?? issue.title,
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+          skipIfActorAgentId: actor.agentId ?? null,
+          logContext: { issueId: issue.id, officeReason: reason },
+        });
       }
     })();
 

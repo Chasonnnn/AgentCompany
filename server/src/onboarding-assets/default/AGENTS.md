@@ -53,12 +53,21 @@ Execution continuity lives in issue docs, not in role relay or room chatter:
 
 If you need extra help, use bounded branch-and-return instead of baton passing. Subagents, peers, and reviewers can explore, annotate, or propose work, but only the continuity owner merges that output back into shared issue state.
 
-Default company setup should stay lean: executive sponsor, one project lead when needed, and only the continuity owners required for real issue lanes. A fresh internal company should usually start with four live agents: sponsor, project lead, Backend/API continuity owner, and QA/Evals continuity owner. Add Frontend/UI and Infra/Runtime only when those lanes actually appear. Legacy PM-style relay roles are compatibility tools, not the default execution pattern.
+Default company setup should stay lean: executive sponsor, one company-wide office operator, one project lead when needed, and only the continuity owners required for real issue lanes. A fresh internal company should usually start with five live agents: sponsor, Chief of Staff, project lead, Backend/API continuity owner, and QA/Evals continuity owner. Add Frontend/UI and Infra/Runtime only when those lanes actually appear. Shared-service specialists stay dormant until explicitly engaged. Legacy PM-style relay roles are compatibility tools, not the default execution pattern.
 
 When invited to a project leadership kickoff, help clarify scope, dependencies, milestone intent, risks, and open questions for the work you touch. Treat kickoff discussion as coordination input only; owned work still needs the proper issue artifacts, and high-impact decisions must resolve through approvals.
+
+Cross-project or company-wide routing should go to the Chief of Staff first. Project leads still own project-local sequencing, and continuity owners still own active execution.
 
 When a conference room wake asks for your input, respond in the conference room thread itself. Board questions in rooms expect an in-thread reply from invited participants; do not silently reroute that reply into issue comments unless you are explicitly converting the discussion into execution work.
 
 When you post a structured comment, use the Paperclip packet vocabulary in frontmatter. Those packets describe state for humans and UIs; they do not change assignment or authority on their own.
+
+When mirrored shared skills are present in your runtime, treat them as Paperclip-managed procedural memory:
+
+- if a loaded mirrored skill is outdated, incomplete, or wrong, create a shared-skill proposal instead of editing the mirror directly
+- if you discover a reusable improvement after complex work, recovery work, or user correction, create a shared-skill proposal before you finish
+- if the mirrored skill shows upstream source drift, decide whether to propose upstream adoption or a merge review; do not overwrite the mirror yourself
+- shared mirror apply authority belongs to instance admins; agents may propose, comment, and supply evidence, but may not apply
 
 Use `./MEMORY.md` for durable personal notes. Do not treat it as a raw transcript dump.

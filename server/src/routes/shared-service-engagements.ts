@@ -8,10 +8,13 @@ import {
 import { notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
+  heartbeatService,
   logActivity as baseLogActivity,
+  officeCoordinationService,
   sharedServiceEngagementService,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination-wakeup.js";
 
 const closeSharedServiceEngagementSchema = z.object({
   outcomeSummary: z.string().optional().nullable(),
@@ -19,7 +22,9 @@ const closeSharedServiceEngagementSchema = z.object({
 
 type SharedServiceEngagementRouteDeps = {
   engagements: ReturnType<typeof sharedServiceEngagementService>;
+  heartbeatService: ReturnType<typeof heartbeatService>;
   logActivity: typeof baseLogActivity;
+  officeCoordinationService: ReturnType<typeof officeCoordinationService>;
 };
 
 export function sharedServiceEngagementRoutes(
@@ -28,7 +33,9 @@ export function sharedServiceEngagementRoutes(
 ) {
   const router = Router();
   const engagements = deps?.engagements ?? sharedServiceEngagementService(db);
+  const heartbeat = deps?.heartbeatService ?? heartbeatService(db);
   const logActivity = deps?.logActivity ?? baseLogActivity;
+  const officeCoordination = deps?.officeCoordinationService ?? officeCoordinationService(db);
 
   router.get("/companies/:companyId/shared-service-engagements", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -62,6 +69,20 @@ export function sharedServiceEngagementRoutes(
           serviceAreaKey: created.serviceAreaKey,
           assignedAgentIds: created.assignments.map((assignment) => assignment.agentId),
         },
+      });
+
+      void wakeCompanyOfficeOperatorSafely({
+        officeCoordination,
+        heartbeat,
+        companyId,
+        reason: "shared_service_engagement_requested",
+        entityType: "shared_service_engagement",
+        entityId: created.id,
+        summary: created.title,
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        skipIfActorAgentId: actor.agentId ?? null,
+        logContext: { engagementId: created.id },
       });
       res.status(201).json(created);
     },
@@ -150,6 +171,20 @@ export function sharedServiceEngagementRoutes(
         details: {
           outcomeSummary: updated.outcomeSummary,
         },
+      });
+
+      void wakeCompanyOfficeOperatorSafely({
+        officeCoordination,
+        heartbeat,
+        companyId: updated.companyId,
+        reason: "shared_service_engagement_closed",
+        entityType: "shared_service_engagement",
+        entityId: updated.id,
+        summary: updated.title,
+        requestedByActorType: actor.actorType,
+        requestedByActorId: actor.actorId,
+        skipIfActorAgentId: actor.agentId ?? null,
+        logContext: { engagementId: updated.id },
       });
       res.status(201).json(updated);
     },

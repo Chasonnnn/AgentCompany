@@ -477,6 +477,13 @@
       "when": 1776646800000,
       "tag": "0067_plugin_database_namespaces",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1776796877098,
+      "tag": "0068_spicy_mariko_yashida",
+      "breakpoints": true
     }
   ]
 }

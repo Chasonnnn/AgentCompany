@@ -28,9 +28,13 @@ export {
 
 export {
   createCompanySchema,
+  companyOfficeOperatorAdoptionSchema,
+  companyOfficeOperatorAdoptionResultSchema,
   updateCompanySchema,
   updateCompanyBrandingSchema,
   type CreateCompany,
+  type CompanyOfficeOperatorAdoption,
+  type CompanyOfficeOperatorAdoptionResultInput,
   type UpdateCompany,
   type UpdateCompanyBranding,
 } from "./company.js";
@@ -100,6 +104,32 @@ export {
   type CompanySkillCreate,
   type CompanySkillFileUpdate,
 } from "./company-skill.js";
+export {
+  sharedSkillMirrorStateSchema,
+  sharedSkillSourceDriftStateSchema,
+  sharedSkillProposalKindSchema,
+  sharedSkillProposalStatusSchema,
+  sharedSkillProposalChangeOpSchema,
+  sharedSkillMirrorSyncModeSchema,
+  sharedSkillSchema,
+  sharedSkillProposalChangeSchema,
+  sharedSkillProposalEvidenceSchema,
+  sharedSkillProposalPayloadSchema,
+  sharedSkillProposalSchema,
+  sharedSkillProposalCommentSchema,
+  sharedSkillProposalSummarySchema,
+  sharedSkillRuntimeContextSchema,
+  sharedSkillMirrorSyncRequestSchema,
+  sharedSkillMirrorSyncItemSchema,
+  sharedSkillMirrorSyncResultSchema,
+  sharedSkillProposalCreateSchema,
+  sharedSkillProposalDecisionSchema,
+  sharedSkillProposalCommentCreateSchema,
+  type SharedSkillMirrorSyncRequest,
+  type SharedSkillProposalCreate,
+  type SharedSkillProposalDecision,
+  type SharedSkillProposalCommentCreate,
+} from "./shared-skill.js";
 export {
   agentSkillStateSchema,
   agentSkillSyncModeSchema,
