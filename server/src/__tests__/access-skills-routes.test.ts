@@ -41,7 +41,7 @@ function createApp(actor: any) {
     req.actor = actor;
     next();
   });
-  return import("../routes/access.js").then(({ accessRoutes }) =>
+  return vi.importActual<typeof import("../routes/access.js")>("../routes/access.js").then(({ accessRoutes }) =>
     Promise.resolve().then(() => {
       app.use(
         "/api",
@@ -65,12 +65,20 @@ describe("access skill routes", () => {
     vi.useRealTimers();
     vi.resetModules();
     vi.resetAllMocks();
+    vi.doUnmock("../routes/access.js");
+    vi.doUnmock("../home-paths.js");
+    vi.doUnmock("../config-file.js");
+    vi.doUnmock("node:fs");
     registerServiceMocks();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.doUnmock("../routes/access.js");
+    vi.doUnmock("../home-paths.js");
+    vi.doUnmock("../config-file.js");
+    vi.doUnmock("node:fs");
   });
 
   it("lists every bundled Paperclip skill in the public skill index", async () => {

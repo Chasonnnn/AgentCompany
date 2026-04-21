@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { costRoutes } from "../routes/costs.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 function makeDb(overrides: Record<string, unknown> = {}) {
   const selectChain = {
@@ -74,6 +72,15 @@ const mockBudgetService = vi.hoisted(() => ({
 }));
 
 async function createApp() {
+  vi.doUnmock("../routes/costs.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../middleware/validate.js");
+  const [{ errorHandler }, { costRoutes }] = await Promise.all([
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/costs.js")>("../routes/costs.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -97,10 +104,19 @@ async function createApp() {
 }
 
 async function createAppWithActor(actor: any) {
+  vi.doUnmock("../routes/costs.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../middleware/validate.js");
+  const [{ errorHandler }, { costRoutes }] = await Promise.all([
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/costs.js")>("../routes/costs.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.actor = actor;
+    req.actor = { ...actor };
     next();
   });
   app.use("/api", costRoutes(makeDb() as any, {
@@ -120,7 +136,14 @@ async function createAppWithActor(actor: any) {
 }
 
 beforeEach(() => {
+  vi.resetModules();
+  vi.restoreAllMocks();
   vi.resetAllMocks();
+  vi.doUnmock("../routes/costs.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../middleware/validate.js");
   mockCostService.createEvent.mockResolvedValue(undefined);
   mockCostService.summary.mockResolvedValue({ spendCents: 0 });
   mockCostService.byAgent.mockResolvedValue([]);
@@ -157,6 +180,14 @@ beforeEach(() => {
     spentMonthlyCents: 0,
   });
   mockBudgetService.upsertPolicy.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.doUnmock("../routes/costs.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../middleware/validate.js");
 });
 
 describe("cost routes", () => {

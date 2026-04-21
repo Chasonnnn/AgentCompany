@@ -17,6 +17,24 @@ describe("agent skill packs", () => {
     ]);
   });
 
+  it("assigns the governance pack to chief-of-staff operators", () => {
+    expect(
+      getDefaultDesiredSkillSlugsForAgent({
+        role: "coo",
+        operatingClass: "executive",
+        archetypeKey: "chief_of_staff",
+      }),
+    ).toEqual([
+      "para-memory-files",
+      "paperclip-create-agent",
+      "find-skills",
+      "openai-docs",
+      "plan-ceo-review",
+      "office-hours",
+      "checkpoint",
+    ]);
+  });
+
   it("treats technical project lead as a project-lead pack alias", () => {
     expect(
       getDefaultDesiredSkillSlugsForAgent({

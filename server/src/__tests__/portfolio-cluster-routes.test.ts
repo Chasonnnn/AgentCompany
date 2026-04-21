@@ -28,17 +28,43 @@ async function createHarness(
     isInstanceAdmin: false,
   },
 ) {
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../middleware/validate.js");
+  vi.doUnmock("../routes/portfolio-clusters.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../services/index.js");
   const [{ errorHandler }, { portfolioClusterRoutes }] = await Promise.all([
-    import("../middleware/index.js"),
-    import("../routes/portfolio-clusters.js"),
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/portfolio-clusters.js")>("../routes/portfolio-clusters.js"),
   ]);
-  const portfolioClusterService = {
-    listForCompany: vi.fn().mockResolvedValue([makeCluster()]),
-    create: vi.fn().mockResolvedValue(makeCluster()),
-    getById: vi.fn().mockResolvedValue(makeCluster()),
-    update: vi.fn().mockResolvedValue(makeCluster({ name: "Platform" })),
+  const calls = {
+    listForCompany: [] as unknown[][],
+    create: [] as unknown[][],
+    getById: [] as unknown[][],
+    update: [] as unknown[][],
+    logActivity: [] as unknown[][],
   };
-  const logActivity = vi.fn().mockResolvedValue(undefined);
+  const portfolioClusterService = {
+    listForCompany: async (...args: unknown[]) => {
+      calls.listForCompany.push(args);
+      return [makeCluster()];
+    },
+    create: async (...args: unknown[]) => {
+      calls.create.push(args);
+      return makeCluster();
+    },
+    getById: async (...args: unknown[]) => {
+      calls.getById.push(args);
+      return makeCluster();
+    },
+    update: async (...args: unknown[]) => {
+      calls.update.push(args);
+      return makeCluster({ name: "Platform" });
+    },
+  };
+  const logActivity = async (...args: unknown[]) => {
+    calls.logActivity.push(args);
+  };
 
   const app = express();
   app.use(express.json());
@@ -52,15 +78,17 @@ async function createHarness(
   }));
   app.use(errorHandler);
 
-  return { app, logActivity, portfolioClusterService };
+  return { app, calls };
 }
 
 describe("portfolio cluster routes", () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
     vi.resetModules();
-    vi.unmock("../services/index.js");
-    vi.unmock("../middleware/validate.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/portfolio-clusters.js");
+    vi.doUnmock("../routes/authz.js");
   });
 
   it("lists clusters for an authorized company actor", async () => {

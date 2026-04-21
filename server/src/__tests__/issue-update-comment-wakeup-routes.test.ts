@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { issueRoutes } from "../routes/issues.js";
 
 const ASSIGNEE_AGENT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -57,6 +55,11 @@ vi.mock("../services/index.js", () => ({
   issueApprovalService: () => ({}),
   issueContinuityService: () => mockContinuityService,
   issueService: () => mockIssueService,
+  officeCoordinationService: () => ({
+    findOfficeOperator: vi.fn(async () => null),
+    buildWakeSnapshot: vi.fn(async () => null),
+    isOfficeOperatorAgent: vi.fn(async () => false),
+  }),
   logActivity: vi.fn(async () => undefined),
   projectService: () => ({}),
   routineService: () => ({
@@ -65,7 +68,12 @@ vi.mock("../services/index.js", () => ({
   workProductService: () => ({}),
 }));
 
-function createApp() {
+async function createApp() {
+  vi.doUnmock("../middleware/index.js");
+  const [{ errorHandler }, { issueRoutes }] = await Promise.all([
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    import("../routes/issues.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -106,6 +114,7 @@ function makeIssue(overrides: Record<string, unknown> = {}) {
 
 describe("issue update comment wakeups", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
     mockContinuityService.recomputeIssueContinuityState.mockResolvedValue({
       tier: "normal",
@@ -150,7 +159,8 @@ describe("issue update comment wakeups", () => {
       body: "write the whole thing",
     });
 
-    const res = await request(createApp())
+    const app = await createApp();
+    const res = await request(app)
       .patch(`/api/issues/${existing.id}`)
       .send({
         assigneeAgentId: ASSIGNEE_AGENT_ID,
@@ -197,7 +207,8 @@ describe("issue update comment wakeups", () => {
       body: "please revise this",
     });
 
-    const res = await request(createApp())
+    const app = await createApp();
+    const res = await request(app)
       .patch(`/api/issues/${existing.id}`)
       .send({
         comment: "please revise this",
@@ -264,7 +275,8 @@ describe("issue update comment wakeups", () => {
       body: "write the whole thing",
     });
 
-    const res = await request(createApp())
+    const app = await createApp();
+    const res = await request(app)
       .patch(`/api/issues/${existing.id}`)
       .send({
         assigneeAgentId: ASSIGNEE_AGENT_ID,

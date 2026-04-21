@@ -59,16 +59,40 @@ const trigger = {
   updatedAt: new Date("2026-03-20T00:00:00.000Z"),
 };
 
-async function createHarness(actor: Record<string, unknown>) {
+async function createHarness(
+  actor: Record<string, unknown>,
+  overrides?: {
+    accessCanUser?: (companyId: string, userId: string, permission: string) => Promise<boolean> | boolean;
+    getRoutine?: (routineId: string) => Promise<typeof routine | typeof pausedRoutine | null> | (typeof routine | typeof pausedRoutine | null);
+    updateRoutine?: (routineId: string, input: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
+  },
+) {
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/routines.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/validate.js");
+  vi.doUnmock("../telemetry.js");
+  vi.doUnmock("@paperclipai/shared/telemetry");
   const [{ errorHandler }, { routineRoutes }] = await Promise.all([
-    import("../middleware/index.js"),
-    import("../routes/routines.js"),
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/routines.js")>("../routes/routines.js"),
   ]);
   const routineService = {
     list: async () => [],
-    get: async () => routine,
+    get: async (routineId: string) => {
+      if (overrides?.getRoutine) {
+        return await overrides.getRoutine(routineId);
+      }
+      return routine;
+    },
     getDetail: async () => null,
-    update: async () => ({ ...routine, assigneeAgentId: otherAgentId }),
+    update: async (routineId: string, input: Record<string, unknown>) => {
+      if (overrides?.updateRoutine) {
+        return await overrides.updateRoutine(routineId, input);
+      }
+      return { ...routine, assigneeAgentId: otherAgentId };
+    },
     create: async () => routine,
     listRuns: async () => [],
     createTrigger: async () => trigger,
@@ -84,7 +108,12 @@ async function createHarness(actor: Record<string, unknown>) {
     firePublicTrigger: async () => undefined,
   };
   const accessService = {
-    canUser: async () => false,
+    canUser: async (targetCompanyId: string, userId: string, permission: string) => {
+      if (overrides?.accessCanUser) {
+        return await overrides.accessCanUser(targetCompanyId, userId, permission);
+      }
+      return false;
+    },
   };
   const logActivity = async () => undefined;
   const trackRoutineCreated = () => {};
@@ -93,7 +122,7 @@ async function createHarness(actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = actor;
+    (req as any).actor = { ...actor };
     next();
   });
   app.use("/api", routineRoutes({} as any, {
@@ -109,15 +138,29 @@ async function createHarness(actor: Record<string, unknown>) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
   vi.doUnmock("../middleware/index.js");
   vi.doUnmock("../routes/routines.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/validate.js");
+  vi.doUnmock("../telemetry.js");
+  vi.doUnmock("@paperclipai/shared/telemetry");
 });
 
 describe("routine routes", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
     vi.doUnmock("../middleware/index.js");
     vi.doUnmock("../routes/routines.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("@paperclipai/shared/telemetry");
   });
 
   it("requires tasks:assign permission for non-admin board routine creation", async () => {
@@ -142,12 +185,16 @@ describe("routine routes", () => {
   });
 
   it("requires tasks:assign permission to retarget a routine assignee", async () => {
+    const accessCanUser = vi.fn(async () => false);
     const { app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
       isInstanceAdmin: false,
       companyIds: [companyId],
+    }, {
+      accessCanUser,
+      getRoutine: async () => ({ ...routine, assigneeAgentId: agentId }),
     });
 
     const res = await request(app)
@@ -158,17 +205,21 @@ describe("routine routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
+    expect(accessCanUser).toHaveBeenCalledWith(companyId, "board-user", "tasks:assign");
   });
 
   it("requires tasks:assign permission to reactivate a routine", async () => {
-    const { app, routineService } = await createHarness({
+    const accessCanUser = vi.fn(async () => false);
+    const { app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
       isInstanceAdmin: false,
       companyIds: [companyId],
+    }, {
+      accessCanUser,
+      getRoutine: async () => pausedRoutine,
     });
-    routineService.get = async () => pausedRoutine;
 
     const res = await request(app)
       .patch(`/api/routines/${routineId}`)
@@ -178,6 +229,7 @@ describe("routine routes", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
+    expect(accessCanUser).toHaveBeenCalledWith(companyId, "board-user", "tasks:assign");
   });
 
   it("requires tasks:assign permission to create a trigger", async () => {
@@ -238,14 +290,15 @@ describe("routine routes", () => {
   });
 
   it("allows routine creation when the board user has tasks:assign", async () => {
-    const { accessService, app } = await createHarness({
+    const { app } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
       isInstanceAdmin: false,
       companyIds: [companyId],
+    }, {
+      accessCanUser: async () => true,
     });
-    accessService.canUser = async () => true;
 
     const res = await request(app)
       .post(`/api/companies/${companyId}/routines`)

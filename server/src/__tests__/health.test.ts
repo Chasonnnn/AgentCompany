@@ -7,16 +7,25 @@ import { serverVersion } from "../version.js";
 describe("GET /health", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.resetAllMocks();
+    vi.doUnmock("../routes/health.js");
+    vi.doUnmock("../dev-server-status.js");
+    vi.doUnmock("../services/instance-settings.js");
+    vi.doUnmock("../middleware/logger.js");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.doUnmock("../routes/health.js");
+    vi.doUnmock("../dev-server-status.js");
+    vi.doUnmock("../services/instance-settings.js");
+    vi.doUnmock("../middleware/logger.js");
   });
 
   it("returns 200 with status ok", async () => {
-    const devServerStatus = await import("../dev-server-status.js");
+    const devServerStatus = await vi.importActual<typeof import("../dev-server-status.js")>("../dev-server-status.js");
     vi.spyOn(devServerStatus, "readPersistedDevServerStatus").mockReturnValue(undefined);
-    const { healthRoutes } = await import("../routes/health.js");
+    const { healthRoutes } = await vi.importActual<typeof import("../routes/health.js")>("../routes/health.js");
     const app = express();
     app.use("/health", healthRoutes());
 
@@ -26,9 +35,9 @@ describe("GET /health", () => {
   });
 
   it("returns 200 when the database probe succeeds", async () => {
-    const devServerStatus = await import("../dev-server-status.js");
+    const devServerStatus = await vi.importActual<typeof import("../dev-server-status.js")>("../dev-server-status.js");
     vi.spyOn(devServerStatus, "readPersistedDevServerStatus").mockReturnValue(undefined);
-    const { healthRoutes } = await import("../routes/health.js");
+    const { healthRoutes } = await vi.importActual<typeof import("../routes/health.js")>("../routes/health.js");
     const db = {
       execute: vi.fn().mockResolvedValue([{ "?column?": 1 }]),
     } as unknown as Db;
@@ -42,9 +51,9 @@ describe("GET /health", () => {
   });
 
   it("returns 503 when the database probe fails", async () => {
-    const devServerStatus = await import("../dev-server-status.js");
+    const devServerStatus = await vi.importActual<typeof import("../dev-server-status.js")>("../dev-server-status.js");
     vi.spyOn(devServerStatus, "readPersistedDevServerStatus").mockReturnValue(undefined);
-    const { healthRoutes } = await import("../routes/health.js");
+    const { healthRoutes } = await vi.importActual<typeof import("../routes/health.js")>("../routes/health.js");
     const db = {
       execute: vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED")),
     } as unknown as Db;

@@ -93,6 +93,11 @@ vi.mock("../services/index.js", () => ({
   }),
   issueService: () => mockIssueService,
   logActivity: mockLogActivity,
+  officeCoordinationService: () => ({
+    findOfficeOperator: vi.fn(async () => null),
+    buildWakeSnapshot: vi.fn(async () => null),
+    isOfficeOperatorAgent: vi.fn(async () => false),
+  }),
   projectService: () => ({}),
   routineService: () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),

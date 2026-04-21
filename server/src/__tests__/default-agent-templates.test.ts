@@ -8,6 +8,7 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(pack.rootPath).toBe("server/src/onboarding-assets/templates");
     expect(Object.keys(pack.files)).toEqual(
       expect.arrayContaining([
+        "chief-of-staff.md",
         "technical-project-lead.md",
         "backend-api-continuity-owner.md",
         "qa-evals-continuity-owner.md",
@@ -19,6 +20,7 @@ describe("loadDefaultAgentTemplatePack", () => {
         "growth-specialist.md",
       ]),
     );
+    expect(pack.files["chief-of-staff.md"]).toContain("Chief of Staff");
     expect(pack.files["technical-project-lead.md"]).toContain("Project Lead");
     expect(pack.files["audit-reviewer.md"]).toContain("inactive until engaged");
   });

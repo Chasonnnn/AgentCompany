@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerAdapterModule } from "../adapters/index.js";
 
 const mocks = vi.hoisted(() => {
@@ -61,11 +61,25 @@ vi.mock("../adapters/plugin-loader.js", () => ({
 
 const EXTERNAL_ADAPTER_TYPE = "external_admin_test";
 const EXTERNAL_PACKAGE_NAME = "paperclip-external-adapter";
-let adapterRoutes: typeof import("../routes/adapters.js").adapterRoutes;
-let errorHandler: typeof import("../middleware/index.js").errorHandler;
-let registerServerAdapter: typeof import("../adapters/registry.js").registerServerAdapter;
-let unregisterServerAdapter: typeof import("../adapters/registry.js").unregisterServerAdapter;
-let setOverridePaused: typeof import("../adapters/registry.js").setOverridePaused;
+
+async function loadAdapterHarnessDeps() {
+  vi.doUnmock("../routes/adapters.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../adapters/registry.js");
+  const [routes, middleware, registry] = await Promise.all([
+    vi.importActual<typeof import("../routes/adapters.js")>("../routes/adapters.js"),
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../adapters/registry.js")>("../adapters/registry.js"),
+  ]);
+
+  return {
+    adapterRoutes: routes.adapterRoutes,
+    errorHandler: middleware.errorHandler,
+    registerServerAdapter: registry.registerServerAdapter,
+    unregisterServerAdapter: registry.unregisterServerAdapter,
+    setOverridePaused: registry.setOverridePaused,
+  };
+}
 
 function createAdapter(type = EXTERNAL_ADAPTER_TYPE): ServerAdapterModule {
   return {
@@ -89,11 +103,8 @@ function installedRecord(type = EXTERNAL_ADAPTER_TYPE) {
   };
 }
 
-function createApp(actor: Express.Request["actor"]) {
-  if (!adapterRoutes || !errorHandler) {
-    throw new Error("adapter route test dependencies were not loaded");
-  }
-
+async function createApp(actor: Express.Request["actor"]) {
+  const { adapterRoutes, errorHandler } = await loadAdapterHarnessDeps();
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -160,30 +171,19 @@ function sendMutatingRequest(app: express.Express, name: string) {
   }
 }
 
-function seedInstalledExternalAdapter() {
+async function seedInstalledExternalAdapter() {
+  const { registerServerAdapter, unregisterServerAdapter } = await loadAdapterHarnessDeps();
   mocks.externalRecords.set(EXTERNAL_ADAPTER_TYPE, installedRecord());
   unregisterServerAdapter(EXTERNAL_ADAPTER_TYPE);
   registerServerAdapter(createAdapter());
 }
 
 describe("adapter management route authorization", () => {
-  beforeAll(async () => {
-    const [routes, middleware, registry] = await Promise.all([
-      import("../routes/adapters.js"),
-      import("../middleware/index.js"),
-      import("../adapters/registry.js"),
-    ]);
-    adapterRoutes = routes.adapterRoutes;
-    errorHandler = middleware.errorHandler;
-    registerServerAdapter = registry.registerServerAdapter;
-    unregisterServerAdapter = registry.unregisterServerAdapter;
-    setOverridePaused = registry.setOverridePaused;
-  }, 20_000);
-
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
     vi.clearAllMocks();
     mocks.externalRecords.clear();
-
+    const { unregisterServerAdapter, setOverridePaused } = await loadAdapterHarnessDeps();
     unregisterServerAdapter(EXTERNAL_ADAPTER_TYPE);
     setOverridePaused("claude_local", false);
     mocks.listAdapterPlugins.mockImplementation(() => [...mocks.externalRecords.values()]);
@@ -195,7 +195,8 @@ describe("adapter management route authorization", () => {
     mocks.reloadExternalAdapter.mockImplementation(async (type: string) => createAdapter(type));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { unregisterServerAdapter, setOverridePaused } = await loadAdapterHarnessDeps();
     unregisterServerAdapter(EXTERNAL_ADAPTER_TYPE);
     setOverridePaused("claude_local", false);
   });
@@ -208,8 +209,8 @@ describe("adapter management route authorization", () => {
     "reload",
     "reinstall",
   ])("rejects %s for a non-instance-admin board user with company membership", async (routeName) => {
-    seedInstalledExternalAdapter();
-    const app = createApp(boardMember("admin"));
+    await seedInstalledExternalAdapter();
+    const app = await createApp(boardMember("admin"));
 
     const res = await sendMutatingRequest(app, routeName);
 
@@ -225,9 +226,9 @@ describe("adapter management route authorization", () => {
     ["reinstall", [200]],
   ] as const)("allows instance admins to reach %s", async (routeName, expectedStatuses) => {
     if (routeName !== "install") {
-      seedInstalledExternalAdapter();
+      await seedInstalledExternalAdapter();
     }
-    const app = createApp(instanceAdmin);
+    const app = await createApp(instanceAdmin);
 
     const res = await sendMutatingRequest(app, routeName);
 
@@ -237,8 +238,8 @@ describe("adapter management route authorization", () => {
   it.each(["viewer", "operator"] as const)(
     "does not let a company %s trigger adapter npm install or reload",
     async (membershipRole) => {
-      seedInstalledExternalAdapter();
-      const app = createApp(boardMember(membershipRole));
+      await seedInstalledExternalAdapter();
+      const app = await createApp(boardMember(membershipRole));
 
       const install = await request(app)
         .post("/api/adapters/install")

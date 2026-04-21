@@ -4,7 +4,14 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { companies, companySkills, createDb } from "@paperclipai/db";
+import {
+  companies,
+  companySkills,
+  createDb,
+  sharedSkillProposalComments,
+  sharedSkillProposals,
+  sharedSkills,
+} from "@paperclipai/db";
 import {
   discoverProjectWorkspaceSkillDirectories,
   findMissingLocalSkillIds,
@@ -13,6 +20,7 @@ import {
   readLocalSkillImportFromDirectory,
   companySkillService,
 } from "../services/company-skills.js";
+import { sharedSkillService } from "../services/shared-skills.js";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -256,6 +264,9 @@ describeEmbeddedPostgres("global skill catalog installs", { timeout: 20_000 }, (
 
   afterEach(async () => {
     await db.delete(companySkills);
+    await db.delete(sharedSkillProposalComments);
+    await db.delete(sharedSkillProposals);
+    await db.delete(sharedSkills);
     await db.delete(companies);
   });
 
@@ -324,7 +335,7 @@ describeEmbeddedPostgres("global skill catalog installs", { timeout: 20_000 }, (
     expect(catalog.map((item) => item.sourceRoot)).toEqual(["codex", "claude", "agents"]);
   });
 
-  it("installs and reinstalls a global skill as a read-only company snapshot", async () => {
+  it("installs and refreshes a global skill through a shared mirror attachment", async () => {
     const homeDir = await makeTempDir("paperclip-global-install-home-");
     process.env.HOME = homeDir;
     const companyId = await seedCompany();
@@ -343,11 +354,12 @@ describeEmbeddedPostgres("global skill catalog installs", { timeout: 20_000 }, (
     expect(catalogKey).toBeTruthy();
 
     const installed = await svc.installGlobalCatalogSkill(companyId, { catalogKey: catalogKey! });
-    expect(installed.sourceType).toBe("catalog");
+    expect(installed.sourceType).toBe("shared_mirror");
+    expect(installed.sharedSkillId).toBeTruthy();
     expect(installed.metadata).toMatchObject({
-      sourceKind: "global_catalog",
-      catalogKey,
-      catalogSourceRoot: "codex",
+      sourceKind: "shared_mirror",
+      sharedSkillId: installed.sharedSkillId,
+      sharedSourceRoot: "codex",
     });
 
     const firstId = installed.id;
@@ -361,6 +373,8 @@ describeEmbeddedPostgres("global skill catalog installs", { timeout: 20_000 }, (
       { "references/checklist.md": "# Updated Checklist\n" },
     );
 
+    await sharedSkillService(db).syncMirrors({ mode: "refresh", sourceRoots: ["codex"] });
+
     const reinstalled = await svc.installGlobalCatalogSkill(companyId, { catalogKey: catalogKey! });
     expect(reinstalled.id).toBe(firstId);
     expect(reinstalled.key).toBe(firstKey);
@@ -371,7 +385,7 @@ describeEmbeddedPostgres("global skill catalog installs", { timeout: 20_000 }, (
       .from(companySkills)
       .where(eq(companySkills.id, firstId))
       .then((rows) => rows[0] ?? null);
-    expect(persistedRow?.sourceType).toBe("catalog");
+    expect(persistedRow?.sourceType).toBe("shared_mirror");
     expect(await fs.readFile(path.join(reinstalled.sourceLocator!, "references/checklist.md"), "utf8")).toContain("Updated Checklist");
   });
 
@@ -487,9 +501,11 @@ describeEmbeddedPostgres("global skill catalog installs", { timeout: 20_000 }, (
 
     const svc = companySkillService(db);
     const discovered = await svc.listGlobalCatalog(companyId);
+    const conflictingCatalogKey = discovered.find((item) => item.slug === "find-skills")?.catalogKey;
+    expect(conflictingCatalogKey).toBeTruthy();
 
     await expect(
-      svc.installGlobalCatalogSkill(companyId, { catalogKey: discovered[0]!.catalogKey }),
+      svc.installGlobalCatalogSkill(companyId, { catalogKey: conflictingCatalogKey! }),
     ).rejects.toMatchObject({
       status: 409,
     });

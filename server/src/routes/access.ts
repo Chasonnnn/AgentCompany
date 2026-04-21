@@ -2407,6 +2407,59 @@ async function probeInviteResolutionTarget(
   }
 }
 
+type InviteTestResolutionInput = {
+  token: string;
+  url: string;
+  timeoutMs?: string | number | null;
+};
+
+export async function resolveInviteTestResolution(
+  db: Db,
+  input: InviteTestResolutionInput,
+) {
+  const token = input.token.trim();
+  if (!token) throw notFound("Invite not found");
+  const invite = await db
+    .select()
+    .from(invites)
+    .where(eq(invites.tokenHash, hashToken(token)))
+    .then((rows) => rows[0] ?? null);
+  if (!invite || invite.revokedAt || inviteExpired(invite)) {
+    throw notFound("Invite not found");
+  }
+
+  const rawUrl = input.url.trim();
+  if (!rawUrl) throw badRequest("url query parameter is required");
+  let target: URL;
+  try {
+    target = new URL(rawUrl);
+  } catch {
+    throw badRequest("url must be an absolute http(s) URL");
+  }
+  if (target.protocol !== "http:" && target.protocol !== "https:") {
+    throw badRequest("url must use http or https");
+  }
+
+  const parsedTimeoutMs =
+    typeof input.timeoutMs === "number"
+      ? input.timeoutMs
+      : typeof input.timeoutMs === "string"
+        ? Number(input.timeoutMs)
+        : Number.NaN;
+  const timeoutMs = Number.isFinite(parsedTimeoutMs)
+    ? Math.max(1000, Math.min(15000, Math.floor(parsedTimeoutMs)))
+    : 5000;
+  const resolvedTarget = await resolveInviteResolutionTarget(target);
+  const probe = await probeInviteResolutionTarget(resolvedTarget, timeoutMs);
+  return {
+    inviteId: invite.id,
+    testResolutionPath: `/api/invites/${token}/test-resolution`,
+    requestedUrl: target.toString(),
+    timeoutMs,
+    ...probe,
+  };
+}
+
 export function accessRoutes(
   db: Db,
   opts: {
@@ -2946,46 +2999,12 @@ export function accessRoutes(
   });
 
   router.get("/invites/:token/test-resolution", async (req, res) => {
-    const token = (req.params.token as string).trim();
-    if (!token) throw notFound("Invite not found");
-    const invite = await db
-      .select()
-      .from(invites)
-      .where(eq(invites.tokenHash, hashToken(token)))
-      .then((rows) => rows[0] ?? null);
-    if (!invite || invite.revokedAt || inviteExpired(invite)) {
-      throw notFound("Invite not found");
-    }
-
-    const rawUrl =
-      typeof req.query.url === "string" ? req.query.url.trim() : "";
-    if (!rawUrl) throw badRequest("url query parameter is required");
-    let target: URL;
-    try {
-      target = new URL(rawUrl);
-    } catch {
-      throw badRequest("url must be an absolute http(s) URL");
-    }
-    if (target.protocol !== "http:" && target.protocol !== "https:") {
-      throw badRequest("url must use http or https");
-    }
-
-    const parsedTimeoutMs =
-      typeof req.query.timeoutMs === "string"
-        ? Number(req.query.timeoutMs)
-        : NaN;
-    const timeoutMs = Number.isFinite(parsedTimeoutMs)
-      ? Math.max(1000, Math.min(15000, Math.floor(parsedTimeoutMs)))
-      : 5000;
-    const resolvedTarget = await resolveInviteResolutionTarget(target);
-    const probe = await probeInviteResolutionTarget(resolvedTarget, timeoutMs);
-    res.json({
-      inviteId: invite.id,
-      testResolutionPath: `/api/invites/${token}/test-resolution`,
-      requestedUrl: target.toString(),
-      timeoutMs,
-      ...probe
+    const result = await resolveInviteTestResolution(db, {
+      token: String(req.params.token ?? ""),
+      url: typeof req.query.url === "string" ? req.query.url : "",
+      timeoutMs: typeof req.query.timeoutMs === "string" ? req.query.timeoutMs : null,
     });
+    res.json(result);
   });
 
   router.post(

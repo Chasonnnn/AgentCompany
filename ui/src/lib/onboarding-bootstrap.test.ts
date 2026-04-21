@@ -66,12 +66,15 @@ describe("onboarding bootstrap helpers", () => {
     expect(companyDoc).toContain("# COMPANY.md");
     expect(companyDoc).toContain("Company monthly budget: $50");
     expect(companyDoc).toContain("Starter-agent budgets: unset by default.");
+    expect(companyDoc).toContain("Chief of Staff");
     expect(companyDoc).toContain("project_leadership");
 
     expect(engineeringTeamDoc).toContain("# TEAM.md");
     expect(engineeringTeamDoc).toContain("project leadership breakdown");
+    expect(engineeringTeamDoc).toContain("Chief of Staff");
 
     expect(operationsTeamDoc).toContain("# TEAM.md");
+    expect(operationsTeamDoc).toContain("company-wide coordination");
     expect(operationsTeamDoc).toContain("heartbeat hygiene");
 
     expect(researchTeamDoc).toContain("# TEAM.md");
@@ -102,33 +105,25 @@ describe("onboarding bootstrap helpers", () => {
     expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.ceo).toEqual(
       expect.arrayContaining(["para-memory-files", "paperclip-create-agent", "plan-ceo-review"]),
     );
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.officeOperator).toEqual(
+      expect.arrayContaining(["paperclip-create-agent", "find-skills"]),
+    );
     expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.technicalProjectLead).toEqual(
       expect.arrayContaining(["plan-eng-review", "review", "health"]),
     );
-    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.continuityOwner).toEqual(
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.backendContinuityOwner).toEqual(
       expect.arrayContaining(["supabase-postgres-best-practices", "security-best-practices"]),
     );
-    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.auditReviewer).toEqual(
+    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.qaEvalsContinuityOwner).toEqual(
       expect.arrayContaining(["audit", "qa-only"]),
-    );
-    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.researchSpecialist).toEqual(
-      expect.arrayContaining(["arxiv", "research-paper-writing", "transcribe"]),
-    );
-    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.growthSpecialist).toEqual(
-      expect.arrayContaining(["onboard", "clarify", "agent-browser"]),
-    );
-    expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.consultingSpecialist).toEqual(
-      expect.arrayContaining(["find-skills"]),
     );
     expect(ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS).toEqual(
       expect.arrayContaining([
         "para-memory-files",
+        "find-skills",
         "plan-eng-review",
         "supabase-postgres-best-practices",
         "audit",
-        "arxiv",
-        "agent-browser",
-        "find-skills",
       ]),
     );
     expect(ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS).toEqual(

@@ -2,8 +2,6 @@ import { Readable } from "node:stream";
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { issueRoutes } from "../routes/issues.js";
 
 const issueId = "11111111-1111-4111-8111-111111111111";
 const companyId = "22222222-2222-4222-8222-222222222222";
@@ -116,6 +114,11 @@ vi.mock("../services/index.js", () => ({
   }),
   issueService: () => mockIssueService,
   logActivity: vi.fn(async () => undefined),
+  officeCoordinationService: () => ({
+    findOfficeOperator: vi.fn(async () => null),
+    buildWakeSnapshot: vi.fn(async () => null),
+    isOfficeOperatorAgent: vi.fn(async () => false),
+  }),
   projectService: () => ({}),
   routineService: () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
@@ -155,7 +158,15 @@ function makeAgent(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createApp(actor: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>) {
+  vi.doUnmock("../routes/issues.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/validate.js");
+  const [{ errorHandler }, { issueRoutes }] = await Promise.all([
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/issues.js")>("../routes/issues.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -200,7 +211,12 @@ function boardActor() {
 
 describe("agent issue mutation checkout ownership", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
+    vi.doUnmock("../routes/issues.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/validate.js");
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(false);
     mockAgentService.getById.mockImplementation(async (id: string) => {
@@ -325,7 +341,7 @@ describe("agent issue mutation checkout ownership", () => {
     ["work product update", (app: express.Express) => request(app).patch("/api/work-products/product-1").send({ title: "Blocked" })],
     ["attachment delete", (app: express.Express) => request(app).delete("/api/attachments/attachment-1")],
   ])("rejects peer agent %s on another agent's active checkout", async (_name, sendRequest) => {
-    const res = await sendRequest(createApp(peerActor()));
+    const res = await sendRequest(await createApp(peerActor()));
 
     expect(res.status, JSON.stringify(res.body)).toBe(409);
     expect(res.body.error).toBe("Issue is checked out by another agent");
@@ -339,7 +355,7 @@ describe("agent issue mutation checkout ownership", () => {
   });
 
   it("allows the checked-out owner with the matching run id to patch and update documents", async () => {
-    const app = createApp(ownerActor());
+    const app = await createApp(ownerActor());
 
     await request(app).patch(`/api/issues/${issueId}`).send({ title: "Updated" }).expect(200);
     await request(app)
@@ -360,7 +376,7 @@ describe("agent issue mutation checkout ownership", () => {
   });
 
   it("preserves board mutations on active checkouts", async () => {
-    const app = createApp(boardActor());
+    const app = await createApp(boardActor());
 
     await request(app).patch(`/api/issues/${issueId}`).send({ title: "Board update" }).expect(200);
     await request(app)
@@ -381,7 +397,7 @@ describe("agent issue mutation checkout ownership", () => {
       permissionKey: string,
     ) => principalId === peerAgentId && permissionKey === "tasks:manage_active_checkouts");
 
-    const res = await request(createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Managed update" });
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Managed update" });
 
     expect(res.status).toBe(200);
     expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
@@ -395,7 +411,7 @@ describe("agent issue mutation checkout ownership", () => {
       ...patch,
     }));
 
-    const res = await request(createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Todo update" });
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Todo update" });
 
     expect(res.status).toBe(403);
     expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
@@ -409,7 +425,7 @@ describe("agent issue mutation checkout ownership", () => {
       ...patch,
     }));
 
-    const res = await request(createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Claimable update" });
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ title: "Claimable update" });
 
     expect(res.status).toBe(403);
     expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();

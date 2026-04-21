@@ -36,6 +36,8 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 async function createApp(actorOverrides: Record<string, unknown> = {}) {
   vi.doUnmock("../routes/approvals.js");
   vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../middleware/validate.js");
+  vi.doUnmock("../routes/authz.js");
   vi.doUnmock("../services/index.js");
   vi.doMock("../services/index.js", () => ({
     approvalService: () => mockApprovalService,
@@ -49,8 +51,8 @@ async function createApp(actorOverrides: Record<string, unknown> = {}) {
     secretService: () => mockSecretService,
   }));
   const [{ approvalRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/approvals.js"),
-    import("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/approvals.js")>("../routes/approvals.js"),
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
   ]);
   const app = express();
   app.use(express.json());
@@ -73,6 +75,8 @@ async function createApp(actorOverrides: Record<string, unknown> = {}) {
 async function createAgentApp() {
   vi.doUnmock("../routes/approvals.js");
   vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../middleware/validate.js");
+  vi.doUnmock("../routes/authz.js");
   vi.doUnmock("../services/index.js");
   vi.doMock("../services/index.js", () => ({
     approvalService: () => mockApprovalService,
@@ -86,8 +90,8 @@ async function createAgentApp() {
     secretService: () => mockSecretService,
   }));
   const [{ approvalRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/approvals.js"),
-    import("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/approvals.js")>("../routes/approvals.js"),
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
   ]);
   const app = express();
   app.use(express.json());
@@ -109,7 +113,11 @@ async function createAgentApp() {
 describe("approval routes idempotent retries", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    vi.doUnmock("../routes/approvals.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../routes/authz.js");
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
     mockLogActivity.mockResolvedValue(undefined);
@@ -118,6 +126,8 @@ describe("approval routes idempotent retries", () => {
   afterEach(() => {
     vi.doUnmock("../routes/approvals.js");
     vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../routes/authz.js");
     vi.doUnmock("../services/index.js");
   });
 
@@ -144,7 +154,7 @@ describe("approval routes idempotent retries", () => {
 
     const res = await request(await createApp())
       .post("/api/approvals/approval-1/approve")
-      .send({});
+      .send({ decisionNote: null, decidedByUserId: "board" });
 
     expect(res.status).toBe(200);
     expect(mockIssueApprovalService.listIssuesForApproval).not.toHaveBeenCalled();
@@ -173,7 +183,7 @@ describe("approval routes idempotent retries", () => {
 
     const res = await request(await createApp())
       .post("/api/approvals/approval-1/reject")
-      .send({});
+      .send({ decisionNote: null, decidedByUserId: "board" });
 
     expect(res.status).toBe(200);
     expect(mockLogActivity).not.toHaveBeenCalled();
@@ -190,7 +200,7 @@ describe("approval routes idempotent retries", () => {
 
     const res = await request(await createApp())
       .post("/api/approvals/approval-2/approve")
-      .send({});
+      .send({ decisionNote: null, decidedByUserId: "board" });
 
     expect(res.status).toBe(403);
     expect(mockApprovalService.approve).not.toHaveBeenCalled();

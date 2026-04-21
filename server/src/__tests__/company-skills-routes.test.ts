@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { companySkillRoutes } from "../routes/company-skills.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -192,6 +190,17 @@ function applyDefaultMocks() {
 
 async function createApp(actor: Record<string, unknown>) {
   applyDefaultMocks();
+  vi.doUnmock("../routes/company-skills.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../middleware/validate.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../telemetry.js");
+  vi.doUnmock("../services/agent-permissions.js");
+  const [{ errorHandler }, { companySkillRoutes }] = await Promise.all([
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/company-skills.js")>("../routes/company-skills.js"),
+  ]);
   const errors = await import("../errors.js");
   const app = express();
   app.use(express.json());
@@ -209,7 +218,6 @@ async function createApp(actor: Record<string, unknown>) {
     },
     telemetry: {
       getTelemetryClient: mockGetTelemetryClient as any,
-      trackSkillImported: mockTrackSkillImported as any,
       agentHasCreatePermission: mockAgentHasCreatePermission as any,
     },
   }));
@@ -220,7 +228,15 @@ async function createApp(actor: Record<string, unknown>) {
 describe("company skill mutation permissions", () => {
   beforeEach(() => {
     vi.useRealTimers();
+    vi.resetModules();
     vi.resetAllMocks();
+    vi.doUnmock("../routes/company-skills.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("../services/agent-permissions.js");
     applyDefaultMocks();
   });
 
@@ -228,6 +244,13 @@ describe("company skill mutation permissions", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    vi.doUnmock("../routes/company-skills.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("../services/agent-permissions.js");
   });
 
   it("allows local board operators to mutate company skills", async () => {
@@ -492,6 +515,10 @@ describe("company skill mutation permissions", () => {
       source: "local_implicit",
       isInstanceAdmin: false,
     });
+    const telemetryClient = {
+      track: vi.fn(),
+    };
+    mocks.getTelemetryClient.mockReturnValue(telemetryClient as any);
     mocks.companySkillService.importFromSource.mockResolvedValue({
       imported: [
         {
@@ -525,9 +552,9 @@ describe("company skill mutation permissions", () => {
       .send({ source: "https://github.com/vercel-labs/agent-browser" });
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
-    expect(mocks.trackSkillImported).toHaveBeenCalledWith(expect.anything(), {
-      sourceType: "github",
-      skillRef: "vercel-labs/agent-browser/find-skills",
+    expect(telemetryClient.track).toHaveBeenCalledWith("skill.imported", {
+      source_type: "github",
+      skill_ref: "vercel-labs/agent-browser/find-skills",
     });
   });
 
@@ -539,6 +566,10 @@ describe("company skill mutation permissions", () => {
       source: "local_implicit",
       isInstanceAdmin: false,
     });
+    const telemetryClient = {
+      track: vi.fn(),
+    };
+    mocks.getTelemetryClient.mockReturnValue(telemetryClient as any);
     mocks.companySkillService.importFromSource.mockResolvedValue({
       imported: [
         {
@@ -572,9 +603,8 @@ describe("company skill mutation permissions", () => {
       .send({ source: "https://ghe.example.com/acme/private-skill" });
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
-    expect(mocks.trackSkillImported).toHaveBeenCalledWith(expect.anything(), {
-      sourceType: "github",
-      skillRef: null,
+    expect(telemetryClient.track).toHaveBeenCalledWith("skill.imported", {
+      source_type: "github",
     });
   });
 
@@ -586,6 +616,10 @@ describe("company skill mutation permissions", () => {
       source: "local_implicit",
       isInstanceAdmin: false,
     });
+    const telemetryClient = {
+      track: vi.fn(),
+    };
+    mocks.getTelemetryClient.mockReturnValue(telemetryClient as any);
     mocks.companySkillService.importFromSource.mockResolvedValue({
       imported: [
         {
@@ -615,9 +649,8 @@ describe("company skill mutation permissions", () => {
       .send({ source: "https://github.com/acme/private-skill" });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(mocks.trackSkillImported).toHaveBeenCalledWith(expect.anything(), {
-      sourceType: "github",
-      skillRef: null,
+    expect(telemetryClient.track).toHaveBeenCalledWith("skill.imported", {
+      source_type: "github",
     });
   });
 

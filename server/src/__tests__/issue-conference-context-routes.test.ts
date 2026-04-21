@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { issueRoutes } from "../routes/issues.js";
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -24,6 +22,13 @@ const mockIssueApprovalService = vi.hoisted(() => ({
 const mockResolveConferenceContext = vi.hoisted(() => vi.fn());
 
 async function createApp(actor: Record<string, unknown>) {
+  vi.doUnmock("../routes/issues.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  const [{ issueRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/issues.js"),
+    import("../middleware/index.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -165,6 +170,7 @@ function createApproval() {
 
 describe("issue conference context routes", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.resetAllMocks();
     mockIssueService.getById.mockResolvedValue({
       id: "issue-1",

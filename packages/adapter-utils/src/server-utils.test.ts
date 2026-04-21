@@ -290,3 +290,92 @@ describe("renderPaperclipWakePrompt conference-room payloads", () => {
     expect(prompt).not.toContain("issue below. Do not switch");
   });
 });
+
+describe("renderPaperclipWakePrompt office coordination payloads", () => {
+  it("renders company-scoped coordination guidance for the office operator", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "office_coordination_requested",
+      officeCoordination: {
+        companyId: "company-1",
+        officeAgentId: "office-1",
+        trigger: {
+          reason: "issue_intake_created",
+          entityType: "issue",
+          entityId: "issue-1",
+          summary: "PAP-1 Architecture audit",
+        },
+        queueCounts: {
+          untriagedIntake: 1,
+          unassignedIssues: 1,
+          blockedIssues: 1,
+          staleIssues: 0,
+          staffingGaps: 1,
+          engagementsNeedingAttention: 1,
+          sharedSkillItems: 1,
+        },
+        untriagedIntake: [
+          {
+            id: "issue-1",
+            identifier: "PAP-1",
+            title: "Architecture audit",
+            status: "todo",
+            priority: "medium",
+            projectId: "project-1",
+            projectName: "Platform",
+            updatedAt: "2026-04-21T12:00:00.000Z",
+          },
+        ],
+        unassignedIssues: [],
+        blockedIssues: [],
+        staleIssues: [],
+        staffingGaps: [
+          {
+            projectId: "project-1",
+            projectName: "Platform",
+            missingRoles: ["project_lead"],
+            openIssueCount: 3,
+          },
+        ],
+        engagementsNeedingAttention: [
+          {
+            id: "engagement-1",
+            title: "Security audit",
+            serviceAreaKey: "security",
+            status: "requested",
+            targetProjectId: "project-1",
+            targetProjectName: "Platform",
+            updatedAt: "2026-04-21T12:00:00.000Z",
+          },
+        ],
+        sharedSkillItems: [
+          {
+            sharedSkillId: "shared-skill-1",
+            key: "global/codex/find-skills",
+            name: "Find Skills",
+            mirrorState: "paperclip_modified",
+            sourceDriftState: "diverged_needs_review",
+            openProposalId: "proposal-1",
+            openProposalStatus: "pending",
+            openProposalSummary: "Merge upstream changes",
+          },
+        ],
+        recentActions: [
+          {
+            action: "issue.assigned",
+            entityType: "issue",
+            entityId: "issue-2",
+            summary: "PAP-2",
+            createdAt: "2026-04-21T12:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(prompt).toContain("company-wide office/logistics operator");
+    expect(prompt).toContain("Company coordination queue counts");
+    expect(prompt).toContain("Untriaged Intake");
+    expect(prompt).toContain("Project staffing gaps");
+    expect(prompt).toContain("Shared skill coordination items");
+    expect(prompt).toContain("Do not become the continuity owner by default");
+  });
+});

@@ -38,9 +38,12 @@ function createDb(row: Record<string, unknown>) {
 }
 
 async function createApp(actor: Express.Request["actor"], row: Record<string, unknown>) {
+  vi.doUnmock("../routes/auth.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../middleware/validate.js");
   const [{ authRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/auth.js"),
-    import("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/auth.js")>("../routes/auth.js"),
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
   ]);
   const app = express();
   app.use(express.json());
@@ -64,11 +67,18 @@ describe("auth routes", () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.resetModules();
+    vi.resetAllMocks();
+    vi.doUnmock("../routes/auth.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../middleware/validate.js");
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.doUnmock("../routes/auth.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../middleware/validate.js");
   });
 
   it("returns the persisted user profile in the session payload", async () => {

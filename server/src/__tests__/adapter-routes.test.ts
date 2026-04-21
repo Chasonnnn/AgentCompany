@@ -3,6 +3,39 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerAdapterModule } from "../adapters/types.js";
 
+const mocks = vi.hoisted(() => ({
+  listAdapterPlugins: vi.fn(() => []),
+  addAdapterPlugin: vi.fn(),
+  removeAdapterPlugin: vi.fn(),
+  getAdapterPluginByType: vi.fn(),
+  getAdapterPluginsDir: vi.fn(() => "/tmp/paperclip-adapter-route-test"),
+  getDisabledAdapterTypes: vi.fn(() => []),
+  setAdapterDisabled: vi.fn(),
+  loadExternalAdapterPackage: vi.fn(),
+  buildExternalAdapters: vi.fn(async () => []),
+  reloadExternalAdapter: vi.fn(),
+  getUiParserSource: vi.fn(),
+  getOrExtractUiParserSource: vi.fn(),
+}));
+
+vi.mock("../services/adapter-plugin-store.js", () => ({
+  listAdapterPlugins: mocks.listAdapterPlugins,
+  addAdapterPlugin: mocks.addAdapterPlugin,
+  removeAdapterPlugin: mocks.removeAdapterPlugin,
+  getAdapterPluginByType: mocks.getAdapterPluginByType,
+  getAdapterPluginsDir: mocks.getAdapterPluginsDir,
+  getDisabledAdapterTypes: mocks.getDisabledAdapterTypes,
+  setAdapterDisabled: mocks.setAdapterDisabled,
+}));
+
+vi.mock("../adapters/plugin-loader.js", () => ({
+  loadExternalAdapterPackage: mocks.loadExternalAdapterPackage,
+  buildExternalAdapters: mocks.buildExternalAdapters,
+  reloadExternalAdapter: mocks.reloadExternalAdapter,
+  getUiParserSource: mocks.getUiParserSource,
+  getOrExtractUiParserSource: mocks.getOrExtractUiParserSource,
+}));
+
 const overridingConfigSchemaAdapter: ServerAdapterModule = {
   type: "claude_local",
   execute: async () => ({ exitCode: 0, signal: null, timedOut: false }),
@@ -32,6 +65,14 @@ let waitForExternalAdapters: typeof import("../adapters/registry.js").waitForExt
 let adapterRoutes: typeof import("../routes/adapters.js").adapterRoutes;
 let errorHandler: typeof import("../middleware/index.js").errorHandler;
 
+function readAdapterList(res: { body: unknown; text: string }) {
+  if (Array.isArray(res.body)) return res.body as Array<Record<string, unknown>>;
+  if (typeof res.text === "string" && res.text.trim().startsWith("[")) {
+    return JSON.parse(res.text) as Array<Record<string, unknown>>;
+  }
+  throw new Error(`Expected adapter list response array, got: ${JSON.stringify(res.body)}`);
+}
+
 function createApp() {
   const app = express();
   app.use(express.json());
@@ -53,6 +94,13 @@ function createApp() {
 describe("adapter routes", () => {
   beforeEach(async () => {
     vi.resetModules();
+    vi.resetAllMocks();
+    vi.doUnmock("../adapters/registry.js");
+    vi.doUnmock("../routes/adapters.js");
+    vi.doUnmock("../middleware/index.js");
+    mocks.listAdapterPlugins.mockReturnValue([]);
+    mocks.getDisabledAdapterTypes.mockReturnValue([]);
+    mocks.buildExternalAdapters.mockResolvedValue([]);
 
     ({
       registerServerAdapter,
@@ -60,9 +108,9 @@ describe("adapter routes", () => {
       unregisterServerAdapter,
       setOverridePaused,
       waitForExternalAdapters,
-    } = await import("../adapters/registry.js"));
-    ({ adapterRoutes } = await import("../routes/adapters.js"));
-    ({ errorHandler } = await import("../middleware/index.js"));
+    } = await vi.importActual<typeof import("../adapters/registry.js")>("../adapters/registry.js"));
+    ({ adapterRoutes } = await vi.importActual<typeof import("../routes/adapters.js")>("../routes/adapters.js"));
+    ({ errorHandler } = await vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"));
 
     await waitForExternalAdapters();
     resetServerAdaptersForTests();
@@ -73,6 +121,9 @@ describe("adapter routes", () => {
   afterEach(() => {
     unregisterServerAdapter("claude_local");
     resetServerAdaptersForTests();
+    vi.doUnmock("../adapters/registry.js");
+    vi.doUnmock("../routes/adapters.js");
+    vi.doUnmock("../middleware/index.js");
   });
 
   it("GET /api/adapters includes capabilities object for each adapter", async () => {
@@ -100,10 +151,11 @@ describe("adapter routes", () => {
 
     const res = await request(app).get("/api/adapters");
     expect(res.status).toBe(200);
+    const adapters = readAdapterList(res);
 
     // codex_local has instructions bundle + skills + jwt, no materialized skills
     // (claude_local is overridden by beforeEach, so check codex_local instead)
-    const codexLocal = res.body.find((a: any) => a.type === "codex_local");
+    const codexLocal = adapters.find((a: any) => a.type === "codex_local");
     expect(codexLocal).toBeDefined();
     expect(codexLocal.capabilities).toMatchObject({
       supportsInstructionsBundle: true,
@@ -115,7 +167,7 @@ describe("adapter routes", () => {
     });
 
     // process adapter should have no local capabilities
-    const processAdapter = res.body.find((a: any) => a.type === "process");
+    const processAdapter = adapters.find((a: any) => a.type === "process");
     expect(processAdapter).toBeDefined();
     expect(processAdapter.capabilities).toMatchObject({
       supportsInstructionsBundle: false,
@@ -127,12 +179,12 @@ describe("adapter routes", () => {
     });
 
     // cursor adapter should require materialized runtime skills
-    const cursorAdapter = res.body.find((a: any) => a.type === "cursor");
+    const cursorAdapter = adapters.find((a: any) => a.type === "cursor");
     expect(cursorAdapter).toBeDefined();
     expect(cursorAdapter.capabilities.requiresMaterializedRuntimeSkills).toBe(true);
     expect(cursorAdapter.capabilities.supportsInstructionsBundle).toBe(true);
 
-    const geminiAdapter = res.body.find((a: any) => a.type === "gemini_local");
+    const geminiAdapter = adapters.find((a: any) => a.type === "gemini_local");
     expect(geminiAdapter).toBeDefined();
     expect(geminiAdapter.capabilities.nativeDecisionQuestions).toBe(true);
   });
@@ -142,14 +194,15 @@ describe("adapter routes", () => {
 
     const res = await request(app).get("/api/adapters");
     expect(res.status).toBe(200);
+    const adapters = readAdapterList(res);
 
     // http adapter has no listSkills/syncSkills
-    const httpAdapter = res.body.find((a: any) => a.type === "http");
+    const httpAdapter = adapters.find((a: any) => a.type === "http");
     expect(httpAdapter).toBeDefined();
     expect(httpAdapter.capabilities.supportsSkills).toBe(false);
 
     // codex_local has listSkills/syncSkills
-    const codexLocal = res.body.find((a: any) => a.type === "codex_local");
+    const codexLocal = adapters.find((a: any) => a.type === "codex_local");
     expect(codexLocal).toBeDefined();
     expect(codexLocal.capabilities.supportsSkills).toBe(true);
   });

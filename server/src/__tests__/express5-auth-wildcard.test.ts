@@ -21,11 +21,12 @@ describe("Express 5 /api/auth wildcard route", () => {
   function buildApp() {
     const app = express();
     let hits = 0;
+    const authRoute = new RegExp(AUTH_WILDCARD_ROUTE.source, AUTH_WILDCARD_ROUTE.flags);
     const handler = vi.fn((_req: express.Request, res: express.Response) => {
       hits += 1;
       res.status(200).json({ ok: true });
     });
-    app.all(AUTH_WILDCARD_ROUTE, handler);
+    app.all(authRoute, handler);
     return { app, handler, getHits: () => hits };
   }
 

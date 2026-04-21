@@ -1,10 +1,18 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { evalRoutes } from "../routes/evals.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-async function createHarness(actor: any) {
+async function createHarness(
+  actor: any,
+  overrides?: {
+    getRun?: (runId: string) => Promise<unknown> | unknown;
+  },
+) {
+  vi.doUnmock("../routes/evals.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../services/evals.js");
+
   const evalService = {
     getSummary: vi.fn().mockResolvedValue({
       artifactSchemaVersion: 1,
@@ -40,13 +48,22 @@ async function createHarness(actor: any) {
         sourceKind: "seeded",
       },
     ]),
-    getRun: vi.fn().mockResolvedValue({
-      runId: "run-1",
-      status: "passed",
-      redactionMode: "redacted",
-      sourceKind: "seeded",
+    getRun: vi.fn(async (runId: string) => {
+      if (overrides?.getRun) {
+        return await overrides.getRun(runId);
+      }
+      return {
+        runId,
+        status: "passed",
+        redactionMode: "redacted",
+        sourceKind: "seeded",
+      };
     }),
   };
+  const [{ errorHandler }, { evalRoutes }] = await Promise.all([
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/evals.js")>("../routes/evals.js"),
+  ]);
 
   const app = express();
   app.use(express.json());
@@ -62,8 +79,21 @@ async function createHarness(actor: any) {
 
 describe("eval routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetModules();
+    vi.resetAllMocks();
+    vi.doUnmock("../routes/evals.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../services/evals.js");
   });
+
+  afterEach(() => {
+    vi.doUnmock("../routes/evals.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../services/evals.js");
+  });
+
   it("allows instance admins to read summary and run detail", async () => {
     const { app, evalService } = await createHarness({
       type: "board",
@@ -113,16 +143,19 @@ describe("eval routes", () => {
   });
 
   it("returns 404 for unknown runs", async () => {
-    const { app, evalService } = await createHarness({
+    const missingRun = vi.fn().mockResolvedValue(null);
+    const { app } = await createHarness({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
       isInstanceAdmin: true,
+    }, {
+      getRun: missingRun,
     });
-    evalService.getRun.mockResolvedValueOnce(null);
 
     const res = await request(app).get("/api/instance/evals/runs/missing-run");
     expect(res.status).toBe(404);
     expect(res.body.error).toContain("Eval run not found");
+    expect(missingRun).toHaveBeenCalledWith("missing-run");
   });
 });

@@ -1,41 +1,39 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 async function createHarness(actor: any) {
-  const instanceSettingsService = {
-    getGeneral: vi.fn().mockResolvedValue({
+  vi.doUnmock("../routes/instance-settings.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../middleware/validate.js");
+  vi.doUnmock("../services/index.js");
+
+  const state = {
+    general: {
       censorUsernameInLogs: false,
       keyboardShortcuts: false,
       feedbackDataSharingPreference: "prompt",
-    }),
-    getExperimental: vi.fn().mockResolvedValue({
+    },
+    experimental: {
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
-    }),
-    updateGeneral: vi.fn(async (patch: Record<string, unknown>) => ({
-      id: "instance-settings-1",
-      general: {
-        censorUsernameInLogs: false,
-        keyboardShortcuts: false,
-        feedbackDataSharingPreference: "prompt",
-        ...patch,
-      },
-    })),
-    updateExperimental: vi.fn(async (patch: Record<string, unknown>) => ({
-      id: "instance-settings-1",
-      experimental: {
-        enableIsolatedWorkspaces: false,
-        autoRestartDevServerWhenIdle: false,
-        ...patch,
-      },
-    })),
-    listCompanyIds: vi.fn().mockResolvedValue(["company-1", "company-2"]),
+    },
+    companyIds: ["company-1", "company-2"],
   };
-  const logActivity = vi.fn().mockResolvedValue(undefined);
+
+  const calls = {
+    getGeneral: [] as unknown[][],
+    getExperimental: [] as unknown[][],
+    updateGeneral: [] as unknown[][],
+    updateExperimental: [] as unknown[][],
+    listCompanyIds: [] as unknown[][],
+    logActivity: [] as unknown[][],
+  };
+
   const [{ errorHandler }, { instanceSettingsRoutes }] = await Promise.all([
-    import("../middleware/index.js"),
-    import("../routes/instance-settings.js"),
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/instance-settings.js")>("../routes/instance-settings.js"),
   ]);
 
   const app = express();
@@ -45,17 +43,61 @@ async function createHarness(actor: any) {
     next();
   });
   app.use("/api", instanceSettingsRoutes({} as any, {
-    instanceSettingsService: instanceSettingsService as any,
-    logActivity,
+    instanceSettingsService: {
+      getGeneral: async (...args: unknown[]) => {
+        calls.getGeneral.push(args);
+        return state.general;
+      },
+      getExperimental: async (...args: unknown[]) => {
+        calls.getExperimental.push(args);
+        return state.experimental;
+      },
+      updateGeneral: async (...args: unknown[]) => {
+        calls.updateGeneral.push(args);
+        state.general = { ...state.general, ...(args[0] as Record<string, unknown>) };
+        return {
+          id: "instance-settings-1",
+          general: state.general,
+        };
+      },
+      updateExperimental: async (...args: unknown[]) => {
+        calls.updateExperimental.push(args);
+        state.experimental = { ...state.experimental, ...(args[0] as Record<string, unknown>) };
+        return {
+          id: "instance-settings-1",
+          experimental: state.experimental,
+        };
+      },
+      listCompanyIds: async (...args: unknown[]) => {
+        calls.listCompanyIds.push(args);
+        return state.companyIds;
+      },
+    } as any,
+    logActivity: async (...args: unknown[]) => {
+      calls.logActivity.push(args);
+    },
   }));
   app.use(errorHandler);
 
-  return { app, instanceSettingsService, logActivity };
+  return { app, state, calls };
 }
 
 describe("instance settings routes", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.doUnmock("../routes/instance-settings.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../services/index.js");
+  });
+
+  afterEach(() => {
+    vi.doUnmock("../routes/instance-settings.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../services/index.js");
   });
 
   it("allows local board users to read and update experimental settings", async () => {
@@ -140,7 +182,7 @@ describe("instance settings routes", () => {
   });
 
   it("allows non-admin board users to read general settings", async () => {
-    const { app, instanceSettingsService } = await createHarness({
+    const { app, calls } = await createHarness({
       type: "board",
       userId: "user-1",
       source: "session",
@@ -151,7 +193,7 @@ describe("instance settings routes", () => {
     const res = await request(app).get("/api/instance/settings/general");
 
     expect(res.status).toBe(200);
-    expect(instanceSettingsService.getGeneral).toHaveBeenCalled();
+    expect(calls.getGeneral).toHaveLength(1);
   });
 
   it("rejects non-admin board users from updating general settings", async () => {

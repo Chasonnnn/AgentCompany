@@ -9,6 +9,32 @@ const mockHeartbeatService = vi.hoisted(() => ({
   wakeup: vi.fn(async () => undefined),
 }));
 
+const mockOfficeCoordinationService = vi.hoisted(() => ({
+  findOfficeOperator: vi.fn(async () => null),
+  buildWakeSnapshot: vi.fn(async () => ({
+    companyId: "company-1",
+    officeAgentId: "office-1",
+    trigger: { reason: "issue_intake_created" },
+    queueCounts: {
+      untriagedIntake: 1,
+      unassignedIssues: 0,
+      blockedIssues: 0,
+      staleIssues: 0,
+      staffingGaps: 0,
+      engagementsNeedingAttention: 0,
+      sharedSkillItems: 0,
+    },
+    untriagedIntake: [],
+    unassignedIssues: [],
+    blockedIssues: [],
+    staleIssues: [],
+    staffingGaps: [],
+    engagementsNeedingAttention: [],
+    sharedSkillItems: [],
+    recentActions: [],
+  })),
+}));
+
 const mockIssueService = vi.hoisted(() => ({
   create: vi.fn(),
 }));
@@ -51,6 +77,7 @@ vi.mock("../services/index.js", () => ({
   issueContinuityService: () => mockContinuityService,
   issueService: () => mockIssueService,
   logActivity: vi.fn(async () => undefined),
+  officeCoordinationService: () => mockOfficeCoordinationService,
   projectService: () => ({}),
   routineService: () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
@@ -107,8 +134,10 @@ function makeContinuityState(overrides: Record<string, unknown> = {}) {
 
 describe("issue creation wakeups", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
     mockAgentService.resolvePrimaryProjectLeadForProject.mockResolvedValue({ agent: null, ambiguous: false });
+    mockOfficeCoordinationService.findOfficeOperator.mockResolvedValue(null);
     mockIssueService.create.mockResolvedValue({
       id: "issue-1",
       companyId: "company-1",
@@ -188,7 +217,7 @@ describe("issue creation wakeups", () => {
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
-  it("defaults a project-scoped issue to the project lead when no assignee is provided", async () => {
+  it("defaults a project-scoped issue to the project lead when no office operator exists", async () => {
     mockAgentService.resolvePrimaryProjectLeadForProject.mockResolvedValue({
       agent: { id: ASSIGNEE_AGENT_ID },
       ambiguous: false,
@@ -216,6 +245,59 @@ describe("issue creation wakeups", () => {
       ASSIGNEE_AGENT_ID,
       expect.objectContaining({
         reason: "issue_assigned",
+      }),
+    );
+  });
+
+  it("leaves project-scoped intake unassigned and wakes the office operator when one exists", async () => {
+    mockOfficeCoordinationService.findOfficeOperator.mockResolvedValue({
+      id: "office-1",
+      companyId: "company-1",
+      role: "coo",
+      archetypeKey: "chief_of_staff",
+      status: "idle",
+    });
+    mockIssueService.create.mockResolvedValue({
+      id: "issue-1",
+      companyId: "company-1",
+      title: "Architecture audit",
+      identifier: "PAP-1",
+      status: "todo",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+      priority: "medium",
+      projectId: PROJECT_ID,
+      goalId: null,
+      parentId: null,
+    });
+
+    const res = await request(await createApp()).post("/api/companies/company-1/issues").send({
+      title: "Architecture audit",
+      projectId: PROJECT_ID,
+      status: "todo",
+      continuityTier: "normal",
+      prepareContinuity: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(res.status).toBe(201);
+    expect(mockAgentService.resolvePrimaryProjectLeadForProject).not.toHaveBeenCalled();
+    expect(mockIssueService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        projectId: PROJECT_ID,
+        assigneeAgentId: null,
+      }),
+    );
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "office-1",
+      expect.objectContaining({
+        reason: "office_coordination_requested",
+        contextSnapshot: expect.objectContaining({
+          paperclipOfficeCoordination: expect.objectContaining({
+            officeAgentId: "office-1",
+          }),
+        }),
       }),
     );
   });

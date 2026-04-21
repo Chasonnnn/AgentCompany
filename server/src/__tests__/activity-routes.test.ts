@@ -50,6 +50,7 @@ async function createApp() {
 
 describe("activity routes", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
   });
 

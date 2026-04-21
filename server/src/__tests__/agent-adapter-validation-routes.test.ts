@@ -79,6 +79,9 @@ const externalAdapter: ServerAdapterModule = {
 };
 
 async function createApp() {
+  vi.doUnmock("../routes/agents.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
   vi.doUnmock("../services/index.js");
   vi.doUnmock("../services/instance-settings.js");
   vi.resetModules();
@@ -140,6 +143,9 @@ async function createApp() {
 
 describe("agent routes adapter validation", () => {
   beforeEach(() => {
+    vi.doUnmock("../routes/agents.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/authz.js");
     vi.doUnmock("../services/index.js");
     vi.doUnmock("../services/instance-settings.js");
     vi.clearAllMocks();
@@ -190,6 +196,9 @@ describe("agent routes adapter validation", () => {
   });
 
   afterEach(() => {
+    vi.doUnmock("../routes/agents.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/authz.js");
     vi.doUnmock("../services/index.js");
     vi.doUnmock("../services/instance-settings.js");
   });

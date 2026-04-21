@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { companyRoutes } from "../routes/companies.js";
-import { errorHandler } from "../middleware/index.js";
 
 const mockCompanyService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -25,6 +23,17 @@ const mockAccessService = vi.hoisted(() => ({
 const mockBudgetService = vi.hoisted(() => ({
   upsertPolicy: vi.fn(),
 }));
+
+const mockAgentHasCreatePermission = vi.hoisted(() =>
+  vi.fn((agent: Record<string, unknown> | null | undefined) => {
+    if (!agent || typeof agent !== "object") return false;
+    const permissions = (agent as { permissions?: { canCreateAgents?: boolean } }).permissions;
+    if (typeof permissions?.canCreateAgents === "boolean") {
+      return permissions.canCreateAgents;
+    }
+    return (agent as { role?: string }).role === "ceo";
+  }),
+);
 
 const mockCompanyPortabilityService = vi.hoisted(() => ({
   exportBundle: vi.fn(),
@@ -71,7 +80,18 @@ vi.mock("../services/index.js", () => ({
   logActivity: mockLogActivity,
 }));
 
-function createApp(actor: Record<string, unknown>) {
+vi.mock("../services/agent-permissions.js", () => ({
+  agentHasCreatePermission: mockAgentHasCreatePermission,
+}));
+
+async function createApp(actor: Record<string, unknown>) {
+  vi.doUnmock("../routes/companies.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  const [{ companyRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/companies.js"),
+    import("../middleware/index.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -85,7 +105,16 @@ function createApp(actor: Record<string, unknown>) {
 
 describe("company portability routes", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.resetAllMocks();
+    mockAgentHasCreatePermission.mockImplementation((agent: Record<string, unknown> | null | undefined) => {
+      if (!agent || typeof agent !== "object") return false;
+      const permissions = (agent as { permissions?: { canCreateAgents?: boolean } }).permissions;
+      if (typeof permissions?.canCreateAgents === "boolean") {
+        return permissions.canCreateAgents;
+      }
+      return (agent as { role?: string }).role === "ceo";
+    });
   });
 
   it("rejects agents without create authority from company-scoped export preview routes", async () => {
@@ -94,7 +123,7 @@ describe("company portability routes", () => {
       companyId: "11111111-1111-4111-8111-111111111111",
       role: "engineer",
     });
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -126,7 +155,7 @@ describe("company portability routes", () => {
       warnings: [],
       paperclipExtensionPath: ".paperclip.yaml",
     });
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -160,7 +189,7 @@ describe("company portability routes", () => {
         previewImportCalls.push(args);
         return { ok: true };
       }) as any;
-      const app = createApp({
+      const app = await createApp({
         type: "agent",
         agentId: "agent-1",
         companyId: "11111111-1111-4111-8111-111111111111",
@@ -188,7 +217,7 @@ describe("company portability routes", () => {
   });
 
   it("keeps global import preview routes board-only", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -210,7 +239,7 @@ describe("company portability routes", () => {
   });
 
   it("requires instance admin for new-company import preview", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       companyIds: ["11111111-1111-4111-8111-111111111111"],
@@ -233,7 +262,7 @@ describe("company portability routes", () => {
   });
 
   it("requires instance admin for new-company import apply", async () => {
-    const app = createApp({
+    const app = await createApp({
       type: "board",
       userId: "user-1",
       companyIds: ["11111111-1111-4111-8111-111111111111"],

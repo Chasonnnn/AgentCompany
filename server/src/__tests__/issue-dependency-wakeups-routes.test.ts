@@ -62,6 +62,11 @@ function registerRouteMocks() {
         lastBundleHash: null,
       })),
     }),
+    officeCoordinationService: () => ({
+      findOfficeOperator: vi.fn(async () => null),
+      buildWakeSnapshot: vi.fn(async () => null),
+      isOfficeOperatorAgent: vi.fn(async () => false),
+    }),
     issueService: () => mockIssueService,
     logActivity: vi.fn(async () => undefined),
     projectService: () => ({

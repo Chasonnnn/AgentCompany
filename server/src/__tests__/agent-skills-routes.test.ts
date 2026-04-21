@@ -1,10 +1,10 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { agentRoutes } from "../routes/agents.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  list: vi.fn(),
   update: vi.fn(),
   create: vi.fn(),
   resolveByReference: vi.fn(),
@@ -49,6 +49,7 @@ const mockAgentSkillService = vi.hoisted(() => ({
   resolveDesiredSkillAssignment: vi.fn(),
 }));
 const mockAgentTemplateService = vi.hoisted(() => ({
+  list: vi.fn(),
   resolveRevisionForInstantiation: vi.fn(),
   listTemplates: vi.fn(),
   listRevisions: vi.fn(),
@@ -109,6 +110,11 @@ async function createApp(
     isInstanceAdmin: false,
   },
 ) {
+  vi.doUnmock("../routes/agents.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/validate.js");
+  const { agentRoutes } = await vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -149,7 +155,7 @@ async function createApp(
   return app;
 }
 
-function makeAgent(adapterType: string) {
+function makeAgent(adapterType: string, overrides: Record<string, unknown> = {}) {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     companyId: "company-1",
@@ -164,6 +170,9 @@ function makeAgent(adapterType: string) {
     runtimeConfig: {},
     permissions: null,
     updatedAt: new Date(),
+    archetypeKey: null,
+    operatingClass: null,
+    ...overrides,
   };
 }
 
@@ -206,14 +215,41 @@ function makeTemplateResolution(
 }
 
 describe("agent skill routes", () => {
+  const ceoId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const projectLeadId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetModules();
+    vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
+    mockAgentTemplateService.list.mockResolvedValue([
+      { id: "template-chief-of-staff", archetypeKey: "chief_of_staff" },
+    ]);
     mockAgentService.resolveByReference.mockResolvedValue({
       ambiguous: false,
       agent: makeAgent("claude_local"),
     });
+    mockAgentService.list.mockResolvedValue([
+      makeAgent("claude_local", {
+        id: ceoId,
+        name: "CEO",
+        role: "ceo",
+        archetypeKey: "ceo",
+        operatingClass: "executive",
+        reportsTo: null,
+        status: "active",
+      }),
+      makeAgent("claude_local", {
+        id: projectLeadId,
+        name: "Project Lead",
+        role: "engineer",
+        archetypeKey: "project_lead",
+        operatingClass: "project_leadership",
+        reportsTo: ceoId,
+        status: "active",
+      }),
+    ]);
     mockSecretService.resolveAdapterConfigForRuntime.mockResolvedValue({ config: { env: {} } });
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([
       {
@@ -248,9 +284,11 @@ describe("agent skill routes", () => {
       entries: [],
       warnings: [],
     });
-    mockAgentService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
-      ...makeAgent("claude_local"),
+    mockAgentService.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      ...makeAgent("claude_local", { id }),
+      ...patch,
       adapterConfig: patch.adapterConfig ?? {},
+      runtimeConfig: patch.runtimeConfig ?? {},
     }));
     mockAgentSkillService.listSkills.mockImplementation(
       async (agent: Record<string, unknown>, options?: { canManage?: boolean }) => {
@@ -759,5 +797,38 @@ describe("agent skill routes", () => {
       | { payload?: { adapterConfig?: Record<string, unknown> } }
       | undefined;
     expect(approvalInput?.payload?.adapterConfig?.promptTemplate).toBeUndefined();
+  });
+
+  it("creates and adopts a chief-of-staff office operator, then reparents project leads", async () => {
+    mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(
+      makeTemplateResolution({
+        name: "Chief of Staff",
+        role: "coo",
+        title: "Chief of Staff",
+        orgLevel: "executive",
+        operatingClass: "executive",
+        capabilityProfileKey: "executive_operator",
+        archetypeKey: "chief_of_staff",
+        departmentKey: "operations",
+        departmentName: "Operations",
+      }),
+    );
+
+    const res = await request(await createApp())
+      .post("/api/companies/company-1/office-operator-adoption")
+      .send({ reparentProjectLeads: true, seedFromAgentId: ceoId });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        role: "coo",
+        archetypeKey: "chief_of_staff",
+        reportsTo: ceoId,
+      }),
+    );
+    expect(mockAgentService.update).toHaveBeenCalledWith(projectLeadId, { reportsTo: expect.any(String) });
+    expect(res.body.created).toBe(true);
+    expect(res.body.reparentedProjectLeadIds).toContain(projectLeadId);
   });
 });

@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { issueRoutes } from "../routes/issues.js";
-import { errorHandler } from "../middleware/index.js";
 
 const issueId = "11111111-1111-4111-8111-111111111111";
 const companyId = "22222222-2222-4222-8222-222222222222";
@@ -62,6 +60,11 @@ vi.mock("../services/index.js", () => ({
   }),
   issueService: () => mockIssueService,
   logActivity: mockLogActivity,
+  officeCoordinationService: () => ({
+    findOfficeOperator: vi.fn(async () => null),
+    buildWakeSnapshot: vi.fn(async () => null),
+    isOfficeOperatorAgent: vi.fn(async () => false),
+  }),
   projectService: () => ({}),
   routineService: () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
@@ -69,7 +72,13 @@ vi.mock("../services/index.js", () => ({
   workProductService: () => ({}),
 }));
 
-function createApp() {
+async function createApp() {
+  vi.doUnmock("../routes/issues.js");
+  vi.doUnmock("../middleware/index.js");
+  const [{ issueRoutes }, { errorHandler }] = await Promise.all([
+    import("../routes/issues.js"),
+    import("../middleware/index.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -89,6 +98,7 @@ function createApp() {
 
 describe("issue document revision routes", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.resetAllMocks();
     mockIssueService.getById.mockResolvedValue({
       id: issueId,
@@ -154,7 +164,7 @@ describe("issue document revision routes", () => {
   });
 
   it("returns revision snapshots including title and format", async () => {
-    const res = await request(createApp()).get(`/api/issues/${issueId}/documents/plan/revisions`);
+    const res = await request(await createApp()).get(`/api/issues/${issueId}/documents/plan/revisions`);
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(expect.arrayContaining([
@@ -168,7 +178,7 @@ describe("issue document revision routes", () => {
   });
 
   it("restores a revision through the append-only route and logs the action", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post(`/api/issues/${issueId}/documents/plan/revisions/revision-1/restore`)
       .send({});
 
@@ -200,7 +210,7 @@ describe("issue document revision routes", () => {
   });
 
   it("rejects invalid document keys before attempting restore", async () => {
-    const res = await request(createApp())
+    const res = await request(await createApp())
       .post(`/api/issues/${issueId}/documents/INVALID KEY/revisions/revision-1/restore`)
       .send({});
 
