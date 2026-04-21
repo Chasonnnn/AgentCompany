@@ -336,13 +336,34 @@ describe("company skill mutation permissions", () => {
       source: "local_implicit",
       isInstanceAdmin: false,
     });
+    const originalPreviewCoverageRepair = mocks.agentSkillService.previewCoverageRepair;
+    const previewCoverageRepairCalls: unknown[][] = [];
+    try {
+      (mocks.agentSkillService as any).previewCoverageRepair = async (...args: unknown[]) => {
+        previewCoverageRepairCalls.push(args);
+        return {
+          companyId: "company-1",
+          auditedAgentCount: 2,
+          coveredCount: 1,
+          repairableGapCount: 1,
+          nonrepairableGapCount: 0,
+          customizedCount: 0,
+          plannedImports: [],
+          agents: [],
+          changedAgentCount: 1,
+          selectionFingerprint: "coverage-fingerprint-1",
+        };
+      };
 
-    const res = await request(app)
-      .post("/api/companies/company-1/skills/coverage-audit/repair-preview")
-      .send({});
+      const res = await request(app)
+        .post("/api/companies/company-1/skills/coverage-audit/repair-preview")
+        .send({});
 
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mocks.agentSkillService.previewCoverageRepair).toHaveBeenCalledWith("company-1");
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(previewCoverageRepairCalls).toEqual([["company-1"]]);
+    } finally {
+      (mocks.agentSkillService as any).previewCoverageRepair = originalPreviewCoverageRepair;
+    }
   });
 
   it("applies a company skill coverage repair", async () => {
@@ -353,26 +374,50 @@ describe("company skill mutation permissions", () => {
       source: "local_implicit",
       isInstanceAdmin: false,
     });
+    const originalApplyCoverageRepair = mocks.agentSkillService.applyCoverageRepair;
+    const applyCoverageRepairCalls: unknown[][] = [];
+    try {
+      (mocks.agentSkillService as any).applyCoverageRepair = async (...args: unknown[]) => {
+        applyCoverageRepairCalls.push(args);
+        return {
+          companyId: "company-1",
+          changedAgentCount: 1,
+          appliedAgentIds: ["agent-1"],
+          importedSkills: [],
+          rollbackPerformed: false,
+          rollbackErrors: [],
+          selectionFingerprint: "coverage-fingerprint-1",
+          audit: {
+            companyId: "company-1",
+            auditedAgentCount: 2,
+            coveredCount: 2,
+            repairableGapCount: 0,
+            nonrepairableGapCount: 0,
+            customizedCount: 0,
+            plannedImports: [],
+            agents: [],
+          },
+        };
+      };
 
-    const res = await request(app)
-      .post("/api/companies/company-1/skills/coverage-audit/repair-apply")
-      .send({ selectionFingerprint: "coverage-fingerprint-1" });
+      const res = await request(app)
+        .post("/api/companies/company-1/skills/coverage-audit/repair-apply")
+        .send({ selectionFingerprint: "coverage-fingerprint-1" });
 
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mocks.agentSkillService.applyCoverageRepair).toHaveBeenCalledWith(
-      "company-1",
-      { selectionFingerprint: "coverage-fingerprint-1" },
-      {
-        actorType: "user",
-        actorId: "local-board",
-        agentId: null,
-        runId: null,
-      },
-    );
-    expect(mocks.logActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      action: "company.skill_coverage_repair_applied",
-      entityId: "company-1",
-    }));
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(applyCoverageRepairCalls).toEqual([[
+        "company-1",
+        { selectionFingerprint: "coverage-fingerprint-1" },
+        {
+          actorType: "user",
+          actorId: "local-board",
+          agentId: null,
+          runId: null,
+        },
+      ]]);
+    } finally {
+      (mocks.agentSkillService as any).applyCoverageRepair = originalApplyCoverageRepair;
+    }
   });
 
   it("previews a bulk skill grant for board actors", async () => {

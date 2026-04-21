@@ -2,35 +2,160 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockRegistry = vi.hoisted(() => ({
-  getById: vi.fn(),
-  getByKey: vi.fn(),
-  upsertConfig: vi.fn(),
-}));
+const mockServices = vi.hoisted(() => {
+  const registry = {
+    calls: {
+      getById: [] as unknown[][],
+      getByKey: [] as unknown[][],
+      upsertConfig: [] as unknown[][],
+    },
+    results: {
+      getById: undefined as unknown,
+      getByKey: undefined as unknown,
+      upsertConfig: undefined as unknown,
+    },
+    reset() {
+      this.calls.getById.length = 0;
+      this.calls.getByKey.length = 0;
+      this.calls.upsertConfig.length = 0;
+      this.results.getById = undefined;
+      this.results.getByKey = undefined;
+      this.results.upsertConfig = undefined;
+    },
+    async getById(...args: unknown[]) {
+      registry.calls.getById.push(args);
+      return registry.results.getById;
+    },
+    async getByKey(...args: unknown[]) {
+      registry.calls.getByKey.push(args);
+      return registry.results.getByKey;
+    },
+    async upsertConfig(...args: unknown[]) {
+      registry.calls.upsertConfig.push(args);
+      return registry.results.upsertConfig;
+    },
+  };
 
-const mockLifecycle = vi.hoisted(() => ({
-  load: vi.fn(),
-  upgrade: vi.fn(),
-  unload: vi.fn(),
-  enable: vi.fn(),
-  disable: vi.fn(),
-}));
+  const lifecycle = {
+    calls: {
+      load: [] as unknown[][],
+      upgrade: [] as unknown[][],
+      unload: [] as unknown[][],
+      enable: [] as unknown[][],
+      disable: [] as unknown[][],
+    },
+    results: {
+      load: undefined as unknown,
+      upgrade: undefined as unknown,
+      unload: undefined as unknown,
+      enable: undefined as unknown,
+      disable: undefined as unknown,
+    },
+    reset() {
+      this.calls.load.length = 0;
+      this.calls.upgrade.length = 0;
+      this.calls.unload.length = 0;
+      this.calls.enable.length = 0;
+      this.calls.disable.length = 0;
+      this.results.load = undefined;
+      this.results.upgrade = undefined;
+      this.results.unload = undefined;
+      this.results.enable = undefined;
+      this.results.disable = undefined;
+    },
+    async load(...args: unknown[]) {
+      lifecycle.calls.load.push(args);
+      return lifecycle.results.load;
+    },
+    async upgrade(...args: unknown[]) {
+      lifecycle.calls.upgrade.push(args);
+      return lifecycle.results.upgrade;
+    },
+    async unload(...args: unknown[]) {
+      lifecycle.calls.unload.push(args);
+      return lifecycle.results.unload;
+    },
+    async enable(...args: unknown[]) {
+      lifecycle.calls.enable.push(args);
+      return lifecycle.results.enable;
+    },
+    async disable(...args: unknown[]) {
+      lifecycle.calls.disable.push(args);
+      return lifecycle.results.disable;
+    },
+  };
+
+  const activityLog = {
+    calls: [] as unknown[][],
+    reset() {
+      this.calls.length = 0;
+    },
+    async log(...args: unknown[]) {
+      activityLog.calls.push(args);
+    },
+  };
+
+  const liveEvents = {
+    calls: [] as unknown[][],
+    reset() {
+      this.calls.length = 0;
+    },
+    publish(...args: unknown[]) {
+      liveEvents.calls.push(args);
+    },
+  };
+
+  return { registry, lifecycle, activityLog, liveEvents };
+});
 
 vi.mock("../services/plugin-registry.js", () => ({
-  pluginRegistryService: () => mockRegistry,
+  pluginRegistryService: () => mockServices.registry,
 }));
 
 vi.mock("../services/plugin-lifecycle.js", () => ({
-  pluginLifecycleManager: () => mockLifecycle,
+  pluginLifecycleManager: () => mockServices.lifecycle,
 }));
 
 vi.mock("../services/activity-log.js", () => ({
-  logActivity: vi.fn(),
+  logActivity: (...args: unknown[]) => mockServices.activityLog.log(...args),
 }));
 
 vi.mock("../services/live-events.js", () => ({
-  publishGlobalLiveEvent: vi.fn(),
+  publishGlobalLiveEvent: (...args: unknown[]) => mockServices.liveEvents.publish(...args),
 }));
+
+function resetPluginRouteMocks() {
+  mockServices.registry.reset();
+  mockServices.lifecycle.reset();
+  mockServices.activityLog.reset();
+  mockServices.liveEvents.reset();
+}
+
+function createAsyncRecorder<TArgs extends unknown[], TResult>(
+  impl: (...args: TArgs) => Promise<TResult> | TResult,
+) {
+  const calls: TArgs[] = [];
+  return {
+    calls,
+    fn: async (...args: TArgs): Promise<TResult> => {
+      calls.push(args);
+      return await impl(...args);
+    },
+  };
+}
+
+function createRecorder<TArgs extends unknown[], TResult>(
+  impl: (...args: TArgs) => TResult,
+) {
+  const calls: TArgs[] = [];
+  return {
+    calls,
+    fn: (...args: TArgs): TResult => {
+      calls.push(args);
+      return impl(...args);
+    },
+  };
+}
 
 async function createApp(
   actor: Record<string, unknown>,
@@ -47,8 +172,9 @@ async function createApp(
     import("../middleware/index.js"),
   ]);
 
+  const defaultInstallPlugin = createAsyncRecorder(async () => undefined);
   const loader = {
-    installPlugin: vi.fn(),
+    installPlugin: defaultInstallPlugin.fn,
     ...loaderOverrides,
   };
 
@@ -68,23 +194,23 @@ async function createApp(
   ));
   app.use(errorHandler);
 
-  return { app, loader };
+  return { app, loader, installPluginCalls: defaultInstallPlugin.calls };
 }
 
 function createSelectQueueDb(rows: Array<Array<Record<string, unknown>>>) {
   let callIndex = 0;
   return {
-    select: vi.fn(() => {
+    select: () => {
       const responseRows = rows[callIndex] ?? [];
       callIndex += 1;
       return {
-        from: vi.fn(() => ({
-          where: vi.fn(() => ({
-            limit: vi.fn(() => Promise.resolve(responseRows)),
-          })),
-        })),
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve(responseRows),
+          }),
+        }),
       };
-    }),
+    },
   };
 }
 
@@ -107,21 +233,22 @@ function boardActor(overrides: Record<string, unknown> = {}) {
 }
 
 function readyPlugin() {
-  mockRegistry.getById.mockResolvedValue({
+  mockServices.registry.results.getById = {
     id: pluginId,
     pluginKey: "paperclip.example",
     version: "1.0.0",
     status: "ready",
-  });
+  };
 }
 
 describe("plugin install and upgrade authz", () => {
   beforeEach(() => {
-    vi.resetAllMocks();
+    resetPluginRouteMocks();
+    vi.resetModules();
   });
 
   it("rejects plugin installation for non-admin board users", async () => {
-    const { app, loader } = await createApp({
+    const { app, installPluginCalls } = await createApp({
       type: "board",
       userId: "user-1",
       source: "session",
@@ -134,7 +261,7 @@ describe("plugin install and upgrade authz", () => {
       .send({ packageName: "paperclip-plugin-example" });
 
     expect(res.status).toBe(403);
-    expect(loader.installPlugin).not.toHaveBeenCalled();
+    expect(installPluginCalls).toHaveLength(0);
   }, 20_000);
 
   it("allows instance admins to install plugins", async () => {
@@ -143,22 +270,23 @@ describe("plugin install and upgrade authz", () => {
         id: "paperclip.example",
       },
     };
+    const installPlugin = createAsyncRecorder(async () => discovered);
 
-    mockRegistry.getByKey.mockResolvedValue({
+    mockServices.registry.results.getByKey = {
       id: pluginId,
       pluginKey: "paperclip.example",
       packageName: "paperclip-plugin-example",
       version: "1.0.0",
-    });
-    mockRegistry.getById.mockResolvedValue({
+    };
+    mockServices.registry.results.getById = {
       id: pluginId,
       pluginKey: "paperclip.example",
       packageName: "paperclip-plugin-example",
       version: "1.0.0",
-    });
-    mockLifecycle.load.mockResolvedValue(undefined);
+    };
+    mockServices.lifecycle.results.load = undefined;
 
-    const { app, loader } = await createApp(
+    const { app } = await createApp(
       {
         type: "board",
         userId: "admin-1",
@@ -166,7 +294,7 @@ describe("plugin install and upgrade authz", () => {
         isInstanceAdmin: true,
         companyIds: [],
       },
-      { installPlugin: vi.fn().mockResolvedValue(discovered) },
+      { installPlugin: installPlugin.fn },
     );
 
     const res = await request(app)
@@ -174,11 +302,13 @@ describe("plugin install and upgrade authz", () => {
       .send({ packageName: "paperclip-plugin-example" });
 
     expect(res.status).toBe(200);
-    expect(loader.installPlugin).toHaveBeenCalledWith({
-      packageName: "paperclip-plugin-example",
-      version: undefined,
-    });
-    expect(mockLifecycle.load).toHaveBeenCalledWith(pluginId);
+    expect(installPlugin.calls).toEqual([
+      [{
+        packageName: "paperclip-plugin-example",
+        version: undefined,
+      }],
+    ]);
+    expect(mockServices.lifecycle.calls.load).toEqual([[pluginId]]);
   }, 20_000);
 
   it("rejects plugin upgrades for non-admin board users", async () => {
@@ -195,8 +325,8 @@ describe("plugin install and upgrade authz", () => {
       .send({});
 
     expect(res.status).toBe(403);
-    expect(mockRegistry.getById).not.toHaveBeenCalled();
-    expect(mockLifecycle.upgrade).not.toHaveBeenCalled();
+    expect(mockServices.registry.calls.getById).toHaveLength(0);
+    expect(mockServices.lifecycle.calls.upgrade).toHaveLength(0);
   }, 20_000);
 
   it.each([
@@ -217,23 +347,23 @@ describe("plugin install and upgrade authz", () => {
     const res = await req;
 
     expect(res.status).toBe(403);
-    expect(mockRegistry.getById).not.toHaveBeenCalled();
-    expect(mockRegistry.upsertConfig).not.toHaveBeenCalled();
-    expect(mockLifecycle.unload).not.toHaveBeenCalled();
-    expect(mockLifecycle.enable).not.toHaveBeenCalled();
-    expect(mockLifecycle.disable).not.toHaveBeenCalled();
+    expect(mockServices.registry.calls.getById).toHaveLength(0);
+    expect(mockServices.registry.calls.upsertConfig).toHaveLength(0);
+    expect(mockServices.lifecycle.calls.unload).toHaveLength(0);
+    expect(mockServices.lifecycle.calls.enable).toHaveLength(0);
+    expect(mockServices.lifecycle.calls.disable).toHaveLength(0);
   }, 20_000);
 
   it("allows instance admins to upgrade plugins", async () => {
-    mockRegistry.getById.mockResolvedValue({
+    mockServices.registry.results.getById = {
       id: pluginId,
       pluginKey: "paperclip.example",
       version: "1.0.0",
-    });
-    mockLifecycle.upgrade.mockResolvedValue({
+    };
+    mockServices.lifecycle.results.upgrade = {
       id: pluginId,
       version: "1.1.0",
-    });
+    };
 
     const { app } = await createApp({
       type: "board",
@@ -248,24 +378,26 @@ describe("plugin install and upgrade authz", () => {
       .send({ version: "1.1.0" });
 
     expect(res.status).toBe(200);
-    expect(mockLifecycle.upgrade).toHaveBeenCalledWith(pluginId, "1.1.0");
+    expect(mockServices.lifecycle.calls.upgrade).toEqual([[pluginId, "1.1.0"]]);
   }, 20_000);
 });
 
 describe("scoped plugin API routes", () => {
   beforeEach(() => {
-    vi.resetAllMocks();
+    resetPluginRouteMocks();
+    vi.resetModules();
   });
 
   it("dispatches manifest-declared scoped routes after company access checks", async () => {
-    const workerManager = {
-      call: vi.fn().mockResolvedValue({
+    const call = createAsyncRecorder(async () => ({
         status: 202,
         body: { ok: true },
-      }),
+      }));
+    const workerManager = {
+      call: call.fn,
     };
-    mockRegistry.getById.mockResolvedValue(null);
-    mockRegistry.getByKey.mockResolvedValue({
+    mockServices.registry.results.getById = null;
+    mockServices.registry.results.getByKey = {
       id: pluginId,
       pluginKey: "paperclip.example",
       version: "1.0.0",
@@ -284,7 +416,7 @@ describe("scoped plugin API routes", () => {
           },
         ],
       },
-    });
+    };
 
     const { app } = await createApp(
       {
@@ -304,33 +436,33 @@ describe("scoped plugin API routes", () => {
 
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ ok: true });
-    expect(workerManager.call).toHaveBeenCalledWith(
-      pluginId,
-      "handleApiRequest",
-      expect.objectContaining({
-        routeKey: "smoke",
-        method: "GET",
-        companyId: "company-1",
-        query: { companyId: "company-1" },
-      }),
-    );
+    expect(call.calls).toHaveLength(1);
+    expect(call.calls[0]?.[0]).toBe(pluginId);
+    expect(call.calls[0]?.[1]).toBe("handleApiRequest");
+    expect(call.calls[0]?.[2]).toMatchObject({
+      routeKey: "smoke",
+      method: "GET",
+      companyId: "company-1",
+      query: { companyId: "company-1" },
+    });
   }, 20_000);
 });
 
 describe("plugin tool and bridge authz", () => {
   beforeEach(() => {
-    vi.resetAllMocks();
+    resetPluginRouteMocks();
+    vi.resetModules();
   });
 
   it("rejects tool execution when the board user cannot access runContext.companyId", async () => {
-    const executeTool = vi.fn();
-    const getTool = vi.fn();
+    const executeTool = createAsyncRecorder(async () => undefined);
+    const getTool = createRecorder(() => undefined);
     const { app } = await createApp(boardActor(), {}, {
       toolDeps: {
         toolDispatcher: {
-          listToolsForAgent: vi.fn(),
-          getTool,
-          executeTool,
+          listToolsForAgent: createAsyncRecorder(async () => []).fn,
+          getTool: getTool.fn,
+          executeTool: executeTool.fn,
         },
       },
     });
@@ -349,8 +481,8 @@ describe("plugin tool and bridge authz", () => {
       });
 
     expect(res.status).toBe(403);
-    expect(getTool).not.toHaveBeenCalled();
-    expect(executeTool).not.toHaveBeenCalled();
+    expect(getTool.calls).toHaveLength(0);
+    expect(executeTool.calls).toHaveLength(0);
   });
 
   it.each([
@@ -378,14 +510,14 @@ describe("plugin tool and bridge authz", () => {
       ],
     ],
   ])("rejects tool execution when runContext.%s is outside the company scope", async (_case, rows) => {
-    const executeTool = vi.fn();
+    const executeTool = createAsyncRecorder(async () => undefined);
     const { app } = await createApp(boardActor(), {}, {
       db: createSelectQueueDb(rows),
       toolDeps: {
         toolDispatcher: {
-          listToolsForAgent: vi.fn(),
-          getTool: vi.fn(() => ({ name: "paperclip.example:search" })),
-          executeTool,
+          listToolsForAgent: createAsyncRecorder(async () => []).fn,
+          getTool: createRecorder(() => ({ name: "paperclip.example:search" })).fn,
+          executeTool: executeTool.fn,
         },
       },
     });
@@ -404,11 +536,11 @@ describe("plugin tool and bridge authz", () => {
       });
 
     expect(res.status).toBe(403);
-    expect(executeTool).not.toHaveBeenCalled();
+    expect(executeTool.calls).toHaveLength(0);
   });
 
   it("allows tool execution when agent, run, and project all belong to runContext.companyId", async () => {
-    const executeTool = vi.fn().mockResolvedValue({ content: "ok" });
+    const executeTool = createAsyncRecorder(async () => ({ content: "ok" }));
     const { app } = await createApp(boardActor(), {}, {
       db: createSelectQueueDb([
         [{ companyId: companyA }],
@@ -417,9 +549,9 @@ describe("plugin tool and bridge authz", () => {
       ]),
       toolDeps: {
         toolDispatcher: {
-          listToolsForAgent: vi.fn(),
-          getTool: vi.fn(() => ({ name: "paperclip.example:search" })),
-          executeTool,
+          listToolsForAgent: createAsyncRecorder(async () => []).fn,
+          getTool: createRecorder(() => ({ name: "paperclip.example:search" })).fn,
+          executeTool: executeTool.fn,
         },
       },
     });
@@ -438,16 +570,18 @@ describe("plugin tool and bridge authz", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(executeTool).toHaveBeenCalledWith(
-      "paperclip.example:search",
-      { q: "test" },
-      {
-        agentId: agentA,
-        runId: runA,
-        companyId: companyA,
-        projectId: projectA,
-      },
-    );
+    expect(executeTool.calls).toEqual([
+      [
+        "paperclip.example:search",
+        { q: "test" },
+        {
+          agentId: agentA,
+          runId: runA,
+          companyId: companyA,
+          projectId: projectA,
+        },
+      ],
+    ]);
   });
 
   it.each([
@@ -457,10 +591,10 @@ describe("plugin tool and bridge authz", () => {
     ["url action", "post", `/api/plugins/${pluginId}/actions/sync`, {}],
   ] as const)("rejects %s bridge calls without companyId for non-admin users", async (_name, _method, path, body) => {
     readyPlugin();
-    const call = vi.fn();
+    const call = createAsyncRecorder(async () => undefined);
     const { app } = await createApp(boardActor(), {}, {
       bridgeDeps: {
-        workerManager: { call },
+        workerManager: { call: call.fn },
       },
     });
 
@@ -469,19 +603,19 @@ describe("plugin tool and bridge authz", () => {
       .send(body);
 
     expect(res.status).toBe(403);
-    expect(call).not.toHaveBeenCalled();
+    expect(call.calls).toHaveLength(0);
   });
 
   it("allows omitted-company bridge calls for instance admins as global plugin actions", async () => {
     readyPlugin();
-    const call = vi.fn().mockResolvedValue({ ok: true });
+    const call = createAsyncRecorder(async () => ({ ok: true }));
     const { app } = await createApp(boardActor({
       userId: "admin-1",
       isInstanceAdmin: true,
       companyIds: [],
     }), {}, {
       bridgeDeps: {
-        workerManager: { call },
+        workerManager: { call: call.fn },
       },
     });
 
@@ -491,16 +625,20 @@ describe("plugin tool and bridge authz", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ data: { ok: true } });
-    expect(call).toHaveBeenCalledWith(pluginId, "performAction", {
-      key: "sync",
-      params: {},
-      renderEnvironment: null,
-    });
+    expect(call.calls).toEqual([[
+      pluginId,
+      "performAction",
+      {
+        key: "sync",
+        params: {},
+        renderEnvironment: null,
+      },
+    ]]);
   });
 
   it("rejects manual job triggers for non-admin board users", async () => {
-    const scheduler = { triggerJob: vi.fn() };
-    const jobStore = { getJobByIdForPlugin: vi.fn() };
+    const scheduler = { triggerJob: createAsyncRecorder(async () => undefined) };
+    const jobStore = { getJobByIdForPlugin: createAsyncRecorder(async () => undefined) };
     const { app } = await createApp(boardActor(), {}, {
       jobDeps: { scheduler, jobStore },
     });
@@ -510,7 +648,7 @@ describe("plugin tool and bridge authz", () => {
       .send({});
 
     expect(res.status).toBe(403);
-    expect(scheduler.triggerJob).not.toHaveBeenCalled();
-    expect(jobStore.getJobByIdForPlugin).not.toHaveBeenCalled();
+    expect(scheduler.triggerJob.calls).toHaveLength(0);
+    expect(jobStore.getJobByIdForPlugin.calls).toHaveLength(0);
   });
 });

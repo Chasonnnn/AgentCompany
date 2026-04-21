@@ -143,31 +143,48 @@ describe("company portability routes", () => {
   });
 
   it("rejects replace collision strategy on create-authority import routes", async () => {
-    mockAgentService.getById.mockResolvedValue({
-      id: "agent-1",
-      companyId: "11111111-1111-4111-8111-111111111111",
-      role: "ceo",
-    });
-    const app = createApp({
-      type: "agent",
-      agentId: "agent-1",
-      companyId: "11111111-1111-4111-8111-111111111111",
-      source: "agent_key",
-      runId: "run-1",
-    });
-
-    const res = await request(app)
-      .post("/api/companies/11111111-1111-4111-8111-111111111111/imports/preview")
-      .send({
-        source: { type: "inline", files: { "COMPANY.md": "---\nname: Test\n---\n" } },
-        include: { company: true, agents: true, projects: false, issues: false },
-        target: { mode: "existing_company", companyId: "11111111-1111-4111-8111-111111111111" },
-        collisionStrategy: "replace",
+    const originalGetById = mockAgentService.getById;
+    const originalPreviewImport = mockCompanyPortabilityService.previewImport;
+    const getByIdCalls: unknown[][] = [];
+    const previewImportCalls: unknown[][] = [];
+    try {
+      mockAgentService.getById = (async (...args: unknown[]) => {
+        getByIdCalls.push(args);
+        return {
+          id: "agent-1",
+          companyId: "11111111-1111-4111-8111-111111111111",
+          role: "ceo",
+        };
+      }) as any;
+      mockCompanyPortabilityService.previewImport = (async (...args: unknown[]) => {
+        previewImportCalls.push(args);
+        return { ok: true };
+      }) as any;
+      const app = createApp({
+        type: "agent",
+        agentId: "agent-1",
+        companyId: "11111111-1111-4111-8111-111111111111",
+        source: "agent_key",
+        runId: "run-1",
       });
 
-    expect(res.status).toBe(403);
-    expect(res.body.error).toContain("does not allow replace");
-    expect(mockCompanyPortabilityService.previewImport).not.toHaveBeenCalled();
+      const res = await request(app)
+        .post("/api/companies/11111111-1111-4111-8111-111111111111/imports/preview")
+        .send({
+          source: { type: "inline", files: { "COMPANY.md": "---\nname: Test\n---\n" } },
+          include: { company: true, agents: true, projects: false, issues: false },
+          target: { mode: "existing_company", companyId: "11111111-1111-4111-8111-111111111111" },
+          collisionStrategy: "replace",
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain("does not allow replace");
+      expect(getByIdCalls).toEqual([["agent-1"]]);
+      expect(previewImportCalls).toHaveLength(0);
+    } finally {
+      mockAgentService.getById = originalGetById;
+      mockCompanyPortabilityService.previewImport = originalPreviewImport;
+    }
   });
 
   it("keeps global import preview routes board-only", async () => {

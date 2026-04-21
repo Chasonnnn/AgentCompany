@@ -4,16 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { sharedServiceEngagementRoutes } from "../routes/shared-service-engagements.js";
 
-const mockSharedServiceEngagementService = {
-  listForCompany: vi.fn(),
-  create: vi.fn(),
-  getById: vi.fn(),
-  update: vi.fn(),
-  approve: vi.fn(),
-  close: vi.fn(),
-};
-
-const mockLogActivity = vi.fn();
+function createAsyncRecorder<TArgs extends unknown[], TResult>(
+  impl: (...args: TArgs) => Promise<TResult> | TResult,
+) {
+  const calls: TArgs[] = [];
+  return {
+    calls,
+    fn: async (...args: TArgs): Promise<TResult> => {
+      calls.push(args);
+      return await impl(...args);
+    },
+  };
+}
 
 function createApp(
   actor: Record<string, unknown> = {
@@ -24,6 +26,34 @@ function createApp(
     isInstanceAdmin: false,
   },
 ) {
+  const listForCompany = createAsyncRecorder(async () => [makeEngagement()]);
+  const create = createAsyncRecorder(async () => makeEngagement());
+  const getById = createAsyncRecorder(async () => makeEngagement());
+  const update = createAsyncRecorder(async () => makeEngagement({ title: "Updated audit" }));
+  const approve = createAsyncRecorder(async () =>
+    makeEngagement({
+      status: "approved",
+      approvedByUserId: "board-user",
+      approvedAt: new Date(),
+    })
+  );
+  const close = createAsyncRecorder(async () =>
+    makeEngagement({
+      status: "closed",
+      outcomeSummary: "Audit delivered",
+      closedByUserId: "board-user",
+      closedAt: new Date(),
+    })
+  );
+  const logActivity = createAsyncRecorder(async () => undefined);
+  const engagements = {
+    listForCompany: listForCompany.fn,
+    create: create.fn,
+    getById: getById.fn,
+    update: update.fn,
+    approve: approve.fn,
+    close: close.fn,
+  };
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -33,12 +63,12 @@ function createApp(
   app.use(
     "/api",
     sharedServiceEngagementRoutes({} as any, {
-      engagements: mockSharedServiceEngagementService as any,
-      logActivity: mockLogActivity,
+      engagements: engagements as any,
+      logActivity: logActivity.fn,
     }),
   );
   app.use(errorHandler);
-  return app;
+  return { app, services: { listForCompany, create, getById, update, approve, close, logActivity } };
 }
 
 function makeEngagement(overrides: Record<string, unknown> = {}) {
@@ -80,37 +110,19 @@ function makeEngagement(overrides: Record<string, unknown> = {}) {
 describe("shared-service engagement routes", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockSharedServiceEngagementService.listForCompany.mockResolvedValue([makeEngagement()]);
-    mockSharedServiceEngagementService.create.mockResolvedValue(makeEngagement());
-    mockSharedServiceEngagementService.getById.mockResolvedValue(makeEngagement());
-    mockSharedServiceEngagementService.update.mockResolvedValue(makeEngagement({ title: "Updated audit" }));
-    mockSharedServiceEngagementService.approve.mockResolvedValue(
-      makeEngagement({
-        status: "approved",
-        approvedByUserId: "board-user",
-        approvedAt: new Date(),
-      }),
-    );
-    mockSharedServiceEngagementService.close.mockResolvedValue(
-      makeEngagement({
-        status: "closed",
-        outcomeSummary: "Audit delivered",
-        closedByUserId: "board-user",
-        closedAt: new Date(),
-      }),
-    );
-    mockLogActivity.mockResolvedValue(undefined);
   });
 
   it("lists engagements for an authorized company actor", async () => {
-    const res = await request(await createApp()).get("/api/companies/company-1/shared-service-engagements");
+    const { app, services } = createApp();
+    const res = await request(app).get("/api/companies/company-1/shared-service-engagements");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockSharedServiceEngagementService.listForCompany).toHaveBeenCalledWith("company-1");
+    expect(services.listForCompany.calls).toEqual([["company-1"]]);
   });
 
   it("creates an engagement with actor metadata", async () => {
-    const res = await request(await createApp())
+    const { app, services } = createApp();
+    const res = await request(app)
       .post("/api/companies/company-1/shared-service-engagements")
       .send({
         targetProjectId: "22222222-2222-4222-8222-222222222222",
@@ -122,7 +134,7 @@ describe("shared-service engagement routes", () => {
       });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(mockSharedServiceEngagementService.create).toHaveBeenCalledWith(
+    expect(services.create.calls).toEqual([[
       "company-1",
       {
         targetProjectId: "22222222-2222-4222-8222-222222222222",
@@ -137,43 +149,46 @@ describe("shared-service engagement routes", () => {
         actorId: "board-user",
         agentId: null,
       },
-    );
+    ]]);
   });
 
   it("approves an engagement for board actors", async () => {
-    const res = await request(await createApp())
+    const { app, services } = createApp();
+    const res = await request(app)
       .post("/api/shared-service-engagements/11111111-1111-4111-8111-111111111111/approve");
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(mockSharedServiceEngagementService.approve).toHaveBeenCalledWith(
+    expect(services.approve.calls).toEqual([[
       "11111111-1111-4111-8111-111111111111",
       {
         actorType: "user",
         actorId: "board-user",
         agentId: null,
       },
-    );
+    ]]);
   });
 
   it("rejects approval for non-board actors", async () => {
-    const res = await request(await createApp({
+    const { app, services } = createApp({
       type: "agent",
       companyId: "company-1",
       companyIds: ["company-1"],
       agentId: "agent-1",
-    })).post("/api/shared-service-engagements/11111111-1111-4111-8111-111111111111/approve");
+    });
+    const res = await request(app).post("/api/shared-service-engagements/11111111-1111-4111-8111-111111111111/approve");
 
     expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(mockSharedServiceEngagementService.approve).not.toHaveBeenCalled();
+    expect(services.approve.calls).toHaveLength(0);
   });
 
   it("closes an engagement for board actors", async () => {
-    const res = await request(await createApp())
+    const { app, services } = createApp();
+    const res = await request(app)
       .post("/api/shared-service-engagements/11111111-1111-4111-8111-111111111111/close")
       .send({ outcomeSummary: "Audit delivered" });
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
-    expect(mockSharedServiceEngagementService.close).toHaveBeenCalledWith(
+    expect(services.close.calls).toEqual([[
       "11111111-1111-4111-8111-111111111111",
       {
         actorType: "user",
@@ -181,6 +196,6 @@ describe("shared-service engagement routes", () => {
         agentId: null,
       },
       "Audit delivered",
-    );
+    ]]);
   });
 });
