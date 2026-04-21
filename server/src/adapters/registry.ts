@@ -122,6 +122,8 @@ const codexLocalAdapter: ServerAdapterModule = {
   supportsInstructionsBundle: true,
   instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: false,
+  nativePlanningMode: true,
+  nativeDecisionQuestions: true,
   agentConfigurationDoc: codexAgentConfigurationDoc,
   getQuotaWindows: codexGetQuotaWindows,
 };

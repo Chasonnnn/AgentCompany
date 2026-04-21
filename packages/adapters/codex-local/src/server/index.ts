@@ -23,8 +23,12 @@ export const sessionCodec: AdapterSessionCodec = {
   deserialize(raw: unknown) {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
     const record = raw as Record<string, unknown>;
-    const sessionId = readNonEmptyString(record.sessionId) ?? readNonEmptyString(record.session_id);
-    if (!sessionId) return null;
+    const threadId =
+      readNonEmptyString(record.threadId) ??
+      readNonEmptyString(record.thread_id) ??
+      readNonEmptyString(record.sessionId) ??
+      readNonEmptyString(record.session_id);
+    if (!threadId) return null;
     const cwd =
       readNonEmptyString(record.cwd) ??
       readNonEmptyString(record.workdir) ??
@@ -33,7 +37,9 @@ export const sessionCodec: AdapterSessionCodec = {
     const repoUrl = readNonEmptyString(record.repoUrl) ?? readNonEmptyString(record.repo_url);
     const repoRef = readNonEmptyString(record.repoRef) ?? readNonEmptyString(record.repo_ref);
     return {
-      sessionId,
+      ...record,
+      threadId,
+      sessionId: readNonEmptyString(record.sessionId) ?? threadId,
       ...(cwd ? { cwd } : {}),
       ...(workspaceId ? { workspaceId } : {}),
       ...(repoUrl ? { repoUrl } : {}),
@@ -42,8 +48,12 @@ export const sessionCodec: AdapterSessionCodec = {
   },
   serialize(params: Record<string, unknown> | null) {
     if (!params) return null;
-    const sessionId = readNonEmptyString(params.sessionId) ?? readNonEmptyString(params.session_id);
-    if (!sessionId) return null;
+    const threadId =
+      readNonEmptyString(params.threadId) ??
+      readNonEmptyString(params.thread_id) ??
+      readNonEmptyString(params.sessionId) ??
+      readNonEmptyString(params.session_id);
+    if (!threadId) return null;
     const cwd =
       readNonEmptyString(params.cwd) ??
       readNonEmptyString(params.workdir) ??
@@ -52,7 +62,9 @@ export const sessionCodec: AdapterSessionCodec = {
     const repoUrl = readNonEmptyString(params.repoUrl) ?? readNonEmptyString(params.repo_url);
     const repoRef = readNonEmptyString(params.repoRef) ?? readNonEmptyString(params.repo_ref);
     return {
-      sessionId,
+      ...params,
+      threadId,
+      sessionId: readNonEmptyString(params.sessionId) ?? threadId,
       ...(cwd ? { cwd } : {}),
       ...(workspaceId ? { workspaceId } : {}),
       ...(repoUrl ? { repoUrl } : {}),
@@ -61,6 +73,11 @@ export const sessionCodec: AdapterSessionCodec = {
   },
   getDisplayId(params: Record<string, unknown> | null) {
     if (!params) return null;
-    return readNonEmptyString(params.sessionId) ?? readNonEmptyString(params.session_id);
+    return (
+      readNonEmptyString(params.threadId) ??
+      readNonEmptyString(params.thread_id) ??
+      readNonEmptyString(params.sessionId) ??
+      readNonEmptyString(params.session_id)
+    );
   },
 };

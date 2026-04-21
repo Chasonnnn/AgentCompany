@@ -110,8 +110,8 @@ describe("adapter routes", () => {
       supportsSkills: true,
       supportsLocalAgentJwt: true,
       requiresMaterializedRuntimeSkills: false,
-      nativePlanningMode: false,
-      nativeDecisionQuestions: false,
+      nativePlanningMode: true,
+      nativeDecisionQuestions: true,
     });
 
     // process adapter should have no local capabilities

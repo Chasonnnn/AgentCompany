@@ -42,12 +42,14 @@ describe("adapter session codecs", () => {
       cwd: "/tmp/codex",
     });
     expect(parsed).toEqual({
+      threadId: "codex-session-1",
       sessionId: "codex-session-1",
       cwd: "/tmp/codex",
     });
 
     const serialized = codexSessionCodec.serialize(parsed);
     expect(serialized).toEqual({
+      threadId: "codex-session-1",
       sessionId: "codex-session-1",
       cwd: "/tmp/codex",
     });

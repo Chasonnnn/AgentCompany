@@ -38,9 +38,9 @@ Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to stdin prompt at runtime
 - model (string, optional): Codex model id
-- modelReasoningEffort (string, optional): reasoning effort override (minimal|low|medium|high|xhigh) passed via -c model_reasoning_effort=...
+- modelReasoningEffort (string, optional): reasoning effort override (minimal|low|medium|high|xhigh)
 - promptTemplate (string, optional): run prompt template
-- search (boolean, optional): run codex with --search
+- search (boolean, optional): enable Codex web search for the app-server thread
 - fastMode (boolean, optional): enable Codex Fast mode; eligible models default this on when omitted, currently GPT-5.4 only, and it consumes credits faster
 - dangerouslyBypassApprovalsAndSandbox (boolean, optional): run with bypass flag
 - command (string, optional): defaults to "codex"
@@ -54,14 +54,15 @@ Operational fields:
 - graceSec (number, optional): SIGTERM grace period in seconds
 
 Notes:
-- Prompts are piped via stdin (Codex receives "-" prompt argument).
-- If instructionsFilePath is configured, Paperclip prepends that file's contents to the stdin prompt on every run.
-- Codex exec automatically applies repo-scoped AGENTS.md instructions from the active workspace. Paperclip cannot suppress that discovery in exec mode, so repo AGENTS.md files may still apply even when you only configured an explicit instructionsFilePath.
+- Paperclip executes \`codex_local\` through \`codex app-server\` by default. Set the server-only env var \`PAPERCLIP_CODEX_LOCAL_TRANSPORT=exec\` to temporarily fall back to the legacy \`codex exec --json\` transport while this migration is soaking.
+- Prompts are sent as \`turn/start\` text input items. If instructionsFilePath is configured, Paperclip prepends that file's contents to the prompt on fresh turns and skips reinjection when resuming an existing Codex thread with a wake delta.
+- Codex automatically applies repo-scoped AGENTS.md instructions from the active workspace. Paperclip cannot suppress that discovery, so repo AGENTS.md files may still apply even when you only configured an explicit instructionsFilePath.
 - In Codex Plan mode, the native structured user-question tool is \`request_user_input\`. It is only available in Plan mode, supports 1-3 short questions with predefined choices, and always includes an \`Other\` free-form option.
-- Paperclip's \`codex_local\` adapter currently runs \`codex exec\` in Default mode, so native decision-question capture is not enabled for Codex in this adapter path.
+- Paperclip enables native Codex Plan mode only when \`context.paperclipPlanningMode === true\`. Non-planning turns remain in Default mode.
+- Native Codex \`request_user_input\` prompts are captured into Paperclip blocking decision questions and resumed back into the same Codex thread after the board answers them.
 - Paperclip injects desired local skills into the effective CODEX_HOME/skills/ directory at execution time so Codex can discover "$paperclip" and related skills without polluting the project working directory. In managed-home mode (the default) this is ~/.paperclip/instances/<id>/companies/<companyId>/codex-home/skills/; when CODEX_HOME is explicitly overridden in adapter config, that override is used instead.
 - Unless explicitly overridden in adapter config, Paperclip runs Codex with a per-company managed CODEX_HOME under the active Paperclip instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
 - Some model/tool combinations reject certain effort levels (for example minimal with web search enabled).
-- Fast mode is currently supported on GPT-5.4 only. Eligible models default this on when config omits \`fastMode\`. When enabled, Paperclip applies \`service_tier="fast"\` and \`features.fast_mode=true\`.
+- Fast mode is currently supported on GPT-5.4 only. Eligible models default this on when config omits \`fastMode\`. When enabled, Paperclip applies \`serviceTier: "fast"\` and \`config.features.fast_mode = true\` on the app-server thread/turn.
 - When Paperclip realizes a workspace/runtime for a run, it injects PAPERCLIP_WORKSPACE_* and PAPERCLIP_RUNTIME_* env vars for agent-side tooling.
 `;

@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ProviderQuotaResult, QuotaWindow } from "@paperclipai/adapter-utils";
+import { CodexAppServerClient } from "./app-server-client.js";
 
 const CODEX_USAGE_SOURCE_RPC = "codex-rpc";
 const CODEX_USAGE_SOURCE_WHAM = "codex-wham";
@@ -400,124 +400,16 @@ export function mapCodexRpcQuota(result: CodexRpcRateLimitsResult, account?: Cod
   };
 }
 
-type PendingRequest = {
-  resolve: (value: Record<string, unknown>) => void;
-  reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
-};
-
-class CodexRpcClient {
-  private proc = spawn(
-    "codex",
-    ["-s", "read-only", "-a", "untrusted", "app-server"],
-    { stdio: ["pipe", "pipe", "pipe"], env: process.env },
-  );
-
-  private nextId = 1;
-  private buffer = "";
-  private pending = new Map<number, PendingRequest>();
-  private stderr = "";
-
-  constructor() {
-    this.proc.stdout.setEncoding("utf8");
-    this.proc.stderr.setEncoding("utf8");
-    this.proc.stdout.on("data", (chunk: string) => this.onStdout(chunk));
-    this.proc.stderr.on("data", (chunk: string) => {
-      this.stderr += chunk;
-    });
-    this.proc.on("exit", () => {
-      for (const request of this.pending.values()) {
-        clearTimeout(request.timer);
-        request.reject(new Error(this.stderr.trim() || "codex app-server closed unexpectedly"));
-      }
-      this.pending.clear();
-    });
-    this.proc.on("error", (err: Error) => {
-      for (const request of this.pending.values()) {
-        clearTimeout(request.timer);
-        request.reject(err);
-      }
-      this.pending.clear();
-    });
-  }
-
-  private onStdout(chunk: string) {
-    this.buffer += chunk;
-    while (true) {
-      const newlineIndex = this.buffer.indexOf("\n");
-      if (newlineIndex < 0) break;
-      const line = this.buffer.slice(0, newlineIndex).trim();
-      this.buffer = this.buffer.slice(newlineIndex + 1);
-      if (!line) continue;
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-      const id = typeof parsed.id === "number" ? parsed.id : null;
-      if (id == null) continue;
-      const pending = this.pending.get(id);
-      if (!pending) continue;
-      this.pending.delete(id);
-      clearTimeout(pending.timer);
-      pending.resolve(parsed);
-    }
-  }
-
-  private request(method: string, params: Record<string, unknown> = {}, timeoutMs = 6_000): Promise<Record<string, unknown>> {
-    const id = this.nextId++;
-    const payload = JSON.stringify({ id, method, params }) + "\n";
-    return new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`codex app-server timed out on ${method}`));
-      }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      this.proc.stdin.write(payload);
-    });
-  }
-
-  private notify(method: string, params: Record<string, unknown> = {}) {
-    this.proc.stdin.write(JSON.stringify({ method, params }) + "\n");
-  }
-
-  async initialize() {
-    await this.request("initialize", {
-      clientInfo: {
-        name: "paperclip",
-        version: "0.0.0",
-      },
-    });
-    this.notify("initialized", {});
-  }
-
-  async fetchRateLimits(): Promise<CodexRpcRateLimitsResult> {
-    const message = await this.request("account/rateLimits/read");
-    return (message.result as CodexRpcRateLimitsResult | undefined) ?? {};
-  }
-
-  async fetchAccount(): Promise<CodexRpcAccountResult | null> {
-    try {
-      const message = await this.request("account/read");
-      return (message.result as CodexRpcAccountResult | undefined) ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  async shutdown() {
-    this.proc.kill("SIGTERM");
-  }
-}
-
 export async function fetchCodexRpcQuota(): Promise<CodexRpcQuotaSnapshot> {
-  const client = new CodexRpcClient();
+  const client = new CodexAppServerClient({
+    args: ["-s", "read-only", "-a", "untrusted", "app-server"],
+    env: process.env,
+  });
   try {
     await client.initialize();
     const [limits, account] = await Promise.all([
-      client.fetchRateLimits(),
-      client.fetchAccount(),
+      client.request("account/rateLimits/read").then((message) => (message.result as CodexRpcRateLimitsResult | undefined) ?? {}),
+      client.request("account/read").then((message) => (message.result as CodexRpcAccountResult | undefined) ?? null).catch(() => null),
     ]);
     return mapCodexRpcQuota(limits, account);
   } finally {

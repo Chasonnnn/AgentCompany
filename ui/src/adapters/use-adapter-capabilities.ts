@@ -18,7 +18,7 @@ const ALL_FALSE: AdapterCapabilities = {
  */
 const KNOWN_DEFAULTS: Record<string, AdapterCapabilities> = {
   claude_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: false, nativeDecisionQuestions: false },
-  codex_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: false, nativeDecisionQuestions: false },
+  codex_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: true, nativeDecisionQuestions: true },
   cursor: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false },
   gemini_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: true },
   opencode_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false },

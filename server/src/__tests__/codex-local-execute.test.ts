@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,21 +9,233 @@ async function writeFakeCodexCommand(commandPath: string): Promise<void> {
 const fs = require("node:fs");
 
 const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
+const scenario = process.env.PAPERCLIP_TEST_SCENARIO || "basic";
 const payload = {
   argv: process.argv.slice(2),
-  prompt: fs.readFileSync(0, "utf8"),
+  prompt: "",
+  prompts: [],
   codexHome: process.env.CODEX_HOME || null,
   paperclipWakePayloadJson: process.env.PAPERCLIP_WAKE_PAYLOAD_JSON || null,
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
     .sort(),
+  threadStartParams: null,
+  threadResumeParams: null,
+  turnStartParams: [],
+  requestUserInputResponses: [],
 };
-if (capturePath) {
-  fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
+let threadId = "codex-thread-1";
+let nextTurn = 1;
+let nextRequest = 1;
+let pendingRequest = null;
+let buffer = "";
+
+function writeCapture() {
+  if (capturePath) {
+    fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
+  }
 }
-console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
-console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
-console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+function extractPrompt(params) {
+  const input = Array.isArray(params && params.input) ? params.input : [];
+  const first = input.find((item) => item && item.type === "text" && typeof item.text === "string");
+  return first && typeof first.text === "string" ? first.text : "";
+}
+
+function completeTurn(turnId, text) {
+  send({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "agent-message-" + turnId,
+        type: "agentMessage",
+        text,
+      },
+    },
+  });
+  send({
+    method: "thread/tokenUsage/updated",
+    params: {
+      turnId,
+      tokenUsage: {
+        last: {
+          inputTokens: 1,
+          cachedInputTokens: 0,
+          outputTokens: 1,
+        },
+      },
+    },
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      turn: {
+        id: turnId,
+        status: "completed",
+      },
+    },
+  });
+}
+
+function requestUserInput(turnId) {
+  const requestId = "req-" + nextRequest++;
+  pendingRequest = {
+    id: requestId,
+    turnId,
+    params: {
+      threadId,
+      turnId,
+      itemId: "item-" + turnId,
+      questions: [
+        {
+          id: "audit_scope",
+          header: "Scope",
+          question: "Which audit slice should I start with?",
+          isOther: false,
+          isSecret: false,
+          options: [
+            { label: "Runtime", description: "Inspect the live runtime first." },
+            { label: "Governance", description: "Start with approval and policy flow." },
+          ],
+        },
+      ],
+    },
+  };
+  send({
+    id: requestId,
+    method: "item/tool/requestUserInput",
+    params: pendingRequest.params,
+  });
+}
+
+function handleMessage(message) {
+  if (message.id && pendingRequest && String(message.id) === String(pendingRequest.id) && Object.prototype.hasOwnProperty.call(message, "result")) {
+    payload.requestUserInputResponses.push(message.result);
+    writeCapture();
+    const turnId = pendingRequest.turnId;
+    pendingRequest = null;
+    completeTurn(turnId, "answered");
+    return;
+  }
+
+  if (message.method === "initialize") {
+    send({ id: message.id, result: { serverInfo: { name: "fake-codex", version: "0.0.0" } } });
+    return;
+  }
+  if (message.method === "initialized") {
+    return;
+  }
+  if (message.method === "thread/start") {
+    payload.threadStartParams = message.params;
+    writeCapture();
+    send({
+      id: message.id,
+      result: {
+        thread: {
+          id: threadId,
+          status: "active",
+        },
+      },
+    });
+    send({
+      method: "thread/started",
+      params: {
+        thread: {
+          id: threadId,
+          status: "active",
+        },
+      },
+    });
+    return;
+  }
+  if (message.method === "thread/resume") {
+    payload.threadResumeParams = message.params;
+    threadId = typeof message.params?.threadId === "string" ? message.params.threadId : threadId;
+    writeCapture();
+    if (scenario === "unknown-resume") {
+      send({
+        id: message.id,
+        error: {
+          message: "thread/resume failed: no rollout found for thread id " + threadId,
+        },
+      });
+      return;
+    }
+    send({
+      id: message.id,
+      result: {
+        thread: {
+          id: threadId,
+          status: "active",
+          waitingOnUserInput: scenario === "pending-answer" || scenario === "pending-no-answer",
+        },
+      },
+    });
+    send({
+      method: "thread/started",
+      params: {
+        thread: {
+          id: threadId,
+          status: "active",
+        },
+      },
+    });
+    if (scenario === "pending-answer" || scenario === "pending-no-answer") {
+      requestUserInput("turn-resume");
+    }
+    return;
+  }
+  if (message.method === "turn/start") {
+    const turnId = "turn-" + nextTurn++;
+    payload.turnStartParams.push(message.params);
+    const prompt = extractPrompt(message.params);
+    payload.prompts.push(prompt);
+    payload.prompt = prompt;
+    writeCapture();
+    send({
+      id: message.id,
+      result: {
+        turn: {
+          id: turnId,
+          status: "inProgress",
+        },
+      },
+    });
+    send({
+      method: "turn/started",
+      params: {
+        turn: {
+          id: turnId,
+          status: "inProgress",
+        },
+      },
+    });
+    if (scenario === "question" || scenario === "planning-question") {
+      requestUserInput(turnId);
+      return;
+    }
+    completeTurn(turnId, "hello");
+  }
+}
+
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  while (true) {
+    const newlineIndex = buffer.indexOf("\\n");
+    if (newlineIndex < 0) break;
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    handleMessage(JSON.parse(line));
+  }
+});
+
+writeCapture();
 `;
   await fs.writeFile(commandPath, script, "utf8");
   await fs.chmod(commandPath, 0o755);
@@ -32,9 +244,14 @@ console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, c
 type CapturePayload = {
   argv: string[];
   prompt: string;
+  prompts: string[];
   codexHome: string | null;
   paperclipWakePayloadJson: string | null;
   paperclipEnvKeys: string[];
+  threadStartParams: Record<string, unknown> | null;
+  threadResumeParams: Record<string, unknown> | null;
+  turnStartParams: Record<string, unknown>[];
+  requestUserInputResponses: Array<Record<string, unknown>>;
 };
 
 type LogEntry = {
@@ -43,6 +260,21 @@ type LogEntry = {
 };
 
 describe("codex execute", () => {
+  let previousTransport: string | undefined;
+
+  beforeEach(() => {
+    previousTransport = process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT;
+    process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT = "app_server";
+  });
+
+  afterEach(() => {
+    if (previousTransport === undefined) {
+      delete process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT;
+    } else {
+      process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT = previousTransport;
+    }
+  });
+
   it("uses a Paperclip-managed CODEX_HOME outside worktree mode while preserving shared auth and config", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-default-"));
     const workspace = path.join(root, "workspace");
@@ -205,7 +437,7 @@ describe("codex execute", () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       expect(commandNotes).toContain(
-        "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Paperclip does not currently suppress that discovery.",
+        "Codex automatically applies repo-scoped AGENTS.md instructions from the current workspace; Paperclip does not currently suppress that discovery.",
       );
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -661,7 +893,7 @@ describe("codex execute", () => {
         runtime: {
           sessionId: null,
           sessionParams: {
-            sessionId: "codex-session-1",
+            sessionId: "codex-thread-1",
             cwd: workspace,
           },
           sessionDisplayId: null,
@@ -724,7 +956,8 @@ describe("codex execute", () => {
       expect(result.errorMessage).toBeNull();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.argv).toEqual(expect.arrayContaining(["resume", "codex-session-1", "-"]));
+      expect(capture.argv).toEqual(expect.arrayContaining(["app-server"]));
+      expect(capture.threadResumeParams?.threadId).toBe("codex-thread-1");
       expect(capture.prompt).toContain("## Paperclip Resume Delta");
       expect(capture.prompt).toContain("Do not switch to another issue until you have handled this wake.");
       expect(capture.prompt).toContain("Second comment");
@@ -820,7 +1053,7 @@ describe("codex execute", () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.codexHome).toBe(isolatedCodexHome);
-      expect(capture.argv).toEqual(expect.arrayContaining(["exec", "--json", "-"]));
+      expect(capture.argv).toEqual(expect.arrayContaining(["app-server"]));
       expect(capture.prompt).toContain("Follow the paperclip heartbeat.");
       expect(capture.paperclipEnvKeys).toEqual(
         expect.arrayContaining([
@@ -949,6 +1182,378 @@ describe("codex execute", () => {
       else process.env.PAPERCLIP_IN_WORKTREE = previousPaperclipInWorktree;
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodexHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves collaborationMode unset for non-planning turns", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-default-mode-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-default-mode",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Coder",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          search: true,
+          fastMode: true,
+          model: "gpt-5.4",
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          paperclipPlanningMode: false,
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.threadStartParams?.config).toEqual({
+        web_search: "live",
+        features: {
+          fast_mode: true,
+        },
+      });
+      expect(capture.threadStartParams?.serviceTier).toBe("fast");
+      expect(capture.turnStartParams[0]?.serviceTier).toBe("fast");
+      expect(capture.turnStartParams[0]?.collaborationMode).toBeUndefined();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses plan collaboration mode only for planning turns", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-planning-mode-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-planning-mode",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Coder",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "gpt-5.4",
+          modelReasoningEffort: "high",
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          paperclipPlanningMode: true,
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.turnStartParams[0]?.collaborationMode).toEqual({
+        mode: "plan",
+        settings: {
+          model: "gpt-5.4",
+          reasoning_effort: "high",
+          developer_instructions: null,
+        },
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("captures native requestUserInput questions into a Paperclip decision question and pending session state", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-native-question-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-native-question",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Planner",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PAPERCLIP_TEST_SCENARIO: "question",
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          paperclipPlanningMode: true,
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.question).toEqual({
+        prompt: "Scope - Which audit slice should I start with?",
+        choices: [
+          {
+            key: "runtime",
+            label: "Runtime",
+            description: "Inspect the live runtime first.",
+          },
+          {
+            key: "governance",
+            label: "Governance",
+            description: "Start with approval and policy flow.",
+          },
+        ],
+      });
+      expect(result.sessionId).toBe("codex-thread-1");
+      expect(result.sessionParams).toMatchObject({
+        threadId: "codex-thread-1",
+        sessionId: "codex-thread-1",
+        cwd: workspace,
+        pendingUserInput: {
+          threadId: "codex-thread-1",
+          turnId: "turn-1",
+          itemId: "item-turn-1",
+        },
+      });
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.requestUserInputResponses).toEqual([]);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a pending native question on decision_question_answered and sends the board answer back to Codex", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-answer-question-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-answer-question",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Planner",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: "codex-thread-1",
+          sessionParams: {
+            threadId: "codex-thread-1",
+            sessionId: "codex-thread-1",
+            cwd: workspace,
+            pendingUserInput: {
+              requestId: "req-1",
+              threadId: "codex-thread-1",
+              turnId: "turn-resume",
+              itemId: "item-turn-resume",
+              questions: [
+                {
+                  id: "audit_scope",
+                  header: "Scope",
+                  question: "Which audit slice should I start with?",
+                  isOther: false,
+                  isSecret: false,
+                  options: [
+                    { label: "Runtime", description: "Inspect the live runtime first." },
+                    { label: "Governance", description: "Start with approval and policy flow." },
+                  ],
+                },
+              ],
+            },
+          },
+          sessionDisplayId: "codex-thread-1",
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PAPERCLIP_TEST_SCENARIO: "pending-answer",
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          wakeReason: "decision_question_answered",
+          paperclipWake: {
+            reason: "decision_question_answered",
+            decisionQuestion: {
+              answer: {
+                selectedOptionKey: "governance",
+                note: "Start with approval flow.",
+              },
+            },
+          },
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.summary).toBe("answered");
+      expect(result.question).toBeNull();
+      expect(result.sessionParams).toMatchObject({
+        threadId: "codex-thread-1",
+        sessionId: "codex-thread-1",
+        cwd: workspace,
+      });
+      expect((result.sessionParams ?? {}).pendingUserInput).toBeUndefined();
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.threadResumeParams?.threadId).toBe("codex-thread-1");
+      expect(capture.turnStartParams).toEqual([]);
+      expect(capture.requestUserInputResponses).toEqual([
+        {
+          answers: {
+            audit_scope: {
+              answers: ["Governance", "Start with approval flow."],
+            },
+          },
+        },
+      ]);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to a fresh thread when a saved resume thread is unknown", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-unknown-thread-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-unknown-thread",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Planner",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: "missing-thread",
+          sessionParams: {
+            threadId: "missing-thread",
+            sessionId: "missing-thread",
+            cwd: workspace,
+          },
+          sessionDisplayId: "missing-thread",
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PAPERCLIP_TEST_SCENARIO: "unknown-resume",
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.sessionId).toBe("codex-thread-1");
+      expect(result.clearSession).toBe(true);
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stdout",
+          chunk: expect.stringContaining('Codex resume session "missing-thread" is unavailable; retrying with a fresh session.'),
+        }),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

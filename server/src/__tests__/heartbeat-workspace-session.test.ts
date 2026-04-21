@@ -417,6 +417,7 @@ describe("buildExplicitResumeSessionOverride", () => {
     expect(result).toEqual({
       sessionDisplayId: "session-after",
       sessionParams: {
+        threadId: "session-after",
         sessionId: "session-after",
         cwd: "/tmp/project",
       },

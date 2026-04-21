@@ -26,6 +26,15 @@ import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 import { buildCodexExecArgs } from "./codex-args.js";
+import { CodexAppServerClient, NO_RESPONSE } from "./app-server-client.js";
+import {
+  buildDecisionQuestionCapture,
+  buildPendingUserInputResponse,
+  normalizeAppServerNotification,
+  normalizePendingUserInputQuestions,
+  parsePendingUserInput,
+  type PendingUserInputState,
+} from "./app-server-normalize.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const CODEX_ROLLOUT_NOISE_RE =
@@ -53,6 +62,10 @@ function firstNonEmptyLine(text: string): string {
       .map((line) => line.trim())
       .find(Boolean) ?? ""
   );
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
@@ -212,6 +225,155 @@ export async function ensureCodexSkillsInjected(
     skillsEntries.map((entry) => entry.runtimeName),
     onLog,
   );
+}
+
+type CodexTransport = "exec" | "app_server";
+
+type AppServerAttempt = {
+  proc: {
+    exitCode: number | null;
+    signal: string | null;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+  };
+  rawStderr: string;
+  parsed: ReturnType<typeof parseCodexJsonl>;
+  question: AdapterExecutionResult["question"];
+  sessionParams: Record<string, unknown> | null;
+  sessionDisplayId: string | null;
+  clearSession: boolean;
+};
+
+function resolveCodexTransport(): CodexTransport {
+  const raw = process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT?.trim().toLowerCase();
+  return raw === "exec" ? "exec" : "app_server";
+}
+
+function readExtraArgs(config: Record<string, unknown>): string[] {
+  const direct = Array.isArray(config.extraArgs) ? config.extraArgs : Array.isArray(config.args) ? config.args : [];
+  return direct.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function buildCodexAppServerArgs(config: Record<string, unknown>) {
+  const execPreview = buildCodexExecArgs(config);
+  const extraArgs = readExtraArgs(config);
+  const args: string[] = ["app-server"];
+  if (extraArgs.length > 0) args.push(...extraArgs);
+  return {
+    args,
+    fastModeApplied: execPreview.fastModeApplied,
+    fastModeIgnoredReason: execPreview.fastModeIgnoredReason,
+  };
+}
+
+function buildAppServerThreadConfig(
+  config: Record<string, unknown>,
+  options: { fastModeApplied: boolean },
+) {
+  const threadConfig: Record<string, unknown> = {};
+  const search = config.search === true;
+  threadConfig.web_search = search ? "live" : "disabled";
+  if (options.fastModeApplied) {
+    threadConfig.features = {
+      fast_mode: true,
+    };
+  }
+  return threadConfig;
+}
+
+function resolveAppServerSandboxPolicy(bypass: boolean): Record<string, unknown> | null {
+  if (!bypass) return null;
+  return {
+    type: "dangerFullAccess",
+  };
+}
+
+function resolveAppServerApprovalPolicy(bypass: boolean): string | null {
+  return bypass ? "never" : null;
+}
+
+function resolveAppServerServiceTier(fastModeApplied: boolean): string | null {
+  return fastModeApplied ? "fast" : null;
+}
+
+function buildCollaborationMode(config: Record<string, unknown>, planningMode: boolean) {
+  if (!planningMode) return null;
+  const model = asString(config.model, "").trim() || "gpt-5.3-codex";
+  const configuredEffort = asString(
+    config.modelReasoningEffort,
+    asString(config.reasoningEffort, ""),
+  ).trim();
+  return {
+    mode: "plan",
+    settings: {
+      model,
+      reasoning_effort: configuredEffort || null,
+      developer_instructions: null,
+    },
+  };
+}
+
+function extractDecisionQuestionAnswer(context: Record<string, unknown>) {
+  const wake = parseObject(context.paperclipWake);
+  const wakeReason =
+    readNonEmptyString(wake.reason) ??
+    readNonEmptyString(context.wakeReason);
+  const answerSource =
+    parseObject(wake.decisionQuestion).answer ??
+    parseObject(context.decisionQuestionAnswer);
+  const answer = parseObject(answerSource);
+  if (wakeReason !== "decision_question_answered" || Object.keys(answer).length === 0) {
+    return null;
+  }
+  return {
+    selectedOptionKey: readNonEmptyString(answer.selectedOptionKey),
+    answer: readNonEmptyString(answer.answer),
+    note: readNonEmptyString(answer.note),
+  };
+}
+
+function shouldPauseForPendingQuestionWithoutAnswer(
+  wakeReason: string | null,
+  pendingUserInput: PendingUserInputState | null,
+  answeredQuestion: { selectedOptionKey: string | null; answer: string | null; note: string | null } | null,
+) {
+  return Boolean(
+    pendingUserInput &&
+    (!answeredQuestion || wakeReason !== "decision_question_answered"),
+  );
+}
+
+function capturePendingUserInput(
+  requestId: string,
+  params: Record<string, unknown>,
+): PendingUserInputState | null {
+  const threadId = readNonEmptyString(params.threadId);
+  const turnId = readNonEmptyString(params.turnId);
+  const itemId = readNonEmptyString(params.itemId);
+  if (!threadId || !turnId || !itemId) return null;
+  const questions = normalizePendingUserInputQuestions(params.questions);
+  if (questions.length === 0) return null;
+  return {
+    requestId,
+    threadId,
+    turnId,
+    itemId,
+    questions,
+  };
+}
+
+function pendingUserInputMatches(
+  pending: PendingUserInputState,
+  params: Record<string, unknown>,
+) {
+  const threadId = readNonEmptyString(params.threadId);
+  const turnId = readNonEmptyString(params.turnId);
+  const itemId = readNonEmptyString(params.itemId);
+  if (threadId && threadId !== pending.threadId) return false;
+  if (turnId && turnId !== pending.turnId) return false;
+  if (itemId && itemId !== pending.itemId) return false;
+  return true;
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
@@ -392,12 +554,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const graceSec = asNumber(config.graceSec, 20);
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
-  const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
+  const runtimeSessionId = asString(
+    runtimeSessionParams.threadId,
+    asString(runtimeSessionParams.sessionId, runtime.sessionId ?? ""),
+  );
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const canResumeSession =
     runtimeSessionId.length > 0 &&
     (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
   const sessionId = canResumeSession ? runtimeSessionId : null;
+  const pendingUserInput = parsePendingUserInput(runtimeSessionParams.pendingUserInput);
+  const answeredDecisionQuestion = extractDecisionQuestionAnswer(context);
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
@@ -425,7 +592,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
   }
   const repoAgentsNote =
-    "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Paperclip does not currently suppress that discovery.";
+    "Codex automatically applies repo-scoped AGENTS.md instructions from the current workspace; Paperclip does not currently suppress that discovery.";
   const bootstrapPromptTemplate = asString(config.bootstrapPromptTemplate, "");
   const templateData = {
     agentId: agent.id,
@@ -488,7 +655,51 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     heartbeatPromptChars: renderedPrompt.length,
   };
 
-  const runAttempt = async (resumeSessionId: string | null) => {
+  const transport = resolveCodexTransport();
+
+  const buildSessionParams = (
+    threadId: string | null,
+    nextPendingUserInput: PendingUserInputState | null = null,
+  ) => threadId
+    ? ({
+      threadId,
+      sessionId: threadId,
+      cwd,
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
+      ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
+      ...(nextPendingUserInput ? { pendingUserInput: nextPendingUserInput } : {}),
+    } as Record<string, unknown>)
+    : null;
+
+  if (transport === "app_server" && shouldPauseForPendingQuestionWithoutAnswer(wakeReason, pendingUserInput, answeredDecisionQuestion)) {
+    await onLog(
+      "stdout",
+      `[paperclip] Codex thread "${runtimeSessionId}" is waiting on a board answer; preserving the pending question without starting a new turn.\n`,
+    );
+    return {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      errorMessage: null,
+      sessionId: runtimeSessionId || null,
+      sessionParams: buildSessionParams(runtimeSessionId || null, pendingUserInput),
+      sessionDisplayId: runtimeSessionId || null,
+      provider: "openai",
+      biller: resolveCodexBiller(effectiveEnv, billingType),
+      model,
+      billingType,
+      costUsd: null,
+      resultJson: {
+        stdout: "",
+        stderr: "",
+      },
+      summary: "",
+      clearSession: false,
+    };
+  }
+
+  const runExecAttempt = async (resumeSessionId: string | null) => {
     const execArgs = buildCodexExecArgs(config, { resumeSessionId });
     const args = execArgs.args;
     const commandNotesWithFastMode =
@@ -530,18 +741,291 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       },
     });
     const cleanedStderr = stripCodexRolloutNoise(proc.stderr);
+    const parsed = parseCodexJsonl(proc.stdout);
+    const resolvedSessionId = parsed.sessionId ?? runtimeSessionId ?? runtime.sessionId ?? null;
     return {
       proc: {
         ...proc,
         stderr: cleanedStderr,
       },
       rawStderr: proc.stderr,
-      parsed: parseCodexJsonl(proc.stdout),
+      parsed,
+      question: null,
+      sessionParams: buildSessionParams(resolvedSessionId),
+      sessionDisplayId: resolvedSessionId,
+      clearSession: false,
+    } satisfies AppServerAttempt;
+  };
+
+  const runAppServerAttempt = async (resumeThreadId: string | null): Promise<AppServerAttempt> => {
+    const configRecord = parseObject(config);
+    const bypass = configRecord.dangerouslyBypassApprovalsAndSandbox === true || configRecord.dangerouslyBypassSandbox === true;
+    const appServerArgs = buildCodexAppServerArgs(configRecord);
+    const threadConfig = buildAppServerThreadConfig(configRecord, {
+      fastModeApplied: appServerArgs.fastModeApplied,
+    });
+    const approvalPolicy = resolveAppServerApprovalPolicy(bypass);
+    const sandboxPolicy = resolveAppServerSandboxPolicy(bypass);
+    const serviceTier = resolveAppServerServiceTier(appServerArgs.fastModeApplied);
+    const effort = asString(configRecord.modelReasoningEffort, asString(configRecord.reasoningEffort, "")).trim();
+    const collaborationMode = buildCollaborationMode(configRecord, context.paperclipPlanningMode === true);
+    const commandNotesWithFastMode =
+      appServerArgs.fastModeIgnoredReason == null
+        ? commandNotes
+        : [...commandNotes, appServerArgs.fastModeIgnoredReason];
+    const shouldResumePendingAnswer = Boolean(
+      resumeThreadId &&
+      pendingUserInput &&
+      answeredDecisionQuestion &&
+      wakeReason === "decision_question_answered",
+    );
+    const appServerPrompt = shouldResumePendingAnswer ? "" : prompt;
+    const appServerPromptMetrics = shouldResumePendingAnswer
+      ? {
+        promptChars: 0,
+        instructionsChars: 0,
+        bootstrapPromptChars: 0,
+        wakePromptChars: 0,
+        projectContextChars: 0,
+        sessionHandoffChars: 0,
+        heartbeatPromptChars: 0,
+      }
+      : promptMetrics;
+
+    if (onMeta) {
+      await onMeta({
+        adapterType: "codex_local",
+        command: resolvedCommand,
+        cwd,
+        commandNotes: commandNotesWithFastMode,
+        commandArgs: appServerArgs.args,
+        env: loggedEnv,
+        prompt: appServerPrompt,
+        promptMetrics: appServerPromptMetrics,
+        context,
+      });
+    }
+
+    const stdoutLines: string[] = [];
+    const usageByTurn = new Map<string, { input_tokens: number; cached_input_tokens: number; output_tokens: number }>();
+    let rawStderr = "";
+    let cleanedStderr = "";
+    let threadId = resumeThreadId;
+    let exitCode: number | null = 0;
+    let signal: string | null = null;
+    let timedOut = false;
+    let capturedQuestion: AdapterExecutionResult["question"] = null;
+    let nextPendingUserInput = shouldResumePendingAnswer ? null : pendingUserInput;
+    let loggedThreadStarted = false;
+    let settled = false;
+    let resolveOutcome!: (value: "completed" | "question") => void;
+    const outcomePromise = new Promise<"completed" | "question">((resolve) => {
+      resolveOutcome = resolve;
+    });
+    const settle = (value: "completed" | "question") => {
+      if (settled) return;
+      settled = true;
+      resolveOutcome(value);
+    };
+    const appendError = async (message: string) => {
+      const trimmed = message.trim();
+      if (!trimmed) return;
+      rawStderr += rawStderr.endsWith("\n") || rawStderr.length === 0 ? `${trimmed}\n` : `\n${trimmed}\n`;
+      cleanedStderr += cleanedStderr.endsWith("\n") || cleanedStderr.length === 0 ? `${trimmed}\n` : `\n${trimmed}\n`;
+      await onLog("stderr", `${trimmed}\n`);
+      const errorLine = JSON.stringify({
+        type: "error",
+        message: trimmed,
+      });
+      stdoutLines.push(errorLine);
+      await onLog("stdout", `${errorLine}\n`);
+    };
+
+    const client = new CodexAppServerClient({
+      command,
+      args: appServerArgs.args,
+      cwd,
+      env,
+      onSpawn,
+      onStderr: async (chunk) => {
+        rawStderr += chunk;
+        const cleaned = stripCodexRolloutNoise(chunk);
+        cleanedStderr += cleaned;
+        if (cleaned.trim().length > 0) {
+          await onLog("stderr", cleaned);
+        }
+      },
+      onNotification: async (method, params) => {
+        const normalized = normalizeAppServerNotification({ method, params, usageByTurn });
+        if (method === "thread/started") {
+          const thread = parseObject(params.thread);
+          threadId = readNonEmptyString(thread.id) ?? threadId;
+          loggedThreadStarted = Boolean(threadId);
+        }
+        if (method === "error") {
+          const error = parseObject(params.error);
+          const message = readNonEmptyString(error.message);
+          if (message) {
+            exitCode = 1;
+          }
+          settle("completed");
+        }
+        if (method === "turn/completed") {
+          const turn = parseObject(params.turn);
+          if (asString(turn.status, "").trim().toLowerCase() === "failed") {
+            exitCode = 1;
+          }
+        }
+        if (normalized?.line) {
+          stdoutLines.push(normalized.line);
+          await onLog("stdout", `${normalized.line}\n`);
+        }
+        if (method === "turn/completed") {
+          settle("completed");
+        }
+      },
+      onRequest: async (method, id, params) => {
+        if (method !== "item/tool/requestUserInput") {
+          return null;
+        }
+
+        const livePending = capturePendingUserInput(String(id), params);
+        if (!livePending) {
+          return null;
+        }
+
+        const debugLine = JSON.stringify({
+          type: "item.requested_user_input",
+          request_id: String(id),
+          thread_id: livePending.threadId,
+          turn_id: livePending.turnId,
+          item_id: livePending.itemId,
+          questions: livePending.questions,
+        });
+        stdoutLines.push(debugLine);
+        await onLog("stdout", `${debugLine}\n`);
+
+        if (answeredDecisionQuestion && (!pendingUserInput || pendingUserInputMatches(pendingUserInput, params))) {
+          nextPendingUserInput = null;
+          return buildPendingUserInputResponse({
+            questions: livePending.questions,
+            selectedOptionKey: answeredDecisionQuestion.selectedOptionKey,
+            answer: answeredDecisionQuestion.answer,
+            note: answeredDecisionQuestion.note,
+          });
+        }
+
+        nextPendingUserInput = livePending;
+        capturedQuestion = buildDecisionQuestionCapture(livePending.questions);
+        settle("question");
+        return NO_RESPONSE;
+      },
+    });
+
+    const timeoutTimer = timeoutSec > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        exitCode = null;
+        settle("completed");
+      }, timeoutSec * 1000)
+      : null;
+
+    try {
+      await client.initialize();
+
+      if (resumeThreadId) {
+        const resumeResponse = await client.request("thread/resume", {
+          threadId: resumeThreadId,
+          cwd,
+          ...(approvalPolicy ? { approvalPolicy } : {}),
+          ...(sandboxPolicy ? { sandbox: sandboxPolicy } : {}),
+          ...(serviceTier ? { serviceTier } : {}),
+          ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
+          ...(model ? { model } : {}),
+          persistExtendedHistory: true,
+        });
+        const thread = parseObject(parseObject(resumeResponse.result).thread);
+        threadId = readNonEmptyString(thread.id) ?? threadId;
+      } else {
+        const startResponse = await client.request("thread/start", {
+          ...(model ? { model } : {}),
+          cwd,
+          ...(approvalPolicy ? { approvalPolicy } : {}),
+          ...(sandboxPolicy ? { sandbox: sandboxPolicy } : {}),
+          ...(serviceTier ? { serviceTier } : {}),
+          ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
+          experimentalRawEvents: false,
+          persistExtendedHistory: true,
+        });
+        const thread = parseObject(parseObject(startResponse.result).thread);
+        threadId = readNonEmptyString(thread.id) ?? threadId;
+      }
+
+      if (threadId && !loggedThreadStarted) {
+        const threadStartedLine = JSON.stringify({
+          type: "thread.started",
+          thread_id: threadId,
+        });
+        stdoutLines.push(threadStartedLine);
+        await onLog("stdout", `${threadStartedLine}\n`);
+        loggedThreadStarted = true;
+      }
+
+      if (!threadId) {
+        throw new Error("Codex app-server did not return a thread id");
+      }
+
+      if (!shouldResumePendingAnswer) {
+        const turnResponse = await client.request("turn/start", {
+          threadId,
+          input: [{ type: "text", text: prompt }],
+          cwd,
+          ...(approvalPolicy ? { approvalPolicy } : {}),
+          ...(sandboxPolicy ? { sandboxPolicy } : {}),
+          ...(serviceTier ? { serviceTier } : {}),
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+          ...(collaborationMode ? { collaborationMode } : {}),
+        });
+        const turn = parseObject(parseObject(turnResponse.result).turn);
+        if (asString(turn.status, "") === "failed") {
+          exitCode = 1;
+          settle("completed");
+        }
+      }
+
+      await outcomePromise;
+    } catch (error) {
+      if (!timedOut) {
+        exitCode = 1;
+        await appendError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (timedOut) signal = "SIGTERM";
+      await client.shutdown({ graceMs: graceSec * 1000 });
+    }
+
+    const stdout = stdoutLines.join("\n");
+    return {
+      proc: {
+        exitCode: timedOut ? null : exitCode,
+        signal,
+        timedOut,
+        stdout,
+        stderr: cleanedStderr,
+      },
+      rawStderr,
+      parsed: parseCodexJsonl(stdout),
+      question: capturedQuestion,
+      sessionParams: buildSessionParams(threadId ?? runtimeSessionId ?? runtime.sessionId ?? null, nextPendingUserInput),
+      sessionDisplayId: threadId ?? runtimeSessionId ?? runtime.sessionId ?? null,
+      clearSession: false,
     };
   };
 
   const toResult = (
-    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl> },
+    attempt: AppServerAttempt,
     clearSessionOnMissingSession = false,
   ): AdapterExecutionResult => {
     if (attempt.proc.timedOut) {
@@ -554,16 +1038,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       };
     }
 
-    const resolvedSessionId = attempt.parsed.sessionId ?? runtimeSessionId ?? runtime.sessionId ?? null;
-    const resolvedSessionParams = resolvedSessionId
-      ? ({
-        sessionId: resolvedSessionId,
-        cwd,
-        ...(workspaceId ? { workspaceId } : {}),
-        ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
-        ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
-      } as Record<string, unknown>)
-      : null;
+    const resolvedSessionId =
+      attempt.sessionDisplayId ??
+      attempt.parsed.sessionId ??
+      runtimeSessionId ??
+      runtime.sessionId ??
+      null;
+    const resolvedSessionParams = attempt.sessionParams ?? buildSessionParams(resolvedSessionId);
     const parsedError = typeof attempt.parsed.errorMessage === "string" ? attempt.parsed.errorMessage.trim() : "";
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
     const fallbackErrorMessage =
@@ -593,9 +1074,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         stderr: attempt.proc.stderr,
       },
       summary: attempt.parsed.summary,
-      clearSession: Boolean(clearSessionOnMissingSession && !resolvedSessionId),
+      clearSession: attempt.clearSession || Boolean(clearSessionOnMissingSession && !resolvedSessionId),
+      question: attempt.question ?? null,
     };
   };
+
+  const runAttempt = async (resumeSessionId: string | null) =>
+    transport === "exec"
+      ? runExecAttempt(resumeSessionId)
+      : runAppServerAttempt(resumeSessionId);
 
   const initial = await runAttempt(sessionId);
   if (
@@ -609,7 +1096,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       `[paperclip] Codex resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
     );
     const retry = await runAttempt(null);
-    return toResult(retry, true);
+    return toResult({
+      ...retry,
+      clearSession: true,
+    });
   }
 
   return toResult(initial);
