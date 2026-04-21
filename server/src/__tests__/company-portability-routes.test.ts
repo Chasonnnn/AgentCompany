@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { companyRoutes } from "../routes/companies.js";
+import { errorHandler } from "../middleware/index.js";
 
 const mockCompanyService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -57,25 +59,19 @@ const mockDocumentService = vi.hoisted(() => ({
   deleteTeamDocument: vi.fn(),
 }));
 
-function registerServiceMocks() {
-  vi.doMock("../services/index.js", () => ({
-    accessService: () => mockAccessService,
-    agentService: () => mockAgentService,
-    budgetService: () => mockBudgetService,
-    companyPortabilityService: () => mockCompanyPortabilityService,
-    companyService: () => mockCompanyService,
-    agentTemplateService: () => mockAgentTemplateService,
-    documentService: () => mockDocumentService,
-    feedbackService: () => mockFeedbackService,
-    logActivity: mockLogActivity,
-  }));
-}
+vi.mock("../services/index.js", () => ({
+  accessService: () => mockAccessService,
+  agentService: () => mockAgentService,
+  budgetService: () => mockBudgetService,
+  companyPortabilityService: () => mockCompanyPortabilityService,
+  companyService: () => mockCompanyService,
+  agentTemplateService: () => mockAgentTemplateService,
+  documentService: () => mockDocumentService,
+  feedbackService: () => mockFeedbackService,
+  logActivity: mockLogActivity,
+}));
 
-async function createApp(actor: Record<string, unknown>) {
-  vi.unmock("../services/index.js");
-  registerServiceMocks();
-  const { companyRoutes } = await import("../routes/companies.js");
-  const { errorHandler } = await import("../middleware/index.js");
+function createApp(actor: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -89,14 +85,7 @@ async function createApp(actor: Record<string, unknown>) {
 
 describe("company portability routes", () => {
   beforeEach(() => {
-    vi.unmock("../services/index.js");
-    vi.resetModules();
-    registerServiceMocks();
     vi.resetAllMocks();
-  });
-
-  afterEach(() => {
-    vi.unmock("../services/index.js");
   });
 
   it("rejects agents without create authority from company-scoped export preview routes", async () => {
@@ -105,7 +94,7 @@ describe("company portability routes", () => {
       companyId: "11111111-1111-4111-8111-111111111111",
       role: "engineer",
     });
-    const app = await createApp({
+    const app = createApp({
       type: "agent",
       agentId: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -137,7 +126,7 @@ describe("company portability routes", () => {
       warnings: [],
       paperclipExtensionPath: ".paperclip.yaml",
     });
-    const app = await createApp({
+    const app = createApp({
       type: "agent",
       agentId: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -159,7 +148,7 @@ describe("company portability routes", () => {
       companyId: "11111111-1111-4111-8111-111111111111",
       role: "ceo",
     });
-    const app = await createApp({
+    const app = createApp({
       type: "agent",
       agentId: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -182,7 +171,7 @@ describe("company portability routes", () => {
   });
 
   it("keeps global import preview routes board-only", async () => {
-    const app = await createApp({
+    const app = createApp({
       type: "agent",
       agentId: "agent-1",
       companyId: "11111111-1111-4111-8111-111111111111",
@@ -204,7 +193,7 @@ describe("company portability routes", () => {
   });
 
   it("requires instance admin for new-company import preview", async () => {
-    const app = await createApp({
+    const app = createApp({
       type: "board",
       userId: "user-1",
       companyIds: ["11111111-1111-4111-8111-111111111111"],
@@ -227,7 +216,7 @@ describe("company portability routes", () => {
   });
 
   it("requires instance admin for new-company import apply", async () => {
-    const app = await createApp({
+    const app = createApp({
       type: "board",
       userId: "user-1",
       companyIds: ["11111111-1111-4111-8111-111111111111"],

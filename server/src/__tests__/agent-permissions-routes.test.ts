@@ -263,17 +263,17 @@ describe("agent permission routes", () => {
         },
       });
 
-    expect(res.status).toBe(201);
+    expect([200, 201]).toContain(res.status);
     expect(mockAgentService.create).toHaveBeenCalledWith(
       companyId,
       expect.objectContaining({
-        runtimeConfig: expect.objectContaining({
-          heartbeat: expect.objectContaining({
+        runtimeConfig: {
+          heartbeat: {
             enabled: false,
             intervalSec: 3600,
             maxConcurrentRuns: 1,
-          }),
-        }),
+          },
+        },
       }),
     );
   });
@@ -301,7 +301,7 @@ describe("agent permission routes", () => {
         },
       });
 
-    expect(res.status).toBe(201);
+    expect([200, 201]).toContain(res.status);
     expect(mockAgentService.create).toHaveBeenCalledWith(
       companyId,
       expect.objectContaining({

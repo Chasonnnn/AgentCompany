@@ -4,6 +4,7 @@ import type { Db } from "@paperclipai/db";
 import {
   agents,
   companySecrets,
+  executionWorkspaces,
   goals,
   heartbeatRuns,
   issues,
@@ -31,6 +32,7 @@ import {
   interpolateRoutineTemplate,
   stringifyRoutineVariableValue,
   syncRoutineVariablesWithTemplate,
+  WORKSPACE_BRANCH_ROUTINE_VARIABLE,
 } from "@paperclipai/shared";
 import { trackRoutineRun } from "@paperclipai/shared/telemetry";
 import { conflict, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
@@ -291,6 +293,43 @@ function resolveRoutineVariableValues(
   }
 
   return resolved;
+}
+
+function routineUsesWorkspaceBranch(variables: RoutineVariable[]) {
+  return variables.some((variable) => variable.name === WORKSPACE_BRANCH_ROUTINE_VARIABLE);
+}
+
+async function resolveWorkspaceBranchRoutineVariables(input: {
+  db: Db;
+  companyId: string;
+  executionWorkspaceId?: string | null;
+  variables: RoutineVariable[];
+}) {
+  if (!input.executionWorkspaceId || !routineUsesWorkspaceBranch(input.variables)) {
+    return {} as Record<string, string>;
+  }
+
+  const workspace = await input.db
+    .select({
+      branchName: executionWorkspaces.branchName,
+      mode: executionWorkspaces.mode,
+      companyId: executionWorkspaces.companyId,
+    })
+    .from(executionWorkspaces)
+    .where(eq(executionWorkspaces.id, input.executionWorkspaceId))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+
+  if (!workspace || workspace.companyId !== input.companyId) {
+    return {};
+  }
+  if (!workspace.branchName || workspace.mode === "shared_workspace") {
+    return {};
+  }
+
+  return {
+    [WORKSPACE_BRANCH_ROUTINE_VARIABLE]: workspace.branchName,
+  };
 }
 
 function mergeRoutineRunPayload(
@@ -701,7 +740,16 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
     if (!assigneeAgentId) {
       throw unprocessable("Default agent required");
     }
-    const resolvedVariables = resolveRoutineVariableValues(input.routine.variables ?? [], input);
+    const autoVariables = await resolveWorkspaceBranchRoutineVariables({
+      db,
+      companyId: input.routine.companyId,
+      executionWorkspaceId: input.executionWorkspaceId ?? null,
+      variables: input.routine.variables ?? [],
+    });
+    const resolvedVariables = resolveRoutineVariableValues(input.routine.variables ?? [], {
+      ...input,
+      variables: { ...autoVariables, ...(input.variables ?? {}) },
+    });
     const allVariables = { ...getBuiltinRoutineVariableValues(), ...resolvedVariables };
     const title = interpolateRoutineTemplate(input.routine.title, allVariables) ?? input.routine.title;
     const description = interpolateRoutineTemplate(input.routine.description, allVariables);

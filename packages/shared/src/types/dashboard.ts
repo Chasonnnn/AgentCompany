@@ -1,5 +1,13 @@
 import type { CompanyAgentCompositionSummary } from "./agent.js";
 
+export interface DashboardRunActivityDay {
+  date: string;
+  succeeded: number;
+  failed: number;
+  other: number;
+  total: number;
+}
+
 export interface DashboardSummary {
   companyId: string;
   agents: {
@@ -49,4 +57,5 @@ export interface DashboardSummary {
     pausedAgents: number;
     pausedProjects: number;
   };
+  runActivity: DashboardRunActivityDay[];
 }

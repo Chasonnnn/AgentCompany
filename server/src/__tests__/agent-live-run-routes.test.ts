@@ -17,6 +17,7 @@ const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getByIdentifier: vi.fn(),
   list: vi.fn(),
+  listDependencyReadiness: vi.fn(),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -78,6 +79,7 @@ describe("agent live run routes", () => {
     });
     mockIssueService.getById.mockResolvedValue(null);
     mockIssueService.list.mockResolvedValue([]);
+    mockIssueService.listDependencyReadiness.mockResolvedValue(new Map());
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       companyId: "company-1",
@@ -165,6 +167,9 @@ describe("agent live run routes", () => {
         parentId: null,
         updatedAt: "2026-04-10T09:30:00.000Z",
         activeRun: null,
+        dependencyReady: true,
+        unresolvedBlockerCount: 0,
+        unresolvedBlockerIssueIds: [],
       },
     ]);
   });

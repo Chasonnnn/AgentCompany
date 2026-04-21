@@ -1918,6 +1918,12 @@ function readRuntimeServiceEntries(config: Record<string, unknown>) {
     : [];
 }
 
+function readDesiredRuntimeState(config: Record<string, unknown>) {
+  return config.desiredState === "running" || config.desiredState === "stopped" || config.desiredState === "manual"
+    ? config.desiredState
+    : null;
+}
+
 export async function ensureRuntimeServicesForRun(input: {
   db?: Db;
   runId: string;
@@ -1929,6 +1935,12 @@ export async function ensureRuntimeServicesForRun(input: {
   adapterEnv: Record<string, string>;
   onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
 }): Promise<RuntimeServiceRef[]> {
+  const desiredState = readDesiredRuntimeState(input.config);
+  if (desiredState === "stopped" || desiredState === "manual") {
+    runtimeServiceLeasesByRun.set(input.runId, []);
+    return [];
+  }
+
   const rawServices = readRuntimeServiceEntries(input.config);
   const acquiredServiceIds: string[] = [];
   const refs: RuntimeServiceRef[] = [];

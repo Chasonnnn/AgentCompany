@@ -294,6 +294,7 @@ export type RoutineTriggerSigningMode = (typeof ROUTINE_TRIGGER_SIGNING_MODES)[n
 
 export const ROUTINE_VARIABLE_TYPES = ["text", "textarea", "number", "boolean", "select"] as const;
 export type RoutineVariableType = (typeof ROUTINE_VARIABLE_TYPES)[number];
+export const WORKSPACE_BRANCH_ROUTINE_VARIABLE = "workspaceBranch";
 
 export const ROUTINE_RUN_STATUSES = [
   "received",
@@ -608,6 +609,7 @@ export const PERMISSION_KEYS = [
   "users:manage_permissions",
   "tasks:assign",
   "tasks:assign_scope",
+  "tasks:manage_active_checkouts",
   "joins:approve",
 ] as const;
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];

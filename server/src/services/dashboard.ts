@@ -1,11 +1,20 @@
 import { and, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, approvals, companies, costEvents, issueDecisionQuestions, issues } from "@paperclipai/db";
+import { agents, approvals, companies, costEvents, heartbeatRuns, issueDecisionQuestions, issues } from "@paperclipai/db";
 import type { DashboardSummary } from "@paperclipai/shared";
 import { notFound } from "../errors.js";
 import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { buildIssueContinuitySummary } from "./issue-continuity-summary.js";
+
+function getLast14Days() {
+  return Array.from({ length: 14 }, (_, index) => {
+    const date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() - (13 - index));
+    return date.toISOString().slice(0, 10);
+  });
+}
 
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
@@ -39,6 +48,7 @@ export function dashboardService(db: Db) {
         openDecisionQuestionCount,
         blockingDecisionQuestionCount,
         openDecisionQuestionRows,
+        runRows,
       ] = await Promise.all([
         db
           .select({ count: sql<number>`count(*)` })
@@ -86,6 +96,23 @@ export function dashboardService(db: Db) {
           .where(and(eq(issueDecisionQuestions.companyId, companyId), eq(issueDecisionQuestions.status, "open")))
           .orderBy(sql`${issueDecisionQuestions.createdAt} desc`)
           .limit(8),
+        db
+          .select({
+            createdAt: heartbeatRuns.createdAt,
+            status: heartbeatRuns.status,
+          })
+          .from(heartbeatRuns)
+          .where(
+            and(
+              eq(heartbeatRuns.companyId, companyId),
+              gte(heartbeatRuns.createdAt, (() => {
+                const date = new Date();
+                date.setUTCHours(0, 0, 0, 0);
+                date.setUTCDate(date.getUTCDate() - 13);
+                return date;
+              })()),
+            ),
+          ),
       ]);
 
       const agentCounts: DashboardSummary["agents"] = {
@@ -183,6 +210,24 @@ export function dashboardService(db: Db) {
           ? (monthSpendCents / company.budgetMonthlyCents) * 100
           : 0;
       const budgetOverview = await budgets.overview(companyId);
+      const runActivityByDate = new Map(
+        getLast14Days().map((date) => [date, {
+          date,
+          succeeded: 0,
+          failed: 0,
+          other: 0,
+          total: 0,
+        }]),
+      );
+      for (const row of runRows) {
+        const date = row.createdAt.toISOString().slice(0, 10);
+        const bucket = runActivityByDate.get(date);
+        if (!bucket) continue;
+        bucket.total += 1;
+        if (row.status === "succeeded") bucket.succeeded += 1;
+        else if (row.status === "failed" || row.status === "timed_out") bucket.failed += 1;
+        else bucket.other += 1;
+      }
 
       return {
         companyId,
@@ -220,6 +265,7 @@ export function dashboardService(db: Db) {
           pausedAgents: budgetOverview.pausedAgentCount,
           pausedProjects: budgetOverview.pausedProjectCount,
         },
+        runActivity: [...runActivityByDate.values()],
       };
     },
   };

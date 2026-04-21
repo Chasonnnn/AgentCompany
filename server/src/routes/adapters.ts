@@ -6,7 +6,9 @@
  * - Installing external adapters from npm packages or local paths
  * - Unregistering external adapters
  *
- * All routes require authenticated org access.
+ * Read-only routes require board org access. Mutating adapter management
+ * routes require instance-admin access because they change server-wide
+ * adapter installation or override state.
  *
  * @module server/routes/adapters
  */
@@ -41,7 +43,7 @@ import type { AdapterPluginRecord } from "../services/adapter-plugin-store.js";
 import type { ServerAdapterModule, AdapterConfigSchema } from "../adapters/types.js";
 import { loadExternalAdapterPackage, getUiParserSource, getOrExtractUiParserSource, reloadExternalAdapter } from "../adapters/plugin-loader.js";
 import { logger } from "../middleware/logger.js";
-import { assertBoardOrgAccess } from "./authz.js";
+import { assertBoardOrgAccess, assertInstanceAdmin } from "./authz.js";
 import { BUILTIN_ADAPTER_TYPES } from "../adapters/builtin-adapter-types.js";
 
 const execFileAsync = promisify(execFile);
@@ -224,7 +226,7 @@ export function adapterRoutes() {
    * - version?: string — target version for npm packages
    */
   router.post("/adapters/install", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertInstanceAdmin(req);
 
     const { packageName, isLocalPath = false, version } = req.body as AdapterInstallRequest;
 
@@ -356,7 +358,7 @@ export function adapterRoutes() {
    * Request body: { "disabled": boolean }
    */
   router.patch("/adapters/:type", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertInstanceAdmin(req);
 
     const adapterType = req.params.type;
     const { disabled } = req.body as { disabled?: boolean };
@@ -391,7 +393,7 @@ export function adapterRoutes() {
    * keep the adapter they started with.
    */
   router.patch("/adapters/:type/override", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertInstanceAdmin(req);
 
     const adapterType = req.params.type;
     const { paused } = req.body as { paused?: boolean };
@@ -420,7 +422,7 @@ export function adapterRoutes() {
    * Unregister an external adapter. Built-in adapters cannot be removed.
    */
   router.delete("/adapters/:type", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertInstanceAdmin(req);
 
     const adapterType = req.params.type;
 
@@ -495,7 +497,7 @@ export function adapterRoutes() {
    * Cannot be used on built-in adapter types.
    */
   router.post("/adapters/:type/reload", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertInstanceAdmin(req);
 
     const type = req.params.type;
 
@@ -547,7 +549,7 @@ export function adapterRoutes() {
   // This is a convenience shortcut for remove + install with the same
   // package name, but without the risk of losing the store record.
   router.post("/adapters/:type/reinstall", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertInstanceAdmin(req);
 
     const type = req.params.type;
 

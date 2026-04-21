@@ -205,8 +205,14 @@ export function executionWorkspaceRoutes(db: Db) {
           runtimeServiceCount = 0;
         }
 
+        const currentDesiredState = readExecutionWorkspaceConfig(existing.metadata as Record<string, unknown> | null)?.desiredState ?? null;
+        const nextDesiredState = currentDesiredState === "manual"
+          ? "manual"
+          : action === "stop"
+            ? "stopped"
+            : "running";
         const metadata = mergeExecutionWorkspaceConfig(existing.metadata as Record<string, unknown> | null, {
-          desiredState: action === "stop" ? "stopped" : "running",
+          desiredState: nextDesiredState,
         });
         await svc.update(existing.id, { metadata });
 

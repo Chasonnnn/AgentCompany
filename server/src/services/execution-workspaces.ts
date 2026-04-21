@@ -125,7 +125,10 @@ export function readExecutionWorkspaceConfig(metadata: Record<string, unknown> |
     teardownCommand: readNullableString(raw.teardownCommand),
     cleanupCommand: readNullableString(raw.cleanupCommand),
     workspaceRuntime: cloneRecord(raw.workspaceRuntime),
-    desiredState: raw.desiredState === "running" || raw.desiredState === "stopped" ? raw.desiredState : null,
+    desiredState:
+      raw.desiredState === "running" || raw.desiredState === "stopped" || raw.desiredState === "manual"
+        ? raw.desiredState
+        : null,
   };
 
   const hasConfig = Object.values(config).some((value) => {
@@ -162,7 +165,7 @@ export function mergeExecutionWorkspaceConfig(
     workspaceRuntime: patch.workspaceRuntime !== undefined ? cloneRecord(patch.workspaceRuntime) : current.workspaceRuntime,
     desiredState:
       patch.desiredState !== undefined
-        ? patch.desiredState === "running" || patch.desiredState === "stopped"
+        ? patch.desiredState === "running" || patch.desiredState === "stopped" || patch.desiredState === "manual"
           ? patch.desiredState
           : null
         : current.desiredState,

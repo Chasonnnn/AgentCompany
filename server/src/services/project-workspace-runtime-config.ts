@@ -9,7 +9,7 @@ function cloneRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function readDesiredState(value: unknown): ProjectWorkspaceRuntimeConfig["desiredState"] {
-  return value === "running" || value === "stopped" ? value : null;
+  return value === "running" || value === "stopped" || value === "manual" ? value : null;
 }
 
 export function readProjectWorkspaceRuntimeConfig(

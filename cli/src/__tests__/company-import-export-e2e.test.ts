@@ -321,6 +321,11 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: `CLI Export Source ${Date.now()}` }),
     });
+    await api(apiBase, `/api/companies/${sourceCompany.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requireBoardApprovalForNewAgents: false }),
+    });
 
     const sourceAgent = await api<{ id: string; name: string }>(
       apiBase,
@@ -541,7 +546,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     mkdirSync(fidelityExportDir, { recursive: true });
 
     // --- Create a richly-populated source company ---
-    const sourceCompany = await api<{
+    let sourceCompany = await api<{
       id: string;
       name: string;
       issuePrefix: string;
@@ -555,8 +560,12 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
         name: `Fidelity Test ${Date.now()}`,
         description: "Company for round-trip fidelity testing",
         brandColor: "#ff5500",
-        requireBoardApprovalForNewAgents: true,
       }),
+    });
+    sourceCompany = await api(apiBase, `/api/companies/${sourceCompany.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requireBoardApprovalForNewAgents: false }),
     });
 
     // Create a manager agent first so we can test reportsTo

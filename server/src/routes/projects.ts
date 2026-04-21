@@ -608,9 +608,16 @@ export function projectRoutes(
           runtimeServiceCount = 0;
         }
 
+        const currentDesiredState = workspace.runtimeConfig?.desiredState ?? null;
+        const nextDesiredState = currentDesiredState === "manual"
+          ? "manual"
+          : action === "stop"
+            ? "stopped"
+            : "running";
+
         await svc.updateWorkspace(project.id, workspace.id, {
           runtimeConfig: {
-            desiredState: action === "stop" ? "stopped" : "running",
+            desiredState: nextDesiredState,
           },
         });
 

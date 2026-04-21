@@ -111,6 +111,16 @@ async function createApp() {
     import("../middleware/index.js"),
     import("../adapters/registry.js"),
   ]);
+  const db = {
+    select: () => ({
+      from: () => ({
+        where: async () => [{
+          id: "company-1",
+          requireBoardApprovalForNewAgents: false,
+        }],
+      }),
+    }),
+  };
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -123,7 +133,7 @@ async function createApp() {
     };
     next();
   });
-  app.use("/api", agentRoutes({} as any));
+  app.use("/api", agentRoutes(db as any));
   app.use(errorHandler);
   return { app, adapterRegistry };
 }

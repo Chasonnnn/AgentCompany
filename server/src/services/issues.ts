@@ -42,6 +42,7 @@ const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
 export const ISSUE_LIST_DEFAULT_LIMIT = 500;
 export const ISSUE_LIST_MAX_LIMIT = 1000;
 const ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE = 500;
+const CHILD_COMPLETION_SUMMARY_BODY_MAX_CHARS = 280;
 
 function assertTransition(from: string, to: string) {
   if (from === to) return;
