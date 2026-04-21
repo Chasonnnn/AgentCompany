@@ -14,6 +14,11 @@ import { RunChatSurface } from "./RunChatSurface";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 
 const MIN_DASHBOARD_RUNS = 4;
+const DASHBOARD_RUN_CARD_LIMIT = 4;
+const DASHBOARD_LOG_POLL_INTERVAL_MS = 15_000;
+const DASHBOARD_LOG_READ_LIMIT_BYTES = 64_000;
+const DASHBOARD_MAX_CHUNKS_PER_RUN = 40;
+const EMPTY_TRANSCRIPT: TranscriptEntry[] = [];
 
 function isRunActive(run: LiveRunForIssue): boolean {
   return run.status === "queued" || run.status === "running";
@@ -32,10 +37,12 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
   });
 
   const runs = useMemo(() => uniqueRunsByAgent(liveRuns ?? []), [liveRuns]);
+  const visibleRuns = useMemo(() => runs.slice(0, DASHBOARD_RUN_CARD_LIMIT), [runs]);
+  const hiddenRunCount = Math.max(0, runs.length - visibleRuns.length);
   const { data: issues } = useQuery({
     queryKey: [...queryKeys.issues.list(companyId), "with-routine-executions"],
     queryFn: () => issuesApi.list(companyId, { includeRoutineExecutions: true }),
-    enabled: runs.length > 0,
+    enabled: visibleRuns.length > 0,
   });
 
   const issueById = useMemo(() => {
@@ -47,9 +54,12 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
   }, [issues]);
 
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
-    runs,
+    runs: visibleRuns,
     companyId,
-    maxChunksPerRun: 120,
+    maxChunksPerRun: DASHBOARD_MAX_CHUNKS_PER_RUN,
+    logPollIntervalMs: DASHBOARD_LOG_POLL_INTERVAL_MS,
+    logReadLimitBytes: DASHBOARD_LOG_READ_LIMIT_BYTES,
+    enableRealtimeUpdates: false,
   });
 
   const handleStopRun = async (run: LiveRunForIssue) => {
@@ -84,13 +94,13 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
-          {runs.map((run) => (
+          {visibleRuns.map((run) => (
             <AgentRunCard
               key={run.id}
               companyId={companyId}
               run={run}
               issue={run.issueId ? issueById.get(run.issueId) : undefined}
-              transcript={transcriptByRun.get(run.id) ?? []}
+              transcript={transcriptByRun.get(run.id) ?? EMPTY_TRANSCRIPT}
               hasOutput={hasOutputForRun(run.id)}
               isActive={isRunActive(run)}
               stopping={stoppingRunIds.has(run.id)}
@@ -101,6 +111,13 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
           ))}
         </div>
       )}
+      {hiddenRunCount > 0 ? (
+        <div className="mt-3 flex justify-end text-xs text-muted-foreground">
+          <Link to="/agents" className="hover:text-foreground hover:underline">
+            {hiddenRunCount} more active/recent run{hiddenRunCount === 1 ? "" : "s"}
+          </Link>
+        </div>
+      ) : null}
     </div>
   );
 }
