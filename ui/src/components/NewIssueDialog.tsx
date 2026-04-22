@@ -264,6 +264,24 @@ function defaultExecutionWorkspaceModeForProject(project: { executionWorkspacePo
   return "shared_workspace";
 }
 
+function singleActiveExecutionProjectIdForAssignee(input: {
+  assigneeAgentId: string | null | undefined;
+  agents: Array<{
+    id: string;
+    operatingClass?: string;
+    requestedForProjectId?: string | null;
+  }> | undefined;
+  projects: Array<{ id: string }>;
+}) {
+  if (!input.assigneeAgentId) return "";
+  const assignee = input.agents?.find((agent) => agent.id === input.assigneeAgentId);
+  if (!assignee || assignee.operatingClass !== "worker" || !assignee.requestedForProjectId) {
+    return "";
+  }
+  const matchingProjects = input.projects.filter((project) => project.id === assignee.requestedForProjectId);
+  return matchingProjects.length === 1 ? matchingProjects[0]!.id : "";
+}
+
 function issueExecutionWorkspaceModeForExistingWorkspace(mode: string | null | undefined) {
   if (mode === "isolated_workspace" || mode === "operator_branch" || mode === "shared_workspace") {
     return mode;
@@ -291,6 +309,8 @@ export function NewIssueDialog() {
   const [participantMenuOpen, setParticipantMenuOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
+  const [projectOptionsOpen, setProjectOptionsOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState("");
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
   const [assigneeThinkingEffort, setAssigneeThinkingEffort] = useState("");
@@ -656,6 +676,8 @@ export function NewIssueDialog() {
     setShowApproverRow(false);
     setProjectId("");
     setProjectWorkspaceId("");
+    setProjectOptionsOpen(false);
+    setProjectSearch("");
     setAssigneeOptionsOpen(false);
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
@@ -681,6 +703,8 @@ export function NewIssueDialog() {
     setShowApproverRow(false);
     setProjectId("");
     setProjectWorkspaceId("");
+    setProjectOptionsOpen(false);
+    setProjectSearch("");
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
     setAssigneeChrome(false);
@@ -695,7 +719,7 @@ export function NewIssueDialog() {
   }
 
   function handleSubmit() {
-    if (!effectiveCompanyId || !title.trim() || createIssue.isPending) return;
+    if (!effectiveCompanyId || !title.trim() || !projectId || createIssue.isPending) return;
     const assigneeAdapterOverrides = buildAssigneeAdapterOverrides({
       adapterType: assigneeAdapterType,
       modelOverride: assigneeModelOverride,
@@ -734,7 +758,7 @@ export function NewIssueDialog() {
       ...(selectedAssigneeUserId ? { assigneeUserId: selectedAssigneeUserId } : {}),
       ...(newIssueDefaults.parentId ? { parentId: newIssueDefaults.parentId } : {}),
       ...(newIssueDefaults.goalId ? { goalId: newIssueDefaults.goalId } : {}),
-      ...(projectId ? { projectId } : {}),
+      projectId,
       ...(projectWorkspaceId ? { projectWorkspaceId } : {}),
       ...(assigneeAdapterOverrides ? { assigneeAdapterOverrides } : {}),
       ...(executionWorkspacePolicy?.enabled ? { executionWorkspacePreference: executionWorkspaceMode } : {}),
@@ -893,6 +917,17 @@ export function NewIssueDialog() {
       ),
     [orderedProjects, projectId, recentProjectIds],
   );
+  const filteredProjectOptions = useMemo(
+    () => {
+      const query = projectSearch.trim().toLowerCase();
+      if (!query) return projectOptions;
+      return projectOptions.filter((project) => {
+        const haystack = `${project.label} ${project.searchText ?? ""}`.toLowerCase();
+        return haystack.includes(query);
+      });
+    },
+    [projectOptions, projectSearch],
+  );
   const savedDraft = loadDraft();
   const hasSavedDraft = Boolean(savedDraft?.title.trim() || savedDraft?.description.trim());
   const canDiscardDraft = hasDraft || hasSavedDraft;
@@ -901,8 +936,8 @@ export function NewIssueDialog() {
   const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
   const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
 
-  const handleProjectChange = useCallback((nextProjectId: string) => {
-    if (nextProjectId) trackRecentProject(nextProjectId);
+  const applyProjectChange = useCallback((nextProjectId: string, trackRecent = true) => {
+    if (nextProjectId && trackRecent) trackRecentProject(nextProjectId);
     setProjectId(nextProjectId);
     const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
     executionWorkspaceDefaultProjectId.current = nextProjectId || null;
@@ -910,6 +945,17 @@ export function NewIssueDialog() {
     setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(nextProject));
     setSelectedExecutionWorkspaceId("");
   }, [orderedProjects]);
+  const handleProjectChange = useCallback((nextProjectId: string) => {
+    applyProjectChange(nextProjectId);
+  }, [applyProjectChange]);
+  const autoProjectId = useMemo(
+    () => singleActiveExecutionProjectIdForAssignee({
+      assigneeAgentId: selectedAssigneeAgentId,
+      agents,
+      projects: orderedProjects,
+    }),
+    [agents, orderedProjects, selectedAssigneeAgentId],
+  );
 
   useEffect(() => {
     if (!newIssueOpen || !projectId || executionWorkspaceDefaultProjectId.current === projectId) {
@@ -922,6 +968,12 @@ export function NewIssueDialog() {
     setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(project));
     setSelectedExecutionWorkspaceId("");
   }, [newIssueOpen, orderedProjects, projectId]);
+
+  useEffect(() => {
+    if (!newIssueOpen || projectId || !autoProjectId) return;
+    applyProjectChange(autoProjectId, false);
+  }, [applyProjectChange, autoProjectId, newIssueOpen, projectId]);
+
   const modelOverrideOptions = useMemo<InlineEntityOption[]>(
     () => {
       return [...(assigneeAdapterModels ?? [])]
@@ -1159,46 +1211,80 @@ export function NewIssueDialog() {
                 }}
               />
               <span>in</span>
-              <InlineEntitySelector
-                ref={projectSelectorRef}
-                value={projectId}
-                options={projectOptions}
-                placeholder="Project"
-                disablePortal
-                noneLabel="No project"
-                searchPlaceholder="Search projects..."
-                emptyMessage="No projects found."
-                onChange={handleProjectChange}
-                onConfirm={() => {
-                  descriptionEditorRef.current?.focus();
+              <Popover
+                open={projectOptionsOpen}
+                onOpenChange={(open) => {
+                  setProjectOptionsOpen(open);
+                  if (!open) setProjectSearch("");
                 }}
-                renderTriggerValue={(option) =>
-                  option && currentProject ? (
-                    <>
-                      <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: currentProject.color ?? "#6366f1" }}
-                      />
-                      <span className="truncate">{option.label}</span>
-                    </>
-                  ) : (
-                    <span className="text-muted-foreground">Project</span>
-                  )
-                }
-                renderOption={(option) => {
-                  if (!option.id) return <span className="truncate">{option.label}</span>;
-                  const project = orderedProjects.find((item) => item.id === option.id);
-                  return (
-                    <>
-                      <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: project?.color ?? "#6366f1" }}
-                      />
-                      <span className="truncate">{option.label}</span>
-                    </>
-                  );
-                }}
-              />
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    ref={projectSelectorRef}
+                    type="button"
+                    className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {currentProject ? (
+                      <>
+                        <span
+                          className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                          style={{ backgroundColor: currentProject.color ?? "#6366f1" }}
+                        />
+                        <span className="truncate">{currentProject.name}</span>
+                      </>
+                    ) : (
+                      <span className="text-destructive">Project required</span>
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  side="bottom"
+                  collisionPadding={16}
+                  className="w-[min(20rem,calc(100vw-2rem))] p-1"
+                  disablePortal
+                >
+                  <input
+                    className="w-full border-b border-border bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground/60"
+                    placeholder="Search projects..."
+                    value={projectSearch}
+                    onChange={(event) => setProjectSearch(event.target.value)}
+                  />
+                  <div className="max-h-56 overflow-y-auto overscroll-contain py-1 touch-pan-y">
+                    {filteredProjectOptions.length === 0 ? (
+                      <p className="px-2 py-2 text-xs text-muted-foreground">No projects found.</p>
+                    ) : (
+                      filteredProjectOptions.map((option) => {
+                        const project = orderedProjects.find((item) => item.id === option.id);
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm touch-manipulation",
+                              option.id === projectId && "bg-accent",
+                            )}
+                            onClick={() => {
+                              handleProjectChange(option.id);
+                              setProjectOptionsOpen(false);
+                              setProjectSearch("");
+                              requestAnimationFrame(() => {
+                                descriptionEditorRef.current?.focus();
+                              });
+                            }}
+                          >
+                            <span
+                              className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                              style={{ backgroundColor: project?.color ?? "#6366f1" }}
+                            />
+                            <span className="truncate">{option.label}</span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
 
               {/* Three-dot menu to add Reviewer / Approver rows */}
               <Popover open={participantMenuOpen} onOpenChange={setParticipantMenuOpen}>
@@ -1687,7 +1773,7 @@ export function NewIssueDialog() {
             <Button
               size="sm"
               className="min-w-[8.5rem] disabled:opacity-100"
-              disabled={!title.trim() || createIssue.isPending}
+              disabled={!title.trim() || !projectId || createIssue.isPending}
               onClick={handleSubmit}
               aria-busy={createIssue.isPending}
             >

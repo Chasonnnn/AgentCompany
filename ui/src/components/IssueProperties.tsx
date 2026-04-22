@@ -249,7 +249,7 @@ export function IssueProperties({
   };
 
   const projectName = (id: string | null) => {
-    if (!id) return id?.slice(0, 8) ?? "None";
+    if (!id) return "Unknown project";
     const project = orderedProjects.find((p) => p.id === id);
     return project?.name ?? id.slice(0, 8);
   };
@@ -649,7 +649,7 @@ export function IssueProperties({
   ) : (
     <>
       <Hexagon className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="text-sm text-muted-foreground">No project</span>
+      <span className="text-sm text-destructive">Project required</span>
     </>
   );
 
@@ -664,16 +664,13 @@ export function IssueProperties({
       />
       <div className="max-h-48 overflow-y-auto overscroll-contain">
         {orderItemsBySelectedAndRecent(
-          [
-            { id: "", kind: "none" as const, name: "No project", color: null as string | null },
-            ...orderedProjects.map((project) => ({
-              id: project.id,
-              kind: "project" as const,
-              name: project.name,
-              color: project.color ?? "#6366f1",
-              project,
-            })),
-          ],
+          orderedProjects.map((project) => ({
+            id: project.id,
+            kind: "project" as const,
+            name: project.name,
+            color: project.color ?? "#6366f1",
+            project,
+          })),
           issue.projectId ?? "",
           recentProjectIds,
         )
@@ -690,36 +687,24 @@ export function IssueProperties({
               p.id === issue.projectId && "bg-accent"
             )}
             onClick={() => {
-              if (p.kind === "project") {
-                const defaultMode = defaultExecutionWorkspaceModeForProject(p.project);
-                trackRecentProject(p.project.id);
-                onUpdate({
-                  projectId: p.project.id,
-                  projectWorkspaceId: defaultProjectWorkspaceIdForProject(p.project),
-                  executionWorkspaceId: null,
-                  executionWorkspacePreference: defaultMode,
-                  executionWorkspaceSettings: p.project.executionWorkspacePolicy?.enabled
-                    ? { mode: defaultMode }
-                    : null,
-                });
-              } else {
-                onUpdate({
-                  projectId: null,
-                  projectWorkspaceId: null,
-                  executionWorkspaceId: null,
-                  executionWorkspacePreference: null,
-                  executionWorkspaceSettings: null,
-                });
-              }
+              const defaultMode = defaultExecutionWorkspaceModeForProject(p.project);
+              trackRecentProject(p.project.id);
+              onUpdate({
+                projectId: p.project.id,
+                projectWorkspaceId: defaultProjectWorkspaceIdForProject(p.project),
+                executionWorkspaceId: null,
+                executionWorkspacePreference: defaultMode,
+                executionWorkspaceSettings: p.project.executionWorkspacePolicy?.enabled
+                  ? { mode: defaultMode }
+                  : null,
+              });
               setProjectOpen(false);
             }}
           >
-            {p.kind === "project" ? (
-              <span
-                className="shrink-0 h-3 w-3 rounded-sm"
-                style={{ backgroundColor: p.color ?? "#6366f1" }}
-              />
-            ) : null}
+            <span
+              className="shrink-0 h-3 w-3 rounded-sm"
+              style={{ backgroundColor: p.color ?? "#6366f1" }}
+            />
             {p.name}
           </button>
         ))}

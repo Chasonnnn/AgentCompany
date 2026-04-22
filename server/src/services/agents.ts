@@ -2477,17 +2477,17 @@ export function agentService(db: Db) {
         }>,
       });
 
-      const ensureProjectNode = (projectId: string | null) => {
-        const key = projectId ?? "__unscoped__";
+      const ensureProjectNode = (projectId: string) => {
+        const key = projectId;
         const existing = projectNodes.get(key);
         if (existing) return existing;
-        const projectRow = projectId ? (projectRowById.get(projectId) ?? null) : null;
-        const pod = projectId ? (projectPods.get(projectId) ?? null) : null;
+        const projectRow = projectRowById.get(projectId) ?? null;
+        const pod = projectPods.get(projectId) ?? null;
         const clusterId = projectRow?.portfolioClusterId ?? null;
         const cluster = clusterId ? (clusterById.get(clusterId) ?? null) : null;
         const created = {
           projectId,
-          projectName: projectRow?.name ?? (projectId ? "Unknown project" : "Unscoped execution"),
+          projectName: projectRow?.name ?? "Unknown project",
           color: projectRow?.color ?? pod?.color ?? null,
           executiveSponsor: cluster?.executiveSponsor ?? null,
           portfolioDirector: cluster?.portfolioDirector ?? null,
@@ -2532,10 +2532,10 @@ export function agentService(db: Db) {
           health?: string | null;
           returnedBranchIssueIds?: string[];
         } | null;
-        if (!summary && !row.projectId) {
+        if (!row.projectId) {
           continue;
         }
-        const node = ensureProjectNode(row.projectId ?? null);
+        const node = ensureProjectNode(row.projectId);
         node.issueCounts.active += 1;
         if (state?.health === "missing_required_docs") node.issueCounts.blockedMissingDocs += 1;
         if (state?.health === "stale_progress") node.issueCounts.staleProgress += 1;

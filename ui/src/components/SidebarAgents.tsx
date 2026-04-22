@@ -255,6 +255,18 @@ function countAccountabilityProjectMembers(project: AccountabilityProjectNode) {
   return flattenAccountabilityProjectMembers(project).length;
 }
 
+function isVisibleAccountabilityProject(
+  project: AccountabilityProjectNode,
+): project is AccountabilityProjectNode & { projectId: string } {
+  return project.projectId !== null;
+}
+
+function visibleAccountabilityProjects(
+  accountability: CompanyAgentAccountability,
+): Array<AccountabilityProjectNode & { projectId: string }> {
+  return accountability.projects.filter(isVisibleAccountabilityProject);
+}
+
 function flattenAccountabilityProjectMembers(project: AccountabilityProjectNode): AgentHierarchyMemberSummary[] {
   const primaryLead = project.projectLead ? [project.projectLead] : [];
   const fallbackLeadership = project.projectLead ? [] : project.leadership;
@@ -607,13 +619,14 @@ function AccountabilityContent({
   activeAgentId: string | null;
   activeTab: string | null;
 }) {
+  const projects = visibleAccountabilityProjects(accountability);
   const sharedSpecialists = buildSharedSpecialistPoolFromAccountability(accountability);
   const sharedServiceDepartments = buildSharedServiceLeadDepartmentsFromAccountability(accountability);
   const sharedSpecialistMembers = sharedSpecialists.map((entry) => entry.member);
   const sharedSpecialistSubtitleByAgentId = new Map(
     sharedSpecialists.map((entry) => [entry.member.id, sharedSpecialistSubtitle(entry)]),
   );
-  const activeProject = accountability.projects.find((project) =>
+  const activeProject = projects.find((project) =>
     accountabilityProjectHasActiveMember(project, activeAgentId),
   );
   const activeSharedService = sharedServiceDepartments.find((department) =>
@@ -643,16 +656,16 @@ function AccountabilityContent({
         </HierarchyFolder>
       ) : null}
 
-      {accountability.projects.map((project) => (
+      {projects.map((project) => (
         <AccountabilityProjectSection
-          key={project.projectId ?? project.projectName}
+          key={project.projectId}
           project={project}
           agentMap={agentMap}
           liveCountByAgent={liveCountByAgent}
           activeAgentId={activeAgentId}
           activeTab={activeTab}
           depth={0}
-          {...accordionFolderControl(project.projectId ?? project.projectName, projectOpenKey, setProjectOpenKey)}
+          {...accordionFolderControl(project.projectId, projectOpenKey, setProjectOpenKey)}
         />
       ))}
 

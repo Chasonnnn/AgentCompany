@@ -231,22 +231,25 @@ export function RoutineRunVariablesDialog({
     [values, variables, workspaceBranchName],
   );
 
-  const workspaceIssue = useMemo(() => ({
-    companyId: companyId ?? null,
-    projectId: selectedProject?.id ?? null,
-    projectWorkspaceId: workspaceConfig.projectWorkspaceId,
-    executionWorkspaceId: workspaceConfig.executionWorkspaceId,
-    executionWorkspacePreference: workspaceConfig.executionWorkspacePreference,
-    executionWorkspaceSettings: workspaceConfig.executionWorkspaceSettings,
-    currentExecutionWorkspace: null,
-  }), [
-    companyId,
-    selectedProject?.id,
-    workspaceConfig.executionWorkspaceId,
-    workspaceConfig.executionWorkspacePreference,
-    workspaceConfig.executionWorkspaceSettings,
-    workspaceConfig.projectWorkspaceId,
-  ]);
+  const workspaceIssue = useMemo(
+    () => (selectedProject ? {
+      companyId: companyId ?? null,
+      projectId: selectedProject.id,
+      projectWorkspaceId: workspaceConfig.projectWorkspaceId,
+      executionWorkspaceId: workspaceConfig.executionWorkspaceId,
+      executionWorkspacePreference: workspaceConfig.executionWorkspacePreference,
+      executionWorkspaceSettings: workspaceConfig.executionWorkspaceSettings,
+      currentExecutionWorkspace: null,
+    } : null),
+    [
+      companyId,
+      selectedProject,
+      workspaceConfig.executionWorkspaceId,
+      workspaceConfig.executionWorkspacePreference,
+      workspaceConfig.executionWorkspaceSettings,
+      workspaceConfig.projectWorkspaceId,
+    ],
+  );
 
   const canSubmit =
     selection.assigneeAgentId.trim().length > 0 &&
@@ -426,7 +429,7 @@ export function RoutineRunVariablesDialog({
             </div>
           ))}
 
-          {workspaceSelectionEnabled && selectedProject && companyId ? (
+          {workspaceSelectionEnabled && selectedProject && companyId && workspaceIssue ? (
             <IssueWorkspaceCard
               key={`${open ? "open" : "closed"}:${selectedProject.id}`}
               issue={workspaceIssue}

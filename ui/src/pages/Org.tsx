@@ -71,6 +71,18 @@ function executiveContinuityOwnerSubtitle(member: {
   return `${memberRoleSubtitle(member)} · ${member.activeIssueCount} active issue${member.activeIssueCount === 1 ? "" : "s"}`;
 }
 
+function isVisibleAccountabilityProject(
+  project: AccountabilityProjectNode,
+): project is AccountabilityProjectNode & { projectId: string } {
+  return project.projectId !== null;
+}
+
+function visibleAccountabilityProjects(
+  accountability: CompanyAgentAccountability,
+): Array<AccountabilityProjectNode & { projectId: string }> {
+  return accountability.projects.filter(isVisibleAccountabilityProject);
+}
+
 function AccountabilityProject({
   project,
 }: {
@@ -124,6 +136,7 @@ function AccountabilityView({
 }: {
   accountability: CompanyAgentAccountability;
 }) {
+  const projects = visibleAccountabilityProjects(accountability);
   const sharedSpecialists = buildSharedSpecialistPoolFromAccountability(accountability);
   const sharedServiceDepartments = buildSharedServiceLeadDepartmentsFromAccountability(accountability);
   const sharedSpecialistMembers = sharedSpecialists.map((entry) => entry.member);
@@ -133,8 +146,8 @@ function AccountabilityView({
   return (
     <div className="space-y-6">
       <MemberList label="Executive Office" members={accountability.executiveOffice} />
-      {accountability.projects.map((project) => (
-        <AccountabilityProject key={project.projectId ?? project.projectName} project={project} />
+      {projects.map((project) => (
+        <AccountabilityProject key={project.projectId} project={project} />
       ))}
       {sharedSpecialists.length > 0 ? (
         <section className="space-y-4">
@@ -177,12 +190,13 @@ export function Org() {
 
   const sharedSpecialists = data ? buildSharedSpecialistPoolFromAccountability(data) : [];
   const sharedServiceDepartments = data ? buildSharedServiceLeadDepartmentsFromAccountability(data) : [];
+  const projects = data ? visibleAccountabilityProjects(data) : [];
 
   return (
     <div className="space-y-4">
       {error ? <p className="text-sm text-destructive">{error.message}</p> : null}
       {data
-        && data.projects.length === 0
+        && projects.length === 0
         && data.executiveOffice.length === 0
         && sharedSpecialists.length === 0
         && sharedServiceDepartments.length === 0
