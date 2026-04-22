@@ -390,8 +390,23 @@ export const issueBranchMergePreviewSchema = z.object({
   returnedArtifacts: z.array(z.string()).default([]),
 });
 
+export const createIssueContinuityDocOverrideSchema = z.object({
+  title: z.string().trim().max(200).optional().nullable(),
+  body: z.string().min(1).max(524288),
+  format: z.literal("markdown").optional(),
+});
+
+export const createIssueContinuityDocsOverrideSchema = z.record(
+  z.enum(["spec", "plan", "runbook", "progress", "test-plan", "handoff"]),
+  createIssueContinuityDocOverrideSchema,
+);
+
+export type CreateIssueContinuityDocOverride = z.infer<typeof createIssueContinuityDocOverrideSchema>;
+export type CreateIssueContinuityDocsOverride = z.infer<typeof createIssueContinuityDocsOverrideSchema>;
+
 export const prepareIssueContinuitySchema = z.object({
   tier: issueContinuityTierSchema.optional(),
+  docs: createIssueContinuityDocsOverrideSchema.optional(),
 });
 
 export const handoffIssueContinuitySchema = z.object({
@@ -524,7 +539,8 @@ export const createIssueSchema = z.object({
   assigneeAdapterOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
   executionPolicy: issueExecutionPolicySchema.optional().nullable(),
   continuityTier: issueContinuityTierSchema.optional(),
-  prepareContinuity: z.boolean().optional().default(false),
+  prepareContinuity: z.boolean().optional(),
+  docs: createIssueContinuityDocsOverrideSchema.optional(),
   executionWorkspaceId: z.string().uuid().optional().nullable(),
   executionWorkspacePreference: z.enum(ISSUE_EXECUTION_WORKSPACE_PREFERENCES).optional().nullable(),
   executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),

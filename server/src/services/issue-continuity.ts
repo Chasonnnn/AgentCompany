@@ -1306,21 +1306,38 @@ export function issueContinuityService(db: Db) {
       const parsed = prepareIssueContinuitySchema.parse(input);
       const issue = await getIssueOrThrow(issueId);
       const initialState = await recomputeIssueContinuityState(issueId, { tier: parsed.tier ?? null });
-      for (const key of initialState.missingDocumentKeys) {
-        const body = buildIssueDocumentTemplate(key, {
-          title: issue.title,
-          description: issue.description ?? null,
-          tier: parsed.tier ?? initialState.tier,
-        });
+      const overrides = (parsed.docs ?? {}) as Record<string, { title?: string | null; body: string } | undefined>;
+      const scaffoldedKeys: string[] = [];
+      const overriddenKeys: string[] = [];
+
+      const seedKeys = new Set<string>([
+        ...initialState.missingDocumentKeys,
+        ...Object.keys(overrides),
+      ]);
+      for (const key of seedKeys) {
+        const override = overrides[key];
+        const body = override
+          ? override.body
+          : buildIssueDocumentTemplate(key, {
+              title: issue.title,
+              description: issue.description ?? null,
+              tier: parsed.tier ?? initialState.tier,
+            });
         if (!body) continue;
         await upsertScaffoldedIssueDocument({
           issueId,
           key,
           body,
+          title: override?.title ?? null,
           createdByAgentId: actor.agentId ?? null,
           createdByUserId: actor.userId ?? null,
           createdByRunId: actor.runId ?? null,
         });
+        if (override) {
+          overriddenKeys.push(key);
+        } else {
+          scaffoldedKeys.push(key);
+        }
       }
       const continuityState = await recomputeIssueContinuityState(issueId, {
         tier: parsed.tier ?? initialState.tier,
@@ -1328,7 +1345,12 @@ export function issueContinuityService(db: Db) {
         forceSpecState: isContinuityExecuting(issue) ? "frozen" : null,
       });
       const continuityBundle = await buildContinuityBundle(issueId);
-      return { continuityState, continuityBundle };
+      return {
+        continuityState,
+        continuityBundle,
+        scaffoldedKeys,
+        overriddenKeys,
+      };
     },
 
     requestPlanApproval: async (

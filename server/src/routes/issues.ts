@@ -158,6 +158,8 @@ function createFallbackIssueContinuityService() {
     prepare: async () => ({
       continuityState: null,
       continuityBundle: null,
+      scaffoldedKeys: [],
+      overriddenKeys: [],
     }),
     handoff: async (_issueId: string) => ({
       issue: null,
@@ -2540,7 +2542,28 @@ export function issueRoutes(
 
     const actor = getActorInfo(req);
     const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
-    const { continuityTier, prepareContinuity, ...createInput } = req.body;
+    const { continuityTier, prepareContinuity, docs, ...createInput } = req.body;
+    if (docs) {
+      const progressOverride = (docs as Record<string, { body: string } | undefined>).progress;
+      if (progressOverride && !parseIssueProgressMarkdown(progressOverride.body)) {
+        res.status(400).json({
+          error: "docs.progress must include valid paperclip/issue-progress.v1 frontmatter",
+          field: "docs.progress.body",
+        });
+        return;
+      }
+      const handoffOverride = (docs as Record<string, { body: string } | undefined>).handoff;
+      if (handoffOverride && !parseIssueHandoffMarkdown(handoffOverride.body)) {
+        res.status(400).json({
+          error: "docs.handoff must include valid paperclip/issue-handoff.v1 frontmatter",
+          field: "docs.handoff.body",
+        });
+        return;
+      }
+    }
+    const shouldAutoPrepareContinuity =
+      prepareContinuity === true ||
+      (prepareContinuity === undefined && typeof req.body.parentId === "string");
     let defaultAssigneeAgentId = typeof req.body.assigneeAgentId === "string" ? req.body.assigneeAgentId : null;
     if (!defaultAssigneeAgentId && !req.body.assigneeUserId && req.body.projectId) {
       const officeOperator = await officeCoordinationSvc.findOfficeOperator(companyId);
@@ -2559,13 +2582,21 @@ export function issueRoutes(
     let continuityState = await continuitySvc.recomputeIssueContinuityState(issue.id, {
       tier: continuityTier ?? "normal",
     });
-    if (prepareContinuity) {
-      const prepared = await continuitySvc.prepare(issue.id, { tier: continuityTier ?? "normal" }, {
-        agentId: actor.agentId ?? null,
-        userId: actor.actorType === "user" ? actor.actorId : null,
-        runId: actor.runId ?? null,
-      });
+    let scaffoldedKeys: string[] = [];
+    let overriddenKeys: string[] = [];
+    if (shouldAutoPrepareContinuity) {
+      const prepared = await continuitySvc.prepare(
+        issue.id,
+        { tier: continuityTier ?? "normal", docs },
+        {
+          agentId: actor.agentId ?? null,
+          userId: actor.actorType === "user" ? actor.actorId : null,
+          runId: actor.runId ?? null,
+        },
+      );
       continuityState = prepared.continuityState;
+      scaffoldedKeys = prepared.scaffoldedKeys ?? [];
+      overriddenKeys = prepared.overriddenKeys ?? [];
     }
     await issueReferencesSvc.syncIssue(issue.id);
     const referenceSummary = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
@@ -2587,6 +2618,9 @@ export function issueRoutes(
         title: issue.title,
         identifier: issue.identifier,
         ...(Array.isArray(req.body.blockedByIssueIds) ? { blockedByIssueIds: req.body.blockedByIssueIds } : {}),
+        ...(scaffoldedKeys.length > 0 || overriddenKeys.length > 0
+          ? { continuityScaffold: { scaffoldedKeys, overriddenKeys, tier: continuityTier ?? "normal" } }
+          : {}),
         ...summarizeIssueReferenceActivityDetails({
           addedReferencedIssues: referenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
           removedReferencedIssues: referenceDiff.removedReferencedIssues.map(summarizeIssueRelationForActivity),
