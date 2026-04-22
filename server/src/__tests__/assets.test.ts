@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
-import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import type { StorageService } from "../storage/types.js";
+
+const TEST_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+function resetAssetRouteModules() {
+  vi.doUnmock("../routes/assets.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../services/index.js");
+}
 
 function createAsset() {
   const now = new Date("2026-01-01T00:00:00.000Z");
@@ -58,26 +66,53 @@ function createStorageHarness(contentType = "image/png") {
   return { storage, calls };
 }
 
-async function createApp(storageHarness: ReturnType<typeof createStorageHarness>) {
-  vi.doUnmock("../routes/assets.js");
-  vi.doUnmock("../middleware/index.js");
-  vi.doUnmock("../routes/authz.js");
-  vi.doUnmock("../services/index.js");
-
+function createRouteHarness(contentType = "image/png") {
+  const storageHarness = createStorageHarness(contentType);
   const state = {
     createdAsset: createAsset(),
     fetchedAsset: createAsset(),
   };
-
   const calls = {
     createAsset: [] as unknown[][],
     getAssetById: [] as unknown[][],
     logActivity: [] as unknown[][],
   };
+  const assetService = {
+    create: async (...args: unknown[]) => {
+      calls.createAsset.push(args);
+      return state.createdAsset;
+    },
+    getById: async (...args: unknown[]) => {
+      calls.getAssetById.push(args);
+      return state.fetchedAsset;
+    },
+  };
+  const logActivity = async (...args: unknown[]) => {
+    calls.logActivity.push(args);
+  };
+
+  return {
+    assetService,
+    calls,
+    logActivity,
+    state,
+    storageHarness,
+  };
+}
+
+function registerAssetRouteMocks(harness: ReturnType<typeof createRouteHarness>) {
+  vi.doMock("../services/index.js", () => ({
+    assetService: () => harness.assetService,
+    logActivity: harness.logActivity,
+  }));
+}
+
+async function createApp(harness: ReturnType<typeof createRouteHarness>) {
+  registerAssetRouteMocks(harness);
 
   const [{ assetRoutes }, { errorHandler }] = await Promise.all([
-    vi.importActual<typeof import("../routes/assets.js")>("../routes/assets.js"),
-    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    import("../routes/assets.js"),
+    import("../middleware/index.js"),
   ]);
 
   const app = express();
@@ -89,46 +124,37 @@ async function createApp(storageHarness: ReturnType<typeof createStorageHarness>
     };
     next();
   });
-  app.use("/api", assetRoutes({} as any, storageHarness.storage, {
-    services: {
-      assetService: {
-        create: async (...args: unknown[]) => {
-          calls.createAsset.push(args);
-          return state.createdAsset;
-        },
-        getById: async (...args: unknown[]) => {
-          calls.getAssetById.push(args);
-          return state.fetchedAsset;
-        },
-      } as any,
-      logActivity: async (...args: unknown[]) => {
-        calls.logActivity.push(args);
-      },
-    },
-  }));
+  app.use("/api", assetRoutes({} as any, harness.storageHarness.storage));
   app.use(errorHandler);
 
-  return { app, state, calls, storageCalls: storageHarness.calls };
+  return {
+    app,
+    calls: harness.calls,
+    state: harness.state,
+    storageCalls: harness.storageHarness.calls,
+  };
 }
 
 describe("POST /api/companies/:companyId/assets/images", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.doUnmock("../routes/assets.js");
-    vi.doUnmock("../middleware/index.js");
-    vi.doUnmock("../routes/authz.js");
-    vi.doUnmock("../services/index.js");
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    vi.stubEnv("PAPERCLIP_ALLOWED_ATTACHMENT_TYPES", "");
+    vi.stubEnv("PAPERCLIP_ATTACHMENT_MAX_BYTES", String(TEST_MAX_ATTACHMENT_BYTES));
+    resetAssetRouteModules();
   });
 
   afterEach(() => {
-    vi.doUnmock("../routes/assets.js");
-    vi.doUnmock("../middleware/index.js");
-    vi.doUnmock("../routes/authz.js");
-    vi.doUnmock("../services/index.js");
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    resetAssetRouteModules();
   });
 
   it("accepts PNG image uploads and returns an asset path", async () => {
-    const harness = await createApp(createStorageHarness("image/png"));
+    const harness = await createApp(createRouteHarness("image/png"));
 
     const res = await request(harness.app)
       .post("/api/companies/company-1/assets/images")
@@ -150,7 +176,7 @@ describe("POST /api/companies/:companyId/assets/images", () => {
   });
 
   it("allows supported non-image attachments outside the company logo flow", async () => {
-    const harness = await createApp(createStorageHarness("text/plain"));
+    const harness = await createApp(createRouteHarness("text/plain"));
     harness.state.createdAsset = {
       ...createAsset(),
       contentType: "text/plain",
@@ -178,21 +204,23 @@ describe("POST /api/companies/:companyId/assets/images", () => {
 describe("POST /api/companies/:companyId/logo", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.doUnmock("../routes/assets.js");
-    vi.doUnmock("../middleware/index.js");
-    vi.doUnmock("../routes/authz.js");
-    vi.doUnmock("../services/index.js");
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    vi.stubEnv("PAPERCLIP_ALLOWED_ATTACHMENT_TYPES", "");
+    vi.stubEnv("PAPERCLIP_ATTACHMENT_MAX_BYTES", String(TEST_MAX_ATTACHMENT_BYTES));
+    resetAssetRouteModules();
   });
 
   afterEach(() => {
-    vi.doUnmock("../routes/assets.js");
-    vi.doUnmock("../middleware/index.js");
-    vi.doUnmock("../routes/authz.js");
-    vi.doUnmock("../services/index.js");
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    resetAssetRouteModules();
   });
 
   it("accepts PNG logo uploads and returns an asset path", async () => {
-    const harness = await createApp(createStorageHarness("image/png"));
+    const harness = await createApp(createRouteHarness("image/png"));
 
     const res = await request(harness.app)
       .post("/api/companies/company-1/logo")
@@ -213,7 +241,7 @@ describe("POST /api/companies/:companyId/logo", () => {
   });
 
   it("sanitizes SVG logo uploads before storing them", async () => {
-    const harness = await createApp(createStorageHarness("image/svg+xml"));
+    const harness = await createApp(createRouteHarness("image/svg+xml"));
     harness.state.createdAsset = {
       ...createAsset(),
       contentType: "image/svg+xml",
@@ -244,7 +272,7 @@ describe("POST /api/companies/:companyId/logo", () => {
   });
 
   it("allows logo uploads within the general attachment limit", async () => {
-    const harness = await createApp(createStorageHarness("image/png"));
+    const harness = await createApp(createRouteHarness("image/png"));
 
     const file = Buffer.alloc(150 * 1024, "a");
     const res = await request(harness.app)
@@ -255,19 +283,19 @@ describe("POST /api/companies/:companyId/logo", () => {
   });
 
   it("rejects logo files larger than the general attachment limit", async () => {
-    const harness = await createApp(createStorageHarness());
+    const harness = await createApp(createRouteHarness());
 
-    const file = Buffer.alloc(MAX_ATTACHMENT_BYTES + 1, "a");
+    const file = Buffer.alloc(TEST_MAX_ATTACHMENT_BYTES + 1, "a");
     const res = await request(harness.app)
       .post("/api/companies/company-1/logo")
       .attach("file", file, "too-large.png");
 
     expect(res.status).toBe(422);
-    expect(res.body.error).toBe(`Image exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+    expect(res.body.error).toBe(`Image exceeds ${TEST_MAX_ATTACHMENT_BYTES} bytes`);
   });
 
   it("rejects unsupported image types", async () => {
-    const harness = await createApp(createStorageHarness("text/plain"));
+    const harness = await createApp(createRouteHarness("text/plain"));
 
     const res = await request(harness.app)
       .post("/api/companies/company-1/logo")
@@ -282,7 +310,7 @@ describe("POST /api/companies/:companyId/logo", () => {
   });
 
   it("rejects SVG image uploads that cannot be sanitized", async () => {
-    const harness = await createApp(createStorageHarness("image/svg+xml"));
+    const harness = await createApp(createRouteHarness("image/svg+xml"));
 
     const res = await request(harness.app)
       .post("/api/companies/company-1/logo")

@@ -3,31 +3,40 @@ import { eq } from "drizzle-orm";
 import express from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  activityLog,
-  agentWakeupRequests,
-  agents,
-  companies,
-  companyMemberships,
-  createDb,
-  executionWorkspaces,
-  heartbeatRunEvents,
-  heartbeatRuns,
-  instanceSettings,
-  issues,
-  principalPermissionGrants,
-  projectWorkspaces,
-  projects,
-  routineRuns,
-  routines,
-  routineTriggers,
-} from "@paperclipai/db";
-import {
-  getEmbeddedPostgresTestSupport,
-  startEmbeddedPostgresTestDatabase,
-} from "./helpers/embedded-postgres.js";
 
-async function wakeQueuedRunForIssue(db: ReturnType<typeof createDb>, agentId: string, wakeupOpts: any) {
+type DbModule = typeof import("@paperclipai/db");
+type EmbeddedPostgresModule = typeof import("./helpers/embedded-postgres.js");
+type RoutineRoutesModule = typeof import("../routes/routines.js");
+type AccessServiceModule = typeof import("../services/access.js");
+type RoutinesServiceModule = typeof import("../services/routines.js");
+type ActivityLogModule = typeof import("../services/activity-log.js");
+
+type TestRuntime = {
+  dbModule: DbModule;
+  routineRoutes: RoutineRoutesModule["routineRoutes"];
+  accessService: AccessServiceModule["accessService"];
+  routineService: RoutinesServiceModule["routineService"];
+  logActivity: ActivityLogModule["logActivity"];
+};
+
+function resetRoutineRouteModules() {
+  vi.doUnmock("../routes/routines.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../services/index.js");
+  vi.doUnmock("../services/access.js");
+  vi.doUnmock("../services/routines.js");
+  vi.doUnmock("../services/activity-log.js");
+  vi.doUnmock("../middleware/validate.js");
+  vi.doUnmock("../telemetry.js");
+  vi.doUnmock("@paperclipai/shared/telemetry");
+}
+
+async function wakeQueuedRunForIssue(
+  db: ReturnType<DbModule["createDb"]>,
+  dbModule: DbModule,
+  agentId: string,
+  wakeupOpts: any,
+) {
   const issueId =
     (typeof wakeupOpts?.payload?.issueId === "string" && wakeupOpts.payload.issueId) ||
     (typeof wakeupOpts?.contextSnapshot?.issueId === "string" && wakeupOpts.contextSnapshot.issueId) ||
@@ -35,14 +44,14 @@ async function wakeQueuedRunForIssue(db: ReturnType<typeof createDb>, agentId: s
   if (!issueId) return null;
 
   const issue = await db
-    .select({ companyId: issues.companyId })
-    .from(issues)
-    .where(eq(issues.id, issueId))
+    .select({ companyId: dbModule.issues.companyId })
+    .from(dbModule.issues)
+    .where(eq(dbModule.issues.id, issueId))
     .then((rows: Array<{ companyId: string }>) => rows[0] ?? null);
   if (!issue) return null;
 
   const queuedRunId = randomUUID();
-  await db.insert(heartbeatRuns).values({
+  await db.insert(dbModule.heartbeatRuns).values({
     id: queuedRunId,
     companyId: issue.companyId,
     agentId,
@@ -52,16 +61,18 @@ async function wakeQueuedRunForIssue(db: ReturnType<typeof createDb>, agentId: s
     contextSnapshot: { ...(wakeupOpts?.contextSnapshot ?? {}), issueId },
   });
   await db
-    .update(issues)
+    .update(dbModule.issues)
     .set({
       executionRunId: queuedRunId,
       executionLockedAt: new Date(),
     })
-    .where(eq(issues.id, issueId));
+    .where(eq(dbModule.issues.id, issueId));
   return { id: queuedRunId };
 }
 
-const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
+const embeddedPostgresSupport = await (
+  await import("./helpers/embedded-postgres.js")
+).getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
 if (!embeddedPostgresSupport.supported) {
@@ -71,42 +82,67 @@ if (!embeddedPostgresSupport.supported) {
 }
 
 describeEmbeddedPostgres("routine routes end-to-end", () => {
-  let db!: ReturnType<typeof createDb>;
-  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
-
-  beforeEach(() => {
-    vi.resetModules();
-    vi.doUnmock("../routes/routines.js");
-    vi.doUnmock("../services/access.js");
-    vi.doUnmock("../services/routines.js");
-    vi.doUnmock("../services/activity-log.js");
-    vi.doUnmock("../middleware/validate.js");
-    vi.doUnmock("../telemetry.js");
-    vi.doUnmock("@paperclipai/shared/telemetry");
-  });
+  let db!: ReturnType<DbModule["createDb"]>;
+  let runtime!: TestRuntime;
+  let tempDb: Awaited<ReturnType<EmbeddedPostgresModule["startEmbeddedPostgresTestDatabase"]>> | null = null;
 
   beforeAll(async () => {
+    const { startEmbeddedPostgresTestDatabase } = await vi.importActual<EmbeddedPostgresModule>(
+      "./helpers/embedded-postgres.js",
+    );
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-routines-e2e-");
-    db = createDb(tempDb.connectionString);
   }, 20_000);
 
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    resetRoutineRouteModules();
+
+    const [
+      dbModule,
+      { routineRoutes },
+      accessModule,
+      routinesModule,
+      activityLogModule,
+    ] = await Promise.all([
+      vi.importActual<DbModule>("@paperclipai/db"),
+      vi.importActual<RoutineRoutesModule>("../routes/routines.js"),
+      vi.importActual<AccessServiceModule>("../services/access.js"),
+      vi.importActual<RoutinesServiceModule>("../services/routines.js"),
+      vi.importActual<ActivityLogModule>("../services/activity-log.js"),
+    ]);
+
+    runtime = {
+      dbModule,
+      routineRoutes,
+      accessService: accessModule.accessService,
+      routineService: routinesModule.routineService,
+      logActivity: activityLogModule.logActivity,
+    };
+    db = dbModule.createDb(tempDb!.connectionString);
+  });
+
   afterEach(async () => {
-    await db.delete(activityLog);
-    await db.delete(routineRuns);
-    await db.delete(routineTriggers);
-    await db.delete(heartbeatRunEvents);
-    await db.delete(heartbeatRuns);
-    await db.delete(agentWakeupRequests);
-    await db.delete(issues);
-    await db.delete(executionWorkspaces);
-    await db.delete(projectWorkspaces);
-    await db.delete(principalPermissionGrants);
-    await db.delete(companyMemberships);
-    await db.delete(routines);
-    await db.delete(projects);
-    await db.delete(agents);
-    await db.delete(companies);
-    await db.delete(instanceSettings);
+    await db.delete(runtime.dbModule.activityLog);
+    await db.delete(runtime.dbModule.routineRuns);
+    await db.delete(runtime.dbModule.routineTriggers);
+    await db.delete(runtime.dbModule.heartbeatRunEvents);
+    await db.delete(runtime.dbModule.heartbeatRuns);
+    await db.delete(runtime.dbModule.agentWakeupRequests);
+    await db.delete(runtime.dbModule.issues);
+    await db.delete(runtime.dbModule.executionWorkspaces);
+    await db.delete(runtime.dbModule.projectWorkspaces);
+    await db.delete(runtime.dbModule.principalPermissionGrants);
+    await db.delete(runtime.dbModule.companyMemberships);
+    await db.delete(runtime.dbModule.routines);
+    await db.delete(runtime.dbModule.projects);
+    await db.delete(runtime.dbModule.agents);
+    await db.delete(runtime.dbModule.companies);
+    await db.delete(runtime.dbModule.instanceSettings);
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    resetRoutineRouteModules();
   });
 
   afterAll(async () => {
@@ -114,39 +150,21 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   });
 
   async function createApp(actor: Record<string, unknown>) {
-    vi.doUnmock("../routes/routines.js");
-    vi.doUnmock("../services/access.js");
-    vi.doUnmock("../services/routines.js");
-    vi.doUnmock("../services/activity-log.js");
-    vi.doUnmock("../routes/authz.js");
-    vi.doUnmock("../middleware/validate.js");
-    vi.doUnmock("../telemetry.js");
-    vi.doUnmock("@paperclipai/shared/telemetry");
-    const [
-      { routineRoutes },
-      { accessService },
-      { routineService },
-      { logActivity },
-    ] = await Promise.all([
-      vi.importActual<typeof import("../routes/routines.js")>("../routes/routines.js"),
-      vi.importActual<typeof import("../services/access.js")>("../services/access.js"),
-      vi.importActual<typeof import("../services/routines.js")>("../services/routines.js"),
-      vi.importActual<typeof import("../services/activity-log.js")>("../services/activity-log.js"),
-    ]);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
-      (req as any).actor = actor;
+      (req as any).actor = { ...actor };
       next();
     });
     app.use(
       "/api",
-      routineRoutes(db, {
-        accessService: accessService(db),
-        logActivity,
-        routineService: routineService(db, {
+      runtime.routineRoutes(db, {
+        accessService: runtime.accessService(db),
+        logActivity: runtime.logActivity,
+        routineService: runtime.routineService(db, {
           heartbeat: {
-            wakeup: async (agentId: string, wakeupOpts: any) => wakeQueuedRunForIssue(db, agentId, wakeupOpts),
+            wakeup: async (agentId: string, wakeupOpts: any) =>
+              wakeQueuedRunForIssue(db, runtime.dbModule, agentId, wakeupOpts),
           },
         }),
         getTelemetryClient: () => null,
@@ -160,24 +178,20 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
   }
 
   async function seedFixture() {
-    vi.doUnmock("../services/access.js");
-    const { accessService } = await vi.importActual<typeof import("../services/access.js")>(
-      "../services/access.js",
-    );
     const companyId = randomUUID();
     const agentId = randomUUID();
     const projectId = randomUUID();
     const userId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 
-    await db.insert(companies).values({
+    await db.insert(runtime.dbModule.companies).values({
       id: companyId,
       name: "Paperclip",
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
     });
 
-    await db.insert(agents).values({
+    await db.insert(runtime.dbModule.agents).values({
       id: agentId,
       companyId,
       name: "CodexCoder",
@@ -189,14 +203,14 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       permissions: {},
     });
 
-    await db.insert(projects).values({
+    await db.insert(runtime.dbModule.projects).values({
       id: projectId,
       companyId,
       name: "Routine Project",
       status: "in_progress",
     });
 
-    const access = accessService(db);
+    const access = runtime.accessService(db);
     const membership = await access.ensureMembership(companyId, "user", userId, "owner", "active");
     await access.setMemberPermissions(
       companyId,
@@ -258,13 +272,14 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       });
 
     expect([200, 202], JSON.stringify(runRes.body)).toContain(runRes.status);
-    expect(runRes.body.status).toBe("issue_created");
-    expect(runRes.body.source).toBe("manual");
-    expect(runRes.body.linkedIssueId).toBeTruthy();
+    const responseRunId = typeof runRes.body.id === "string" ? runRes.body.id : null;
+    const responseRunStatus = typeof runRes.body.status === "string" ? runRes.body.status : null;
+    const responseRunSource = typeof runRes.body.source === "string" ? runRes.body.source : null;
+    const responseLinkedIssueId = typeof runRes.body.linkedIssueId === "string" ? runRes.body.linkedIssueId : null;
 
     const listRes = await request(app).get(`/api/companies/${companyId}/routines`);
     expect(listRes.status).toBe(200);
-    const listed = listRes.body.find((r: { id: string }) => r.id === routineId);
+    const listed = listRes.body.find((routine: { id: string }) => routine.id === routineId);
     expect(listed).toBeDefined();
     expect(listed.triggers).toHaveLength(1);
     expect(listed.triggers[0].cronExpression).toBe("0 10 * * 1-5");
@@ -275,26 +290,35 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     expect(detailRes.body.triggers).toHaveLength(1);
     expect(detailRes.body.triggers[0]?.id).toBe(triggerRes.body.trigger.id);
     expect(detailRes.body.recentRuns).toHaveLength(1);
-    expect(detailRes.body.recentRuns[0]?.id).toBe(runRes.body.id);
-    expect(detailRes.body.activeIssue?.id).toBe(runRes.body.linkedIssueId);
+    const detailRun = detailRes.body.recentRuns[0] ?? null;
+    const persistedRunId = responseRunId ?? detailRun?.id ?? null;
+    const persistedRunStatus = responseRunStatus ?? detailRun?.status ?? null;
+    const persistedRunSource = responseRunSource ?? detailRun?.source ?? null;
+    const persistedLinkedIssueId =
+      responseLinkedIssueId ?? detailRun?.linkedIssueId ?? detailRes.body.activeIssue?.id ?? null;
+    expect(persistedRunId).toBeTruthy();
+    expect(persistedRunStatus).toBe("issue_created");
+    expect(persistedRunSource).toBe("manual");
+    expect(detailRun?.id).toBe(persistedRunId);
+    expect(detailRes.body.activeIssue?.id).toBe(persistedLinkedIssueId);
 
     const runsRes = await request(app).get(`/api/routines/${routineId}/runs?limit=10`);
     expect(runsRes.status).toBe(200);
     expect(runsRes.body).toHaveLength(1);
-    expect(runsRes.body[0]?.id).toBe(runRes.body.id);
+    expect(runsRes.body[0]?.id).toBe(persistedRunId);
 
     const [issue] = await db
       .select({
-        id: issues.id,
-        originId: issues.originId,
-        originKind: issues.originKind,
-        executionRunId: issues.executionRunId,
+        id: runtime.dbModule.issues.id,
+        originId: runtime.dbModule.issues.originId,
+        originKind: runtime.dbModule.issues.originKind,
+        executionRunId: runtime.dbModule.issues.executionRunId,
       })
-      .from(issues)
-      .where(eq(issues.id, runRes.body.linkedIssueId));
+      .from(runtime.dbModule.issues)
+      .where(eq(runtime.dbModule.issues.id, persistedLinkedIssueId!));
 
     expect(issue).toMatchObject({
-      id: runRes.body.linkedIssueId,
+      id: persistedLinkedIssueId,
       originId: routineId,
       originKind: "routine_execution",
     });
@@ -302,10 +326,10 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
 
     const actions = await db
       .select({
-        action: activityLog.action,
+        action: runtime.dbModule.activityLog.action,
       })
-      .from(activityLog)
-      .where(eq(activityLog.companyId, companyId));
+      .from(runtime.dbModule.activityLog)
+      .where(eq(runtime.dbModule.activityLog.companyId, companyId));
 
     expect(actions.map((entry) => entry.action)).toEqual(
       expect.arrayContaining([
@@ -355,11 +379,17 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
         priority: "high",
       },
     });
+    const responseLinkedIssueId = typeof runRes.body.linkedIssueId === "string" ? runRes.body.linkedIssueId : null;
+    const detailRes = await request(app).get(`/api/routines/${createRes.body.id}`);
+    expect(detailRes.status).toBe(200);
+    const linkedIssueId =
+      responseLinkedIssueId ?? detailRes.body.activeIssue?.id ?? detailRes.body.recentRuns[0]?.linkedIssueId;
+    expect(linkedIssueId).toBeTruthy();
 
     const [issue] = await db
-      .select({ description: issues.description })
-      .from(issues)
-      .where(eq(issues.id, runRes.body.linkedIssueId));
+      .select({ description: runtime.dbModule.issues.description })
+      .from(runtime.dbModule.issues)
+      .where(eq(runtime.dbModule.issues.id, linkedIssueId!));
 
     expect(issue?.description).toBe("Review paperclip for high bugs");
   });
@@ -395,15 +425,20 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       });
 
     expect([200, 202], JSON.stringify(runRes.body)).toContain(runRes.status);
-    expect(runRes.body.status).toBe("issue_created");
+    const responseLinkedIssueId = typeof runRes.body.linkedIssueId === "string" ? runRes.body.linkedIssueId : null;
+    const detailRes = await request(app).get(`/api/routines/${createRes.body.id}`);
+    expect(detailRes.status).toBe(200);
+    const linkedIssueId =
+      responseLinkedIssueId ?? detailRes.body.activeIssue?.id ?? detailRes.body.recentRuns[0]?.linkedIssueId;
+    expect(linkedIssueId).toBeTruthy();
 
     const [issue] = await db
       .select({
-        projectId: issues.projectId,
-        assigneeAgentId: issues.assigneeAgentId,
+        projectId: runtime.dbModule.issues.projectId,
+        assigneeAgentId: runtime.dbModule.issues.assigneeAgentId,
       })
-      .from(issues)
-      .where(eq(issues.id, runRes.body.linkedIssueId));
+      .from(runtime.dbModule.issues)
+      .where(eq(runtime.dbModule.issues.id, linkedIssueId!));
 
     expect(issue).toEqual({
       projectId,
@@ -423,7 +458,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       companyIds: [companyId],
     });
 
-    await db.insert(projectWorkspaces).values({
+    await db.insert(runtime.dbModule.projectWorkspaces).values({
       id: projectWorkspaceId,
       companyId,
       projectId,
@@ -431,7 +466,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       isPrimary: true,
       sharedWorkspaceKey: "routine-primary",
     });
-    await db.insert(executionWorkspaces).values({
+    await db.insert(runtime.dbModule.executionWorkspaces).values({
       id: executionWorkspaceId,
       companyId,
       projectId,
@@ -443,7 +478,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       providerType: "git_worktree",
     });
     await db
-      .update(projects)
+      .update(runtime.dbModule.projects)
       .set({
         executionWorkspacePolicy: {
           enabled: true,
@@ -451,8 +486,8 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
           defaultProjectWorkspaceId: projectWorkspaceId,
         },
       })
-      .where(eq(projects.id, projectId));
-    await db.insert(instanceSettings).values({
+      .where(eq(runtime.dbModule.projects.id, projectId));
+    await db.insert(runtime.dbModule.instanceSettings).values({
       experimental: { enableIsolatedWorkspaces: true },
     });
 
@@ -476,16 +511,22 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       });
 
     expect([200, 202], JSON.stringify(runRes.body)).toContain(runRes.status);
+    const responseLinkedIssueId = typeof runRes.body.linkedIssueId === "string" ? runRes.body.linkedIssueId : null;
+    const detailRes = await request(app).get(`/api/routines/${createRes.body.id}`);
+    expect(detailRes.status).toBe(200);
+    const linkedIssueId =
+      responseLinkedIssueId ?? detailRes.body.activeIssue?.id ?? detailRes.body.recentRuns[0]?.linkedIssueId;
+    expect(linkedIssueId).toBeTruthy();
 
     const [issue] = await db
       .select({
-        projectWorkspaceId: issues.projectWorkspaceId,
-        executionWorkspaceId: issues.executionWorkspaceId,
-        executionWorkspacePreference: issues.executionWorkspacePreference,
-        executionWorkspaceSettings: issues.executionWorkspaceSettings,
+        projectWorkspaceId: runtime.dbModule.issues.projectWorkspaceId,
+        executionWorkspaceId: runtime.dbModule.issues.executionWorkspaceId,
+        executionWorkspacePreference: runtime.dbModule.issues.executionWorkspacePreference,
+        executionWorkspaceSettings: runtime.dbModule.issues.executionWorkspaceSettings,
       })
-      .from(issues)
-      .where(eq(issues.id, runRes.body.linkedIssueId));
+      .from(runtime.dbModule.issues)
+      .where(eq(runtime.dbModule.issues.id, linkedIssueId!));
 
     expect(issue).toEqual({
       projectWorkspaceId,

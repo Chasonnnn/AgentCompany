@@ -169,6 +169,8 @@ async function createApp(
 ) {
   vi.doUnmock("../routes/plugins.js");
   vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/validate.js");
   const [{ pluginRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/plugins.js")>("../routes/plugins.js"),
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
@@ -183,7 +185,7 @@ async function createApp(
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.actor = actor as typeof req.actor;
+    req.actor = { ...actor } as typeof req.actor;
     next();
   });
   app.use("/api", pluginRoutes(
@@ -249,6 +251,8 @@ describe("plugin install and upgrade authz", () => {
     vi.resetModules();
     vi.doUnmock("../routes/plugins.js");
     vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/validate.js");
   });
 
   it("rejects plugin installation for non-admin board users", async () => {
@@ -392,6 +396,8 @@ describe("scoped plugin API routes", () => {
     vi.resetModules();
     vi.doUnmock("../routes/plugins.js");
     vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/validate.js");
   });
 
   it("dispatches manifest-declared scoped routes after company access checks", async () => {
@@ -460,6 +466,8 @@ describe("plugin tool and bridge authz", () => {
     vi.resetModules();
     vi.doUnmock("../routes/plugins.js");
     vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/validate.js");
   });
 
   it("rejects tool execution when the board user cannot access runContext.companyId", async () => {

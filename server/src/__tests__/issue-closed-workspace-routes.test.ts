@@ -107,23 +107,24 @@ function registerServiceMocks() {
 }
 
 async function createApp() {
-  vi.unmock("../services/index.js");
-  vi.unmock("../telemetry.js");
-  vi.unmock("@paperclipai/shared/telemetry");
+  vi.doUnmock("../routes/issues.js");
+  vi.doUnmock("../middleware/index.js");
+  vi.doUnmock("../routes/authz.js");
+  vi.doUnmock("../middleware/validate.js");
   const [{ issueRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/issues.js"),
-    import("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/issues.js")>("../routes/issues.js"),
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
   ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
+    (req as any).actor = structuredClone({
       type: "board",
       userId: "local-board",
       companyIds: ["company-1"],
       source: "local_implicit",
       isInstanceAdmin: false,
-    };
+    });
     next();
   });
   app.use("/api", issueRoutes({} as any, {} as any));
@@ -161,10 +162,14 @@ function makeClosedWorkspace() {
 
 describe("closed isolated workspace issue routes", () => {
   beforeEach(() => {
-    vi.unmock("../services/index.js");
-    vi.unmock("../telemetry.js");
-    vi.unmock("@paperclipai/shared/telemetry");
     vi.resetModules();
+    vi.doUnmock("../routes/issues.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("@paperclipai/shared/telemetry");
     registerServiceMocks();
     vi.clearAllMocks();
     mockIssueService.getById.mockResolvedValue(makeIssue());
@@ -172,9 +177,13 @@ describe("closed isolated workspace issue routes", () => {
   });
 
   afterEach(() => {
-    vi.unmock("../services/index.js");
-    vi.unmock("../telemetry.js");
-    vi.unmock("@paperclipai/shared/telemetry");
+    vi.doUnmock("../routes/issues.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/validate.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("@paperclipai/shared/telemetry");
   });
 
   it("rejects new issue comments when the linked isolated workspace is closed", async () => {

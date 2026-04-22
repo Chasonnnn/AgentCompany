@@ -110,6 +110,7 @@ async function createApp(
     isInstanceAdmin: false,
   },
 ) {
+  vi.resetModules();
   vi.doUnmock("../routes/agents.js");
   vi.doUnmock("../services/index.js");
   vi.doUnmock("../routes/authz.js");
@@ -118,7 +119,7 @@ async function createApp(
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = actor;
+    (req as any).actor = { ...actor };
     next();
   });
   app.use("/api", agentRoutes(db as any, {

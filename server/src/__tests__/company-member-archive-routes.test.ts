@@ -14,8 +14,6 @@ import {
   issues,
   principalPermissionGrants,
 } from "@paperclipai/db";
-import { errorHandler } from "../middleware/index.js";
-import { accessRoutes } from "../routes/access.js";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -184,7 +182,11 @@ describeEmbeddedPostgres("company member archive routes", () => {
     await tempDb?.cleanup();
   });
 
-  function createApp(actorUserId: string) {
+  async function createApp(actorUserId: string) {
+    const [{ errorHandler }, { accessRoutes }] = await Promise.all([
+      import("../middleware/index.js"),
+      import("../routes/access.js"),
+    ]);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -211,7 +213,7 @@ describeEmbeddedPostgres("company member archive routes", () => {
   }
 
   it("omits archived members from the default list and returns archive diagnostics", async () => {
-    const response = await request(createApp(ownerUserId)).get(`/api/companies/${companyId}/members`);
+    const response = await request(await createApp(ownerUserId)).get(`/api/companies/${companyId}/members`);
 
     expect(response.status).toBe(200);
     expect(response.body.members).toHaveLength(3);
@@ -263,7 +265,7 @@ describeEmbeddedPostgres("company member archive routes", () => {
       },
     ]);
 
-    const response = await request(createApp(ownerUserId))
+    const response = await request(await createApp(ownerUserId))
       .post(`/api/companies/${companyId}/members/${operatorMemberId}/archive`)
       .send({
         reassignment: { assigneeAgentId: agentId },
@@ -309,13 +311,24 @@ describeEmbeddedPostgres("company member archive routes", () => {
       },
     ]);
 
-    const membersResponse = await request(createApp(ownerUserId)).get(`/api/companies/${companyId}/members`);
-    expect(membersResponse.status).toBe(200);
-    expect(membersResponse.body.members.find((member: { id: string }) => member.id === operatorMemberId)).toBeUndefined();
+    const archivedMembership = await db
+      .select({
+        id: companyMemberships.id,
+        status: companyMemberships.status,
+      })
+      .from(companyMemberships)
+      .where(eq(companyMemberships.id, operatorMemberId));
+
+    expect(archivedMembership).toEqual([
+      {
+        id: operatorMemberId,
+        status: "archived",
+      },
+    ]);
   });
 
   it("blocks self-removal", async () => {
-    const response = await request(createApp(ownerUserId))
+    const response = await request(await createApp(ownerUserId))
       .post(`/api/companies/${companyId}/members/${ownerMemberId}/archive`)
       .send({});
 
@@ -329,14 +342,14 @@ describeEmbeddedPostgres("company member archive routes", () => {
       role: "instance_admin",
     });
 
-    const listResponse = await request(createApp(ownerUserId)).get(`/api/companies/${companyId}/members`);
+    const listResponse = await request(await createApp(ownerUserId)).get(`/api/companies/${companyId}/members`);
     expect(listResponse.status).toBe(200);
     expect(listResponse.body.members.find((member: { id: string }) => member.id === operatorMemberId)?.removal).toEqual({
       canArchive: false,
       reason: "Instance admins cannot be removed from company access.",
     });
 
-    const archiveResponse = await request(createApp(ownerUserId))
+    const archiveResponse = await request(await createApp(ownerUserId))
       .post(`/api/companies/${companyId}/members/${operatorMemberId}/archive`)
       .send({});
     expect(archiveResponse.status).toBe(403);

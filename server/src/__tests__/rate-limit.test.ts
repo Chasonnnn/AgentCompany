@@ -20,6 +20,7 @@ function sendFromIp(app: express.Express, ip = DEFAULT_TEST_IP) {
 
 describe("rateLimitMiddleware", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 

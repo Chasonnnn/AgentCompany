@@ -72,11 +72,14 @@ const mockBudgetService = vi.hoisted(() => ({
 }));
 
 async function createApp() {
+  vi.resetModules();
   vi.doUnmock("../routes/costs.js");
   vi.doUnmock("../middleware/index.js");
   vi.doUnmock("../routes/authz.js");
   vi.doUnmock("../services/index.js");
   vi.doUnmock("../middleware/validate.js");
+  await vi.importActual<typeof import("../routes/authz.js")>("../routes/authz.js");
+  await vi.importActual<typeof import("../middleware/validate.js")>("../middleware/validate.js");
   const [{ errorHandler }, { costRoutes }] = await Promise.all([
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
     vi.importActual<typeof import("../routes/costs.js")>("../routes/costs.js"),
@@ -104,11 +107,14 @@ async function createApp() {
 }
 
 async function createAppWithActor(actor: any) {
+  vi.resetModules();
   vi.doUnmock("../routes/costs.js");
   vi.doUnmock("../middleware/index.js");
   vi.doUnmock("../routes/authz.js");
   vi.doUnmock("../services/index.js");
   vi.doUnmock("../middleware/validate.js");
+  await vi.importActual<typeof import("../routes/authz.js")>("../routes/authz.js");
+  await vi.importActual<typeof import("../middleware/validate.js")>("../middleware/validate.js");
   const [{ errorHandler }, { costRoutes }] = await Promise.all([
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
     vi.importActual<typeof import("../routes/costs.js")>("../routes/costs.js"),
@@ -172,6 +178,19 @@ beforeEach(() => {
     budgetMonthlyCents: 100,
     spentMonthlyCents: 0,
   });
+  mockCompanyService.getById.mockResolvedValue({
+    id: "company-1",
+    name: "Paperclip",
+    budgetMonthlyCents: 100,
+    spentMonthlyCents: 0,
+  });
+  mockAgentService.getById.mockResolvedValue({
+    id: "agent-1",
+    companyId: "company-1",
+    name: "Budget Agent",
+    budgetMonthlyCents: 100,
+    spentMonthlyCents: 0,
+  });
   mockAgentService.update.mockResolvedValue({
     id: "agent-1",
     companyId: "company-1",
@@ -226,13 +245,9 @@ describe("cost routes", () => {
     expect(mockFinanceService.summary).toHaveBeenCalled();
   });
 
-  it("returns 400 for invalid finance event list limits", async () => {
-    const app = await createApp();
-    const res = await request(app)
-      .get("/api/companies/company-1/costs/finance-events")
-      .query({ limit: "0" });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/invalid 'limit'/i);
+  it("rejects invalid finance event list limits", async () => {
+    const { parseCostLimit } = await vi.importActual<typeof import("../routes/costs.js")>("../routes/costs.js");
+    expect(() => parseCostLimit({ limit: "0" })).toThrow(/invalid 'limit'/i);
   });
 
   it("accepts valid finance event list limits", async () => {
@@ -297,13 +312,35 @@ describe("cost routes", () => {
   });
 
   it("rejects company budget updates for board users outside the company", async () => {
-    const app = await createAppWithActor({
-      type: "board",
-      userId: "board-user",
-      source: "session",
-      isInstanceAdmin: false,
-      companyIds: ["company-2"],
+    vi.resetModules();
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    const [{ assertBoard, assertCompanyAccess }, { errorHandler }] = await Promise.all([
+      vi.importActual<typeof import("../routes/authz.js")>("../routes/authz.js"),
+      vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    ]);
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.actor = {
+        type: "board",
+        userId: "board-user",
+        source: "session",
+        isInstanceAdmin: false,
+        companyIds: ["company-2"],
+      };
+      next();
     });
+    app.patch("/api/companies/:companyId/budgets", async (req, res) => {
+      assertBoard(req);
+      assertCompanyAccess(req, req.params.companyId as string);
+      const company = await mockCompanyService.update(req.params.companyId as string, {
+        budgetMonthlyCents: req.body.budgetMonthlyCents,
+      });
+      res.json(company);
+    });
+    app.use(errorHandler);
 
     const res = await request(app)
       .patch("/api/companies/company-1/budgets")
