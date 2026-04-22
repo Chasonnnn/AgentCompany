@@ -102,6 +102,44 @@ console.log(JSON.stringify({ type: "result", session_id: "claude-session-2", res
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeRetryMkdirFailureThenSucceedClaudeCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+
+const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
+const statePath = process.env.PAPERCLIP_TEST_STATE_PATH;
+const payload = {
+  argv: process.argv.slice(2),
+  prompt: fs.readFileSync(0, "utf8"),
+};
+if (capturePath) {
+  const entries = fs.existsSync(capturePath) ? JSON.parse(fs.readFileSync(capturePath, "utf8")) : [];
+  entries.push(payload);
+  fs.writeFileSync(capturePath, JSON.stringify(entries), "utf8");
+}
+const resumed = process.argv.includes("--resume");
+const shouldFailResume = resumed && statePath && !fs.existsSync(statePath);
+if (shouldFailResume) {
+  fs.writeFileSync(statePath, "retried", "utf8");
+  console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "claude-session-1", model: "claude-sonnet" }));
+  console.log(JSON.stringify({
+    type: "result",
+    subtype: "success",
+    session_id: "claude-session-1",
+    is_error: true,
+    stopReason: "adapter_failed",
+    result: "API Error: ENOENT: no such file or directory, mkdir",
+  }));
+  process.exit(1);
+}
+console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "claude-session-2", model: "claude-sonnet" }));
+console.log(JSON.stringify({ type: "assistant", session_id: "claude-session-2", message: { content: [{ type: "text", text: "hello" }] } }));
+console.log(JSON.stringify({ type: "result", session_id: "claude-session-2", result: "hello", usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 } }));
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function writeQuestionOnlyClaudeCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "claude-session-q1", model: "claude-sonnet" }));
@@ -303,6 +341,41 @@ describe("claude execute", () => {
     const instructionsFile = path.join(root, "instructions.md");
     await fs.writeFile(instructionsFile, "# Agent instructions", "utf-8");
     const metaEvents: Array<{ commandArgs: string[]; commandNotes: string[] }> = [];
+    const wakeContext = {
+      issueId: "issue-1",
+      taskId: "issue-1",
+      wakeReason: "issue_commented",
+      wakeCommentId: "comment-2",
+      paperclipWake: {
+        reason: "issue_commented",
+        issue: {
+          id: "issue-1",
+          identifier: "PAP-874",
+          title: "chat-speed issues",
+          status: "in_progress",
+          priority: "medium",
+        },
+        commentIds: ["comment-2"],
+        latestCommentId: "comment-2",
+        comments: [
+          {
+            id: "comment-2",
+            issueId: "issue-1",
+            body: "Second comment",
+            bodyTruncated: false,
+            createdAt: "2026-03-28T14:35:10.000Z",
+            author: { type: "user", id: "user-1" },
+          },
+        ],
+        commentWindow: {
+          requestedCount: 1,
+          includedCount: 1,
+          missingCount: 0,
+        },
+        truncated: false,
+        fallbackFetchNeeded: false,
+      },
+    };
     try {
       const result = await execute({
         runId: "run-resume-fallback",
@@ -318,7 +391,7 @@ describe("claude execute", () => {
           promptTemplate: "Do work.",
           instructionsFilePath: instructionsFile,
         },
-        context: {},
+        context: wakeContext,
         authToken: "tok",
         onLog: async () => {},
         onMeta: async (meta) => {
@@ -330,14 +403,20 @@ describe("claude execute", () => {
       });
       const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as Array<{
         argv: string[];
+        prompt: string;
         appendedSystemPromptFilePath: string | null;
         appendedSystemPromptFileContents: string | null;
       }>;
       expect(captured).toHaveLength(2);
       expect(captured[0]?.argv).toContain("--resume");
       expect(captured[0]?.argv).not.toContain("--append-system-prompt-file");
+      expect(captured[0]?.prompt).toContain("## Paperclip Resume Delta");
+      expect(captured[0]?.prompt).not.toContain("Do work.");
       expect(captured[1]?.argv).not.toContain("--resume");
       expect(captured[1]?.argv).toContain("--append-system-prompt-file");
+      expect(captured[1]?.prompt).toContain("## Paperclip Wake Payload");
+      expect(captured[1]?.prompt).toContain("Do work.");
+      expect(captured[1]?.prompt).not.toContain("## Paperclip Resume Delta");
       expect(captured[1]?.appendedSystemPromptFilePath).toContain("agent-instructions.md");
       expect(captured[1]?.appendedSystemPromptFilePath).not.toBe(instructionsFile);
       expect(captured[1]?.appendedSystemPromptFileContents).toContain("# Agent instructions");
@@ -358,7 +437,54 @@ describe("claude execute", () => {
     }
   });
 
-  it("logs the resolved executable path and scoped Claude settings in invocation metadata", async () => {
+  it("retries fresh when a resumed Claude session returns a recoverable mkdir adapter failure", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-resume-mkdir-fallback-"));
+    const { workspace, commandPath, capturePath, statePath, restore } = await setupExecuteEnv(root, {
+      commandWriter: writeRetryMkdirFailureThenSucceedClaudeCommand,
+    });
+    const logs: string[] = [];
+
+    try {
+      const result = await execute({
+        runId: "run-resume-mkdir-fallback",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: "claude-session-1", sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PAPERCLIP_TEST_STATE_PATH: statePath,
+          },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        authToken: "tok",
+        onLog: async (_stream, chunk) => {
+          logs.push(chunk);
+        },
+        onMeta: async () => {},
+      });
+
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as Array<{
+        argv: string[];
+        prompt: string;
+      }>;
+      expect(captured).toHaveLength(2);
+      expect(captured[0]?.argv).toContain("--resume");
+      expect(captured[1]?.argv).not.toContain("--resume");
+      expect(captured[1]?.prompt).toContain("Do work.");
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      expect(result.sessionId).toBe("claude-session-2");
+      expect(logs.join("")).toContain("recoverable filesystem error");
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("logs the resolved executable path and preserves host Claude config in invocation metadata", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-execute-meta-"));
     const workspace = path.join(root, "workspace");
     const binDir = path.join(root, "bin");
@@ -417,7 +543,7 @@ describe("claude execute", () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       expect(loggedCommand).toBe(commandPath);
-      expect(loggedEnv.CLAUDE_CONFIG_DIR).toBe("");
+      expect(loggedEnv.CLAUDE_CONFIG_DIR).toBe(claudeConfigDir);
       expect(loggedEnv.PAPERCLIP_RESOLVED_COMMAND).toBe(commandPath);
       expect(loggedArgs).toContain("--settings");
       const settingsFlagIndex = loggedArgs.indexOf("--settings");
@@ -429,7 +555,7 @@ describe("claude execute", () => {
       expect(settingsValue.skillsPaths?.[0]).toContain("/.claude/skills");
 
       const captured = JSON.parse(await fs.readFile(capturePath, "utf-8"));
-      expect(captured.claudeConfigDir).toBeNull();
+      expect(captured.claudeConfigDir).toBe(claudeConfigDir);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
