@@ -568,11 +568,21 @@ export const createIssueLabelSchema = z.object({
 
 export type CreateIssueLabel = z.infer<typeof createIssueLabelSchema>;
 
+export const inReviewSelfAttestSchema = z.object({
+  testsRun: z.boolean(),
+  docsUpdated: z.boolean(),
+  worktreeClean: z.boolean(),
+});
+
+export type InReviewSelfAttest = z.infer<typeof inReviewSelfAttestSchema>;
+
 export const updateIssueSchema = createIssueSchema.partial().extend({
   comment: z.string().min(1).optional(),
   reopen: z.boolean().optional(),
   interrupt: z.boolean().optional(),
   hiddenAt: z.string().datetime().nullable().optional(),
+  pullRequestUrl: z.string().url().max(2048).optional(),
+  selfAttest: inReviewSelfAttestSchema.optional(),
 });
 
 export type UpdateIssue = z.infer<typeof updateIssueSchema>;

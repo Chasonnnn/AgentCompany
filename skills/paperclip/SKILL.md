@@ -155,6 +155,28 @@ MD
 
 Status values: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `blocked`, `cancelled`. Priority values: `critical`, `high`, `medium`, `low`. Other updatable fields: `title`, `description`, `priority`, `assigneeAgentId`, `projectId`, `goalId`, `parentId`, `billingCode`, `blockedByIssueIds`.
 
+**in_review entry gate.** Transitioning from `in_progress` to `in_review` now requires the PATCH body to include either a `pullRequestUrl` (a valid URL to the PR for the work) OR a complete `selfAttest` checklist with all three fields set to `true`:
+
+```json
+PATCH /api/issues/{issueId}
+{
+  "status": "in_review",
+  "pullRequestUrl": "https://github.com/owner/repo/pull/123"
+}
+```
+
+or
+
+```json
+PATCH /api/issues/{issueId}
+{
+  "status": "in_review",
+  "selfAttest": { "testsRun": true, "docsUpdated": true, "worktreeClean": true }
+}
+```
+
+Neither present (or any attest field not `true`) returns `422` with `details.missing` naming the absent fields. Execution-policy review-stage transitions are unaffected — this gate only applies to direct `status: "in_review"` PATCHes from `in_progress`.
+
 **Step 9 — Delegate if needed.** Create subtasks with `POST /api/companies/{companyId}/issues`. Always set `parentId` and `goalId`. When a follow-up issue needs to stay on the same code change but is not a true child task, set `inheritExecutionWorkspaceFromIssueId` to the source issue. Set `billingCode` for cross-team work.
 
 ## Issue Dependencies (Blockers)
