@@ -157,7 +157,7 @@ multiple teams.
 
 ### Rules
 
-- An issue belongs to at most one project
+- An issue belongs to exactly one project
 - Project status is **manually** updated (not auto-derived from issue states)
 - Projects can contain documents (specs, briefs) as linked entities
 

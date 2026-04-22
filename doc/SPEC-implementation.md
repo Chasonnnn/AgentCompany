@@ -204,7 +204,7 @@ Invariant:
 
 - `id` uuid pk
 - `company_id` uuid fk not null
-- `project_id` uuid fk `projects.id` null
+- `project_id` uuid fk `projects.id` not null
 - `goal_id` uuid fk `goals.id` null
 - `parent_id` uuid fk `issues.id` null
 - `title` text not null
@@ -320,7 +320,7 @@ If the referenced bundle hash or document revisions change, resume logic must in
 - `company_id` uuid fk not null
 - `agent_id` uuid fk `agents.id` not null
 - `issue_id` uuid fk `issues.id` null
-- `project_id` uuid fk `projects.id` null
+- `project_id` uuid fk `projects.id` not null
 - `goal_id` uuid fk `goals.id` null
 - `billing_code` text null
 - `provider` text not null

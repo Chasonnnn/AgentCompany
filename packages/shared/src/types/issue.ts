@@ -50,7 +50,7 @@ export interface IssueAncestor {
   priority: string;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
-  projectId: string | null;
+  projectId: string;
   goalId: string | null;
   project: IssueAncestorProject | null;
   goal: IssueAncestorGoal | null;
@@ -390,7 +390,7 @@ export interface IssueBranchMergePreview {
 export interface Issue {
   id: string;
   companyId: string;
-  projectId: string | null;
+  projectId: string;
   projectWorkspaceId: string | null;
   goalId: string | null;
   parentId: string | null;

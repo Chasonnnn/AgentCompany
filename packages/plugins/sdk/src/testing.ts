@@ -442,11 +442,14 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       },
       async create(input) {
         requireCapability(manifest, capabilitySet, "issues.create");
+        if (!input.projectId) {
+          throw new Error("Mock issue creation requires projectId");
+        }
         const now = new Date();
         const record: Issue = {
           id: randomUUID(),
           companyId: input.companyId,
-          projectId: input.projectId ?? null,
+          projectId: input.projectId,
           projectWorkspaceId: null,
           goalId: input.goalId ?? null,
           parentId: input.parentId ?? null,

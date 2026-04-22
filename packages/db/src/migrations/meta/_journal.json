@@ -505,6 +505,13 @@
       "when": 1776879792937,
       "tag": "0071_bitter_doctor_octopus",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1776895846826,
+      "tag": "0072_faithful_maverick",
+      "breakpoints": true
     }
   ]
 }

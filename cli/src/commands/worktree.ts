@@ -2315,6 +2315,9 @@ async function applyMergePlan(input: {
     const insertedIssueIdentifiers = new Map<string, string>();
     let insertedIssues = 0;
     for (const issue of issueInserts) {
+      if (!issue.targetProjectId) {
+        throw new Error(`Cannot import issue ${issue.source.id} without a resolved target project`);
+      }
       const issueNumber = nextIssueNumber;
       nextIssueNumber += 1;
       const identifier = `${input.company.issuePrefix}-${issueNumber}`;

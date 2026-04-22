@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, inArray, isNull, ne, not, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, ne, not, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
   agents,
+  agentProjectScopes,
   assets,
   companies,
   companyMemberships,
@@ -158,10 +159,18 @@ type IssueUserContextInput = {
 };
 type ProjectGoalReader = Pick<Db, "select">;
 type DbReader = Pick<Db, "select">;
-type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId"> & {
+type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId" | "projectId"> & {
+  projectId?: string | null;
   labelIds?: string[];
   blockedByIssueIds?: string[];
   inheritExecutionWorkspaceFromIssueId?: string | null;
+};
+type IssueUpdateInput = Partial<Omit<typeof issues.$inferInsert, "projectId">> & {
+  projectId?: string | null;
+  labelIds?: string[];
+  blockedByIssueIds?: string[];
+  actorAgentId?: string | null;
+  actorUserId?: string | null;
 };
 type IssueRelationSummaryMap = {
   blockedBy: IssueRelationIssueSummary[];
@@ -900,6 +909,144 @@ export function issueService(db: Db) {
     if (!membership) {
       throw notFound("Assignee user not found");
     }
+  }
+
+  async function assertValidProject(
+    companyId: string,
+    projectId: string,
+    dbOrTx: DbReader = db,
+  ) {
+    const project = await dbOrTx
+      .select({ id: projects.id, companyId: projects.companyId })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .then((rows) => rows[0] ?? null);
+    if (!project) throw notFound("Project not found");
+    if (project.companyId !== companyId) throw unprocessable("Project must belong to same company");
+  }
+
+  async function resolveProjectIdFromProjectWorkspace(
+    companyId: string,
+    projectWorkspaceId: string | null | undefined,
+    dbOrTx: DbReader = db,
+  ) {
+    if (!projectWorkspaceId) return null;
+    const workspace = await dbOrTx
+      .select({
+        id: projectWorkspaces.id,
+        companyId: projectWorkspaces.companyId,
+        projectId: projectWorkspaces.projectId,
+      })
+      .from(projectWorkspaces)
+      .where(eq(projectWorkspaces.id, projectWorkspaceId))
+      .then((rows) => rows[0] ?? null);
+    if (!workspace) throw notFound("Project workspace not found");
+    if (workspace.companyId !== companyId) {
+      throw unprocessable("Project workspace must belong to same company");
+    }
+    return workspace.projectId;
+  }
+
+  async function resolveProjectIdFromExecutionWorkspace(
+    companyId: string,
+    executionWorkspaceId: string | null | undefined,
+    dbOrTx: DbReader = db,
+  ) {
+    if (!executionWorkspaceId) return null;
+    const workspace = await dbOrTx
+      .select({
+        id: executionWorkspaces.id,
+        companyId: executionWorkspaces.companyId,
+        projectId: executionWorkspaces.projectId,
+      })
+      .from(executionWorkspaces)
+      .where(eq(executionWorkspaces.id, executionWorkspaceId))
+      .then((rows) => rows[0] ?? null);
+    if (!workspace) throw notFound("Execution workspace not found");
+    if (workspace.companyId !== companyId) {
+      throw unprocessable("Execution workspace must belong to same company");
+    }
+    return workspace.projectId;
+  }
+
+  async function resolveProjectIdFromParentIssue(
+    companyId: string,
+    parentId: string | null | undefined,
+    dbOrTx: DbReader = db,
+  ) {
+    if (!parentId) return null;
+    const parent = await dbOrTx
+      .select({
+        id: issues.id,
+        companyId: issues.companyId,
+        projectId: issues.projectId,
+      })
+      .from(issues)
+      .where(eq(issues.id, parentId))
+      .then((rows) => rows[0] ?? null);
+    if (!parent) throw notFound("Parent issue not found");
+    if (parent.companyId !== companyId) throw unprocessable("Parent issue must belong to same company");
+    return parent.projectId;
+  }
+
+  async function resolveProjectIdFromSingleExecutionScope(
+    companyId: string,
+    assigneeAgentId: string | null | undefined,
+    dbOrTx: DbReader = db,
+  ) {
+    if (!assigneeAgentId) return null;
+    const now = new Date();
+    const rows = await dbOrTx
+      .select({
+        projectId: agentProjectScopes.projectId,
+      })
+      .from(agentProjectScopes)
+      .where(
+        and(
+          eq(agentProjectScopes.companyId, companyId),
+          eq(agentProjectScopes.agentId, assigneeAgentId),
+          eq(agentProjectScopes.scopeMode, "execution"),
+          or(isNull(agentProjectScopes.activeTo), gt(agentProjectScopes.activeTo, now)),
+        ),
+      );
+    const distinctProjectIds = [...new Set(rows.map((row) => row.projectId))];
+    return distinctProjectIds.length === 1 ? distinctProjectIds[0] : null;
+  }
+
+  async function resolveRequiredProjectId(
+    {
+      companyId,
+      explicitProjectId,
+      projectWorkspaceId,
+      executionWorkspaceId,
+      parentId,
+      assigneeAgentId,
+      fallbackProjectId,
+    }: {
+      companyId: string;
+      explicitProjectId?: string | null;
+      projectWorkspaceId?: string | null;
+      executionWorkspaceId?: string | null;
+      parentId?: string | null;
+      assigneeAgentId?: string | null;
+      fallbackProjectId?: string | null;
+    },
+    dbOrTx: DbReader = db,
+  ) {
+    if (explicitProjectId) {
+      await assertValidProject(companyId, explicitProjectId, dbOrTx);
+      return explicitProjectId;
+    }
+    const projectWorkspaceProjectId = await resolveProjectIdFromProjectWorkspace(companyId, projectWorkspaceId, dbOrTx);
+    if (projectWorkspaceProjectId) return projectWorkspaceProjectId;
+    const executionWorkspaceProjectId = await resolveProjectIdFromExecutionWorkspace(companyId, executionWorkspaceId, dbOrTx);
+    if (executionWorkspaceProjectId) return executionWorkspaceProjectId;
+    const parentProjectId = await resolveProjectIdFromParentIssue(companyId, parentId, dbOrTx);
+    if (parentProjectId) return parentProjectId;
+    if (fallbackProjectId) return fallbackProjectId;
+    const singleScopeProjectId = await resolveProjectIdFromSingleExecutionScope(companyId, assigneeAgentId, dbOrTx);
+    if (singleScopeProjectId) return singleScopeProjectId;
+    throw unprocessable("Issues must belong to a project");
   }
 
   async function assertValidProjectWorkspace(
@@ -1665,19 +1812,20 @@ export function issueService(db: Db) {
       }
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, companyId);
-        const projectGoalId = await getProjectDefaultGoalId(tx, companyId, issueData.projectId);
         let projectWorkspaceId = issueData.projectWorkspaceId ?? null;
         let executionWorkspaceId = issueData.executionWorkspaceId ?? null;
         let executionWorkspacePreference = issueData.executionWorkspacePreference ?? null;
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
         const workspaceInheritanceIssueId = inheritExecutionWorkspaceFromIssueId ?? null;
+        let fallbackProjectId: string | null = null;
         const hasExplicitExecutionWorkspaceOverride =
           issueData.executionWorkspaceId !== undefined ||
           issueData.executionWorkspacePreference !== undefined ||
           issueData.executionWorkspaceSettings !== undefined;
         if (workspaceInheritanceIssueId) {
           const workspaceSource = await getWorkspaceInheritanceIssue(tx, companyId, workspaceInheritanceIssueId);
+          fallbackProjectId = workspaceSource.projectId;
           if (projectWorkspaceId == null && workspaceSource.projectWorkspaceId) {
             projectWorkspaceId = workspaceSource.projectWorkspaceId;
           }
@@ -1704,15 +1852,25 @@ export function issueService(db: Db) {
             }
           }
         }
+        const projectId = await resolveRequiredProjectId({
+          companyId,
+          explicitProjectId: issueData.projectId,
+          projectWorkspaceId,
+          executionWorkspaceId,
+          parentId: issueData.parentId ?? null,
+          assigneeAgentId: issueData.assigneeAgentId ?? null,
+          fallbackProjectId,
+        }, tx);
+        const projectGoalId = await getProjectDefaultGoalId(tx, companyId, projectId);
         if (
           executionWorkspaceSettings == null &&
           executionWorkspaceId == null &&
-          issueData.projectId
+          projectId
         ) {
           const project = await tx
             .select({ executionWorkspacePolicy: projects.executionWorkspacePolicy })
             .from(projects)
-            .where(and(eq(projects.id, issueData.projectId), eq(projects.companyId, companyId)))
+            .where(and(eq(projects.id, projectId), eq(projects.companyId, companyId)))
             .then((rows) => rows[0] ?? null);
           executionWorkspaceSettings =
             defaultIssueExecutionWorkspaceSettingsForProject(
@@ -1722,13 +1880,13 @@ export function issueService(db: Db) {
               ),
             ) as Record<string, unknown> | null;
         }
-        if (!projectWorkspaceId && issueData.projectId) {
+        if (!projectWorkspaceId) {
           const project = await tx
             .select({
               executionWorkspacePolicy: projects.executionWorkspacePolicy,
             })
             .from(projects)
-            .where(and(eq(projects.id, issueData.projectId), eq(projects.companyId, companyId)))
+            .where(and(eq(projects.id, projectId), eq(projects.companyId, companyId)))
             .then((rows) => rows[0] ?? null);
           const projectPolicy = parseProjectExecutionWorkspacePolicy(project?.executionWorkspacePolicy);
           projectWorkspaceId = projectPolicy?.defaultProjectWorkspaceId ?? null;
@@ -1736,16 +1894,16 @@ export function issueService(db: Db) {
             projectWorkspaceId = await tx
               .select({ id: projectWorkspaces.id })
               .from(projectWorkspaces)
-              .where(and(eq(projectWorkspaces.projectId, issueData.projectId), eq(projectWorkspaces.companyId, companyId)))
+              .where(and(eq(projectWorkspaces.projectId, projectId), eq(projectWorkspaces.companyId, companyId)))
               .orderBy(desc(projectWorkspaces.isPrimary), asc(projectWorkspaces.createdAt), asc(projectWorkspaces.id))
               .then((rows) => rows[0]?.id ?? null);
           }
         }
         if (projectWorkspaceId) {
-          await assertValidProjectWorkspace(companyId, issueData.projectId, projectWorkspaceId, tx);
+          await assertValidProjectWorkspace(companyId, projectId, projectWorkspaceId, tx);
         }
         if (executionWorkspaceId) {
-          await assertValidExecutionWorkspace(companyId, issueData.projectId, executionWorkspaceId, tx);
+          await assertValidExecutionWorkspace(companyId, projectId, executionWorkspaceId, tx);
         }
         // Self-correcting counter: use MAX(issue_number) + 1 if the counter
         // has drifted below the actual max, preventing identifier collisions.
@@ -1768,9 +1926,10 @@ export function issueService(db: Db) {
 
         const values = {
           ...issueData,
+          projectId,
           originKind: issueData.originKind ?? "manual",
           goalId: resolveIssueGoalId({
-            projectId: issueData.projectId,
+            projectId,
             goalId: issueData.goalId,
             projectGoalId,
             defaultGoalId: defaultCompanyGoal?.id ?? null,
@@ -1816,12 +1975,7 @@ export function issueService(db: Db) {
 
     update: async (
       id: string,
-      data: Partial<typeof issues.$inferInsert> & {
-        labelIds?: string[];
-        blockedByIssueIds?: string[];
-        actorAgentId?: string | null;
-        actorUserId?: string | null;
-      },
+      data: IssueUpdateInput,
       dbOrTx: any = db,
     ) => {
       const existing = await dbOrTx
@@ -1836,36 +1990,52 @@ export function issueService(db: Db) {
         blockedByIssueIds,
         actorAgentId,
         actorUserId,
-        ...issueData
+        projectId: requestedProjectId,
+        ...patchableIssueData
       } = data;
+      if (requestedProjectId === null) {
+        throw unprocessable("Issues must belong to a project");
+      }
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
       if (!isolatedWorkspacesEnabled) {
-        delete issueData.executionWorkspaceId;
-        delete issueData.executionWorkspacePreference;
-        delete issueData.executionWorkspaceSettings;
+        delete patchableIssueData.executionWorkspaceId;
+        delete patchableIssueData.executionWorkspacePreference;
+        delete patchableIssueData.executionWorkspaceSettings;
       }
 
-      if (issueData.status) {
-        assertTransition(existing.status, issueData.status);
+      if (patchableIssueData.status) {
+        assertTransition(existing.status, patchableIssueData.status);
       }
 
       const patch: Partial<typeof issues.$inferInsert> = {
-        ...issueData,
+        ...patchableIssueData,
         updatedAt: new Date(),
       };
 
       const nextAssigneeAgentId =
-        issueData.assigneeAgentId !== undefined ? issueData.assigneeAgentId : existing.assigneeAgentId;
+        patchableIssueData.assigneeAgentId !== undefined ? patchableIssueData.assigneeAgentId : existing.assigneeAgentId;
       const nextAssigneeUserId =
-        issueData.assigneeUserId !== undefined ? issueData.assigneeUserId : existing.assigneeUserId;
+        patchableIssueData.assigneeUserId !== undefined ? patchableIssueData.assigneeUserId : existing.assigneeUserId;
 
       if (nextAssigneeAgentId && nextAssigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
       }
-      const nextStatus = issueData.status !== undefined ? issueData.status : existing.status;
+      const nextStatus = patchableIssueData.status !== undefined ? patchableIssueData.status : existing.status;
       if (EXECUTING_ISSUE_STATUSES.has(nextStatus) && !nextAssigneeAgentId && !nextAssigneeUserId) {
         throw unprocessable(`${nextStatus} issues require an assignee`);
       }
+      const nextProjectId = await resolveRequiredProjectId({
+        companyId: existing.companyId,
+        explicitProjectId: requestedProjectId !== undefined ? requestedProjectId : existing.projectId,
+        projectWorkspaceId:
+          patchableIssueData.projectWorkspaceId !== undefined ? patchableIssueData.projectWorkspaceId : existing.projectWorkspaceId,
+        executionWorkspaceId:
+          patchableIssueData.executionWorkspaceId !== undefined ? patchableIssueData.executionWorkspaceId : existing.executionWorkspaceId,
+        parentId: patchableIssueData.parentId !== undefined ? patchableIssueData.parentId : existing.parentId,
+        assigneeAgentId: nextAssigneeAgentId,
+        fallbackProjectId: existing.projectId,
+      }, dbOrTx);
+      patch.projectId = nextProjectId;
       if (patch.status === "in_progress") {
         const unresolvedBlockerIssueIds = blockedByIssueIds !== undefined
           ? await listUnresolvedBlockerIssueIds(dbOrTx, existing.companyId, blockedByIssueIds)
@@ -1876,17 +2046,16 @@ export function issueService(db: Db) {
           throw unprocessable("Issue is blocked by unresolved blockers", { unresolvedBlockerIssueIds });
         }
       }
-      if (issueData.assigneeAgentId) {
-        await assertAssignableAgent(existing.companyId, issueData.assigneeAgentId);
+      if (patchableIssueData.assigneeAgentId) {
+        await assertAssignableAgent(existing.companyId, patchableIssueData.assigneeAgentId);
       }
-      if (issueData.assigneeUserId) {
-        await assertAssignableUser(existing.companyId, issueData.assigneeUserId);
+      if (patchableIssueData.assigneeUserId) {
+        await assertAssignableUser(existing.companyId, patchableIssueData.assigneeUserId);
       }
-      const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =
-        issueData.projectWorkspaceId !== undefined ? issueData.projectWorkspaceId : existing.projectWorkspaceId;
+        patchableIssueData.projectWorkspaceId !== undefined ? patchableIssueData.projectWorkspaceId : existing.projectWorkspaceId;
       const nextExecutionWorkspaceId =
-        issueData.executionWorkspaceId !== undefined ? issueData.executionWorkspaceId : existing.executionWorkspaceId;
+        patchableIssueData.executionWorkspaceId !== undefined ? patchableIssueData.executionWorkspaceId : existing.executionWorkspaceId;
       if (nextProjectWorkspaceId) {
         await assertValidProjectWorkspace(existing.companyId, nextProjectId, nextProjectWorkspaceId);
       }
@@ -1894,14 +2063,14 @@ export function issueService(db: Db) {
         await assertValidExecutionWorkspace(existing.companyId, nextProjectId, nextExecutionWorkspaceId);
       }
 
-      applyStatusSideEffects(issueData.status, patch);
-      if (issueData.status && issueData.status !== "done") {
+      applyStatusSideEffects(patchableIssueData.status, patch);
+      if (patchableIssueData.status && patchableIssueData.status !== "done") {
         patch.completedAt = null;
       }
-      if (issueData.status && issueData.status !== "cancelled") {
+      if (patchableIssueData.status && patchableIssueData.status !== "cancelled") {
         patch.cancelledAt = null;
       }
-      if (issueData.status && issueData.status !== "in_progress") {
+      if (patchableIssueData.status && patchableIssueData.status !== "in_progress") {
         patch.checkoutRunId = null;
         // Fix B: also clear the execution lock when leaving in_progress
         patch.executionRunId = null;
@@ -1909,8 +2078,8 @@ export function issueService(db: Db) {
         patch.executionLockedAt = null;
       }
       if (
-        (issueData.assigneeAgentId !== undefined && issueData.assigneeAgentId !== existing.assigneeAgentId) ||
-        (issueData.assigneeUserId !== undefined && issueData.assigneeUserId !== existing.assigneeUserId)
+        (patchableIssueData.assigneeAgentId !== undefined && patchableIssueData.assigneeAgentId !== existing.assigneeAgentId) ||
+        (patchableIssueData.assigneeUserId !== undefined && patchableIssueData.assigneeUserId !== existing.assigneeUserId)
       ) {
         patch.checkoutRunId = null;
         // Fix B: clear execution lock on reassignment, matching checkoutRunId clear
@@ -1926,15 +2095,15 @@ export function issueService(db: Db) {
           getProjectDefaultGoalId(
             tx,
             existing.companyId,
-            issueData.projectId !== undefined ? issueData.projectId : existing.projectId,
+            nextProjectId,
           ),
         ]);
         patch.goalId = resolveNextIssueGoalId({
           currentProjectId: existing.projectId,
           currentGoalId: existing.goalId,
           currentProjectGoalId,
-          projectId: issueData.projectId,
-          goalId: issueData.goalId,
+          projectId: nextProjectId === existing.projectId && requestedProjectId === undefined ? undefined : nextProjectId,
+          goalId: patchableIssueData.goalId,
           projectGoalId: nextProjectGoalId,
           defaultGoalId: defaultCompanyGoal?.id ?? null,
         });

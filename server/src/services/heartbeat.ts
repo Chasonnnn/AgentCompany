@@ -2859,7 +2859,7 @@ export function heartbeatService(db: Db) {
           status: string;
           assigneeAgentId: string | null;
           executionState: Record<string, unknown> | null;
-          projectId: string | null;
+          projectId: string;
         }
       | null,
     agent: typeof agents.$inferSelect,
