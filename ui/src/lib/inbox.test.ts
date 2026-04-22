@@ -251,6 +251,12 @@ function makeExecutionWorkspace(overrides: Partial<ExecutionWorkspace> = {}): Ex
     closedAt: null,
     cleanupEligibleAt: null,
     cleanupReason: null,
+    cleanupState: "idle",
+    cleanupAttemptCount: 0,
+    lastCleanupError: null,
+    nextCleanupAttemptAt: null,
+    reconcileState: "pending",
+    lastReconciledAt: null,
     config: null,
     metadata: null,
     createdAt: new Date("2026-03-11T00:00:00.000Z"),
@@ -281,6 +287,7 @@ const dashboard: DashboardSummary = {
     inProgress: 0,
     blocked: 0,
     done: 0,
+    operatorStates: [],
   },
   costs: {
     monthSpendCents: 900,
@@ -302,6 +309,7 @@ const dashboard: DashboardSummary = {
     returnedBranches: 0,
     handoffPending: 0,
   },
+  operatorStateReasons: [],
   budgets: {
     activeIncidents: 0,
     pendingApprovals: 0,
@@ -602,6 +610,15 @@ describe("inbox helpers", () => {
         defaultProjectWorkspaceIdByProjectId: new Map([["project-1", "project-workspace-2"]]),
       },
     )).toBe(true);
+  });
+
+  it("matches server-owned operator labels and reasons in inbox search", () => {
+    const issue = makeIssue("operator", false);
+    issue.operatorState = "decision_blocked";
+    issue.operatorReason = "Waiting on board decision";
+
+    expect(matchesInboxIssueSearch(issue, "needs decision")).toBe(true);
+    expect(matchesInboxIssueSearch(issue, "board decision")).toBe(true);
   });
 
   it("returns archived search matches that are not already visible in the inbox", () => {

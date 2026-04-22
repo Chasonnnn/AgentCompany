@@ -781,7 +781,7 @@ export function IssuesList({
                             />
                           </>
                         )}
-                        mobileMeta={issueActivityText(issue).toLowerCase()}
+                        mobileMeta={issueActivityText(issue, liveIssueIds?.has(issue.id) === true).toLowerCase()}
                         desktopTrailing={(
                           visibleTrailingIssueColumns.length > 0 ? (
                             <InboxIssueTrailingColumns

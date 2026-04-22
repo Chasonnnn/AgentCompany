@@ -94,12 +94,30 @@ function normalizeClaudeQuestionInput(input: unknown) {
   };
 }
 
+function normalizeClaudeQuestionInputs(input: unknown) {
+  if (typeof input === "string") {
+    const single = normalizeClaudeQuestionInput(input);
+    return single ? [single] : [];
+  }
+
+  const obj = parseObject(input);
+  if (Array.isArray(obj.questions) && obj.questions.length > 0) {
+    return obj.questions
+      .map((entry) => normalizeClaudeQuestionInput(entry))
+      .filter((entry): entry is NonNullable<ReturnType<typeof normalizeClaudeQuestionInput>> => Boolean(entry));
+  }
+
+  const single = normalizeClaudeQuestionInput(obj);
+  return single ? [single] : [];
+}
+
 export function parseClaudeStreamJson(stdout: string) {
   let sessionId: string | null = null;
   let model = "";
   let finalResult: Record<string, unknown> | null = null;
   const assistantTexts: string[] = [];
   let question: { prompt: string; choices: Array<{ key: string; label: string; description?: string }> } | null = null;
+  const questions: Array<{ prompt: string; choices: Array<{ key: string; label: string; description?: string }> }> = [];
 
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -127,11 +145,16 @@ export function parseClaudeStreamJson(stdout: string) {
           continue;
         }
         if (
-          !question &&
           asString(block.type, "") === "tool_use" &&
           asString(block.name, "") === CLAUDE_NATIVE_QUESTION_TOOL_NAME
         ) {
-          question = normalizeClaudeQuestionInput(block.input);
+          const normalizedQuestions = normalizeClaudeQuestionInputs(block.input);
+          if (normalizedQuestions.length > 0) {
+            if (!question) {
+              question = normalizedQuestions[0] ?? null;
+            }
+            questions.push(...normalizedQuestions);
+          }
         }
       }
       continue;
@@ -152,6 +175,7 @@ export function parseClaudeStreamJson(stdout: string) {
       summary: assistantTexts.join("\n\n").trim(),
       resultJson: null as Record<string, unknown> | null,
       question,
+      questions,
     };
   }
 
@@ -174,6 +198,7 @@ export function parseClaudeStreamJson(stdout: string) {
     summary,
     resultJson: finalResult,
     question,
+    questions,
   };
 }
 

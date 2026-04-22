@@ -219,6 +219,72 @@ describe("claude_local server parser", () => {
     });
   });
 
+  it("captures all Claude Code native questions when AskUserQuestion emits a questions array", () => {
+    const parsed = parseClaudeStreamJson([
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        model: "claude-sonnet-4-6",
+        session_id: "claude-session-1",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        session_id: "claude-session-1",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tool_1",
+              name: "AskUserQuestion",
+              input: {
+                questions: [
+                  {
+                    question: "Which audit slice should I start with?",
+                    options: [
+                      { label: "Runtime", description: "Focus on execution and infra first." },
+                      { label: "Governance", description: "Start with instructions and approval flows." },
+                    ],
+                  },
+                  {
+                    question: "Which severity bar should I use?",
+                    options: [
+                      { label: "Enterprise", description: "Use the strict external-customer bar." },
+                      { label: "Internal", description: "Use the internal operator bar." },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    ].join("\n"));
+
+    expect(parsed.question).toEqual({
+      prompt: "Which audit slice should I start with?",
+      choices: [
+        { key: "runtime", label: "Runtime", description: "Focus on execution and infra first." },
+        { key: "governance", label: "Governance", description: "Start with instructions and approval flows." },
+      ],
+    });
+    expect(parsed.questions).toEqual([
+      {
+        prompt: "Which audit slice should I start with?",
+        choices: [
+          { key: "runtime", label: "Runtime", description: "Focus on execution and infra first." },
+          { key: "governance", label: "Governance", description: "Start with instructions and approval flows." },
+        ],
+      },
+      {
+        prompt: "Which severity bar should I use?",
+        choices: [
+          { key: "enterprise", label: "Enterprise", description: "Use the strict external-customer bar." },
+          { key: "internal", label: "Internal", description: "Use the internal operator bar." },
+        ],
+      },
+    ]);
+  });
+
   it("ignores SendUserMessage tool_use blocks for native decision capture", () => {
     const parsed = parseClaudeStreamJson([
       JSON.stringify({

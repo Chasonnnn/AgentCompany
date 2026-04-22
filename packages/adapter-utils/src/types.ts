@@ -93,6 +93,14 @@ export interface AdapterExecutionResult {
       description?: string;
     }>;
   } | null;
+  questions?: Array<{
+    prompt: string;
+    choices: Array<{
+      key: string;
+      label: string;
+      description?: string;
+    }>;
+  }> | null;
 }
 
 export interface AdapterSessionCodec {

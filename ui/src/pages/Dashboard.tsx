@@ -14,6 +14,7 @@ import { MetricCard } from "../components/MetricCard";
 import { EmptyState } from "../components/EmptyState";
 import { IssueContinuityBadge } from "../components/IssueContinuityBadge";
 import { StatusIcon } from "../components/StatusIcon";
+import { IssueOperatorStateBadge } from "../components/IssueColumns";
 
 import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
@@ -23,12 +24,25 @@ import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle, 
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
-import type { Agent, Issue } from "@paperclipai/shared";
+import type { Agent, Issue, IssueOperatorState } from "@paperclipai/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
+import { formatIssueOperatorStateLabel } from "../lib/issue-operator-state";
 
 function getRecentIssues(issues: Issue[]): Issue[] {
   return [...issues]
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+function sortOperatorStateCounts(
+  items: Array<{ state: string; count: number }>,
+): Array<{ state: string; count: number }> {
+  return [...items].sort((a, b) => b.count - a.count || a.state.localeCompare(b.state));
+}
+
+function sortOperatorStateReasons(
+  items: Array<{ state: string; reason: string; count: number }>,
+): Array<{ state: string; reason: string; count: number }> {
+  return [...items].sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 }
 
 export function Dashboard() {
@@ -76,6 +90,14 @@ export function Dashboard() {
 
   const recentIssues = issues ? getRecentIssues(issues) : [];
   const recentActivity = useMemo(() => (activity ?? []).slice(0, 10), [activity]);
+  const operatorStateCounts = useMemo(
+    () => sortOperatorStateCounts(data?.tasks.operatorStates ?? []),
+    [data?.tasks.operatorStates],
+  );
+  const operatorStateReasons = useMemo(
+    () => sortOperatorStateReasons(data?.operatorStateReasons ?? []).slice(0, 4),
+    [data?.operatorStateReasons],
+  );
 
   useEffect(() => {
     for (const timer of activityAnimationTimersRef.current) {
@@ -371,6 +393,57 @@ export function Dashboard() {
             )}
           </div>
 
+          <div className="rounded-lg border border-border/70 bg-card/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold">Operator states</h3>
+                <p className="text-xs text-muted-foreground">
+                  Server-owned execution posture for open work, separate from raw issue status.
+                </p>
+              </div>
+              <Link to="/issues" className="text-xs text-muted-foreground underline underline-offset-2">
+                Inspect issues
+              </Link>
+            </div>
+            {operatorStateCounts.length > 0 ? (
+              <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {operatorStateCounts.map((entry) => (
+                    <span
+                      key={entry.state}
+                      className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/60 px-3 py-1 text-xs"
+                    >
+                      <span className="font-medium">
+                        {formatIssueOperatorStateLabel(entry.state as IssueOperatorState)}
+                      </span>
+                      <span className="text-muted-foreground">{entry.count}</span>
+                    </span>
+                  ))}
+                </div>
+                {operatorStateReasons.length > 0 ? (
+                  <div className="mt-3 space-y-1.5 text-xs text-muted-foreground">
+                    {operatorStateReasons.map((entry) => (
+                      <div key={`${entry.state}:${entry.reason}`} className="flex items-start justify-between gap-3">
+                        <span className="min-w-0">
+                          <span className="font-medium text-foreground">
+                            {formatIssueOperatorStateLabel(entry.state as IssueOperatorState)}
+                          </span>
+                          {" · "}
+                          {entry.reason}
+                        </span>
+                        <span className="shrink-0">{entry.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="mt-3 rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                No operator-state summaries yet.
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <ChartCard title="Run Activity" subtitle="Last 14 days">
               <RunActivityChart activity={data.runActivity} />
@@ -448,6 +521,7 @@ export function Dashboard() {
                             <span className="text-xs font-mono text-muted-foreground">
                               {issue.identifier ?? issue.id.slice(0, 8)}
                             </span>
+                            <IssueOperatorStateBadge issue={issue} />
                             <IssueContinuityBadge issue={issue} />
                             {issue.assigneeAgentId && (() => {
                               const name = agentName(issue.assigneeAgentId);

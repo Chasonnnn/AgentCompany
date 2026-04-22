@@ -261,6 +261,11 @@ function createContinuityBundle(
       context: null,
       runbook: null,
     },
+    evidenceManifest: {
+      attachments: [],
+      recentComments: [],
+      executionWorkspace: null,
+    },
     referencedRevisionIds: {},
   };
 }

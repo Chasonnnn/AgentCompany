@@ -184,6 +184,31 @@ describe("InboxIssueMetaLeading", () => {
       root.unmount();
     });
   });
+
+  it("renders queued state from the server-owned operator summary", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <InboxIssueMetaLeading
+          issue={createIssue({
+            operatorState: "queued_followup",
+            operatorReason: "Waiting on queued follow-up execution",
+          })}
+          isLive={false}
+        />,
+      );
+    });
+
+    const queuedBadge = container.querySelector('[data-operator-state="queued_followup"]');
+    expect(queuedBadge).not.toBeNull();
+    expect(queuedBadge?.textContent).toContain("Queued");
+    expect(queuedBadge?.getAttribute("title")).toContain("Waiting on queued follow-up execution");
+
+    act(() => {
+      root.unmount();
+    });
+  });
 });
 
 describe("InboxIssueTrailingColumns", () => {

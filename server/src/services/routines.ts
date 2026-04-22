@@ -61,6 +61,177 @@ const WEEKDAY_INDEX: Record<string, number> = {
 
 type Actor = { agentId?: string | null; userId?: string | null };
 
+type AdvisorRoutineTemplate = {
+  advisorKind: NonNullable<CreateRoutine["advisorKind"]>;
+  title: string;
+  description: string;
+  disabledByDefault: boolean;
+  variables: RoutineVariable[];
+};
+
+const BUILTIN_ADVISOR_ROUTINE_TEMPLATES: AdvisorRoutineTemplate[] = [
+  {
+    advisorKind: "security_audit",
+    title: "Security Audit",
+    description: "Review secrets, dependency exposure, plugin risk, and high-impact runtime paths on a recurring cadence.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "scope",
+        label: "Audit scope",
+        type: "textarea",
+        defaultValue: null,
+        required: true,
+        options: [],
+      },
+    ],
+  },
+  {
+    advisorKind: "continuity_audit",
+    title: "Continuity Audit",
+    description: "Check issue continuity health, stale handoffs, missing docs, and execution ownership drift.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "lane",
+        label: "Lane",
+        type: "text",
+        defaultValue: null,
+        required: true,
+        options: [],
+      },
+    ],
+  },
+  {
+    advisorKind: "instruction_drift",
+    title: "Instruction Drift Audit",
+    description: "Compare live behavior against operating docs, local instructions, and template expectations.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "instructionSurface",
+        label: "Instruction surface",
+        type: "text",
+        defaultValue: null,
+        required: true,
+        options: [],
+      },
+    ],
+  },
+  {
+    advisorKind: "skill_review",
+    title: "Skill Review Digest",
+    description: "Summarize active skill usage, gaps, and candidate follow-up reviews for the board.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "focusArea",
+        label: "Focus area",
+        type: "text",
+        defaultValue: null,
+        required: false,
+        options: [],
+      },
+    ],
+  },
+  {
+    advisorKind: "skill_janitor",
+    title: "Skill Janitor Sweep",
+    description: "Find duplicate, stale, or obsolete skill installs and capture cleanup recommendations.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "skillRoot",
+        label: "Skill root",
+        type: "text",
+        defaultValue: "~/.codex/skills",
+        required: true,
+        options: [],
+      },
+    ],
+  },
+  {
+    advisorKind: "budget_analyst",
+    title: "Budget Analyst Review",
+    description: "Monitor burn, flag anomalies, and summarize budget pressure before it becomes an approval incident.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "window",
+        label: "Budget window",
+        type: "select",
+        defaultValue: "month_to_date",
+        required: true,
+        options: ["day", "week", "month_to_date"],
+      },
+    ],
+  },
+  {
+    advisorKind: "evidence_librarian",
+    title: "Evidence Librarian Digest",
+    description: "Collect links, logs, and artifacts into durable issue or project docs for later review.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "artifactTarget",
+        label: "Artifact target",
+        type: "text",
+        defaultValue: null,
+        required: true,
+        options: [],
+      },
+    ],
+  },
+  {
+    advisorKind: "workspace_janitor",
+    title: "Workspace Janitor Sweep",
+    description: "Look for stale workspaces, orphaned worktrees, cache debris, and local runtime leftovers.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "workspaceRoot",
+        label: "Workspace root",
+        type: "text",
+        defaultValue: ".",
+        required: true,
+        options: [],
+      },
+    ],
+  },
+  {
+    advisorKind: "adapter_qa",
+    title: "Adapter QA Sweep",
+    description: "Exercise adapter paths, capture regressions, and summarize readiness gaps.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "adapterSurface",
+        label: "Adapter surface",
+        type: "text",
+        defaultValue: null,
+        required: true,
+        options: [],
+      },
+    ],
+  },
+  {
+    advisorKind: "conversation_qa",
+    title: "Conversation QA Sample",
+    description: "Review recent transcripts for routing misses, avoidable interruptions, and unclear asks.",
+    disabledByDefault: true,
+    variables: [
+      {
+        name: "sampleSize",
+        label: "Sample size",
+        type: "number",
+        defaultValue: 5,
+        required: true,
+        options: [],
+      },
+    ],
+  },
+];
+
 function assertTimeZone(timeZone: string) {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
@@ -214,6 +385,25 @@ function sanitizeRoutineVariableInputs(
     options: variable.options ?? [],
   }));
 }
+
+function cloneRoutineVariables(variables: RoutineVariable[]) {
+  return variables.map((variable) => ({
+    ...variable,
+    options: [...variable.options],
+  }));
+}
+
+function isMissingAdvisorColumnError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? (error as { code?: string }).code : undefined;
+  const message = "message" in error ? (error as { message?: string }).message : undefined;
+  return code === "42703" && typeof message === "string" && /advisor_kind|advisor_enabled/.test(message);
+}
+
+type RoutineAdvisorState = {
+  advisorKind: NonNullable<CreateRoutine["advisorKind"]> | null;
+  advisorEnabled: boolean;
+};
 
 function assertScheduleCompatibleVariables(variables: RoutineVariable[]) {
   const missingDefaults = variables
@@ -384,12 +574,64 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
   const secretsSvc = secretService(db);
   const heartbeat = deps.heartbeat ?? heartbeatService(db);
 
+  async function listRoutineAdvisorState(routineIds: string[], executor: Pick<Db, "select"> = db) {
+    if (routineIds.length === 0) return new Map<string, RoutineAdvisorState>();
+    try {
+      const rows = await executor
+        .select({
+          id: routines.id,
+          advisorKind: sql<NonNullable<CreateRoutine["advisorKind"]> | null>`advisor_kind`.as("advisorKind"),
+          advisorEnabled: sql<boolean>`coalesce(advisor_enabled, false)`.as("advisorEnabled"),
+        })
+        .from(routines)
+        .where(inArray(routines.id, routineIds));
+      return new Map<string, RoutineAdvisorState>(
+        rows.map((row) => [
+          row.id,
+          {
+            advisorKind: row.advisorKind ?? null,
+            advisorEnabled: row.advisorEnabled ?? false,
+          },
+        ]),
+      );
+    } catch (error) {
+      if (isMissingAdvisorColumnError(error)) {
+        return new Map<string, RoutineAdvisorState>();
+      }
+      throw error;
+    }
+  }
+
+  async function getRoutineAdvisorState(id: string, executor: Pick<Db, "select"> = db) {
+    return (await listRoutineAdvisorState([id], executor)).get(id) ?? { advisorKind: null, advisorEnabled: false };
+  }
+
+  async function persistRoutineAdvisorState(
+    id: string,
+    state: RoutineAdvisorState,
+    executor: Pick<Db, "execute"> = db,
+  ) {
+    try {
+      await executor.execute(sql`
+        update routines
+        set advisor_kind = ${state.advisorKind},
+            advisor_enabled = ${state.advisorEnabled}
+        where id = ${id}
+      `);
+    } catch (error) {
+      if (isMissingAdvisorColumnError(error)) return;
+      throw error;
+    }
+  }
+
   async function getRoutineById(id: string) {
-    return db
+    const row = await db
       .select()
       .from(routines)
       .where(eq(routines.id, id))
       .then((rows) => rows[0] ?? null);
+    if (!row) return null;
+    return { ...row, ...(await getRoutineAdvisorState(id)) };
   }
 
   async function getTriggerById(id: string) {
@@ -1027,6 +1269,11 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
   return {
     get: getRoutineById,
     getTrigger: getTriggerById,
+    listAdvisorTemplates: () =>
+      BUILTIN_ADVISOR_ROUTINE_TEMPLATES.map((template) => ({
+        ...template,
+        variables: cloneRoutineVariables(template.variables),
+      })),
 
     list: async (companyId: string): Promise<RoutineListItem[]> => {
       const rows = await db
@@ -1035,13 +1282,15 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
         .where(eq(routines.companyId, companyId))
         .orderBy(desc(routines.updatedAt), asc(routines.title));
       const routineIds = rows.map((row) => row.id);
-      const [triggersByRoutine, latestRunByRoutine, activeIssueByRoutine] = await Promise.all([
+      const [triggersByRoutine, latestRunByRoutine, activeIssueByRoutine, advisorStateByRoutine] = await Promise.all([
         listTriggersForRoutineIds(companyId, routineIds),
         listLatestRunByRoutineIds(companyId, routineIds),
         listLiveIssueByRoutineIds(companyId, routineIds),
+        listRoutineAdvisorState(routineIds),
       ]);
       return rows.map((row) => ({
         ...row,
+        ...(advisorStateByRoutine.get(row.id) ?? { advisorKind: null, advisorEnabled: false }),
         triggers: (triggersByRoutine.get(row.id) ?? []).map((trigger) => ({
           id: trigger.id,
           kind: trigger.kind as RoutineListItem["triggers"][number]["kind"],
@@ -1185,7 +1434,11 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
           updatedByUserId: actor.userId ?? null,
         })
         .returning();
-      return created;
+      await persistRoutineAdvisorState(created.id, {
+        advisorKind: input.advisorKind ?? null,
+        advisorEnabled: input.advisorEnabled ?? false,
+      });
+      return (await getRoutineById(created.id))!;
     },
 
     update: async (id: string, patch: UpdateRoutine, actor: Actor): Promise<Routine | null> => {
@@ -1196,6 +1449,8 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
       const nextTitle = patch.title ?? existing.title;
       const nextDescription = patch.description === undefined ? existing.description : patch.description;
       const requestedStatus = patch.status ?? existing.status;
+      const nextAdvisorKind = patch.advisorKind === undefined ? existing.advisorKind ?? null : patch.advisorKind;
+      const nextAdvisorEnabled = patch.advisorEnabled ?? existing.advisorEnabled ?? false;
       if (patch.status === "active") {
         assertRoutineCanEnable(patch.status, nextAssigneeAgentId);
       }
@@ -1246,7 +1501,12 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
         })
         .where(eq(routines.id, id))
         .returning();
-      return updated ?? null;
+      if (!updated) return null;
+      await persistRoutineAdvisorState(id, {
+        advisorKind: nextAdvisorKind,
+        advisorEnabled: nextAdvisorEnabled,
+      });
+      return getRoutineById(id);
     },
 
     createTrigger: async (

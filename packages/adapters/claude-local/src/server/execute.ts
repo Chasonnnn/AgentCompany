@@ -659,6 +659,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       resultJson: parsed ?? parsedStream.resultJson ?? fallbackResultJson,
       summary: parsedStream.summary || (parsed ? asString(parsed.result, "") : ""),
       question: parsedStream.question ?? null,
+      questions: parsedStream.questions ?? null,
       clearSession: clearSessionForMaxTurns || Boolean(opts.clearSessionOnMissingSession && !resolvedSessionId),
     };
   };

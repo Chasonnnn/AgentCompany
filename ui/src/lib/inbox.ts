@@ -11,6 +11,7 @@ import {
   defaultIssueFilterState,
   type IssueFilterState,
 } from "./issue-filters";
+import { formatIssueOperatorStateLabel } from "./issue-operator-state";
 
 export const RECENT_ISSUES_LIMIT = 100;
 export const FAILED_RUN_STATUSES = new Set(["failed", "timed_out"]);
@@ -300,7 +301,7 @@ export function filterInboxIssues(issues: Issue[], showRoutineExecutions: boolea
 }
 
 export function matchesInboxIssueSearch(
-  issue: Pick<Issue, "title" | "identifier" | "description" | "executionWorkspaceId" | "projectId" | "projectWorkspaceId">,
+  issue: Pick<Issue, "title" | "identifier" | "description" | "executionWorkspaceId" | "projectId" | "projectWorkspaceId" | "operatorState" | "operatorReason">,
   query: string,
   {
     isolatedWorkspacesEnabled = false,
@@ -323,6 +324,8 @@ export function matchesInboxIssueSearch(
   if (issue.title.toLowerCase().includes(normalizedQuery)) return true;
   if (issue.identifier?.toLowerCase().includes(normalizedQuery)) return true;
   if (issue.description?.toLowerCase().includes(normalizedQuery)) return true;
+  if (issue.operatorReason?.toLowerCase().includes(normalizedQuery)) return true;
+  if (issue.operatorState && formatIssueOperatorStateLabel(issue.operatorState).toLowerCase().includes(normalizedQuery)) return true;
   if (!isolatedWorkspacesEnabled) return false;
 
   const workspaceName = resolveIssueWorkspaceName(issue, {

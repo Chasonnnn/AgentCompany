@@ -34,6 +34,15 @@ const pausedRoutine = {
   ...routine,
   status: "paused",
 };
+const advisorTemplates = [
+  {
+    advisorKind: "security_audit",
+    title: "Security Audit",
+    description: "Review runtime and dependency risk.",
+    disabledByDefault: true,
+    variables: [],
+  },
+];
 const trigger = {
   id: "66666666-6666-4666-8666-666666666666",
   companyId,
@@ -80,6 +89,7 @@ async function createHarness(
   ]);
   const routineService = {
     list: async () => [],
+    listAdvisorTemplates: () => advisorTemplates,
     get: async (routineId: string) => {
       if (overrides?.getRoutine) {
         return await overrides.getRoutine(routineId);
@@ -314,5 +324,20 @@ describe("routine routes", () => {
       title: "Daily routine",
       assigneeAgentId: agentId,
     }));
+  });
+
+  it("lists built-in advisor routine templates for company actors", async () => {
+    const { app } = await createHarness({
+      type: "board",
+      userId: "board-user",
+      source: "session",
+      isInstanceAdmin: false,
+      companyIds: [companyId],
+    });
+
+    const res = await request(app).get(`/api/companies/${companyId}/routines/advisor-templates`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual(advisorTemplates);
   });
 });

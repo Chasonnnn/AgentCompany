@@ -1,6 +1,8 @@
 import { Router, type Request } from "express";
+import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import {
+  ADVISOR_KINDS,
   createRoutineSchema,
   createRoutineTriggerSchema,
   rotateRoutineTriggerSecretSchema,
@@ -14,6 +16,16 @@ import { accessService, logActivity as baseLogActivity, routineService } from ".
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { forbidden, unauthorized } from "../errors.js";
 import { getTelemetryClient as baseGetTelemetryClient } from "../telemetry.js";
+
+const createRoutineRouteSchema = createRoutineSchema.extend({
+  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
+  advisorEnabled: z.boolean().optional().default(false),
+});
+
+const updateRoutineRouteSchema = updateRoutineSchema.extend({
+  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
+  advisorEnabled: z.boolean().optional(),
+});
 
 type RoutineRouteDeps = {
   accessService: ReturnType<typeof accessService>;
@@ -69,7 +81,13 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     res.json(result);
   });
 
-  router.post("/companies/:companyId/routines", validate(createRoutineSchema), async (req, res) => {
+  router.get("/companies/:companyId/routines/advisor-templates", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await svc.listAdvisorTemplates());
+  });
+
+  router.post("/companies/:companyId/routines", validate(createRoutineRouteSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertBoardCanAssignTasks(req, companyId);
     assertCanManageCompanyRoutine(req, companyId, req.body.assigneeAgentId);
@@ -106,7 +124,7 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     res.json(detail);
   });
 
-  router.patch("/routines/:id", validate(updateRoutineSchema), async (req, res) => {
+  router.patch("/routines/:id", validate(updateRoutineRouteSchema), async (req, res) => {
     const routine = await assertCanManageExistingRoutine(req, req.params.id as string);
     if (!routine) {
       res.status(404).json({ error: "Routine not found" });

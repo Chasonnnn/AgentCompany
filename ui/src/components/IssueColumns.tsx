@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Issue } from "@paperclipai/shared";
+import type { Issue, IssueOperatorState } from "@paperclipai/shared";
 import { Columns3 } from "lucide-react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import type { InboxIssueColumn } from "../lib/inbox";
+import { describeIssueActivity, formatIssueOperatorStateLabel, resolveIssueOperatorState } from "../lib/issue-operator-state";
 import { cn } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Identity } from "./Identity";
@@ -22,6 +23,18 @@ import { IssueContinuityBadge } from "./IssueContinuityBadge";
 import { StatusIcon } from "./StatusIcon";
 
 export const issueTrailingColumns: InboxIssueColumn[] = ["assignee", "project", "workspace", "parent", "labels", "updated"];
+
+const operatorStateBadgeClassName: Record<IssueOperatorState, string> = {
+  ready: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  running: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  queued_followup: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  decision_blocked: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  dependency_blocked: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
+  continuity_blocked: "bg-orange-500/10 text-orange-700 dark:text-orange-300",
+  budget_blocked: "bg-red-500/10 text-red-700 dark:text-red-300",
+  review_waiting: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  archived: "bg-muted text-muted-foreground",
+};
 
 const issueColumnLabels: Record<InboxIssueColumn, string> = {
   status: "Status",
@@ -45,8 +58,54 @@ const issueColumnDescriptions: Record<InboxIssueColumn, string> = {
   updated: "Latest visible activity time.",
 };
 
-export function issueActivityText(issue: Issue): string {
-  return `Updated ${timeAgo(issue.lastActivityAt ?? issue.lastExternalCommentAt ?? issue.updatedAt)}`;
+export function issueActivityText(issue: Issue, isLiveFallback = false): string {
+  return describeIssueActivity(issue, { isLiveFallback });
+}
+
+export function IssueOperatorStateBadge({
+  issue,
+  isLiveFallback = false,
+}: {
+  issue: Pick<Issue, "operatorState" | "operatorReason" | "updatedAt" | "lastActivityAt" | "lastExternalCommentAt">;
+  isLiveFallback?: boolean;
+}) {
+  const operatorState = resolveIssueOperatorState(issue, { isLiveFallback });
+  if (!operatorState || operatorState === "ready") return null;
+
+  const label = formatIssueOperatorStateLabel(operatorState);
+  const title = issue.operatorReason?.trim() || describeIssueActivity(issue, { isLiveFallback });
+
+  if (operatorState === "running") {
+    return (
+      <span
+        title={title}
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 sm:gap-1.5 sm:px-2",
+          operatorStateBadgeClassName[operatorState],
+        )}
+        data-operator-state={operatorState}
+      >
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-blue-400 opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+        </span>
+        <span className="hidden text-[11px] font-medium sm:inline">{label}</span>
+      </span>
+    );
+  }
+
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
+        operatorStateBadgeClassName[operatorState],
+      )}
+      data-operator-state={operatorState}
+    >
+      {label}
+    </span>
+  );
 }
 
 function issueTrailingGridTemplate(columns: InboxIssueColumn[]): string {
@@ -159,32 +218,7 @@ export function InboxIssueMetaLeading({
           {issue.identifier ?? issue.id.slice(0, 8)}
         </span>
       ) : null}
-      {isLive && (
-        <span
-          className={cn(
-            "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 sm:gap-1.5 sm:px-2",
-            "bg-blue-500/10",
-          )}
-        >
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-blue-400 opacity-75" />
-            <span
-              className={cn(
-                "relative inline-flex h-2 w-2 rounded-full",
-                "bg-blue-500",
-              )}
-            />
-          </span>
-          <span
-            className={cn(
-              "hidden text-[11px] font-medium sm:inline",
-              "text-blue-600 dark:text-blue-400",
-            )}
-          >
-            Live
-          </span>
-        </span>
-      )}
+      <IssueOperatorStateBadge issue={issue} isLiveFallback={isLive} />
       <IssueContinuityBadge issue={issue} />
     </>
   );

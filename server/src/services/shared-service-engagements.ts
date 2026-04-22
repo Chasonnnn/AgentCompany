@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -21,8 +21,156 @@ type ActorInfo = {
   agentId?: string | null;
 };
 
+type AdvisorEngagementTemplate = {
+  advisorKind: NonNullable<CreateSharedServiceEngagement["advisorKind"]>;
+  serviceAreaKey: string;
+  serviceAreaLabel: string;
+  title: string;
+  summary: string;
+  disabledByDefault: boolean;
+};
+
+type AdvisorySurface = "comment" | "conference_room" | "decision_question" | "approval";
+
+type AdvisorySurfaceRecommendationInput = {
+  title?: string | null;
+  summary?: string | null;
+  advisorKind?: CreateSharedServiceEngagement["advisorKind"];
+  requiresGovernance?: boolean;
+  requestsBoardAnswer?: boolean;
+  blocksExecution?: boolean;
+  needsCrossFunctionalCoordination?: boolean;
+  participantAgentIds?: string[] | null;
+};
+
+type AdvisorySurfaceRecommendation = {
+  recommendedSurface: AdvisorySurface;
+  reason: string;
+  matchedSignals: string[];
+};
+
+const BUILTIN_ADVISOR_ENGAGEMENT_TEMPLATES: AdvisorEngagementTemplate[] = [
+  {
+    advisorKind: "security_audit",
+    serviceAreaKey: "security",
+    serviceAreaLabel: "Security",
+    title: "Security Audit",
+    summary: "Run a focused security review on the target project and return findings with concrete follow-ups.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "continuity_audit",
+    serviceAreaKey: "operations",
+    serviceAreaLabel: "Operations",
+    title: "Continuity Audit",
+    summary: "Audit issue continuity, handoff health, and owner readiness for the target project.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "instruction_drift",
+    serviceAreaKey: "operations",
+    serviceAreaLabel: "Operations",
+    title: "Instruction Drift Review",
+    summary: "Compare live execution behavior against current operating docs and local instruction bundles.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "skill_review",
+    serviceAreaKey: "operations",
+    serviceAreaLabel: "Operations",
+    title: "Skill Review",
+    summary: "Review installed skills, gaps, and follow-up opportunities for the current project lane.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "skill_janitor",
+    serviceAreaKey: "operations",
+    serviceAreaLabel: "Operations",
+    title: "Skill Janitor Sweep",
+    summary: "Clean stale, duplicate, or obsolete skill installs and summarize the safe cleanup plan.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "budget_analyst",
+    serviceAreaKey: "finance",
+    serviceAreaLabel: "Finance",
+    title: "Budget Analyst Review",
+    summary: "Review spend, flag anomalies, and recommend budget actions before hard-stop incidents appear.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "evidence_librarian",
+    serviceAreaKey: "research",
+    serviceAreaLabel: "Research",
+    title: "Evidence Librarian Support",
+    summary: "Collect the logs, artifacts, and references needed to back a decision or audit packet.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "workspace_janitor",
+    serviceAreaKey: "operations",
+    serviceAreaLabel: "Operations",
+    title: "Workspace Janitor Sweep",
+    summary: "Inspect runtime debris, worktrees, and cache leftovers around the target project workspace.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "adapter_qa",
+    serviceAreaKey: "quality",
+    serviceAreaLabel: "Quality",
+    title: "Adapter QA",
+    summary: "Exercise adapter behavior, capture regressions, and return a readiness summary for the lane.",
+    disabledByDefault: true,
+  },
+  {
+    advisorKind: "conversation_qa",
+    serviceAreaKey: "quality",
+    serviceAreaLabel: "Quality",
+    title: "Conversation QA",
+    summary: "Review recent transcripts for routing misses, unclear asks, and avoidable board escalations.",
+    disabledByDefault: true,
+  },
+];
+
+const APPROVAL_KEYWORDS = [
+  "approve",
+  "approval",
+  "signoff",
+  "authorize",
+  "budget",
+  "ship",
+  "release",
+  "policy",
+  "exception",
+  "staffing",
+];
+const DECISION_QUESTION_KEYWORDS = [
+  "decide",
+  "decision",
+  "choose",
+  "which option",
+  "pick one",
+  "unblock",
+  "blocked",
+];
+const CONFERENCE_ROOM_KEYWORDS = [
+  "kickoff",
+  "sync",
+  "review",
+  "discuss",
+  "coordination",
+  "align",
+  "incident",
+  "architecture",
+];
+
 type DbSelectable = Pick<Db, "select">;
-type DbMutationContext = Pick<Db, "select" | "insert" | "update">;
+type DbMutationContext = Pick<Db, "select" | "insert" | "update" | "execute">;
+
+type EngagementAdvisorState = {
+  advisorKind: NonNullable<CreateSharedServiceEngagement["advisorKind"]> | null;
+  advisorEnabled: boolean;
+};
 
 function readTrimmed(value: unknown) {
   if (typeof value !== "string") return null;
@@ -38,6 +186,21 @@ function deriveServiceAreaLabel(key: string, explicit?: string | null) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function includesKeyword(text: string, keywords: string[]) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function cloneEngagementTemplate(template: AdvisorEngagementTemplate): AdvisorEngagementTemplate {
+  return { ...template };
+}
+
+function isMissingAdvisorColumnError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? (error as { code?: string }).code : undefined;
+  const message = "message" in error ? (error as { message?: string }).message : undefined;
+  return code === "42703" && typeof message === "string" && /advisor_kind|advisor_enabled/.test(message);
 }
 
 function grantId(engagementId: string) {
@@ -77,6 +240,8 @@ function toEngagement(
     approvedAt: row.approvedAt ?? null,
     closedAt: row.closedAt ?? null,
     outcomeSummary: row.outcomeSummary ?? null,
+    advisorKind: (row.advisorKind as SharedServiceEngagement["advisorKind"]) ?? null,
+    advisorEnabled: row.advisorEnabled,
     metadata: (row.metadata as Record<string, unknown> | null) ?? null,
     assignments,
     createdAt: row.createdAt,
@@ -85,12 +250,73 @@ function toEngagement(
 }
 
 export function sharedServiceEngagementService(db: Db) {
+  async function listEngagementAdvisorState(
+    engagementIds: string[],
+    dbOrTx: Pick<Db, "select"> = db,
+  ) {
+    if (engagementIds.length === 0) return new Map<string, EngagementAdvisorState>();
+    try {
+      const rows = await dbOrTx
+        .select({
+          id: sharedServiceEngagements.id,
+          advisorKind: sql<NonNullable<CreateSharedServiceEngagement["advisorKind"]> | null>`advisor_kind`.as("advisorKind"),
+          advisorEnabled: sql<boolean>`coalesce(advisor_enabled, false)`.as("advisorEnabled"),
+        })
+        .from(sharedServiceEngagements)
+        .where(inArray(sharedServiceEngagements.id, engagementIds));
+      return new Map<string, EngagementAdvisorState>(
+        rows.map((row) => [
+          row.id,
+          {
+            advisorKind: row.advisorKind ?? null,
+            advisorEnabled: row.advisorEnabled ?? false,
+          },
+        ]),
+      );
+    } catch (error) {
+      if (isMissingAdvisorColumnError(error)) {
+        return new Map<string, EngagementAdvisorState>();
+      }
+      throw error;
+    }
+  }
+
+  async function getEngagementAdvisorState(
+    engagementId: string,
+    dbOrTx: Pick<Db, "select"> = db,
+  ) {
+    return (await listEngagementAdvisorState([engagementId], dbOrTx)).get(engagementId) ?? {
+      advisorKind: null,
+      advisorEnabled: false,
+    };
+  }
+
+  async function persistEngagementAdvisorState(
+    engagementId: string,
+    state: EngagementAdvisorState,
+    dbOrTx: Pick<Db, "execute"> = db,
+  ) {
+    try {
+      await dbOrTx.execute(sql`
+        update shared_service_engagements
+        set advisor_kind = ${state.advisorKind},
+            advisor_enabled = ${state.advisorEnabled}
+        where id = ${engagementId}
+      `);
+    } catch (error) {
+      if (isMissingAdvisorColumnError(error)) return;
+      throw error;
+    }
+  }
+
   async function getRow(id: string, dbOrTx: DbSelectable = db) {
-    return dbOrTx
+    const row = await dbOrTx
       .select()
       .from(sharedServiceEngagements)
       .where(eq(sharedServiceEngagements.id, id))
       .then((rows) => rows[0] ?? null);
+    if (!row) return null;
+    return { ...row, ...(await getEngagementAdvisorState(id, dbOrTx)) };
   }
 
   async function assertTargetProject(companyId: string, projectId: string, dbOrTx: DbSelectable = db) {
@@ -146,9 +372,13 @@ export function sharedServiceEngagementService(db: Db) {
       group.push(toAssignment(assignment));
       assignmentsByEngagement.set(assignment.engagementId, group);
     }
+    const advisorStateByEngagement = await listEngagementAdvisorState(engagementIds, dbOrTx);
     return rows.map((row) =>
       toEngagement(
-        row,
+        {
+          ...row,
+          ...(advisorStateByEngagement.get(row.id) ?? { advisorKind: null, advisorEnabled: false }),
+        },
         (assignmentsByEngagement.get(row.id) ?? []).sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()),
       ),
     );
@@ -252,6 +482,60 @@ export function sharedServiceEngagementService(db: Db) {
   }
 
   return {
+    listAdvisorTemplates: () => BUILTIN_ADVISOR_ENGAGEMENT_TEMPLATES.map(cloneEngagementTemplate),
+
+    recommendSurface: (draft: AdvisorySurfaceRecommendationInput): AdvisorySurfaceRecommendation => {
+      const text = [draft.title, draft.summary]
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .join(" ")
+        .toLowerCase();
+      const participantCount = new Set((draft.participantAgentIds ?? []).map((id) => id.trim()).filter(Boolean)).size;
+      const matchedSignals: string[] = [];
+
+      if (draft.requiresGovernance) matchedSignals.push("requires_governance");
+      if (draft.requestsBoardAnswer) matchedSignals.push("requests_board_answer");
+      if (draft.blocksExecution) matchedSignals.push("blocks_execution");
+      if (draft.needsCrossFunctionalCoordination) matchedSignals.push("needs_cross_functional_coordination");
+      if (participantCount > 1) matchedSignals.push("multiple_participants");
+      if (includesKeyword(text, APPROVAL_KEYWORDS)) matchedSignals.push("approval_keywords");
+      if (includesKeyword(text, DECISION_QUESTION_KEYWORDS)) matchedSignals.push("decision_keywords");
+      if (includesKeyword(text, CONFERENCE_ROOM_KEYWORDS)) matchedSignals.push("conference_room_keywords");
+
+      if (draft.requiresGovernance || includesKeyword(text, APPROVAL_KEYWORDS)) {
+        return {
+          recommendedSurface: "approval",
+          reason: "Governed commitments and formal signoff requests should resolve through approvals.",
+          matchedSignals,
+        };
+      }
+
+      if (draft.requestsBoardAnswer || draft.blocksExecution || includesKeyword(text, DECISION_QUESTION_KEYWORDS)) {
+        return {
+          recommendedSurface: "decision_question",
+          reason: "Blocking agent-to-board asks should use decision questions until formal signoff is required.",
+          matchedSignals,
+        };
+      }
+
+      if (
+        draft.needsCrossFunctionalCoordination ||
+        participantCount > 1 ||
+        includesKeyword(text, CONFERENCE_ROOM_KEYWORDS)
+      ) {
+        return {
+          recommendedSurface: "conference_room",
+          reason: "Multi-party coordination belongs in conference rooms.",
+          matchedSignals,
+        };
+      }
+
+      return {
+        recommendedSurface: "comment",
+        reason: "Routine execution updates and narrow follow-ups should stay in issue comments.",
+        matchedSignals,
+      };
+    },
+
     getById: async (id: string) => {
       const row = await getRow(id);
       if (!row) return null;
@@ -287,15 +571,23 @@ export function sharedServiceEngagementService(db: Db) {
           })
           .returning()
           .then((rows) => rows[0]!);
+        await persistEngagementAdvisorState(row.id, {
+          advisorKind: input.advisorKind ?? null,
+          advisorEnabled: input.advisorEnabled ?? false,
+        }, tx);
         await syncAssignments(tx, row.id, companyId, input.assignedAgentIds ?? []);
-        const [engagement] = await hydrate([row], tx);
-        return engagement!;
+        const engagement = await getRow(row.id, tx);
+        if (!engagement) throw notFound("Shared-service engagement not found");
+        const [hydrated] = await hydrate([engagement], tx);
+        return hydrated!;
       });
     },
 
     update: async (id: string, input: UpdateSharedServiceEngagement) => {
       const existing = await getRow(id);
       if (!existing) return null;
+      const nextAdvisorKind = input.advisorKind === undefined ? existing.advisorKind ?? null : input.advisorKind;
+      const nextAdvisorEnabled = input.advisorEnabled ?? existing.advisorEnabled ?? false;
       return db.transaction(async (tx) => {
         const updated = await tx
           .update(sharedServiceEngagements)
@@ -314,11 +606,17 @@ export function sharedServiceEngagementService(db: Db) {
           .returning()
           .then((rows) => rows[0] ?? null);
         if (!updated) return null;
+        await persistEngagementAdvisorState(id, {
+          advisorKind: nextAdvisorKind,
+          advisorEnabled: nextAdvisorEnabled,
+        }, tx);
         if (input.assignedAgentIds) {
           await syncAssignments(tx, updated.id, updated.companyId, input.assignedAgentIds);
         }
         await reconcileConsultingScopes(updated.id, tx);
-        const [engagement] = await hydrate([updated], tx);
+        const refreshed = await getRow(updated.id, tx);
+        if (!refreshed) return null;
+        const [engagement] = await hydrate([refreshed], tx);
         return engagement ?? null;
       });
     },

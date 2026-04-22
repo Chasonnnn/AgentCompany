@@ -25,6 +25,12 @@ async function createApp(
   },
 ) {
   const listForCompany = createAsyncRecorder(async () => [makeEngagement()]);
+  const listAdvisorTemplates = createAsyncRecorder(async () => [makeAdvisorTemplate()]);
+  const recommendSurface = createAsyncRecorder(async () => ({
+    recommendedSurface: "decision_question",
+    reason: "Blocking board asks should use decision questions.",
+    matchedSignals: ["blocks_execution", "requests_board_answer"],
+  }));
   const create = createAsyncRecorder(async () => makeEngagement());
   const getById = createAsyncRecorder(async () => makeEngagement());
   const update = createAsyncRecorder(async () => makeEngagement({ title: "Updated audit" }));
@@ -76,6 +82,8 @@ async function createApp(
   const logActivity = createAsyncRecorder(async () => undefined);
   const engagements = {
     listForCompany: listForCompany.fn,
+    listAdvisorTemplates: listAdvisorTemplates.fn,
+    recommendSurface: recommendSurface.fn,
     create: create.fn,
     getById: getById.fn,
     update: update.fn,
@@ -117,6 +125,8 @@ async function createApp(
     app,
     services: {
       listForCompany,
+      listAdvisorTemplates,
+      recommendSurface,
       create,
       getById,
       update,
@@ -149,6 +159,8 @@ function makeEngagement(overrides: Record<string, unknown> = {}) {
     closedByUserId: null,
     closedAt: null,
     outcomeSummary: null,
+    advisorKind: null,
+    advisorEnabled: false,
     metadata: null,
     assignments: [
       {
@@ -162,6 +174,18 @@ function makeEngagement(overrides: Record<string, unknown> = {}) {
     ],
     createdAt: new Date(),
     updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+function makeAdvisorTemplate(overrides: Record<string, unknown> = {}) {
+  return {
+    advisorKind: "security_audit",
+    serviceAreaKey: "security",
+    serviceAreaLabel: "Security",
+    title: "Security Audit",
+    summary: "Run a focused security review on the target project.",
+    disabledByDefault: true,
     ...overrides,
   };
 }
@@ -190,6 +214,8 @@ describe("shared-service engagement routes", () => {
         serviceAreaLabel: "Research",
         title: "Audit product launch",
         summary: "Run a pre-launch audit on the current release candidate",
+        advisorKind: "security_audit",
+        advisorEnabled: true,
         assignedAgentIds: ["44444444-4444-4444-8444-444444444444"],
       });
 
@@ -202,6 +228,8 @@ describe("shared-service engagement routes", () => {
         serviceAreaLabel: "Research",
         title: "Audit product launch",
         summary: "Run a pre-launch audit on the current release candidate",
+        advisorKind: "security_audit",
+        advisorEnabled: true,
         assignedAgentIds: ["44444444-4444-4444-8444-444444444444"],
       },
       {
@@ -211,6 +239,45 @@ describe("shared-service engagement routes", () => {
       },
     ]]);
     expect(services.wakeup.calls).toHaveLength(1);
+  });
+
+  it("lists built-in advisor engagement templates for company actors", async () => {
+    const { app, services } = await createApp();
+    const res = await request(app).get("/api/companies/company-1/shared-service-engagements/advisor-templates");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(services.listAdvisorTemplates.calls).toEqual([[]]);
+    expect(res.body).toEqual([makeAdvisorTemplate()]);
+  });
+
+  it("recommends an advisory surface from a draft payload", async () => {
+    const { app, services } = await createApp();
+    const res = await request(app)
+      .post("/api/companies/company-1/shared-service-engagements/recommend-surface")
+      .send({
+        title: "Need a board answer before we proceed",
+        summary: "This is blocked until we know which option to pursue.",
+        requestsBoardAnswer: true,
+        blocksExecution: true,
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(services.recommendSurface.calls).toEqual([[
+      {
+        title: "Need a board answer before we proceed",
+        summary: "This is blocked until we know which option to pursue.",
+        requestsBoardAnswer: true,
+        blocksExecution: true,
+        requiresGovernance: false,
+        needsCrossFunctionalCoordination: false,
+        participantAgentIds: [],
+      },
+    ]]);
+    expect(res.body).toEqual({
+      recommendedSurface: "decision_question",
+      reason: "Blocking board asks should use decision questions.",
+      matchedSignals: ["blocks_execution", "requests_board_answer"],
+    });
   });
 
   it("approves an engagement for board actors", async () => {

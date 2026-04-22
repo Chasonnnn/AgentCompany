@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import {
+  ADVISOR_KINDS,
   createSharedServiceEngagementSchema,
   updateSharedServiceEngagementSchema,
 } from "@paperclipai/shared";
@@ -18,6 +19,27 @@ import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination
 
 const closeSharedServiceEngagementSchema = z.object({
   outcomeSummary: z.string().optional().nullable(),
+}).strict();
+
+const createSharedServiceEngagementRouteSchema = createSharedServiceEngagementSchema.extend({
+  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
+  advisorEnabled: z.boolean().optional().default(false),
+});
+
+const updateSharedServiceEngagementRouteSchema = updateSharedServiceEngagementSchema.extend({
+  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
+  advisorEnabled: z.boolean().optional(),
+});
+
+const recommendSharedServiceSurfaceSchema = z.object({
+  title: z.string().trim().max(200).optional().nullable(),
+  summary: z.string().trim().max(4_000).optional().nullable(),
+  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
+  requiresGovernance: z.boolean().optional().default(false),
+  requestsBoardAnswer: z.boolean().optional().default(false),
+  blocksExecution: z.boolean().optional().default(false),
+  needsCrossFunctionalCoordination: z.boolean().optional().default(false),
+  participantAgentIds: z.array(z.string().trim().min(1)).optional().default([]),
 }).strict();
 
 type SharedServiceEngagementRouteDeps = {
@@ -43,9 +65,25 @@ export function sharedServiceEngagementRoutes(
     res.json(await engagements.listForCompany(companyId));
   });
 
+  router.get("/companies/:companyId/shared-service-engagements/advisor-templates", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await engagements.listAdvisorTemplates());
+  });
+
+  router.post(
+    "/companies/:companyId/shared-service-engagements/recommend-surface",
+    validate(recommendSharedServiceSurfaceSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertCompanyAccess(req, companyId);
+      res.json(await engagements.recommendSurface(req.body));
+    },
+  );
+
   router.post(
     "/companies/:companyId/shared-service-engagements",
-    validate(createSharedServiceEngagementSchema),
+    validate(createSharedServiceEngagementRouteSchema),
     async (req, res) => {
       const companyId = req.params.companyId as string;
       assertCompanyAccess(req, companyId);
@@ -90,7 +128,7 @@ export function sharedServiceEngagementRoutes(
 
   router.patch(
     "/shared-service-engagements/:id",
-    validate(updateSharedServiceEngagementSchema),
+    validate(updateSharedServiceEngagementRouteSchema),
     async (req, res) => {
       const existing = await engagements.getById(req.params.id as string);
       if (!existing) throw notFound("Shared-service engagement not found");

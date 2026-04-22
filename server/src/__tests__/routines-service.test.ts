@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
@@ -42,6 +42,8 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-routines-service-");
     db = createDb(tempDb.connectionString);
+    await db.execute(sql.raw(`ALTER TABLE routines ADD COLUMN IF NOT EXISTS advisor_kind text`));
+    await db.execute(sql.raw(`ALTER TABLE routines ADD COLUMN IF NOT EXISTS advisor_enabled boolean NOT NULL DEFAULT false`));
   }, 20_000);
 
   afterEach(async () => {
@@ -244,6 +246,59 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     expect(routine.projectId).toBeNull();
     expect(routine.assigneeAgentId).toBeNull();
     expect(routine.status).toBe("paused");
+  });
+
+  it("persists advisor metadata on create and update", async () => {
+    const { companyId, projectId, agentId, svc } = await seedFixture();
+
+    const created = await svc.create(
+      companyId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "security audit",
+        description: "Review the release candidate",
+        assigneeAgentId: agentId,
+        priority: "medium",
+        status: "active",
+        advisorKind: "security_audit",
+        advisorEnabled: true,
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    expect(created.advisorKind).toBe("security_audit");
+    expect(created.advisorEnabled).toBe(true);
+
+    const updated = await svc.update(
+      created.id,
+      {
+        advisorKind: "budget_analyst",
+        advisorEnabled: false,
+      },
+      {},
+    );
+
+    expect(updated?.advisorKind).toBe("budget_analyst");
+    expect(updated?.advisorEnabled).toBe(false);
+
+    const detail = await svc.getDetail(created.id);
+    expect(detail?.advisorKind).toBe("budget_analyst");
+    expect(detail?.advisorEnabled).toBe(false);
+  });
+
+  it("lists built-in advisor routine templates disabled by default", async () => {
+    const { svc } = await seedFixture();
+
+    const templates = svc.listAdvisorTemplates();
+
+    expect(templates.length).toBeGreaterThan(0);
+    expect(templates.every((template) => template.disabledByDefault)).toBe(true);
+    expect(templates.map((template) => template.advisorKind)).toContain("security_audit");
+    expect(templates.map((template) => template.advisorKind)).toContain("conversation_qa");
   });
 
   it("wakes the assignee when a routine creates a fresh execution issue", async () => {

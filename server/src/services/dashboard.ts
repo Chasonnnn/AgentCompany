@@ -6,6 +6,7 @@ import { notFound } from "../errors.js";
 import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { buildIssueContinuitySummary } from "./issue-continuity-summary.js";
+import { buildIssueOperatorState } from "./issue-operator-state.js";
 
 function getLast14Days() {
   return Array.from({ length: 14 }, (_, index) => {
@@ -149,6 +150,7 @@ export function dashboardService(db: Db) {
         inProgress: 0,
         blocked: 0,
         done: 0,
+        operatorStates: [],
       };
       const activeContinuityOwners = new Set<string>();
       const executionHealth = {
@@ -160,6 +162,8 @@ export function dashboardService(db: Db) {
         returnedBranches: 0,
         handoffPending: 0,
       };
+      const operatorStateCounts = new Map<string, number>();
+      const operatorStateReasons = new Map<string, number>();
       for (const row of taskRows) {
         const count = Number(row.count);
         if (row.status === "in_progress") taskCounts.inProgress += count;
@@ -173,6 +177,16 @@ export function dashboardService(db: Db) {
           continuityState: row.continuityState,
           executionState: row.executionState,
         });
+        const operator = buildIssueOperatorState({
+          issueId: "",
+          status: row.status as any,
+          continuitySummary: summary,
+        });
+        operatorStateCounts.set(operator.operatorState, (operatorStateCounts.get(operator.operatorState) ?? 0) + 1);
+        operatorStateReasons.set(
+          `${operator.operatorState}::${operator.operatorReason}`,
+          (operatorStateReasons.get(`${operator.operatorState}::${operator.operatorReason}`) ?? 0) + 1,
+        );
         const state = row.continuityState as {
           status?: string | null;
           health?: string | null;
@@ -189,6 +203,10 @@ export function dashboardService(db: Db) {
         if (state?.status === "handoff_pending") executionHealth.handoffPending += 1;
       }
       executionHealth.activeContinuityOwners = activeContinuityOwners.size;
+      taskCounts.operatorStates = Array.from(operatorStateCounts.entries()).map(([state, count]) => ({
+        state,
+        count,
+      }));
 
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -259,6 +277,10 @@ export function dashboardService(db: Db) {
           })),
         },
         executionHealth,
+        operatorStateReasons: Array.from(operatorStateReasons.entries()).map(([key, count]) => {
+          const [state, reason] = key.split("::", 2);
+          return { state, reason, count };
+        }),
         budgets: {
           activeIncidents: budgetOverview.activeIncidents.length,
           pendingApprovals: budgetOverview.pendingApprovalCount,

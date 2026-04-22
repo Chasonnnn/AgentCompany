@@ -314,6 +314,35 @@ describe("IssuesList", () => {
     });
   });
 
+  it("renders the server-owned operator state badge when present", async () => {
+    const operatorIssue = createIssue({
+      id: "issue-operator",
+      identifier: "PAP-77",
+      title: "Operator issue",
+      operatorState: "decision_blocked",
+      operatorReason: "Waiting on board direction",
+    });
+
+    const { root } = renderWithQueryClient(
+      <IssuesList
+        issues={[operatorIssue]}
+        agents={[]}
+        projects={[]}
+        viewStateKey="paperclip:test-issues"
+        onUpdateIssue={() => undefined}
+      />,
+      container,
+    );
+
+    await waitForAssertion(() => {
+      expect(container.textContent).toContain("Needs decision");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("filters the list to a single workspace when a workspace name is clicked", async () => {
     localStorage.setItem("paperclip:inbox:issue-columns", JSON.stringify(["id", "workspace"]));
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: true });
