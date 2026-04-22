@@ -129,8 +129,8 @@ async function readSkipAutoPermissionPromptWarning(
       "Claude settings.json has skipAutoPermissionPrompt=true. Native AskUserQuestion UI prompts will be auto-suppressed.",
     detail: settingsPath,
     hint:
-      "Set skipAutoPermissionPrompt to false if you need Claude's native ask-user UI. " +
-      "Paperclip Claude heartbeats should rely on persisted issue decision questions via POST /api/issues/:issueId/questions.",
+      "Set skipAutoPermissionPrompt to false if you need Claude's native ask-user tool flow to surface reliably. " +
+      "If native ask-user remains unavailable, fall back to persisted issue decision questions via POST /api/issues/:issueId/questions.",
   };
 }
 

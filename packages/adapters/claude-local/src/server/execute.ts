@@ -35,11 +35,6 @@ import { isBedrockModelId } from "./models.js";
 import { prepareClaudePromptBundle } from "./prompt-cache.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const CLAUDE_DECISION_QUESTION_GUARDRAIL =
-  "Do not use AskUserQuestion in Paperclip Claude heartbeats. " +
-  "If issue execution is blocked on a board decision, create a structured decision question " +
-  "via POST /api/issues/{issueId}/questions instead. Persisted Paperclip issue decision " +
-  "questions are the supported ask-user path for unattended Claude runs.";
 
 interface ClaudeExecutionInput {
   runId: string;
@@ -225,6 +220,10 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
 
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
+  }
+
+  if (typeof env.PAPERCLIP_NATIVE_DECISION_QUESTIONS !== "string") {
+    env.PAPERCLIP_NATIVE_DECISION_QUESTIONS = "1";
   }
 
   if (!hasExplicitApiKey && authToken) {
@@ -442,7 +441,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
-    CLAUDE_DECISION_QUESTION_GUARDRAIL,
     renderedBootstrapPrompt,
     wakePrompt,
     sessionHandoffNote,

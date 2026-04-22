@@ -137,7 +137,7 @@ describe("server adapter registry", () => {
     expect(adapter!.instructionsPathKey).toBe("instructionsFilePath");
     expect(adapter!.requiresMaterializedRuntimeSkills).toBe(false);
     expect(adapter!.supportsLocalAgentJwt).toBe(true);
-    expect(adapter!.nativeDecisionQuestions).toBe(false);
+    expect(adapter!.nativeDecisionQuestions).toBe(true);
   });
 
   it("switches active adapter behavior back to the builtin when an override is paused", async () => {

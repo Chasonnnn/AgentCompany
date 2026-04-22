@@ -43,6 +43,7 @@ Operational fields:
 
 Notes:
 - When Paperclip realizes a workspace/runtime for a run, it injects PAPERCLIP_WORKSPACE_* and PAPERCLIP_RUNTIME_* env vars for agent-side tooling.
-- Paperclip does not support Claude native AskUserQuestion for unattended heartbeats. Claude's non-interactive \`--print\` runner can suppress or reject that UI, especially when \`~/.claude/settings.json\` sets \`skipAutoPermissionPrompt=true\`.
-- When a Claude heartbeat needs a board decision, create a persisted Paperclip decision question with \`POST /api/issues/:issueId/questions\`. If Claude still emits \`AskUserQuestion\`, Paperclip will attempt to capture it back into a structured decision question artifact.
+- Paperclip exposes Claude native \`AskUserQuestion\` via \`PAPERCLIP_NATIVE_DECISION_QUESTIONS=1\` and captures that tool-use back into a persisted Paperclip decision question artifact.
+- Claude's non-interactive \`--print\` runner can still suppress or reject native ask-user UI when \`~/.claude/settings.json\` sets \`skipAutoPermissionPrompt=true\`, so set that flag to \`false\` if you want native question prompts to surface reliably.
+- If native ask-user is unavailable or rejected, fall back to creating a persisted Paperclip decision question with \`POST /api/issues/:issueId/questions\`.
 `;

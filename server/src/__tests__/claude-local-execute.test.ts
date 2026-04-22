@@ -190,9 +190,7 @@ describe("claude execute", () => {
       const captured = JSON.parse(await fs.readFile(capturePath, "utf-8"));
       expect(captured.argv).toContain("--append-system-prompt-file");
       expect(captured.argv).not.toContain("--brief");
-      expect(captured.nativeDecisionQuestions).toBeNull();
-      expect(captured.prompt).toContain("Do not use AskUserQuestion in Paperclip Claude heartbeats.");
-      expect(captured.prompt).toContain("POST /api/issues/{issueId}/questions");
+      expect(captured.nativeDecisionQuestions).toBe("1");
     } finally {
       restore();
       await fs.rm(root, { recursive: true, force: true });
@@ -224,7 +222,7 @@ describe("claude execute", () => {
       const captured = JSON.parse(await fs.readFile(capturePath, "utf-8"));
       expect(captured.argv).not.toContain("--append-system-prompt-file");
       expect(captured.argv).toContain("--resume");
-      expect(captured.prompt).toContain("Do not use AskUserQuestion in Paperclip Claude heartbeats.");
+      expect(captured.nativeDecisionQuestions).toBe("1");
     } finally {
       restore();
       await fs.rm(root, { recursive: true, force: true });
