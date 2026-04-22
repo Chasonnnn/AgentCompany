@@ -3,6 +3,8 @@ import type {
   AdapterEnvironmentTestContext,
   AdapterEnvironmentTestResult,
 } from "@paperclipai/adapter-utils";
+import fs from "node:fs/promises";
+import os from "node:os";
 import {
   asString,
   asBoolean,
@@ -91,6 +93,45 @@ function describeClaudeNativeAuth(status: ClaudeAuthStatusProbe | null): string 
   return status.subscriptionType
     ? `Claude is authenticated via claude.ai (${status.subscriptionType}).`
     : "Claude is authenticated via claude.ai.";
+}
+
+function resolveClaudeConfigDir(env: NodeJS.ProcessEnv): string {
+  const configured = env.CLAUDE_CONFIG_DIR;
+  if (typeof configured === "string" && configured.trim().length > 0) {
+    return configured.trim();
+  }
+  const home = typeof env.HOME === "string" && env.HOME.trim().length > 0
+    ? env.HOME.trim()
+    : os.homedir();
+  return path.join(home, ".claude");
+}
+
+async function readSkipAutoPermissionPromptWarning(
+  env: NodeJS.ProcessEnv,
+): Promise<AdapterEnvironmentCheck | null> {
+  const settingsPath = path.join(resolveClaudeConfigDir(env), "settings.json");
+  let raw: string;
+  try {
+    raw = await fs.readFile(settingsPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  const parsed = parseJson(raw);
+  if (!parsed) return null;
+  const settings = parseObject(parsed);
+  if (settings.skipAutoPermissionPrompt !== true) return null;
+
+  return {
+    code: "claude_skip_auto_permission_prompt_enabled",
+    level: "warn",
+    message:
+      "Claude settings.json has skipAutoPermissionPrompt=true. Native AskUserQuestion UI prompts will be auto-suppressed.",
+    detail: settingsPath,
+    hint:
+      "Set skipAutoPermissionPrompt to false if you need Claude's native ask-user UI. " +
+      "Paperclip Claude heartbeats should rely on persisted issue decision questions via POST /api/issues/:issueId/questions.",
+  };
 }
 
 export async function testEnvironment(
@@ -188,6 +229,13 @@ export async function testEnvironment(
         level: "info",
         message: "ANTHROPIC_API_KEY is not set; subscription-based auth can be used if Claude is logged in.",
       });
+    }
+  }
+
+  if (commandLooksLike(command, "claude")) {
+    const skipPromptWarning = await readSkipAutoPermissionPromptWarning(runtimeEnv).catch(() => null);
+    if (skipPromptWarning) {
+      checks.push(skipPromptWarning);
     }
   }
 

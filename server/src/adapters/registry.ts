@@ -100,9 +100,10 @@ const claudeLocalAdapter: ServerAdapterModule = {
   supportsInstructionsBundle: true,
   instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: false,
-  // Claude Code's non-interactive --print runner currently rejects
-  // AskUserQuestion calls with "Answer questions?" even under bypass mode, so
-  // Paperclip must fall back to persisted decision-question artifacts here.
+  // Claude Code's non-interactive --print runner can reject or silently
+  // suppress AskUserQuestion UI (for example when skipAutoPermissionPrompt=true),
+  // so Paperclip treats native ask-user as unsupported here and uses persisted
+  // decision-question artifacts as the authoritative path.
   nativeDecisionQuestions: false,
   agentConfigurationDoc: claudeAgentConfigurationDoc,
   getQuotaWindows: claudeGetQuotaWindows,
