@@ -252,7 +252,7 @@ function accountabilityProjectHasActiveMember(project: AccountabilityProjectNode
 }
 
 function countAccountabilityProjectMembers(project: AccountabilityProjectNode) {
-  return flattenAllAccountabilityProjectMembers(project).length;
+  return flattenAccountabilityProjectMembers(project).length;
 }
 
 function flattenAccountabilityProjectMembers(project: AccountabilityProjectNode): AgentHierarchyMemberSummary[] {

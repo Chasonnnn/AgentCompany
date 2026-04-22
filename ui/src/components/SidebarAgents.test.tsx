@@ -540,7 +540,7 @@ describe("SidebarAgents", () => {
 
     const onboardingButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Onboarding"));
-    expect(onboardingButton?.textContent).toContain("3");
+    expect(onboardingButton?.textContent).toContain("2");
 
     expect(container.textContent).toContain("Executive continuity owners");
     expect(container.textContent).toContain("CEO · 2 active issues");
