@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -79,7 +79,7 @@ export function activityService(db: Db) {
         and(
           eq(heartbeatRuns.companyId, companyId),
           isNull(heartbeatRuns.livenessState),
-          sql`${heartbeatRuns.status} not in ('queued', 'running')`,
+          sql`${heartbeatRuns.status} not in ('queued', 'running', 'scheduled_retry')`,
           or(
             sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`,
             sql`exists (
@@ -290,7 +290,7 @@ export function activityService(db: Db) {
 
     runsForIssue: async (companyId: string, issueId: string) => {
       scheduleRunLivenessBackfill(companyId, issueId);
-      return db
+      const runs = await db
         .select({
           runId: heartbeatRuns.id,
           status: heartbeatRuns.status,
@@ -303,6 +303,10 @@ export function activityService(db: Db) {
           usageJson: heartbeatRuns.usageJson,
           resultJson: heartbeatRuns.resultJson,
           logBytes: heartbeatRuns.logBytes,
+          retryOfRunId: heartbeatRuns.retryOfRunId,
+          scheduledRetryAt: heartbeatRuns.scheduledRetryAt,
+          scheduledRetryAttempt: heartbeatRuns.scheduledRetryAttempt,
+          scheduledRetryReason: heartbeatRuns.scheduledRetryReason,
           livenessState: heartbeatRuns.livenessState,
           livenessReason: heartbeatRuns.livenessReason,
           continuationAttempt: heartbeatRuns.continuationAttempt,
@@ -334,6 +338,34 @@ export function activityService(db: Db) {
           ),
         )
         .orderBy(desc(heartbeatRuns.createdAt));
+
+      if (runs.length === 0) return runs;
+
+      const exhaustionRows = await db
+        .select({
+          runId: heartbeatRunEvents.runId,
+          message: heartbeatRunEvents.message,
+        })
+        .from(heartbeatRunEvents)
+        .where(
+          and(
+            inArray(heartbeatRunEvents.runId, runs.map((run) => run.runId)),
+            eq(heartbeatRunEvents.eventType, "lifecycle"),
+            sql`${heartbeatRunEvents.message} like 'Bounded retry exhausted%'`,
+          ),
+        )
+        .orderBy(asc(heartbeatRunEvents.runId), desc(heartbeatRunEvents.id));
+
+      const retryExhaustedReasonByRunId = new Map<string, string>();
+      for (const row of exhaustionRows) {
+        if (!row.runId || !row.message || retryExhaustedReasonByRunId.has(row.runId)) continue;
+        retryExhaustedReasonByRunId.set(row.runId, row.message);
+      }
+
+      return runs.map((run) => ({
+        ...run,
+        retryExhaustedReason: retryExhaustedReasonByRunId.get(run.runId) ?? null,
+      }));
     },
 
     issuesForRun: async (runId: string) => {

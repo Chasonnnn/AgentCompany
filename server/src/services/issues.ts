@@ -621,7 +621,7 @@ async function withIssueLabels(dbOrTx: any, rows: IssueRow[]): Promise<IssueWith
   });
 }
 
-const ACTIVE_RUN_STATUSES = ["queued", "running"];
+const ACTIVE_RUN_STATUSES = ["queued", "running", "scheduled_retry"];
 
 async function activeRunMapForIssues(
   dbOrTx: any,
