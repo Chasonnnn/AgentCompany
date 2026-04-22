@@ -222,4 +222,57 @@ describeEmbeddedPostgres("issueContinuityService.prepare scaffolds continuity do
     expect(second.overriddenKeys).toEqual([]);
     expect(second.continuityState.missingDocumentKeys).toEqual([]);
   });
+
+  it("rejects docs.progress override with invalid frontmatter at the service layer", async () => {
+    const { companyId, agentId, parentId } = await seedCompanyAndParentIssue();
+    const child = await createSubtask(companyId, parentId, agentId);
+
+    const badProgress = [
+      "---",
+      "kind: paperclip/issue-progress.v1",
+      'currentState: "No nextAction"',
+      "knownPitfalls: []",
+      "openQuestions: []",
+      "evidence: []",
+      "---",
+      "",
+      "Missing nextAction field.",
+    ].join("\n");
+
+    await expect(
+      continuity$.prepare(
+        child.id,
+        { tier: "normal", docs: { progress: { body: badProgress } } },
+        { agentId },
+      ),
+    ).rejects.toThrow(/paperclip\/issue-progress\.v1/);
+
+    const progressDoc = await docs$.getIssueDocumentByKey(child.id, "progress");
+    expect(progressDoc).toBeNull();
+  });
+
+  it("rejects docs.handoff override with invalid frontmatter at the service layer", async () => {
+    const { companyId, agentId, parentId } = await seedCompanyAndParentIssue();
+    const child = await createSubtask(companyId, parentId, agentId);
+
+    const badHandoff = [
+      "---",
+      "kind: paperclip/issue-handoff.v1",
+      'reasonCode: "reassignment"',
+      "---",
+      "",
+      "Missing required timestamp/transferTarget/exactNextAction fields.",
+    ].join("\n");
+
+    await expect(
+      continuity$.prepare(
+        child.id,
+        { tier: "long_running", docs: { handoff: { body: badHandoff } } },
+        { agentId },
+      ),
+    ).rejects.toThrow(/paperclip\/issue-handoff\.v1/);
+
+    const handoffDoc = await docs$.getIssueDocumentByKey(child.id, "handoff");
+    expect(handoffDoc).toBeNull();
+  });
 });

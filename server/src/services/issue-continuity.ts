@@ -1307,6 +1307,12 @@ export function issueContinuityService(db: Db) {
       const issue = await getIssueOrThrow(issueId);
       const initialState = await recomputeIssueContinuityState(issueId, { tier: parsed.tier ?? null });
       const overrides = (parsed.docs ?? {}) as Record<string, { title?: string | null; body: string } | undefined>;
+      if (overrides.progress && !parseIssueProgressMarkdown(overrides.progress.body)) {
+        throw unprocessable("docs.progress must include valid paperclip/issue-progress.v1 frontmatter");
+      }
+      if (overrides.handoff && !parseIssueHandoffMarkdown(overrides.handoff.body)) {
+        throw unprocessable("docs.handoff must include valid paperclip/issue-handoff.v1 frontmatter");
+      }
       const scaffoldedKeys: string[] = [];
       const overriddenKeys: string[] = [];
 
