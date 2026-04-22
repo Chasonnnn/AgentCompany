@@ -28,6 +28,7 @@ vi.mock("../../api/heartbeats", () => ({
 
 vi.mock("../../adapters", () => ({
   buildTranscript: (chunks: unknown[]) => chunks,
+  buildTranscriptAsync: async (chunks: unknown[]) => chunks,
   getUIAdapter: () => null,
   onAdapterChange: () => () => {},
 }));
