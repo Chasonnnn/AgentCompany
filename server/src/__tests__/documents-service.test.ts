@@ -111,6 +111,7 @@ describeEmbeddedPostgres("documentService concurrent upserts", () => {
 
   it("serializes concurrent issue document upserts on the same base revision", async () => {
     const companyId = randomUUID();
+    const projectId = randomUUID();
     const issueId = randomUUID();
     await db.insert(companies).values({
       id: companyId,
@@ -118,9 +119,16 @@ describeEmbeddedPostgres("documentService concurrent upserts", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Issue documents",
+      status: "in_progress",
+    });
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Issue document target",
       status: "todo",
       priority: "medium",

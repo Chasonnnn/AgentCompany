@@ -163,7 +163,7 @@ function makeIssue(id: string, isUnreadForMe: boolean): Issue {
   return {
     id,
     companyId: "company-1",
-    projectId: null,
+    projectId: "project-1",
     projectWorkspaceId: null,
     goalId: null,
     parentId: null,

@@ -144,7 +144,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     id: "issue-1",
     identifier: "PAP-101",
     companyId: "company-1",
-    projectId: null,
+    projectId: "project-1",
     projectWorkspaceId: null,
     goalId: null,
     parentId: null,

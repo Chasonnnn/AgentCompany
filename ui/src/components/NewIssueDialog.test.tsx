@@ -163,14 +163,53 @@ vi.mock("./InlineEntitySelector", async () => {
       HTMLButtonElement,
       {
         value: string;
+        options: Array<{ id: string; label: string }>;
         placeholder?: string;
+        noneLabel?: string;
+        searchPlaceholder?: string;
+        onChange?: (value: string) => void;
+        onConfirm?: () => void;
         renderTriggerValue?: (option: { id: string; label: string } | null) => ReactNode;
+        renderOption?: (option: { id: string; label: string }) => ReactNode;
       }
-    >(function InlineEntitySelectorMock({ value, placeholder, renderTriggerValue }, ref) {
+    >(function InlineEntitySelectorMock({
+      value,
+      options,
+      placeholder,
+      noneLabel,
+      searchPlaceholder,
+      onChange,
+      onConfirm,
+      renderTriggerValue,
+      renderOption,
+    }, ref) {
+      const [open, setOpen] = React.useState(false);
+      const currentOption = options.find((option) => option.id === value) ?? null;
+      const allOptions = noneLabel ? [{ id: "", label: noneLabel }, ...options] : options;
       return (
-        <button ref={ref} type="button">
-          {(renderTriggerValue?.(value ? { id: value, label: value } : null) ?? value) || placeholder}
-        </button>
+        <div>
+          <button ref={ref} type="button" onClick={() => setOpen((current) => !current)}>
+            {(renderTriggerValue?.(currentOption) ?? currentOption?.label) || placeholder}
+          </button>
+          {open ? (
+            <div>
+              {searchPlaceholder ? <input placeholder={searchPlaceholder} readOnly /> : null}
+              {allOptions.map((option) => (
+                <button
+                  key={option.id || "__none__"}
+                  type="button"
+                  onClick={() => {
+                    onChange?.(option.id);
+                    onConfirm?.();
+                    setOpen(false);
+                  }}
+                >
+                  {renderOption?.(option) ?? option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       );
     }),
   };
@@ -220,6 +259,15 @@ async function flush() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+}
+
+function setNativeTextareaValue(textarea: HTMLTextAreaElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+  const previous = textarea.value;
+  valueSetter?.call(textarea, value);
+  const tracker = (textarea as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker;
+  tracker?.setValue(previous);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function renderDialog(container: HTMLDivElement) {
@@ -459,6 +507,132 @@ describe("NewIssueDialog", () => {
 
     expect(container.textContent).toContain("will no longer use the parent issue workspace");
     expect(container.textContent).toContain("Parent workspace");
+
+    act(() => root.unmount());
+  });
+
+  it("requires a project before creating an issue", async () => {
+    mockProjectsApi.list.mockResolvedValue([]);
+
+    const { root } = renderDialog(container);
+    await flush();
+
+    const titleInput = container.querySelector('textarea[placeholder="Issue title"]') as HTMLTextAreaElement | null;
+    expect(titleInput).not.toBeNull();
+
+    await act(async () => {
+      setNativeTextareaValue(titleInput!, "Missing project");
+    });
+    await flush();
+
+    expect(container.textContent).toContain("Project required");
+
+    const submitButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Create Issue"));
+    expect(submitButton).not.toBeUndefined();
+    expect(submitButton?.hasAttribute("disabled")).toBe(true);
+
+    await act(async () => {
+      submitButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockIssuesApi.create).not.toHaveBeenCalled();
+    expect(
+      Array.from(container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "No project"),
+    ).toBe(false);
+
+    act(() => root.unmount());
+  });
+
+  it("auto-fills the project when the assignee has exactly one active execution-scoped project", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Backend Owner",
+        urlKey: "backend-owner",
+        role: "engineer",
+        title: null,
+        icon: null,
+        status: "active",
+        reportsTo: null,
+        orgLevel: "staff",
+        operatingClass: "worker",
+        capabilityProfileKey: "general",
+        archetypeKey: "default",
+        departmentKey: "engineering",
+        departmentName: null,
+        capabilities: null,
+        adapterType: "process",
+        adapterConfig: {},
+        runtimeConfig: {},
+        budgetMonthlyCents: 0,
+        spentMonthlyCents: 0,
+        pauseReason: null,
+        pausedAt: null,
+        permissions: { canCreateAgents: false },
+        requestedByPrincipalType: null,
+        requestedByPrincipalId: null,
+        requestedForProjectId: "project-1",
+        requestedReason: null,
+        lastHeartbeatAt: null,
+        metadata: null,
+        createdAt: new Date("2026-04-16T10:00:00.000Z"),
+        updatedAt: new Date("2026-04-16T10:00:00.000Z"),
+      },
+    ]);
+
+    const { root } = renderDialog(container);
+    await flush();
+
+    const assigneeTrigger = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Assignee"));
+    expect(assigneeTrigger).not.toBeUndefined();
+
+    await act(async () => {
+      assigneeTrigger!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const assigneeOption = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Backend Owner"));
+    expect(assigneeOption).not.toBeUndefined();
+
+    await act(async () => {
+      assigneeOption!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    await flush();
+
+    expect(
+      Array.from(container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Project required"),
+    ).toBe(false);
+
+    const submitTitleInput = container.querySelector('textarea[placeholder="Issue title"]') as HTMLTextAreaElement | null;
+    expect(submitTitleInput).not.toBeNull();
+
+    await act(async () => {
+      setNativeTextareaValue(submitTitleInput!, "Auto-filled project");
+    });
+    await flush();
+
+    const submitButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Create Issue"));
+    expect(submitButton?.hasAttribute("disabled")).toBe(false);
+
+    await act(async () => {
+      submitButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(mockIssuesApi.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        title: "Auto-filled project",
+        assigneeAgentId: "agent-1",
+        projectId: "project-1",
+      }),
+    );
 
     act(() => root.unmount());
   });

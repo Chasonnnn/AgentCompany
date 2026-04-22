@@ -17,6 +17,7 @@ import {
   heartbeatRuns,
   issueComments,
   issues,
+  projects,
 } from "@paperclipai/db";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { issueContinuityService } from "../services/issue-continuity.ts";
@@ -238,6 +239,7 @@ describe("heartbeat comment wake batching", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const heartbeat = heartbeatService(db);
     const continuity = issueContinuityService(db);
@@ -248,6 +250,12 @@ describe("heartbeat comment wake batching", () => {
         name: "Paperclip",
         issuePrefix,
         requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(projects).values({
+        id: projectId,
+        companyId,
+        name: "Comment wake batching",
+        status: "in_progress",
       });
 
       await db.insert(agents).values({
@@ -274,6 +282,7 @@ describe("heartbeat comment wake batching", () => {
       await db.insert(issues).values({
         id: issueId,
         companyId,
+        projectId,
         title: "Batch wake comments",
         status: "todo",
         priority: "medium",
@@ -452,6 +461,7 @@ describe("heartbeat comment wake batching", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const heartbeat = heartbeatService(db);
     const continuity = issueContinuityService(db);
@@ -462,6 +472,12 @@ describe("heartbeat comment wake batching", () => {
         name: "Paperclip",
         issuePrefix,
         requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(projects).values({
+        id: projectId,
+        companyId,
+        name: "Comment wake follow-up",
+        status: "in_progress",
       });
 
       await db.insert(agents).values({
@@ -488,6 +504,7 @@ describe("heartbeat comment wake batching", () => {
       await db.insert(issues).values({
         id: issueId,
         companyId,
+        projectId,
         title: "Require a comment",
         status: "todo",
         priority: "medium",

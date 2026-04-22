@@ -5,6 +5,7 @@ import {
   createDb,
   issueDecisionQuestions,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -38,6 +39,7 @@ describeEmbeddedPostgres("issueDecisionQuestionService", () => {
   afterEach(async () => {
     await db.delete(issueDecisionQuestions);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(companies);
   });
 
@@ -48,6 +50,7 @@ describeEmbeddedPostgres("issueDecisionQuestionService", () => {
   async function seedIssue() {
     const companyId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
 
     await db.insert(companies).values({
       id: companyId,
@@ -55,10 +58,17 @@ describeEmbeddedPostgres("issueDecisionQuestionService", () => {
       issuePrefix: `Q${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Decision questions",
+      status: "in_progress",
+    });
 
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Scope the audit",
       status: "todo",
       priority: "high",

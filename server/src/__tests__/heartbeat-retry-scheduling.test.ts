@@ -9,6 +9,7 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -61,6 +62,7 @@ describeEmbeddedPostgres("heartbeat scheduled retry scheduling", () => {
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -73,6 +75,7 @@ describeEmbeddedPostgres("heartbeat scheduled retry scheduling", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const wakeupRequestId = randomUUID();
     const runId = randomUUID();
     const now = new Date("2026-04-22T12:00:00.000Z");
@@ -83,6 +86,12 @@ describeEmbeddedPostgres("heartbeat scheduled retry scheduling", () => {
       name: "Paperclip",
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Retry scheduling",
+      status: "in_progress",
     });
 
     await db.insert(agents).values({
@@ -100,6 +109,7 @@ describeEmbeddedPostgres("heartbeat scheduled retry scheduling", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Retry issue",
       description: "Needs another attempt",
       status: "in_progress",

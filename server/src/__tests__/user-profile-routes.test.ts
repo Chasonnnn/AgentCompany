@@ -12,6 +12,7 @@ import {
   createDb,
   issueComments,
   issues,
+  projects,
 } from "@paperclipai/db";
 import { errorHandler } from "../middleware/index.js";
 import { userProfileRoutes } from "../routes/user-profiles.js";
@@ -35,6 +36,7 @@ describeEmbeddedPostgres("GET /companies/:companyId/users/:userSlug/profile", ()
   let companyId!: string;
   let userId!: string;
   let agentId!: string;
+  let projectId!: string;
 
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-user-profile-route-");
@@ -45,6 +47,7 @@ describeEmbeddedPostgres("GET /companies/:companyId/users/:userSlug/profile", ()
     companyId = randomUUID();
     userId = randomUUID();
     agentId = randomUUID();
+    projectId = randomUUID();
     const now = new Date();
 
     await db.insert(companies).values({
@@ -52,6 +55,12 @@ describeEmbeddedPostgres("GET /companies/:companyId/users/:userSlug/profile", ()
       name: "Paperclip",
       issuePrefix: `U${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "User profile",
+      status: "in_progress",
     });
     await db.insert(authUsers).values({
       id: userId,
@@ -86,6 +95,7 @@ describeEmbeddedPostgres("GET /companies/:companyId/users/:userSlug/profile", ()
     await db.delete(issueComments);
     await db.delete(activityLog);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companyMemberships);
     await db.delete(authUsers);
@@ -123,6 +133,7 @@ describeEmbeddedPostgres("GET /companies/:companyId/users/:userSlug/profile", ()
       {
         id: doneIssueId,
         companyId,
+        projectId,
         title: "Ship profile page",
         status: "done",
         priority: "high",
@@ -135,6 +146,7 @@ describeEmbeddedPostgres("GET /companies/:companyId/users/:userSlug/profile", ()
       {
         id: openIssueId,
         companyId,
+        projectId,
         title: "Review profile copy",
         status: "in_progress",
         priority: "medium",

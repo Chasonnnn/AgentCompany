@@ -12,6 +12,7 @@ import {
   createDb,
   instanceUserRoles,
   issues,
+  projects,
   principalPermissionGrants,
 } from "@paperclipai/db";
 import {
@@ -172,6 +173,7 @@ describeEmbeddedPostgres("company member archive routes", () => {
     await db.delete(issues);
     await db.delete(principalPermissionGrants);
     await db.delete(instanceUserRoles);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companyMemberships);
     await db.delete(authUsers);
@@ -235,12 +237,23 @@ describeEmbeddedPostgres("company member archive routes", () => {
   it("archives a member and reassigns open issues", async () => {
     const inProgressIssueId = randomUUID();
     const queuedIssueId = randomUUID();
+    const projectId = randomUUID();
     const now = new Date();
+
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Archive routing",
+      status: "in_progress",
+      createdAt: now,
+      updatedAt: now,
+    });
 
     await db.insert(issues).values([
       {
         id: inProgressIssueId,
         companyId,
+        projectId,
         title: "In-progress work",
         status: "in_progress",
         priority: "high",
@@ -254,6 +267,7 @@ describeEmbeddedPostgres("company member archive routes", () => {
       {
         id: queuedIssueId,
         companyId,
+        projectId,
         title: "Queued work",
         status: "todo",
         priority: "medium",

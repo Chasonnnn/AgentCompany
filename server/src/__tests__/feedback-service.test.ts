@@ -23,6 +23,7 @@ import {
   issueComments,
   issueDocuments,
   issues,
+  projects,
 } from "@paperclipai/db";
 import { feedbackService } from "../services/feedback.ts";
 
@@ -119,6 +120,7 @@ describe("feedbackService.saveIssueVote", () => {
     await db.delete(heartbeatRuns);
     await db.delete(companySkills);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
     for (const dir of tempDirs) {
@@ -139,6 +141,7 @@ describe("feedbackService.saveIssueVote", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const commentId = randomUUID();
 
     await db.insert(companies).values({
@@ -146,6 +149,12 @@ describe("feedbackService.saveIssueVote", () => {
       name: "Paperclip",
       issuePrefix: `F${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Feedback votes",
+      status: "in_progress",
     });
 
     await db.insert(agents).values({
@@ -163,6 +172,7 @@ describe("feedbackService.saveIssueVote", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Add feedback voting",
       status: "todo",
       priority: "medium",
@@ -184,6 +194,7 @@ describe("feedbackService.saveIssueVote", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const targetCommentId = randomUUID();
     const earlierCommentId = randomUUID();
     const laterCommentId = randomUUID();
@@ -206,6 +217,12 @@ describe("feedbackService.saveIssueVote", () => {
       name: "Paperclip",
       issuePrefix: `R${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Feedback traces",
+      status: "in_progress",
     });
 
     await db.insert(companySkills).values([
@@ -264,6 +281,7 @@ describe("feedbackService.saveIssueVote", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Trace-rich feedback",
       description: "Issue context includes ops@example.com and a backup phone 555 111 2222.",
       status: "todo",
@@ -342,6 +360,7 @@ describe("feedbackService.saveIssueVote", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const documentId = randomUUID();
     const revisionId = randomUUID();
 
@@ -350,6 +369,12 @@ describe("feedbackService.saveIssueVote", () => {
       name: "Paperclip",
       issuePrefix: `D${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Feedback documents",
+      status: "in_progress",
     });
 
     await db.insert(agents).values({
@@ -367,6 +392,7 @@ describe("feedbackService.saveIssueVote", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Document feedback",
       status: "todo",
       priority: "medium",
@@ -411,6 +437,7 @@ describe("feedbackService.saveIssueVote", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const commentId = randomUUID();
     const runId = randomUUID();
 
@@ -419,6 +446,12 @@ describe("feedbackService.saveIssueVote", () => {
       name: "Paperclip",
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Adapter traces",
+      status: "in_progress",
     });
 
     await db.insert(agents).values({
@@ -436,6 +469,7 @@ describe("feedbackService.saveIssueVote", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Trace-backed feedback",
       status: "todo",
       priority: "medium",
@@ -981,6 +1015,7 @@ describe("feedbackService.saveIssueVote", () => {
   it("rejects feedback votes on human-authored comments", async () => {
     const companyId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const commentId = randomUUID();
 
     await db.insert(companies).values({
@@ -989,10 +1024,17 @@ describe("feedbackService.saveIssueVote", () => {
       issuePrefix: `H${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Human comments",
+      status: "in_progress",
+    });
 
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Human-authored comment",
       status: "todo",
       priority: "medium",

@@ -9,6 +9,7 @@ import {
   issueDocuments,
   issueReferenceMentions,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -72,6 +73,7 @@ describeEmbeddedPostgres("issueReferenceService", () => {
     await db.delete(issueDocuments);
     await db.delete(documents);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(companies);
   });
 
@@ -81,6 +83,7 @@ describeEmbeddedPostgres("issueReferenceService", () => {
 
   it("tracks outbound and inbound references across issue fields, comments, and documents", async () => {
     const companyId = randomUUID();
+    const projectId = randomUUID();
     const sourceIssueId = randomUUID();
     const targetTwoId = randomUUID();
     const targetThreeId = randomUUID();
@@ -95,11 +98,18 @@ describeEmbeddedPostgres("issueReferenceService", () => {
       issuePrefix: `R${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Issue refs",
+      status: "in_progress",
+    });
 
     await db.insert(issues).values([
       {
         id: sourceIssueId,
         companyId,
+        projectId,
         title: "Coordinate PAP-2",
         description: "Review /issues/pap-3 and ignore PAP-1 self references.",
         status: "todo",
@@ -109,6 +119,7 @@ describeEmbeddedPostgres("issueReferenceService", () => {
       {
         id: targetTwoId,
         companyId,
+        projectId,
         title: "Target two",
         status: "todo",
         priority: "medium",
@@ -117,6 +128,7 @@ describeEmbeddedPostgres("issueReferenceService", () => {
       {
         id: targetThreeId,
         companyId,
+        projectId,
         title: "Target three",
         status: "todo",
         priority: "medium",
@@ -125,6 +137,7 @@ describeEmbeddedPostgres("issueReferenceService", () => {
       {
         id: inboundIssueId,
         companyId,
+        projectId,
         title: "Inbound reference",
         description: "This one depends on PAP-1.",
         status: "in_progress",
@@ -181,6 +194,7 @@ describeEmbeddedPostgres("issueReferenceService", () => {
 
   it("backfills existing references for a company without requiring write-time sync", async () => {
     const companyId = randomUUID();
+    const projectId = randomUUID();
     const sourceIssueId = randomUUID();
     const targetIssueId = randomUUID();
     const commentId = randomUUID();
@@ -193,11 +207,18 @@ describeEmbeddedPostgres("issueReferenceService", () => {
       issuePrefix: `B${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Issue refs backfill",
+      status: "in_progress",
+    });
 
     await db.insert(issues).values([
       {
         id: sourceIssueId,
         companyId,
+        projectId,
         title: "Legacy issue",
         status: "todo",
         priority: "medium",
@@ -206,6 +227,7 @@ describeEmbeddedPostgres("issueReferenceService", () => {
       {
         id: targetIssueId,
         companyId,
+        projectId,
         title: "Referenced legacy issue",
         status: "todo",
         priority: "medium",

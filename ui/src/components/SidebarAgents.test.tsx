@@ -483,6 +483,73 @@ describe("SidebarAgents", () => {
     act(() => root.unmount());
   });
 
+  it("filters out synthetic null-project accountability buckets", async () => {
+    mockAgentsApi.accountability.mockResolvedValue({
+      ...createAccountability(),
+      projects: [
+        ...createAccountability().projects,
+        {
+          projectId: null,
+          projectName: "Unscoped execution",
+          color: null,
+          executiveSponsor: null,
+          portfolioDirector: null,
+          projectLead: null,
+          leadership: [],
+          continuityOwners: [
+            {
+              ...createMember({
+                id: "floating-owner",
+                name: "Floating Owner",
+                urlKey: "floating-owner",
+                role: "engineer",
+              }),
+              activeIssueCount: 1,
+              blockedContinuityIssueCount: 0,
+              openReviewFindingsCount: 0,
+              returnedBranchCount: 0,
+              issues: [],
+            },
+          ],
+          executiveIssueOwners: [],
+          sharedServices: [],
+          issueCounts: {
+            active: 1,
+            blockedMissingDocs: 0,
+            staleProgress: 0,
+            invalidHandoff: 0,
+            openReviewFindings: 0,
+            returnedBranches: 0,
+            handoffPending: 0,
+          },
+        },
+      ],
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidebarAgents />
+        </QueryClientProvider>,
+      );
+    });
+
+    await flush();
+    await flush();
+
+    expect(container.textContent).not.toContain("Unscoped execution");
+    expect(container.textContent).not.toContain("Floating Owner");
+
+    act(() => root.unmount());
+  });
+
   it("renders executive continuity ownership as neutral metadata instead of a warning", async () => {
     mockAgentsApi.accountability.mockResolvedValue({
       ...createAccountability(),

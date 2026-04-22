@@ -117,7 +117,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
     id: "issue-1",
     companyId: "company-1",
-    projectId: null,
+    projectId: "project-1",
     projectWorkspaceId: null,
     goalId: null,
     parentId: null,
@@ -216,7 +216,7 @@ describe("IssueProperties", () => {
   it("always exposes the add sub-issue action", async () => {
     const onAddSubIssue = vi.fn();
     const root = renderProperties(container, {
-      issue: createIssue(),
+      issue: { ...createIssue(), projectId: null } as unknown as Issue,
       childIssues: [],
       onAddSubIssue,
       onUpdate: vi.fn(),
@@ -262,6 +262,57 @@ describe("IssueProperties", () => {
 
     expect(container.querySelector('input[placeholder="Search labels..."]')).not.toBeNull();
     expect(container.querySelector('button[title="Delete Bug"]')).toBeNull();
+
+    act(() => root.unmount());
+  });
+
+  it("shows Project required when the issue is missing a project and only offers real projects", async () => {
+    const onUpdate = vi.fn();
+    mockProjectsApi.list.mockResolvedValue([
+      {
+        id: "project-1",
+        name: "Alpha",
+        archivedAt: null,
+        color: "#445566",
+        executionWorkspacePolicy: null,
+      },
+    ]);
+
+    const root = renderProperties(container, {
+      issue: { ...createIssue(), projectId: null } as unknown as Issue,
+      childIssues: [],
+      onUpdate,
+      inline: true,
+    });
+    await flush();
+
+    expect(container.textContent).toContain("Project required");
+    expect(container.textContent).not.toContain("No project");
+
+    const projectTrigger = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Project required"));
+    expect(projectTrigger).not.toBeUndefined();
+
+    await act(async () => {
+      projectTrigger!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const projectOption = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Alpha"));
+    expect(projectOption).not.toBeUndefined();
+
+    await act(async () => {
+      projectOption!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      projectId: "project-1",
+      projectWorkspaceId: null,
+      executionWorkspaceId: null,
+      executionWorkspacePreference: "shared_workspace",
+      executionWorkspaceSettings: null,
+    });
 
     act(() => root.unmount());
   });
@@ -312,7 +363,7 @@ describe("IssueProperties", () => {
           priority: "medium",
           assigneeAgentId: null,
           assigneeUserId: null,
-          projectId: null,
+          projectId: "project-1",
           goalId: null,
           project: null,
           goal: null,

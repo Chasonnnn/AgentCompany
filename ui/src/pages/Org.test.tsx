@@ -226,6 +226,71 @@ describe("Org page", () => {
     act(() => root.unmount());
   });
 
+  it("ignores synthetic null-project buckets when deciding whether org accountability is empty", async () => {
+    mockAgentsApi.accountability.mockResolvedValue({
+      companyId: "company-1",
+      generatedAt: "2026-04-19T12:00:00.000Z",
+      counts: {
+        totalConfiguredAgents: 0,
+        activeContinuityOwners: 0,
+        activeGovernanceLeads: 0,
+        activeSharedServiceAgents: 0,
+        legacyAgents: 0,
+        inactiveAgents: 0,
+        simplificationCandidates: 0,
+      },
+      executiveOffice: [],
+      projects: [
+        {
+          projectId: null,
+          projectName: "Unscoped execution",
+          color: null,
+          executiveSponsor: null,
+          portfolioDirector: null,
+          projectLead: null,
+          leadership: [],
+          continuityOwners: [],
+          executiveIssueOwners: [],
+          sharedServices: [],
+          issueCounts: {
+            active: 1,
+            blockedMissingDocs: 0,
+            staleProgress: 0,
+            invalidHandoff: 0,
+            openReviewFindings: 0,
+            returnedBranches: 0,
+            handoffPending: 0,
+          },
+        },
+      ],
+      sharedServices: [],
+      unassigned: [],
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Org />
+        </QueryClientProvider>,
+      );
+    });
+
+    await flush();
+    await flush();
+
+    expect(container.textContent).toContain("No accountability graph yet. Create agents and assign issue ownership to build it.");
+    expect(container.textContent).not.toContain("Unscoped execution");
+
+    act(() => root.unmount());
+  });
+
   it("shows executive continuity owners as a neutral project member section", async () => {
     const executiveOwner = {
       ...createMember({

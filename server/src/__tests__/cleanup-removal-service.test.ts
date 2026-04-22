@@ -14,6 +14,7 @@ import {
   issueExecutionDecisions,
   issueReadStates,
   issues,
+  projects,
   workspaceOperations,
 } from "@paperclipai/db";
 import {
@@ -52,6 +53,7 @@ describeEmbeddedPostgres("cleanup removal services", () => {
     await db.delete(workspaceOperations);
     await db.delete(heartbeatRuns);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -64,6 +66,7 @@ describeEmbeddedPostgres("cleanup removal services", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const runId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 
@@ -72,6 +75,12 @@ describeEmbeddedPostgres("cleanup removal services", () => {
       name: "Paperclip",
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Cleanup removal",
+      status: "in_progress",
     });
 
     await db.insert(agents).values({
@@ -89,6 +98,7 @@ describeEmbeddedPostgres("cleanup removal services", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Regression fixture",
       status: "todo",
       priority: "medium",

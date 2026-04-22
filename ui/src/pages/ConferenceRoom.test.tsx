@@ -101,7 +101,7 @@ function createIssue(id: string, identifier: string, title: string): Issue {
     id,
     identifier,
     companyId: "company-1",
-    projectId: null,
+    projectId: "project-1",
     projectWorkspaceId: null,
     goalId: null,
     parentId: null,

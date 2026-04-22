@@ -10,6 +10,7 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -138,6 +139,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -175,6 +177,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const runId = randomUUID();
     const wakeupRequestId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const now = new Date("2026-03-19T00:00:00.000Z");
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 
@@ -183,6 +186,12 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       name: "Paperclip",
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Heartbeat recovery",
+      status: "in_progress",
     });
 
     await db.insert(agents).values({
@@ -232,6 +241,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       await db.insert(issues).values({
         id: issueId,
         companyId,
+        projectId,
         title: "Recover local adapter after lost process",
         status: "in_progress",
         priority: "medium",

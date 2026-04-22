@@ -17,6 +17,7 @@ import {
   issueDocuments,
   issueRelations,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -124,6 +125,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(agentRuntimeState);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -135,6 +137,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
   it("keeps blocked descendants queued until their blockers resolve", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     const blockerId = randomUUID();
     const blockedIssueId = randomUUID();
     const readyIssueId = randomUUID();
@@ -144,6 +147,12 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       name: "Paperclip",
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Dependency scheduling",
+      status: "in_progress",
     });
     await db.insert(agents).values({
       id: agentId,
@@ -165,6 +174,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       {
         id: blockerId,
         companyId,
+        projectId,
         title: "Mission 0",
         status: "todo",
         priority: "high",
@@ -172,6 +182,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       {
         id: blockedIssueId,
         companyId,
+        projectId,
         title: "Mission 2",
         status: "todo",
         priority: "medium",
@@ -180,6 +191,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       {
         id: readyIssueId,
         companyId,
+        projectId,
         title: "Mission 1",
         status: "todo",
         priority: "critical",

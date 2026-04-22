@@ -255,7 +255,7 @@ describe("optimistic issue comments", () => {
       {
         id: "issue-1",
         companyId: "company-1",
-        projectId: null,
+        projectId: "project-1",
         projectWorkspaceId: null,
         goalId: null,
         parentId: null,
@@ -322,7 +322,7 @@ describe("optimistic issue comments", () => {
             priority: "medium",
             assigneeAgentId: null,
             assigneeUserId: null,
-            projectId: null,
+            projectId: "project-1",
             goalId: null,
             project: null,
             goal: null,
@@ -502,7 +502,7 @@ describe("optimistic issue comments", () => {
       {
         id: "issue-1",
         companyId: "company-1",
-        projectId: null,
+        projectId: "project-1",
         projectWorkspaceId: null,
         goalId: null,
         parentId: null,
@@ -543,7 +543,7 @@ describe("optimistic issue comments", () => {
       {
         id: "issue-2",
         companyId: "company-1",
-        projectId: null,
+        projectId: "project-1",
         projectWorkspaceId: null,
         goalId: null,
         parentId: null,

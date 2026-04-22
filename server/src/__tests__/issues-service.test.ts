@@ -43,6 +43,17 @@ async function ensureIssueRelationsTable(db: ReturnType<typeof createDb>) {
   `));
 }
 
+async function insertProject(db: ReturnType<typeof createDb>, companyId: string, name = "Test project") {
+  const projectId = randomUUID();
+  await db.insert(projects).values({
+    id: projectId,
+    companyId,
+    name,
+    status: "in_progress",
+  });
+  return projectId;
+}
+
 if (!embeddedPostgresSupport.supported) {
   console.warn(
     `Skipping embedded Postgres issue service tests on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
@@ -91,6 +102,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Participation");
 
     await db.insert(agents).values([
       {
@@ -127,6 +139,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: assignedIssueId,
         companyId,
+        projectId,
         title: "Assigned issue",
         status: "todo",
         priority: "medium",
@@ -136,6 +149,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: createdIssueId,
         companyId,
+        projectId,
         title: "Created issue",
         status: "todo",
         priority: "medium",
@@ -144,6 +158,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: commentedIssueId,
         companyId,
+        projectId,
         title: "Commented issue",
         status: "todo",
         priority: "medium",
@@ -152,6 +167,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: activityIssueId,
         companyId,
+        projectId,
         title: "Activity issue",
         status: "todo",
         priority: "medium",
@@ -160,6 +176,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: excludedIssueId,
         companyId,
+        projectId,
         title: "Excluded issue",
         status: "todo",
         priority: "medium",
@@ -208,6 +225,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Participation search");
 
     await db.insert(agents).values({
       id: agentId,
@@ -228,6 +246,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: matchedIssueId,
         companyId,
+        projectId,
         title: "Invoice reconciliation",
         status: "todo",
         priority: "medium",
@@ -236,6 +255,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: otherIssueId,
         companyId,
+        projectId,
         title: "Weekly planning",
         status: "todo",
         priority: "medium",
@@ -260,6 +280,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Search limits");
 
     const exactIdentifierId = randomUUID();
     const titleMatchId = randomUUID();
@@ -269,6 +290,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: exactIdentifierId,
         companyId,
+        projectId,
         issueNumber: 42,
         identifier: "PAP-42",
         title: "Completely unrelated",
@@ -278,6 +300,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: titleMatchId,
         companyId,
+        projectId,
         title: "Search ranking issue",
         status: "todo",
         priority: "medium",
@@ -285,6 +308,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: descriptionMatchId,
         companyId,
+        projectId,
         title: "Another item",
         description: "Contains the search keyword",
         status: "todo",
@@ -311,11 +335,13 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Comment ranking");
 
     await db.insert(issues).values([
       {
         id: commentMatchId,
         companyId,
+        projectId,
         title: "Comment match",
         status: "todo",
         priority: "medium",
@@ -323,6 +349,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: descriptionMatchId,
         companyId,
+        projectId,
         title: "Description match",
         description: "Contains pull/3303 in the description",
         status: "todo",
@@ -355,10 +382,12 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: "PAP",
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Get by id");
 
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       issueNumber: 1064,
       identifier: "PAP-1064",
       title: "Feedback votes error",
@@ -472,6 +501,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Inbox archives");
 
     const visibleIssueId = randomUUID();
     const archivedIssueId = randomUUID();
@@ -481,6 +511,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: visibleIssueId,
         companyId,
+        projectId,
         title: "Visible issue",
         status: "todo",
         priority: "medium",
@@ -491,6 +522,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: archivedIssueId,
         companyId,
+        projectId,
         title: "Archived issue",
         status: "todo",
         priority: "medium",
@@ -501,6 +533,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: resurfacedIssueId,
         companyId,
+        projectId,
         title: "Resurfaced issue",
         status: "todo",
         priority: "medium",
@@ -557,12 +590,14 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Inbox resurfacing");
 
     const issueId = randomUUID();
 
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Issue with old comment then status change",
       status: "todo",
       priority: "medium",
@@ -625,11 +660,13 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Last activity");
 
     await db.insert(issues).values([
       {
         id: olderIssueId,
         companyId,
+        projectId,
         title: "Older issue",
         status: "todo",
         priority: "medium",
@@ -638,6 +675,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: commentIssueId,
         companyId,
+        projectId,
         title: "Comment activity issue",
         status: "todo",
         priority: "medium",
@@ -646,6 +684,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: activityIssueId,
         companyId,
+        projectId,
         title: "Logged activity issue",
         status: "todo",
         priority: "medium",
@@ -1014,6 +1053,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Dependencies");
     await db.insert(agents).values({
       id: blockedAssigneeId,
       companyId,
@@ -1026,6 +1066,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       {
         id: blockerId,
         companyId,
+        projectId,
         title: "Blocker",
         status: "todo",
         priority: "high",
@@ -1033,6 +1074,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       {
         id: blockedId,
         companyId,
+        projectId,
         title: "Blocked issue",
         status: "blocked",
         priority: "medium",
@@ -1059,12 +1101,13 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Cycle detection");
 
     const issueA = randomUUID();
     const issueB = randomUUID();
     await db.insert(issues).values([
-      { id: issueA, companyId, title: "Issue A", status: "todo", priority: "medium" },
-      { id: issueB, companyId, title: "Issue B", status: "todo", priority: "medium" },
+      { id: issueA, companyId, projectId, title: "Issue A", status: "todo", priority: "medium" },
+      { id: issueB, companyId, projectId, title: "Issue B", status: "todo", priority: "medium" },
     ]);
 
     await svc.update(issueA, { blockedByIssueIds: [issueB] });
@@ -1083,6 +1126,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Wakeable blockers");
     await db.insert(agents).values({
       id: assigneeAgentId,
       companyId,
@@ -1099,11 +1143,12 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     const blockerB = randomUUID();
     const blockedIssueId = randomUUID();
     await db.insert(issues).values([
-      { id: blockerA, companyId, title: "Blocker A", status: "done", priority: "medium" },
-      { id: blockerB, companyId, title: "Blocker B", status: "todo", priority: "medium" },
+      { id: blockerA, companyId, projectId, title: "Blocker A", status: "done", priority: "medium" },
+      { id: blockerB, companyId, projectId, title: "Blocker B", status: "todo", priority: "medium" },
       {
         id: blockedIssueId,
         companyId,
+        projectId,
         title: "Blocked issue",
         status: "blocked",
         priority: "medium",
@@ -1134,12 +1179,13 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Dependency readiness");
 
     const blockerId = randomUUID();
     const blockedId = randomUUID();
     await db.insert(issues).values([
-      { id: blockerId, companyId, title: "Blocker", status: "todo", priority: "medium" },
-      { id: blockedId, companyId, title: "Blocked", status: "todo", priority: "medium" },
+      { id: blockerId, companyId, projectId, title: "Blocker", status: "todo", priority: "medium" },
+      { id: blockedId, companyId, projectId, title: "Blocked", status: "todo", priority: "medium" },
     ]);
     await svc.update(blockedId, { blockedByIssueIds: [blockerId] });
 
@@ -1173,6 +1219,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Execution blockers");
     await db.insert(agents).values({
       id: assigneeAgentId,
       companyId,
@@ -1188,10 +1235,11 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     const blockerId = randomUUID();
     const blockedId = randomUUID();
     await db.insert(issues).values([
-      { id: blockerId, companyId, title: "Blocker", status: "todo", priority: "medium" },
+      { id: blockerId, companyId, projectId, title: "Blocker", status: "todo", priority: "medium" },
       {
         id: blockedId,
         companyId,
+        projectId,
         title: "Blocked",
         status: "todo",
         priority: "medium",
@@ -1218,6 +1266,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Parent wake");
     await db.insert(agents).values({
       id: assigneeAgentId,
       companyId,
@@ -1237,6 +1286,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       {
         id: parentId,
         companyId,
+        projectId,
         title: "Parent issue",
         status: "todo",
         priority: "medium",
@@ -1245,6 +1295,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       {
         id: childA,
         companyId,
+        projectId,
         parentId,
         title: "Child A",
         status: "done",
@@ -1253,6 +1304,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       {
         id: childB,
         companyId,
+        projectId,
         parentId,
         title: "Child B",
         status: "blocked",
@@ -1279,6 +1331,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Status transitions");
 
     const doneIssueId = randomUUID();
     const cancelledIssueId = randomUUID();
@@ -1286,6 +1339,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       {
         id: doneIssueId,
         companyId,
+        projectId,
         title: "Completed issue",
         status: "done",
         priority: "medium",
@@ -1293,6 +1347,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       {
         id: cancelledIssueId,
         companyId,
+        projectId,
         title: "Cancelled issue",
         status: "cancelled",
         priority: "medium",
@@ -1322,6 +1377,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Checkout validation");
     await db.insert(agents).values({
       id: assigneeAgentId,
       companyId,
@@ -1338,6 +1394,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Checkout target",
       status: "todo",
       priority: "medium",
@@ -1357,6 +1414,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Release terminal");
     await db.insert(agents).values({
       id: assigneeAgentId,
       companyId,
@@ -1393,6 +1451,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Completed issue",
       status: "done",
       priority: "medium",
@@ -1428,6 +1487,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Release active");
     await db.insert(agents).values({
       id: assigneeAgentId,
       companyId,
@@ -1452,6 +1512,7 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Active issue",
       status: "in_progress",
       priority: "medium",
