@@ -4,7 +4,7 @@ import type { LiveEvent } from "@paperclipai/shared";
 import { ApiError } from "../../api/client";
 import { instanceSettingsApi } from "../../api/instanceSettings";
 import { heartbeatsApi } from "../../api/heartbeats";
-import { buildTranscript, getUIAdapter, onAdapterChange, type RunLogChunk, type TranscriptEntry } from "../../adapters";
+import { buildTranscriptAsync, getUIAdapter, onAdapterChange, type RunLogChunk, type TranscriptEntry } from "../../adapters";
 import { queryKeys } from "../../lib/queryKeys";
 
 const LOG_POLL_INTERVAL_MS = 2000;
@@ -356,45 +356,59 @@ export function useLiveRunTranscripts({
     };
   }, [activeRunIds, companyId, enableRealtimeUpdates, runById]);
 
-  const transcriptByRun = useMemo(() => {
-    const next = new Map<string, TranscriptEntry[]>();
+  const [transcriptByRun, setTranscriptByRun] = useState<Map<string, TranscriptEntry[]>>(new Map());
+
+  useEffect(() => {
     const censorUsernameInLogs = generalSettings?.censorUsernameInLogs === true;
     const cache = transcriptCacheRef.current;
     const currentRunIds = new Set<string>();
-    for (const run of normalizedRuns) {
-      currentRunIds.add(run.id);
-      const chunks = chunksByRun.get(run.id) ?? EMPTY_RUN_LOG_CHUNKS;
-      const cached = cache.get(run.id);
-      if (
-        cached &&
-        cached.adapterType === run.adapterType &&
-        cached.chunks === chunks &&
-        cached.censorUsernameInLogs === censorUsernameInLogs &&
-        cached.parserTick === parserTick
-      ) {
-        next.set(run.id, cached.transcript);
-        continue;
-      }
+    let cancelled = false;
 
-      const adapter = getUIAdapter(run.adapterType);
-      const transcript = buildTranscript(chunks, adapter, {
-        censorUsernameInLogs,
-      });
-      cache.set(run.id, {
-        adapterType: run.adapterType,
-        chunks,
-        censorUsernameInLogs,
-        parserTick,
-        transcript,
-      });
-      next.set(run.id, transcript);
-    }
-    for (const runId of cache.keys()) {
-      if (!currentRunIds.has(runId)) {
-        cache.delete(runId);
+    const compute = async () => {
+      const next = new Map<string, TranscriptEntry[]>();
+
+      await Promise.all(normalizedRuns.map(async (run) => {
+        currentRunIds.add(run.id);
+        const chunks = chunksByRun.get(run.id) ?? EMPTY_RUN_LOG_CHUNKS;
+        const cached = cache.get(run.id);
+        if (
+          cached &&
+          cached.adapterType === run.adapterType &&
+          cached.chunks === chunks &&
+          cached.censorUsernameInLogs === censorUsernameInLogs &&
+          cached.parserTick === parserTick
+        ) {
+          next.set(run.id, cached.transcript);
+          return;
+        }
+
+        const adapter = getUIAdapter(run.adapterType);
+        const transcript = await buildTranscriptAsync(chunks, adapter, {
+          censorUsernameInLogs,
+        });
+        cache.set(run.id, {
+          adapterType: run.adapterType,
+          chunks,
+          censorUsernameInLogs,
+          parserTick,
+          transcript,
+        });
+        next.set(run.id, transcript);
+      }));
+
+      if (cancelled) return;
+      for (const runId of cache.keys()) {
+        if (!currentRunIds.has(runId)) {
+          cache.delete(runId);
+        }
       }
-    }
-    return next;
+      setTranscriptByRun(next);
+    };
+
+    void compute();
+    return () => {
+      cancelled = true;
+    };
   }, [chunksByRun, generalSettings?.censorUsernameInLogs, normalizedRuns, parserTick]);
 
   return {

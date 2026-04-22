@@ -7,11 +7,11 @@ export {
   syncExternalAdapters,
   onAdapterChange,
 } from "./registry";
-export { buildTranscript } from "./transcript";
+export { buildTranscript, buildTranscriptAsync } from "./transcript";
 export type {
   TranscriptEntry,
   StdoutLineParser,
   UIAdapterModule,
   AdapterConfigFieldsProps,
 } from "./types";
-export type { RunLogChunk } from "./transcript";
+export type { RunLogChunk, TranscriptBuildOptions } from "./transcript";

@@ -2,7 +2,7 @@ import { redactHomePathUserSegments, redactTranscriptEntryPaths } from "@papercl
 import type { TranscriptEntry, StdoutLineParser, TranscriptParserSource } from "./types";
 
 export type RunLogChunk = { ts: string; stream: "stdout" | "stderr" | "system"; chunk: string };
-type TranscriptBuildOptions = { censorUsernameInLogs?: boolean };
+export type TranscriptBuildOptions = { censorUsernameInLogs?: boolean };
 type RedactionOptions = { enabled: boolean };
 
 function resolveStdoutParser(source: StdoutLineParser | TranscriptParserSource) {
@@ -147,4 +147,15 @@ export function buildTranscript(
   reset?.();
 
   return entries;
+}
+
+export async function buildTranscriptAsync(
+  chunks: RunLogChunk[],
+  parserSource: StdoutLineParser | TranscriptParserSource,
+  opts?: TranscriptBuildOptions,
+): Promise<TranscriptEntry[]> {
+  if (typeof parserSource !== "function" && parserSource.buildTranscriptAsync) {
+    return parserSource.buildTranscriptAsync(chunks, opts);
+  }
+  return buildTranscript(chunks, parserSource, opts);
 }

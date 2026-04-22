@@ -103,14 +103,15 @@ export function getUIAdapter(type: string): UIAdapterModule {
           loadStarted = true;
           loadDynamicParser(type).then((parserModule) => {
             if (parserModule) {
-              registerUIAdapter({
-                type,
-                label: type,
-                parseStdoutLine: parserModule.parseStdoutLine,
-                createStdoutParser: parserModule.createStdoutParser,
-                ConfigFields: SchemaConfigFields,
-                buildAdapterConfig: buildSchemaAdapterConfig,
-              });
+                registerUIAdapter({
+                  type,
+                  label: type,
+                  parseStdoutLine: parserModule.parseStdoutLine,
+                  createStdoutParser: parserModule.createStdoutParser,
+                  buildTranscriptAsync: parserModule.buildTranscriptAsync,
+                  ConfigFields: SchemaConfigFields,
+                  buildAdapterConfig: buildSchemaAdapterConfig,
+                });
             }
           });
         }
@@ -191,6 +192,7 @@ export function syncExternalAdapters(
                   label,
                   parseStdoutLine: parserModule.parseStdoutLine,
                   createStdoutParser: parserModule.createStdoutParser,
+                  buildTranscriptAsync: parserModule.buildTranscriptAsync,
                   ConfigFields: originalBuiltin.ConfigFields,
                   buildAdapterConfig: originalBuiltin.buildAdapterConfig,
                 });
@@ -241,6 +243,7 @@ export function syncExternalAdapters(
                 label,
                 parseStdoutLine: parserModule.parseStdoutLine,
                 createStdoutParser: parserModule.createStdoutParser,
+                buildTranscriptAsync: parserModule.buildTranscriptAsync,
                 ConfigFields: existing?.ConfigFields ?? SchemaConfigFields,
                 buildAdapterConfig: existing?.buildAdapterConfig ?? buildSchemaAdapterConfig,
               });
