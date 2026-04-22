@@ -132,6 +132,19 @@ function registerRouteMocks(harness: ReturnType<typeof createRouteHarness>) {
         lastBundleHash: null,
       })),
     }),
+    issueReferenceService: () => ({
+      syncIssue: vi.fn(async () => undefined),
+      syncComment: vi.fn(async () => undefined),
+      syncDocument: vi.fn(async () => undefined),
+      deleteDocumentSource: vi.fn(async () => undefined),
+      listIssueReferenceSummary: vi.fn(async () => ({ outbound: [], inbound: [] })),
+      diffIssueReferenceSummary: vi.fn(() => ({
+        addedReferencedIssues: [],
+        removedReferencedIssues: [],
+        currentReferencedIssues: [],
+      })),
+      emptySummary: vi.fn(() => ({ outbound: [], inbound: [] })),
+    }),
     issueService: () => harness.issueService,
     logActivity: harness.logActivity,
     officeCoordinationService: () => ({

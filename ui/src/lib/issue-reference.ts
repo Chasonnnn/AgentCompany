@@ -1,3 +1,10 @@
+import {
+  buildIssueReferenceHref,
+  findIssueReferenceMatches,
+  normalizeIssueIdentifier,
+  parseIssueReferenceHref,
+} from "@paperclipai/shared";
+
 type MarkdownNode = {
   type: string;
   value?: string;
@@ -5,64 +12,23 @@ type MarkdownNode = {
   children?: MarkdownNode[];
 };
 
-const BARE_ISSUE_IDENTIFIER_RE = /^[A-Z][A-Z0-9]+-\d+$/i;
-const ISSUE_REFERENCE_TOKEN_RE = /https?:\/\/[^\s<>()]+|\b[A-Z][A-Z0-9]+-\d+\b/gi;
-
 export function parseIssuePathIdFromPath(pathOrUrl: string | null | undefined): string | null {
   if (!pathOrUrl) return null;
-  let pathname = pathOrUrl.trim();
-  if (!pathname) return null;
-
-  if (/^https?:\/\//i.test(pathname)) {
-    try {
-      pathname = new URL(pathname).pathname;
-    } catch {
-      return null;
-    }
-  }
-
-  const segments = pathname.split("/").filter(Boolean);
-  const issueIndex = segments.findIndex((segment) => segment === "issues");
-  if (issueIndex === -1 || issueIndex === segments.length - 1) return null;
-  return decodeURIComponent(segments[issueIndex + 1] ?? "");
+  return parseIssueReferenceHref(pathOrUrl)?.identifier ?? null;
 }
 
 export function parseIssueReferenceFromHref(href: string | null | undefined) {
   if (!href) return null;
-  const pathId = parseIssuePathIdFromPath(href);
-  if (pathId) {
-    return {
-      issuePathId: pathId,
-      href: `/issues/${encodeURIComponent(pathId)}`,
-    };
-  }
-
   const trimmed = href.trim();
-  if (!BARE_ISSUE_IDENTIFIER_RE.test(trimmed)) return null;
-  const normalized = trimmed.toUpperCase();
+  const identifier =
+    parseIssueReferenceHref(trimmed)?.identifier
+    ?? normalizeIssueIdentifier(trimmed)
+    ?? null;
+  if (!identifier) return null;
   return {
-    issuePathId: normalized,
-    href: `/issues/${encodeURIComponent(normalized)}`,
+    issuePathId: identifier,
+    href: buildIssueReferenceHref(identifier),
   };
-}
-
-function splitTrailingPunctuation(token: string) {
-  let core = token;
-  let trailing = "";
-
-  while (core.length > 0) {
-    const lastChar = core.at(-1);
-    if (!lastChar || !/[),.;!?]/.test(lastChar)) break;
-    if (lastChar === ")") {
-      const openCount = (core.match(/\(/g) ?? []).length;
-      const closeCount = (core.match(/\)/g) ?? []).length;
-      if (closeCount <= openCount) break;
-    }
-    trailing = `${lastChar}${trailing}`;
-    core = core.slice(0, -1);
-  }
-
-  return { core, trailing };
 }
 
 function createIssueLinkNode(value: string, href: string, childType: "text" | "inlineCode" = "text"): MarkdownNode {
@@ -74,32 +40,22 @@ function createIssueLinkNode(value: string, href: string, childType: "text" | "i
 }
 
 function linkifyIssueReferencesInText(value: string): MarkdownNode[] | null {
+  const matches = findIssueReferenceMatches(value);
+  if (matches.length === 0) return null;
+
   const nodes: MarkdownNode[] = [];
   let cursor = 0;
-  let matched = false;
 
-  for (const match of value.matchAll(ISSUE_REFERENCE_TOKEN_RE)) {
-    const raw = match[0];
-    if (!raw) continue;
-
-    const start = match.index ?? 0;
-    const end = start + raw.length;
-    const { core, trailing } = splitTrailingPunctuation(raw);
-    const issueRef = parseIssueReferenceFromHref(core);
-    if (!issueRef) continue;
-
-    matched = true;
+  for (const match of matches) {
+    const start = match.index;
+    const end = start + match.length;
     if (start > cursor) {
       nodes.push({ type: "text", value: value.slice(cursor, start) });
     }
-    nodes.push(createIssueLinkNode(core, issueRef.href));
-    if (trailing) {
-      nodes.push({ type: "text", value: trailing });
-    }
+    nodes.push(createIssueLinkNode(match.matchedText, buildIssueReferenceHref(match.identifier)));
     cursor = end;
   }
 
-  if (!matched) return null;
   if (cursor < value.length) {
     nodes.push({ type: "text", value: value.slice(cursor) });
   }

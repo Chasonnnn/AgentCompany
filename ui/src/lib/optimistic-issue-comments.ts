@@ -82,6 +82,32 @@ export function isQueuedIssueComment(params: {
   return toTimestamp(params.comment.createdAt) >= toTimestamp(params.activeRunStartedAt);
 }
 
+export function applyLocalQueuedIssueCommentState<
+  T extends {
+    queueState?: "queued";
+    queueTargetRunId?: string | null;
+  },
+>(
+  comment: T,
+  params: {
+    queuedTargetRunId?: string | null;
+    targetRunIsLive: boolean;
+    runningRunId?: string | null;
+  },
+): T {
+  const queuedTargetRunId =
+    typeof params.queuedTargetRunId === "string" && params.queuedTargetRunId.trim().length > 0
+      ? params.queuedTargetRunId
+      : null;
+  if (!queuedTargetRunId || !params.targetRunIsLive) return comment;
+  if (comment.queueState === "queued" && comment.queueTargetRunId === queuedTargetRunId) return comment;
+  return {
+    ...comment,
+    queueState: "queued" as const,
+    queueTargetRunId: queuedTargetRunId,
+  };
+}
+
 export function mergeIssueComments(
   comments: IssueComment[] | undefined,
   optimisticComments: OptimisticIssueComment[],

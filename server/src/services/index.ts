@@ -19,6 +19,7 @@ export {
   clampIssueListLimit,
   type IssueFilters,
 } from "./issues.js";
+export { issueReferenceService } from "./issue-references.js";
 export { issueContinuityService } from "./issue-continuity.js";
 export { issueDecisionQuestionService } from "./issue-decision-questions.js";
 export { issueApprovalService } from "./issue-approvals.js";
