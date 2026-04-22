@@ -14,6 +14,10 @@ import { createStoredZipArchive } from "./helpers/zip.js";
 
 const execFileAsync = promisify(execFile);
 type ServerProcess = ReturnType<typeof spawn>;
+type ServerOutput = { stdout: string[]; stderr: string[] };
+type EnsureServerAvailable = (() => Promise<void>) | null;
+
+let ensureServerAvailableForCliE2E: EnsureServerAvailable = null;
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -206,31 +210,57 @@ async function stopServerProcess(child: ServerProcess | null) {
 }
 
 async function api<T>(baseUrl: string, pathname: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${baseUrl}${pathname}`, init);
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`Request failed ${res.status} ${pathname}: ${text}`);
+  const requestOnce = async () => {
+    const res = await fetch(`${baseUrl}${pathname}`, init);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Request failed ${res.status} ${pathname}: ${text}`);
+    }
+    return text ? JSON.parse(text) as T : (null as T);
+  };
+
+  try {
+    return await requestOnce();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!ensureServerAvailableForCliE2E || !/fetch failed|ECONNREFUSED/i.test(message)) {
+      throw error;
+    }
+    await ensureServerAvailableForCliE2E();
+    return await requestOnce();
   }
-  return text ? JSON.parse(text) as T : (null as T);
 }
 
 async function runCliJson<T>(args: string[], opts: { apiBase: string; configPath: string }) {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-  const result = await execFileAsync(
-    "pnpm",
-    ["--silent", "paperclipai", ...args, "--api-base", opts.apiBase, "--config", opts.configPath, "--json"],
-    {
-      cwd: repoRoot,
-      env: createCliEnv(),
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  );
-  const stdout = result.stdout.trim();
-  const jsonStart = stdout.search(/[\[{]/);
-  if (jsonStart === -1) {
-    throw new Error(`CLI did not emit JSON.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  const runOnce = async () => {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const result = await execFileAsync(
+      "pnpm",
+      ["--silent", "paperclipai", ...args, "--api-base", opts.apiBase, "--config", opts.configPath, "--json"],
+      {
+        cwd: repoRoot,
+        env: createCliEnv(),
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+    const stdout = result.stdout.trim();
+    const jsonStart = stdout.search(/[\[{]/);
+    if (jsonStart === -1) {
+      throw new Error(`CLI did not emit JSON.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    }
+    return JSON.parse(stdout.slice(jsonStart)) as T;
+  };
+
+  try {
+    return await runOnce();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!ensureServerAvailableForCliE2E || !/Could not reach the Paperclip API|fetch failed|ECONNREFUSED/i.test(message)) {
+      throw error;
+    }
+    await ensureServerAvailableForCliE2E();
+    return await runOnce();
   }
-  return JSON.parse(stdout.slice(jsonStart)) as T;
 }
 
 async function waitForServer(
@@ -267,7 +297,52 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
   let exportDir = "";
   let apiBase = "";
   let serverProcess: ServerProcess | null = null;
+  let serverOutput: ServerOutput = { stdout: [], stderr: [] };
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  async function startServer() {
+    if (!tempDb) {
+      throw new Error("Embedded Postgres test database was not initialized");
+    }
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const tsxCliPath = path.join(repoRoot, "cli", "node_modules", "tsx", "dist", "cli.mjs");
+    const serverEntryPath = path.join(repoRoot, "server", "src", "index.ts");
+    serverOutput = { stdout: [], stderr: [] };
+    const child = spawn(
+      process.execPath,
+      [tsxCliPath, serverEntryPath],
+      {
+        cwd: repoRoot,
+        env: createServerEnv(configPath, Number(new URL(apiBase).port), tempDb.connectionString),
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    serverProcess = child;
+    child.stdout?.on("data", (chunk) => {
+      serverOutput.stdout.push(String(chunk));
+    });
+    child.stderr?.on("data", (chunk) => {
+      serverOutput.stderr.push(String(chunk));
+    });
+
+    await waitForServer(apiBase, child, serverOutput);
+  }
+
+  async function ensureServerAvailable() {
+    const healthUrl = `${apiBase}/api/health`;
+    if (serverProcess && serverProcess.exitCode === null) {
+      try {
+        const res = await fetch(healthUrl);
+        if (res.ok) return;
+      } catch {
+        // Fall through to restart.
+      }
+    }
+
+    await stopServerProcess(serverProcess);
+    await startServer();
+  }
 
   beforeAll(async () => {
     tempRoot = mkdtempSync(path.join(os.tmpdir(), "paperclip-company-cli-e2e-"));
@@ -279,33 +354,12 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     const port = await getAvailablePort();
     writeTestConfig(configPath, tempRoot, port, tempDb.connectionString);
     apiBase = `http://127.0.0.1:${port}`;
-
-    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-    const tsxCliPath = path.join(repoRoot, "cli", "node_modules", "tsx", "dist", "cli.mjs");
-    const serverEntryPath = path.join(repoRoot, "server", "src", "index.ts");
-    const output = { stdout: [] as string[], stderr: [] as string[] };
-    const child = spawn(
-      process.execPath,
-      [tsxCliPath, serverEntryPath],
-      {
-        cwd: repoRoot,
-        env: createServerEnv(configPath, port, tempDb.connectionString),
-        detached: process.platform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    serverProcess = child;
-    child.stdout?.on("data", (chunk) => {
-      output.stdout.push(String(chunk));
-    });
-    child.stderr?.on("data", (chunk) => {
-      output.stderr.push(String(chunk));
-    });
-
-    await waitForServer(apiBase, child, output);
+    ensureServerAvailableForCliE2E = ensureServerAvailable;
+    await startServer();
   }, 60_000);
 
   afterAll(async () => {
+    ensureServerAvailableForCliE2E = null;
     await stopServerProcess(serverProcess);
     await tempDb?.cleanup();
     if (tempRoot) {
