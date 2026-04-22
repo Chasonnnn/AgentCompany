@@ -13,6 +13,7 @@ import type {
   IssueExecutionStateStatus,
   IssueOriginKind,
   IssuePriority,
+  IssueReferenceSourceKind,
   IssueSpecState,
   IssueStatus,
 } from "../constants.js";
@@ -130,6 +131,24 @@ export interface IssueRelation {
   relatedIssueId: string;
   type: "blocks";
   relatedIssue: IssueRelationIssueSummary;
+}
+
+export interface IssueReferenceSource {
+  kind: IssueReferenceSourceKind;
+  sourceRecordId: string | null;
+  label: string;
+  matchedText: string | null;
+}
+
+export interface IssueRelatedWorkItem {
+  issue: IssueRelationIssueSummary;
+  mentionCount: number;
+  sources: IssueReferenceSource[];
+}
+
+export interface IssueRelatedWorkSummary {
+  outbound: IssueRelatedWorkItem[];
+  inbound: IssueRelatedWorkItem[];
 }
 
 export interface IssueExecutionStagePrincipal {
@@ -409,6 +428,8 @@ export interface Issue {
   labels?: IssueLabel[];
   blockedBy?: IssueRelationIssueSummary[];
   blocks?: IssueRelationIssueSummary[];
+  relatedWork?: IssueRelatedWorkSummary;
+  referencedIssueIdentifiers?: string[];
   planDocument?: IssueDocument | null;
   documentSummaries?: IssueDocumentSummary[];
   legacyPlanDocument?: LegacyPlanDocument | null;

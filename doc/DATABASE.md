@@ -149,6 +149,10 @@ Recent V1 schema additions include:
 
 Current collaboration-model support also includes:
 
+- first-class issue reference persistence:
+  - `issue_reference_mentions`
+  - stores resolved issue-to-issue mentions extracted from issue titles, descriptions, comments, and issue documents
+  - supports backfill via `scripts/backfill-issue-reference-mentions.ts`
 - nullable `conference_rooms.kind`
   - `executive_staff`
   - `project_leadership`

@@ -88,6 +88,7 @@ export {
   PROJECT_RESERVED_DOCUMENT_KEYS,
   ISSUE_RESERVED_DOCUMENT_KEYS,
   TEAM_RESERVED_DOCUMENT_KEYS,
+  ISSUE_REFERENCE_SOURCE_KINDS,
   SHARED_SERVICE_ENGAGEMENT_STATUSES,
   SECRET_PROVIDERS,
   STORAGE_PROVIDERS,
@@ -166,6 +167,7 @@ export {
   type PluginIssueOriginKind,
   type IssueOriginKind,
   type IssueRelationType,
+  type IssueReferenceSourceKind,
   type IssueExecutionPolicyMode,
   type IssueExecutionStageType,
   type IssueExecutionStateStatus,
@@ -459,6 +461,9 @@ export type {
   IssueWorkProductReviewState,
   Issue,
   IssueAssigneeAdapterOverrides,
+  IssueReferenceSource,
+  IssueRelatedWorkItem,
+  IssueRelatedWorkSummary,
   IssueContinuityBundle,
   IssueContinuityDocumentSnapshot,
   IssuePlanApprovalSummary,
@@ -639,6 +644,16 @@ export type {
   QuotaWindow,
   ProviderQuotaResult,
 } from "./types/index.js";
+export {
+  ISSUE_REFERENCE_IDENTIFIER_RE,
+  buildIssueReferenceHref,
+  extractIssueReferenceIdentifiers,
+  extractIssueReferenceMatches,
+  findIssueReferenceMatches,
+  normalizeIssueIdentifier,
+  parseIssueReferenceHref,
+  type IssueReferenceMatch,
+} from "./issue-references.js";
 
 export {
   DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
