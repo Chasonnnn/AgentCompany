@@ -11,6 +11,11 @@ import {
   EVAL_SCORECARD_VERSION,
 } from "../evals.js";
 import type {
+  ComponentEvalAdapterType,
+  ComponentEvalExecutionStatus,
+  ComponentEvalRunRequest,
+  ComponentEvalRunResult,
+  ComponentEvalTraceSummary,
   EvalAcceptanceOracle,
   EvalBundle,
   EvalEnvironmentManifest,
@@ -360,3 +365,42 @@ export const evalSummaryIndexSchema = z.object({
   failingScenarios: z.array(evalSummaryScenarioEntrySchema),
   runs: z.array(evalRunListItemSchema),
 }) as z.ZodType<EvalSummaryIndex>;
+
+export const componentEvalAdapterTypeSchema = (
+  z.enum(["codex_local", "claude_local"])
+) as z.ZodType<ComponentEvalAdapterType>;
+
+export const componentEvalExecutionStatusSchema = z.enum([
+  "succeeded",
+  "failed",
+  "timed_out",
+  "blocked",
+  "invalid",
+]) as z.ZodType<ComponentEvalExecutionStatus>;
+
+export const componentEvalTraceSummarySchema = z.object({
+  eventKinds: z.array(trimmedString),
+  toolNames: z.array(trimmedString),
+  sessionId: nullableTrimmedString,
+  warnings: z.array(trimmedString),
+}) as z.ZodType<ComponentEvalTraceSummary>;
+
+export const componentEvalRunRequestSchema = z.object({
+  caseId: trimmedString,
+  adapterType: componentEvalAdapterTypeSchema,
+  prompt: trimmedString,
+  vars: z.record(z.string(), z.unknown()),
+  timeoutMs: z.number().int().positive().max(10 * 60 * 1000).optional(),
+}) as z.ZodType<ComponentEvalRunRequest>;
+
+export const componentEvalRunResultSchema = z.object({
+  executionStatus: componentEvalExecutionStatusSchema,
+  adapterType: componentEvalAdapterTypeSchema,
+  modelId: nullableTrimmedString,
+  finalText: z.string(),
+  durationMs: z.number().int().nonnegative(),
+  stderrExcerpt: nullableTrimmedString,
+  traceSummary: componentEvalTraceSummarySchema,
+  rawTranscript: z.array(z.unknown()).nullable(),
+  errorMessage: nullableTrimmedString,
+}) as z.ZodType<ComponentEvalRunResult>;

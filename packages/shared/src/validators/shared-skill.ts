@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   companySkillCompatibilitySchema,
   companySkillFileInventoryEntrySchema,
+  skillVerificationMetadataSchema,
   companySkillTrustLevelSchema,
   globalSkillCatalogSourceRootSchema,
 } from "./company-skill.js";
@@ -54,11 +55,23 @@ export const sharedSkillProposalEvidenceSchema = z.object({
   issueId: z.string().uuid().optional(),
   runId: z.string().uuid().optional(),
   note: z.string().optional(),
+  failureFingerprint: z.string().min(1).optional(),
+  reproductionSummary: z.string().min(1).optional(),
+});
+
+export const sharedSkillProposalVerificationResultsSchema = z.object({
+  passedUnitCommands: z.array(z.string().min(1)).default([]),
+  passedIntegrationCommands: z.array(z.string().min(1)).default([]),
+  passedPromptfooCaseIds: z.array(z.string().min(1)).default([]),
+  passedArchitectureScenarioIds: z.array(z.string().min(1)).default([]),
+  completedSmokeChecklist: z.array(z.string().min(1)).default([]),
 });
 
 export const sharedSkillProposalPayloadSchema = z.object({
   changes: z.array(sharedSkillProposalChangeSchema),
   evidence: sharedSkillProposalEvidenceSchema,
+  requiredVerification: skillVerificationMetadataSchema.nullable().optional(),
+  verificationResults: sharedSkillProposalVerificationResultsSchema.nullable().optional(),
   upstreamDecision: z.enum(["adopt_source", "preserve_local", "merge_required"]).optional(),
 });
 
@@ -149,11 +162,21 @@ export const sharedSkillProposalCreateSchema = z.object({
   baseSourceDigest: z.string().nullable(),
   changes: z.array(sharedSkillProposalChangeSchema),
   evidence: sharedSkillProposalEvidenceSchema,
+  requiredVerification: skillVerificationMetadataSchema.nullable().optional(),
+  verificationResults: sharedSkillProposalVerificationResultsSchema.nullable().optional(),
   upstreamDecision: z.enum(["adopt_source", "preserve_local", "merge_required"]).optional(),
 });
 
 export const sharedSkillProposalDecisionSchema = z.object({
   decisionNote: z.string().nullable().optional(),
+});
+
+export const sharedSkillProposalVerificationUpdateSchema = z.object({
+  passedUnitCommands: z.array(z.string().min(1)).optional(),
+  passedIntegrationCommands: z.array(z.string().min(1)).optional(),
+  passedPromptfooCaseIds: z.array(z.string().min(1)).optional(),
+  passedArchitectureScenarioIds: z.array(z.string().min(1)).optional(),
+  completedSmokeChecklist: z.array(z.string().min(1)).optional(),
 });
 
 export const sharedSkillProposalCommentCreateSchema = z.object({
@@ -164,3 +187,4 @@ export type SharedSkillMirrorSyncRequest = z.infer<typeof sharedSkillMirrorSyncR
 export type SharedSkillProposalCreate = z.infer<typeof sharedSkillProposalCreateSchema>;
 export type SharedSkillProposalDecision = z.infer<typeof sharedSkillProposalDecisionSchema>;
 export type SharedSkillProposalCommentCreate = z.infer<typeof sharedSkillProposalCommentCreateSchema>;
+export type SharedSkillProposalVerificationUpdate = z.infer<typeof sharedSkillProposalVerificationUpdateSchema>;

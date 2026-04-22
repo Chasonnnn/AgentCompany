@@ -1,6 +1,7 @@
 import type {
   CompanySkillCompatibility,
   CompanySkillFileInventoryEntry,
+  SkillVerificationMetadata,
   CompanySkillTrustLevel,
   GlobalSkillCatalogSourceRoot,
 } from "./company-skill.js";
@@ -52,11 +53,23 @@ export interface SharedSkillProposalEvidence {
   issueId?: string;
   runId?: string;
   note?: string;
+  failureFingerprint?: string;
+  reproductionSummary?: string;
+}
+
+export interface SharedSkillProposalVerificationResults {
+  passedUnitCommands: string[];
+  passedIntegrationCommands: string[];
+  passedPromptfooCaseIds: string[];
+  passedArchitectureScenarioIds: string[];
+  completedSmokeChecklist: string[];
 }
 
 export interface SharedSkillProposalPayload {
   changes: SharedSkillProposalChange[];
   evidence: SharedSkillProposalEvidence;
+  requiredVerification?: SkillVerificationMetadata | null;
+  verificationResults?: SharedSkillProposalVerificationResults | null;
   upstreamDecision?: "adopt_source" | "preserve_local" | "merge_required";
 }
 
@@ -147,11 +160,21 @@ export interface SharedSkillProposalCreateRequest {
   baseSourceDigest: string | null;
   changes: SharedSkillProposalChange[];
   evidence: SharedSkillProposalEvidence;
+  requiredVerification?: SkillVerificationMetadata | null;
+  verificationResults?: SharedSkillProposalVerificationResults | null;
   upstreamDecision?: "adopt_source" | "preserve_local" | "merge_required";
 }
 
 export interface SharedSkillProposalDecisionRequest {
   decisionNote?: string | null;
+}
+
+export interface SharedSkillProposalVerificationUpdateRequest {
+  passedUnitCommands?: string[];
+  passedIntegrationCommands?: string[];
+  passedPromptfooCaseIds?: string[];
+  passedArchitectureScenarioIds?: string[];
+  completedSmokeChecklist?: string[];
 }
 
 export interface SharedSkillProposalCommentCreateRequest {

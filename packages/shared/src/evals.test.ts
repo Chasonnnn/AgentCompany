@@ -8,6 +8,8 @@ import {
   validateEvalTraceCompleteness,
 } from "./evals.js";
 import {
+  componentEvalRunRequestSchema,
+  componentEvalRunResultSchema,
   evalRunArtifactSchema,
   evalSummaryIndexSchema,
 } from "./validators/evals.js";
@@ -321,5 +323,42 @@ describe("architecture eval shared contracts", () => {
     expect(new Set(parsed.runs.map((run) => run.runId))).toEqual(new Set(["run-1", "run-2"]));
     expect(parsed.runs.every((run) => run.status === "passed")).toBe(true);
     expect(summary.dimensions[0]?.totalRuns).toBe(2);
+  });
+
+  it("parses component eval requests", () => {
+    const parsed = componentEvalRunRequestSchema.parse({
+      caseId: "reliability.deterministic_first",
+      adapterType: "codex_local",
+      prompt: "Respond with hello.",
+      vars: {
+        agentId: "agent-1",
+      },
+      timeoutMs: 30_000,
+    });
+
+    expect(parsed.adapterType).toBe("codex_local");
+    expect(parsed.timeoutMs).toBe(30_000);
+  });
+
+  it("parses component eval results", () => {
+    const parsed = componentEvalRunResultSchema.parse({
+      executionStatus: "succeeded",
+      adapterType: "claude_local",
+      modelId: "claude-sonnet",
+      finalText: "Run context-now first.",
+      durationMs: 1250,
+      stderrExcerpt: null,
+      traceSummary: {
+        eventKinds: ["assistant", "result"],
+        toolNames: [],
+        sessionId: "session-1",
+        warnings: [],
+      },
+      rawTranscript: [{ type: "assistant", text: "Run context-now first." }],
+      errorMessage: null,
+    });
+
+    expect(parsed.executionStatus).toBe("succeeded");
+    expect(parsed.traceSummary.sessionId).toBe("session-1");
   });
 });

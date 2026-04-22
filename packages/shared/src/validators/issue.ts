@@ -420,6 +420,15 @@ export const reviewReturnIssueContinuitySchema = z.object({
   findings: z.array(issueReviewFindingInputSchema).min(1),
 });
 
+export const promoteIssueReviewFindingSkillSchema = z.object({
+  companySkillId: z.string().uuid().optional(),
+  sharedSkillId: z.string().uuid().optional(),
+  sourceRunId: z.string().uuid().optional().nullable(),
+  reproductionSummary: z.string().trim().min(1).optional().nullable(),
+}).refine((value) => Boolean(value.companySkillId || value.sharedSkillId), {
+  message: "companySkillId or sharedSkillId is required",
+});
+
 export const progressCheckpointIssueContinuitySchema = z.object({
   summary: z.string().trim().min(1).optional().nullable(),
   currentState: z.string().trim().min(1),
@@ -607,6 +616,7 @@ export type RestoreIssueDocumentRevision = z.infer<typeof restoreIssueDocumentRe
 export type PrepareIssueContinuity = z.infer<typeof prepareIssueContinuitySchema>;
 export type HandoffIssueContinuity = z.infer<typeof handoffIssueContinuitySchema>;
 export type ReviewReturnIssueContinuity = z.infer<typeof reviewReturnIssueContinuitySchema>;
+export type PromoteIssueReviewFindingSkill = z.infer<typeof promoteIssueReviewFindingSkillSchema>;
 export type ReviewResubmitIssueContinuity = z.infer<typeof reviewResubmitIssueContinuitySchema>;
 export type ProgressCheckpointIssueContinuity = z.infer<typeof progressCheckpointIssueContinuitySchema>;
 export type HandoffRepairIssueContinuity = z.infer<typeof handoffRepairIssueContinuitySchema>;

@@ -1223,6 +1223,11 @@ export {
   evalSummaryScenarioEntrySchema,
   evalRunListItemSchema,
   evalSummaryIndexSchema,
+  componentEvalAdapterTypeSchema,
+  componentEvalExecutionStatusSchema,
+  componentEvalTraceSummarySchema,
+  componentEvalRunRequestSchema,
+  componentEvalRunResultSchema,
 } from "./validators/evals.js";
 export {
   conferenceContextSchema,
@@ -1282,6 +1287,11 @@ export {
 } from "./operating-model.js";
 
 export type {
+  ComponentEvalAdapterType,
+  ComponentEvalExecutionStatus,
+  ComponentEvalTraceSummary,
+  ComponentEvalRunRequest,
+  ComponentEvalRunResult,
   EvalFairnessConstraints,
   EvalScenarioOverlayFile,
   EvalScenarioOverlay,
@@ -1392,3 +1402,47 @@ export {
   type SecretsLocalEncryptedConfig,
   type ConfigMeta,
 } from "./config-schema.js";
+
+export type {
+  CompanySkillHardeningState,
+  CompanySkillLinkedIssueSummary,
+  CompanySkillLinkedProposalSummary,
+  CompanySkillReliabilityAudit,
+  CompanySkillReliabilityAuditSkill,
+  CompanySkillReliabilityFinding,
+  CompanySkillReliabilityRepairApplyRequest,
+  CompanySkillReliabilityRepairPreview,
+  CompanySkillReliabilityRepairResult,
+  CompanySkillReliabilityStatus,
+  CompanySkillReliabilitySweepMode,
+  CompanySkillReliabilitySweepRequest,
+  CompanySkillReliabilitySweepResult,
+  IssueReviewFindingSkillPromotion,
+  SharedSkillProposalVerificationResults,
+  SharedSkillProposalVerificationUpdateRequest,
+  SkillReliabilityMetadata,
+  SkillVerificationMetadata,
+} from "./types/index.js";
+
+export {
+  companySkillHardeningStateSchema,
+  companySkillLinkedIssueSummarySchema,
+  companySkillLinkedProposalSummarySchema,
+  companySkillReliabilityAuditSchema,
+  companySkillReliabilityAuditSkillSchema,
+  companySkillReliabilityFindingSchema,
+  companySkillReliabilityRepairApplyRequestSchema,
+  companySkillReliabilityRepairPreviewSchema,
+  companySkillReliabilityRepairResultSchema,
+  companySkillReliabilityStatusSchema,
+  companySkillReliabilitySweepModeSchema,
+  companySkillReliabilitySweepRequestSchema,
+  companySkillReliabilitySweepResultSchema,
+  promoteIssueReviewFindingSkillSchema,
+  sharedSkillProposalVerificationResultsSchema,
+  sharedSkillProposalVerificationUpdateSchema,
+  skillReliabilityMetadataSchema,
+  skillVerificationMetadataSchema,
+  type PromoteIssueReviewFindingSkill,
+  type SharedSkillProposalVerificationUpdate,
+} from "./validators/index.js";

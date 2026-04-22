@@ -12,6 +12,20 @@ export const companySkillCoverageStatusSchema = z.enum([
   "nonrepairable_gap",
   "customized",
 ]);
+export const companySkillHardeningStateSchema = z.enum([
+  "scaffolded",
+  "drafted",
+  "proposal_open",
+  "verification_pending",
+  "ready_for_approval",
+  "complete",
+]);
+export const companySkillReliabilityStatusSchema = z.enum([
+  "healthy",
+  "repairable_gap",
+  "needs_review",
+  "proposal_stale",
+]);
 
 export const companySkillFileInventoryEntrySchema = z.object({
   path: z.string().min(1),
@@ -24,6 +38,38 @@ export const companySkillCompatibilityMetadataSchema = z.object({
   minAdapterVersion: z.string().nullable(),
   requiredTools: z.array(z.string().min(1)).default([]),
   requiredCapabilities: z.array(z.string().min(1)).default([]),
+});
+
+export const skillVerificationMetadataSchema = z.object({
+  unitCommands: z.array(z.string().min(1)).default([]),
+  integrationCommands: z.array(z.string().min(1)).default([]),
+  promptfooCaseIds: z.array(z.string().min(1)).default([]),
+  architectureScenarioIds: z.array(z.string().min(1)).default([]),
+  smokeChecklist: z.array(z.string().min(1)).default([]),
+});
+
+export const skillReliabilityMetadataSchema = z.object({
+  activationHints: z.array(z.string().min(1)).default([]),
+  deterministicEntrypoints: z.array(z.string().min(1)).default([]),
+  verification: skillVerificationMetadataSchema.nullable().optional().default(null),
+  overlapDomains: z.array(z.string().min(1)).default([]),
+  disambiguationHints: z.array(z.string().min(1)).default([]),
+});
+
+export const companySkillLinkedIssueSummarySchema = z.object({
+  id: z.string().uuid(),
+  identifier: z.string().nullable(),
+  title: z.string().min(1),
+  status: z.string().min(1),
+  priority: z.string().min(1),
+});
+
+export const companySkillLinkedProposalSummarySchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(["self_improvement", "upstream_adoption", "merge_review"]),
+  status: z.enum(["pending", "revision_requested", "approved", "rejected", "superseded"]),
+  summary: z.string().min(1),
+  createdAt: z.string().min(1),
 });
 
 export const companySkillSchema = z.object({
@@ -97,6 +143,11 @@ export const companySkillDetailSchema = companySkillSchema.extend({
   sourceLabel: z.string().nullable(),
   sourceBadge: companySkillSourceBadgeSchema,
   sourcePath: z.string().nullable(),
+  reliabilityMetadata: skillReliabilityMetadataSchema.nullable(),
+  reliabilityParseWarnings: z.array(z.string()).default([]),
+  linkedHardeningIssue: companySkillLinkedIssueSummarySchema.nullable(),
+  linkedProposal: companySkillLinkedProposalSummarySchema.nullable(),
+  hardeningState: companySkillHardeningStateSchema.nullable(),
 });
 
 export const companySkillUpdateStatusSchema = z.object({
@@ -286,6 +337,76 @@ export const companySkillCoverageRepairResultSchema = z.object({
   audit: companySkillCoverageAuditSchema,
 });
 
+export const companySkillReliabilityFindingSchema = z.object({
+  code: z.string().min(1),
+  severity: z.enum(["critical", "high", "medium", "low"]),
+  message: z.string().min(1),
+  repairable: z.boolean(),
+  references: z.array(z.string().min(1)).default([]),
+});
+
+export const companySkillReliabilityAuditSkillSchema = z.object({
+  skillId: z.string().uuid(),
+  sharedSkillId: z.string().uuid().nullable(),
+  key: z.string().min(1),
+  slug: z.string().min(1),
+  name: z.string().min(1),
+  sourceType: companySkillSourceTypeSchema,
+  attachedAgentCount: z.number().int().nonnegative(),
+  managedLocalAgentCount: z.number().int().nonnegative(),
+  externalOnlyUsage: z.boolean(),
+  reliabilityMetadata: skillReliabilityMetadataSchema.nullable(),
+  reliabilityParseWarnings: z.array(z.string()).default([]),
+  status: companySkillReliabilityStatusSchema,
+  findings: z.array(companySkillReliabilityFindingSchema).default([]),
+  linkedHardeningIssue: companySkillLinkedIssueSummarySchema.nullable(),
+  linkedProposal: companySkillLinkedProposalSummarySchema.nullable(),
+  hardeningState: companySkillHardeningStateSchema.nullable(),
+});
+
+export const companySkillReliabilityAuditSchema = z.object({
+  companyId: z.string().uuid(),
+  auditedSkillCount: z.number().int().nonnegative(),
+  healthyCount: z.number().int().nonnegative(),
+  repairableGapCount: z.number().int().nonnegative(),
+  needsReviewCount: z.number().int().nonnegative(),
+  proposalStaleCount: z.number().int().nonnegative(),
+  managedAdapterTypes: z.array(z.string().min(1)).default([]),
+  skills: z.array(companySkillReliabilityAuditSkillSchema).default([]),
+});
+
+export const companySkillReliabilityRepairPreviewSchema = companySkillReliabilityAuditSchema.extend({
+  changedSkillCount: z.number().int().nonnegative(),
+  selectionFingerprint: z.string().min(1),
+});
+
+export const companySkillReliabilityRepairApplyRequestSchema = z.object({
+  selectionFingerprint: z.string().min(1),
+});
+
+export const companySkillReliabilityRepairResultSchema = z.object({
+  companyId: z.string().uuid(),
+  changedSkillCount: z.number().int().nonnegative(),
+  createdIssueIds: z.array(z.string().uuid()).default([]),
+  refreshedIssueIds: z.array(z.string().uuid()).default([]),
+  selectionFingerprint: z.string().min(1),
+  audit: companySkillReliabilityAuditSchema,
+});
+
+export const companySkillReliabilitySweepModeSchema = z.enum(["report", "report_and_refresh"]);
+
+export const companySkillReliabilitySweepRequestSchema = z.object({
+  mode: companySkillReliabilitySweepModeSchema.default("report"),
+});
+
+export const companySkillReliabilitySweepResultSchema = z.object({
+  companyId: z.string().uuid(),
+  mode: companySkillReliabilitySweepModeSchema,
+  createdIssueIds: z.array(z.string().uuid()).default([]),
+  refreshedIssueIds: z.array(z.string().uuid()).default([]),
+  audit: companySkillReliabilityAuditSchema,
+});
+
 export const companySkillProjectScanRequestSchema = z.object({
   projectIds: z.array(z.string().uuid()).optional(),
   workspaceIds: z.array(z.string().uuid()).optional(),
@@ -353,6 +474,8 @@ export type CompanySkillInstallGlobalAllResult = z.infer<typeof companySkillInst
 export type BulkSkillGrantRequest = z.infer<typeof bulkSkillGrantRequestSchema>;
 export type BulkSkillGrantApplyRequest = z.infer<typeof bulkSkillGrantApplyRequestSchema>;
 export type CompanySkillCoverageRepairApplyRequest = z.infer<typeof companySkillCoverageRepairApplyRequestSchema>;
+export type CompanySkillReliabilityRepairApplyRequest = z.infer<typeof companySkillReliabilityRepairApplyRequestSchema>;
 export type CompanySkillProjectScan = z.infer<typeof companySkillProjectScanRequestSchema>;
 export type CompanySkillCreate = z.infer<typeof companySkillCreateSchema>;
 export type CompanySkillFileUpdate = z.infer<typeof companySkillFileUpdateSchema>;
+export type CompanySkillReliabilitySweepRequest = z.infer<typeof companySkillReliabilitySweepRequestSchema>;

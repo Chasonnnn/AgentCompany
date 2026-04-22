@@ -126,6 +126,20 @@ export type IssueReviewFindingsOutcome = "changes_requested" | "approved_with_no
 export type IssueReviewFindingsResolutionState = "open" | "addressed";
 export type IssueReviewFindingSeverity = "critical" | "high" | "medium" | "low";
 
+export interface IssueReviewFindingSkillPromotion {
+  hardeningIssueId?: string | null;
+  hardeningIssueIdentifier?: string | null;
+  companySkillId?: string | null;
+  companySkillKey?: string | null;
+  sharedSkillId?: string | null;
+  sharedSkillProposalId?: string | null;
+  sharedSkillProposalStatus?: "pending" | "revision_requested" | "approved" | "rejected" | "superseded" | null;
+  sourceRunId?: string | null;
+  failureFingerprint?: string | null;
+  promotedAt?: string | null;
+  promotedBy?: string | null;
+}
+
 export interface IssueProgressCheckpoint {
   at?: string | null;
   completed: string[];
@@ -170,12 +184,14 @@ export interface IssueBranchCharter {
 }
 
 export interface IssueReviewFinding {
+  findingId?: string | null;
   severity: IssueReviewFindingSeverity;
   category: string;
   title: string;
   detail: string;
   requiredAction: string;
   evidence: string[];
+  skillPromotion?: IssueReviewFindingSkillPromotion | null;
 }
 
 export interface IssueReviewFindingsDocument {

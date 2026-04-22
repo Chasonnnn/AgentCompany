@@ -1,4 +1,5 @@
 import type { AgentDepartmentKey, AgentRole } from "../constants.js";
+import type { SharedSkillProposalKind, SharedSkillProposalStatus } from "./shared-skill.js";
 
 export type CompanySkillSourceType = "local_path" | "github" | "url" | "catalog" | "skills_sh" | "shared_mirror";
 
@@ -30,6 +31,46 @@ export interface CompanySkillCompatibilityMetadata {
   minAdapterVersion: string | null;
   requiredTools: string[];
   requiredCapabilities: string[];
+}
+
+export interface SkillVerificationMetadata {
+  unitCommands: string[];
+  integrationCommands: string[];
+  promptfooCaseIds: string[];
+  architectureScenarioIds: string[];
+  smokeChecklist: string[];
+}
+
+export interface SkillReliabilityMetadata {
+  activationHints: string[];
+  deterministicEntrypoints: string[];
+  verification: SkillVerificationMetadata | null;
+  overlapDomains: string[];
+  disambiguationHints: string[];
+}
+
+export type CompanySkillHardeningState =
+  | "scaffolded"
+  | "drafted"
+  | "proposal_open"
+  | "verification_pending"
+  | "ready_for_approval"
+  | "complete";
+
+export interface CompanySkillLinkedIssueSummary {
+  id: string;
+  identifier: string | null;
+  title: string;
+  status: string;
+  priority: string;
+}
+
+export interface CompanySkillLinkedProposalSummary {
+  id: string;
+  kind: SharedSkillProposalKind;
+  status: SharedSkillProposalStatus;
+  summary: string;
+  createdAt: string;
 }
 
 export interface CompanySkill {
@@ -124,6 +165,11 @@ export interface CompanySkillDetail extends CompanySkill {
   sourceLabel: string | null;
   sourceBadge: CompanySkillSourceBadge;
   sourcePath: string | null;
+  reliabilityMetadata: SkillReliabilityMetadata | null;
+  reliabilityParseWarnings: string[];
+  linkedHardeningIssue: CompanySkillLinkedIssueSummary | null;
+  linkedProposal: CompanySkillLinkedProposalSummary | null;
+  hardeningState: CompanySkillHardeningState | null;
 }
 
 export interface CompanySkillUpdateStatus {
@@ -307,6 +353,82 @@ export interface CompanySkillCoverageRepairResult {
   rollbackErrors: string[];
   selectionFingerprint: string;
   audit: CompanySkillCoverageAudit;
+}
+
+export type CompanySkillReliabilityStatus =
+  | "healthy"
+  | "repairable_gap"
+  | "needs_review"
+  | "proposal_stale";
+
+export interface CompanySkillReliabilityFinding {
+  code: string;
+  severity: "critical" | "high" | "medium" | "low";
+  message: string;
+  repairable: boolean;
+  references: string[];
+}
+
+export interface CompanySkillReliabilityAuditSkill {
+  skillId: string;
+  sharedSkillId: string | null;
+  key: string;
+  slug: string;
+  name: string;
+  sourceType: CompanySkillSourceType;
+  attachedAgentCount: number;
+  managedLocalAgentCount: number;
+  externalOnlyUsage: boolean;
+  reliabilityMetadata: SkillReliabilityMetadata | null;
+  reliabilityParseWarnings: string[];
+  status: CompanySkillReliabilityStatus;
+  findings: CompanySkillReliabilityFinding[];
+  linkedHardeningIssue: CompanySkillLinkedIssueSummary | null;
+  linkedProposal: CompanySkillLinkedProposalSummary | null;
+  hardeningState: CompanySkillHardeningState | null;
+}
+
+export interface CompanySkillReliabilityAudit {
+  companyId: string;
+  auditedSkillCount: number;
+  healthyCount: number;
+  repairableGapCount: number;
+  needsReviewCount: number;
+  proposalStaleCount: number;
+  managedAdapterTypes: string[];
+  skills: CompanySkillReliabilityAuditSkill[];
+}
+
+export interface CompanySkillReliabilityRepairPreview extends CompanySkillReliabilityAudit {
+  changedSkillCount: number;
+  selectionFingerprint: string;
+}
+
+export interface CompanySkillReliabilityRepairApplyRequest {
+  selectionFingerprint: string;
+}
+
+export interface CompanySkillReliabilityRepairResult {
+  companyId: string;
+  changedSkillCount: number;
+  createdIssueIds: string[];
+  refreshedIssueIds: string[];
+  selectionFingerprint: string;
+  audit: CompanySkillReliabilityAudit;
+}
+
+export type CompanySkillReliabilitySweepMode = "report" | "report_and_refresh";
+
+export interface CompanySkillReliabilitySweepRequest {
+  mode: CompanySkillReliabilitySweepMode;
+}
+
+export interface CompanySkillReliabilitySweepResult {
+  companyId: string;
+  mode: CompanySkillReliabilitySweepMode;
+  createdIssueIds: string[];
+  refreshedIssueIds: string[];
+  audit: CompanySkillReliabilityAudit;
 }
 
 export interface CompanySkillImportResult {

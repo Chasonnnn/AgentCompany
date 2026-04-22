@@ -333,3 +333,39 @@ export interface EvalSummaryIndex {
   failingScenarios: EvalSummaryScenarioEntry[];
   runs: EvalRunListItem[];
 }
+
+export type ComponentEvalAdapterType = "codex_local" | "claude_local";
+
+export type ComponentEvalExecutionStatus =
+  | "succeeded"
+  | "failed"
+  | "timed_out"
+  | "blocked"
+  | "invalid";
+
+export interface ComponentEvalTraceSummary {
+  eventKinds: string[];
+  toolNames: string[];
+  sessionId: string | null;
+  warnings: string[];
+}
+
+export interface ComponentEvalRunRequest {
+  caseId: string;
+  adapterType: ComponentEvalAdapterType;
+  prompt: string;
+  vars: Record<string, unknown>;
+  timeoutMs?: number;
+}
+
+export interface ComponentEvalRunResult {
+  executionStatus: ComponentEvalExecutionStatus;
+  adapterType: ComponentEvalAdapterType;
+  modelId: string | null;
+  finalText: string;
+  durationMs: number;
+  stderrExcerpt: string | null;
+  traceSummary: ComponentEvalTraceSummary;
+  rawTranscript: unknown[] | null;
+  errorMessage: string | null;
+}

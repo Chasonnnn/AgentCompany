@@ -312,19 +312,49 @@ export const issueBranchCharterSchema = z.object({
 })) as z.ZodType<IssueBranchCharter>;
 
 export const issueReviewFindingSchema = z.object({
+  findingId: z.string().trim().min(1).nullable().optional(),
   severity: z.enum(["critical", "high", "medium", "low"]),
   category: z.string().trim().min(1),
   title: z.string().trim().min(1),
   detail: z.string().trim().min(1),
   requiredAction: z.string().trim().min(1),
   evidence: z.array(z.string()).optional().default([]),
+  skillPromotion: z.object({
+    hardeningIssueId: z.string().uuid().nullable().optional(),
+    hardeningIssueIdentifier: z.string().trim().min(1).nullable().optional(),
+    companySkillId: z.string().uuid().nullable().optional(),
+    companySkillKey: z.string().trim().min(1).nullable().optional(),
+    sharedSkillId: z.string().uuid().nullable().optional(),
+    sharedSkillProposalId: z.string().uuid().nullable().optional(),
+    sharedSkillProposalStatus: z.enum(["pending", "revision_requested", "approved", "rejected", "superseded"]).nullable().optional(),
+    sourceRunId: z.string().uuid().nullable().optional(),
+    failureFingerprint: z.string().trim().min(1).nullable().optional(),
+    promotedAt: z.string().trim().min(1).nullable().optional(),
+    promotedBy: z.string().trim().min(1).nullable().optional(),
+  }).nullable().optional(),
 }).transform((value) => ({
+  findingId: normalizeNullableText(value.findingId),
   severity: value.severity,
   category: value.category.trim(),
   title: value.title.trim(),
   detail: value.detail.trim(),
   requiredAction: value.requiredAction.trim(),
   evidence: normalizeStringList(value.evidence),
+  skillPromotion: value.skillPromotion
+    ? {
+      hardeningIssueId: value.skillPromotion.hardeningIssueId ?? null,
+      hardeningIssueIdentifier: normalizeNullableText(value.skillPromotion.hardeningIssueIdentifier),
+      companySkillId: value.skillPromotion.companySkillId ?? null,
+      companySkillKey: normalizeNullableText(value.skillPromotion.companySkillKey),
+      sharedSkillId: value.skillPromotion.sharedSkillId ?? null,
+      sharedSkillProposalId: value.skillPromotion.sharedSkillProposalId ?? null,
+      sharedSkillProposalStatus: value.skillPromotion.sharedSkillProposalStatus ?? null,
+      sourceRunId: value.skillPromotion.sourceRunId ?? null,
+      failureFingerprint: normalizeNullableText(value.skillPromotion.failureFingerprint),
+      promotedAt: normalizeNullableText(value.skillPromotion.promotedAt),
+      promotedBy: normalizeNullableText(value.skillPromotion.promotedBy),
+    }
+    : null,
 })) as z.ZodType<IssueReviewFinding>;
 
 export const issueReviewFindingsDocumentSchema = z.object({
