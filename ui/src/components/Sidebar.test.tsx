@@ -150,4 +150,33 @@ describe("Sidebar", () => {
       root.unmount();
     });
   });
+
+  it("counts unique live agents in the dashboard badge", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([
+      { id: "run-1", agentId: "agent-1", status: "running" },
+      { id: "run-2", agentId: "agent-1", status: "queued" },
+    ]);
+
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Sidebar />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+
+    expect(container.textContent).toContain("1 live");
+    expect(container.textContent).not.toContain("2 live");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
 });
