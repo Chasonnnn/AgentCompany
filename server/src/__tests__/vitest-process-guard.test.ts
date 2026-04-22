@@ -9,6 +9,11 @@ describe("vitest process guard", () => {
     expect(isTrackedProcessCommand("node /Users/chason/paperclip/server/dist/index.js")).toBe(true);
     expect(
       isTrackedProcessCommand(
+        "node -e require('node:http').createServer((req,res)=>res.end('ok')).listen(Number(process.env.PORT), '127.0.0.1')",
+      ),
+    ).toBe(true);
+    expect(
+      isTrackedProcessCommand(
         "/Users/chason/.local/bin/claude --print - --output-format stream-json --verbose --append-system-prompt-file /tmp/paperclip-skills-123/agent-instructions.md",
       ),
     ).toBe(true);

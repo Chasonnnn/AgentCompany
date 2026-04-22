@@ -115,13 +115,33 @@ type ProcessOutputAccumulator = {
   finish(): ProcessOutputCapture;
 };
 
-export async function resetRuntimeServicesForTests() {
+export async function resetRuntimeServicesForTests(options?: {
+  stopProcesses?: boolean;
+}) {
+  const shouldStopProcesses = options?.stopProcesses ?? true;
+  const errors: string[] = [];
+
+  if (shouldStopProcesses) {
+    const serviceIds = Array.from(runtimeServicesById.keys());
+    for (const serviceId of serviceIds) {
+      try {
+        await stopRuntimeService(serviceId);
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
   for (const record of runtimeServicesById.values()) {
     clearIdleTimer(record);
   }
   runtimeServicesById.clear();
   runtimeServicesByReuseKey.clear();
   runtimeServiceLeasesByRun.clear();
+
+  if (errors.length > 0) {
+    throw new Error(`Failed to stop runtime services during test reset: ${errors.join("; ")}`);
+  }
 }
 
 function stableStringify(value: unknown): string {

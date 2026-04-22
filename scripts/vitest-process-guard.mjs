@@ -15,6 +15,7 @@ const TRACKED_PROCESS_PATTERNS = [
   /\bpaperclipai run\b/,
   /\bcli\/src\/index\.ts run --config\b/,
   /(?:^|\s)(?:[^ ]+\/)?server\/(?:dist\/index\.js|src\/index\.ts)\b/,
+  /\bnode\s+-e\b.*\bnode:http\b.*createServer\(/,
   /\bclaude\s+(?:--print\b.*\b--output-format\s+(?:stream-json|json)\b|auth\s+status\b|login\b)/,
   /\bcodex\s+(?:--search\s+)?(?:app-server\b|exec\s+--json\b|resume\s+\S+\s+-\b)/,
   /\bgemini\b.*(?:^|\s)--output-format\s+(?:stream-json|json)\b/,

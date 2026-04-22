@@ -476,6 +476,20 @@ function invalidateHeartbeatQueries(
   }
 }
 
+function invalidateAgentStructureQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  companyId: string,
+) {
+  queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.agents.hierarchy(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.agents.operatingHierarchy(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.agents.accountability(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(companyId, "department") });
+  queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(companyId, "project") });
+  queryClient.invalidateQueries({ queryKey: queryKeys.agents.orgSimplification(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.org(companyId) });
+}
+
 function invalidateActivityQueries(
   queryClient: ReturnType<typeof useQueryClient>,
   companyId: string,
@@ -518,8 +532,7 @@ function invalidateActivityQueries(
   }
 
   if (entityType === "agent") {
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(companyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.org(companyId) });
+    invalidateAgentStructureQueries(queryClient, companyId);
     if (entityId) {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(entityId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(companyId, entityId) });
@@ -639,9 +652,8 @@ function handleLiveEvent(
   }
 
   if (event.type === "agent.status") {
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(expectedCompanyId) });
+    invalidateAgentStructureQueries(queryClient, expectedCompanyId);
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(expectedCompanyId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.org(expectedCompanyId) });
     const agentId = readString(payload.agentId);
     if (agentId) queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentId) });
     const toast = buildAgentStatusToast(payload, nameOf, queryClient, expectedCompanyId);
@@ -712,6 +724,8 @@ export const __liveUpdatesTestUtils = {
   buildAgentStatusToast,
   buildRunStatusToast,
   closeSocketQuietly,
+  handleLiveEvent,
+  invalidateAgentStructureQueries,
   invalidateActivityQueries,
   resolveLiveCompanyId,
   shouldSuppressActivityToastForVisibleIssue,

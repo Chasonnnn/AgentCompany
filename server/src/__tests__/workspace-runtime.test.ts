@@ -1865,6 +1865,56 @@ describe("ensureRuntimeServicesForRun", () => {
     expect(services[0]?.scopeId).toBe("execution-workspace-1");
   });
 
+  it("stops spawned runtime services during test-only reset", async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-reset-"));
+    const workspace = buildWorkspace(workspaceRoot);
+    const runId = "run-reset";
+    leasedRunIds.add(runId);
+
+    const services = await ensureRuntimeServicesForRun({
+      runId,
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+      issue: null,
+      workspace,
+      config: {
+        workspaceRuntime: {
+          services: [
+            {
+              name: "web",
+              command:
+                "node -e \"require('node:http').createServer((req,res)=>res.end('ok')).listen(Number(process.env.PORT), '127.0.0.1')\"",
+              port: { type: "auto" },
+              readiness: {
+                type: "http",
+                urlTemplate: "http://127.0.0.1:{{port}}",
+                timeoutSec: 10,
+                intervalMs: 100,
+              },
+              lifecycle: "shared",
+              reuseScope: "execution_workspace",
+              stopPolicy: {
+                type: "manual",
+              },
+            },
+          ],
+        },
+      },
+      adapterEnv: {},
+    });
+
+    await expect(fetch(services[0]!.url!)).resolves.toMatchObject({ ok: true });
+
+    leasedRunIds.delete(runId);
+    await resetRuntimeServicesForTests();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    await expect(fetch(services[0]!.url!)).rejects.toThrow();
+  });
+
   it("stops execution workspace runtime services by executionWorkspaceId", async () => {
     const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-stop-"));
     const workspace = buildWorkspace(workspaceRoot);
@@ -2142,7 +2192,7 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
     expect(service?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     await expect(fetch(service!.url!)).resolves.toMatchObject({ ok: true });
 
-    await resetRuntimeServicesForTests();
+    await resetRuntimeServicesForTests({ stopProcesses: false });
 
     const result = await reconcilePersistedRuntimeServicesOnStartup(db);
     expect(result).toMatchObject({ reconciled: 1, adopted: 1, stopped: 0 });

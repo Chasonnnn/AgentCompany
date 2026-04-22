@@ -165,6 +165,101 @@ describe("LiveUpdatesProvider issue invalidation", () => {
   });
 });
 
+describe("LiveUpdatesProvider agent invalidation", () => {
+  it("refreshes accountability and org-tree queries for agent activity events", () => {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "company-1",
+      {
+        entityType: "agent",
+        entityId: "agent-1",
+        action: "agent.updated",
+        details: null,
+      },
+      { userId: null, agentId: null },
+    );
+
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.list("company-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.hierarchy("company-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.operatingHierarchy("company-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.accountability("company-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.navigation("company-1", "department"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.navigation("company-1", "project"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.orgSimplification("company-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.org("company-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.detail("agent-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.heartbeats("company-1", "agent-1"),
+    });
+  });
+
+  it("refreshes accountability when an agent status live event arrives", () => {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      queryClient as never,
+      "company-1",
+      "/agents/ceo",
+      {
+        companyId: "company-1",
+        type: "agent.status",
+        payload: {
+          agentId: "agent-1",
+          status: "running",
+        },
+      } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: null, agentId: null },
+    );
+
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.accountability("company-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.list("company-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.agents.detail("agent-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.dashboard("company-1"),
+    });
+  });
+});
+
 describe("LiveUpdatesProvider visible issue toast suppression", () => {
   it("suppresses activity toasts for the issue page currently in view", () => {
     const queryClient = {

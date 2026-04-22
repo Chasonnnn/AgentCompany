@@ -21,4 +21,28 @@ describe("root vitest runner wrapper", () => {
 
     expect(buildVitestCommandArgs("watch", ["-t", "heartbeat"])).toEqual(["exec", "vitest", "-t", "heartbeat"]);
   });
+
+  it("caps default Vitest worker env for repo-script runs", async () => {
+    const { buildVitestEnv, getDefaultVitestWorkerCount } = await import(vitestRunnerModule);
+
+    const env = buildVitestEnv({});
+
+    expect(env.VITEST_MAX_FORKS).toMatch(/^\d+$/);
+    expect(env.VITEST_MAX_THREADS).toBe(env.VITEST_MAX_FORKS);
+    expect(getDefaultVitestWorkerCount(2)).toBe(1);
+    expect(getDefaultVitestWorkerCount(8)).toBe(2);
+    expect(getDefaultVitestWorkerCount(32)).toBe(2);
+  });
+
+  it("preserves explicit Vitest worker overrides", async () => {
+    const { buildVitestEnv } = await import(vitestRunnerModule);
+
+    const env = buildVitestEnv({
+      VITEST_MAX_FORKS: "3",
+      VITEST_MAX_THREADS: "2",
+    });
+
+    expect(env.VITEST_MAX_FORKS).toBe("3");
+    expect(env.VITEST_MAX_THREADS).toBe("2");
+  });
 });

@@ -1,10 +1,31 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import os from "node:os";
 import { pathToFileURL } from "node:url";
 
 const mode = process.argv[2] === "run" ? "run" : "watch";
 const cliArgs = process.argv.slice(3);
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+
+export function getDefaultVitestWorkerCount(availableParallelism) {
+  const detectedAvailable =
+    typeof availableParallelism === "number" && Number.isInteger(availableParallelism) && availableParallelism > 0
+      ? availableParallelism
+      : typeof os.availableParallelism === "function"
+        ? os.availableParallelism()
+        : os.cpus().length;
+
+  return Math.max(1, Math.min(2, Math.floor(detectedAvailable / 2)));
+}
+
+export function buildVitestEnv(baseEnv = process.env) {
+  const workerCount = String(getDefaultVitestWorkerCount());
+  return {
+    ...baseEnv,
+    VITEST_MAX_FORKS: baseEnv.VITEST_MAX_FORKS ?? workerCount,
+    VITEST_MAX_THREADS: baseEnv.VITEST_MAX_THREADS ?? workerCount,
+  };
+}
 
 export function normalizeForwardedArgs(args) {
   let start = 0;
@@ -28,7 +49,7 @@ function runCommand(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(pnpmBin, args, {
       stdio: "inherit",
-      env: process.env,
+      env: buildVitestEnv(process.env),
     });
 
     child.on("error", reject);

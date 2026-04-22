@@ -18,7 +18,7 @@
     "desktop:prepare-pages-release": "pnpm --filter @paperclipai/desktop prepare-pages-release",
     "build": "pnpm run preflight:workspace-links && pnpm -r build",
     "typecheck": "pnpm run preflight:workspace-links && pnpm -r typecheck",
-    "test:prepare": "pnpm --filter @paperclipai/server^... build",
+    "test:prepare": "pnpm --workspace-concurrency=2 --filter @paperclipai/server^... build",
     "test": "node scripts/vitest-runner.mjs watch",
     "test:run": "node scripts/vitest-runner.mjs run",
     "db:generate": "pnpm --filter @paperclipai/db generate",
