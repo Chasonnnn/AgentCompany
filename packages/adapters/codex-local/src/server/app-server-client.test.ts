@@ -137,6 +137,40 @@ describe("CodexAppServerClient", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("forwards initialize capabilities when requested", async () => {
+    const writes: string[] = [];
+    const child = createMockChild(writes);
+    mockSpawn.mockReturnValue(child);
+
+    const client = new CodexAppServerClient();
+    const initializePromise = client.initialize({
+      capabilities: {
+        experimentalApi: true,
+      },
+    });
+    expect(JSON.parse(writes.shift() ?? "{}")).toEqual({
+      id: 1,
+      method: "initialize",
+      params: {
+        clientInfo: {
+          name: "paperclip",
+          version: "0.0.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+        },
+      },
+    });
+    child.stdout.emit("data", JSON.stringify({ id: 1, result: {} }) + "\n");
+    await initializePromise;
+    expect(JSON.parse(writes.shift() ?? "{}")).toEqual({
+      method: "initialized",
+      params: {},
+    });
+
+    await client.shutdown({ graceMs: 0 });
+  });
+
   it("surfaces request timeouts", async () => {
     const writes: string[] = [];
     const child = createMockChild(writes);

@@ -30,6 +30,14 @@ export type AppServerClientOptions = {
   onStderr?: (chunk: string) => Promise<void> | void;
 };
 
+export type AppServerInitializeCapabilities = {
+  experimentalApi?: boolean;
+};
+
+export type AppServerInitializeOptions = {
+  capabilities?: AppServerInitializeCapabilities | null;
+};
+
 export const NO_RESPONSE = Symbol("codex-app-server-no-response");
 
 function stringifyId(id: JsonRpcId): string {
@@ -217,12 +225,17 @@ export class CodexAppServerClient {
     this.writeRaw({ method, params });
   }
 
-  async initialize() {
+  async initialize(options: AppServerInitializeOptions = {}) {
+    const capabilities =
+      options.capabilities && Object.keys(options.capabilities).length > 0
+        ? options.capabilities
+        : undefined;
     await this.request("initialize", {
       clientInfo: {
         name: "paperclip",
         version: "0.0.0",
       },
+      ...(capabilities ? { capabilities } : {}),
     });
     this.notify("initialized", {});
   }

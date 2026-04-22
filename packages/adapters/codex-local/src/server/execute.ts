@@ -295,6 +295,13 @@ function resolveAppServerServiceTier(fastModeApplied: boolean): string | null {
   return fastModeApplied ? "fast" : null;
 }
 
+function buildInitializeCapabilities(planningMode: boolean) {
+  if (!planningMode) return null;
+  return {
+    experimentalApi: true,
+  };
+}
+
 function buildCollaborationMode(config: Record<string, unknown>, planningMode: boolean) {
   if (!planningMode) return null;
   const model = asString(config.model, "").trim() || "gpt-5.3-codex";
@@ -310,6 +317,35 @@ function buildCollaborationMode(config: Record<string, unknown>, planningMode: b
       developer_instructions: null,
     },
   };
+}
+
+function isExperimentalPlanningCapabilityError(message: string) {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.includes("turn/start.collaborationmode requires experimentalapi capability")) {
+    return true;
+  }
+  const mentionsExperimentalApi =
+    normalized.includes("experimentalapi") ||
+    normalized.includes("experimental api");
+  const mentionsPlanningNegotiation =
+    normalized.includes("collaborationmode") ||
+    normalized.includes("capabilit") ||
+    normalized.includes("initialize");
+  return mentionsExperimentalApi && mentionsPlanningNegotiation;
+}
+
+function normalizePlanningCapabilityError(message: string, planningMode: boolean) {
+  const trimmed = message.trim();
+  if (!planningMode || !isExperimentalPlanningCapabilityError(trimmed)) {
+    return trimmed;
+  }
+  return [
+    "Paperclip requested native Codex Plan mode, but codex app-server rejected experimental capability negotiation.",
+    trimmed,
+    "Paperclip does not downgrade planning runs automatically.",
+    "Use PAPERCLIP_CODEX_LOCAL_TRANSPORT=exec as a temporary workaround while this app-server path is unavailable.",
+  ].join(" ");
 }
 
 function extractDecisionQuestionAnswer(context: Record<string, unknown>) {
@@ -766,7 +802,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const sandboxPolicy = resolveAppServerSandboxPolicy(bypass);
     const serviceTier = resolveAppServerServiceTier(appServerArgs.fastModeApplied);
     const effort = asString(configRecord.modelReasoningEffort, asString(configRecord.reasoningEffort, "")).trim();
-    const collaborationMode = buildCollaborationMode(configRecord, context.paperclipPlanningMode === true);
+    const planningMode = context.paperclipPlanningMode === true;
+    const initializeCapabilities = buildInitializeCapabilities(planningMode);
+    const collaborationMode = buildCollaborationMode(
+      configRecord,
+      initializeCapabilities?.experimentalApi === true,
+    );
     const commandNotesWithFastMode =
       appServerArgs.fastModeIgnoredReason == null
         ? commandNotes
@@ -854,6 +895,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         }
       },
       onNotification: async (method, params) => {
+        if (method === "error") {
+          const error = parseObject(params.error);
+          const message = readNonEmptyString(error.message);
+          if (message) {
+            error.message = normalizePlanningCapabilityError(message, planningMode);
+          }
+        }
         const normalized = normalizeAppServerNotification({ method, params, usageByTurn });
         if (method === "thread/started") {
           const thread = parseObject(params.thread);
@@ -929,7 +977,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       : null;
 
     try {
-      await client.initialize();
+      await client.initialize(
+        initializeCapabilities ? { capabilities: initializeCapabilities } : undefined,
+      );
 
       if (resumeThreadId) {
         const resumeResponse = await client.request("thread/resume", {
@@ -994,7 +1044,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     } catch (error) {
       if (!timedOut) {
         exitCode = 1;
-        await appendError(error instanceof Error ? error.message : String(error));
+        await appendError(
+          normalizePlanningCapabilityError(
+            error instanceof Error ? error.message : String(error),
+            planningMode,
+          ),
+        );
       }
     } finally {
       if (timeoutTimer) clearTimeout(timeoutTimer);

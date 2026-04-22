@@ -19,6 +19,7 @@ const payload = {
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
     .sort(),
+  initializeParams: null,
   threadStartParams: null,
   threadResumeParams: null,
   turnStartParams: [],
@@ -123,6 +124,18 @@ function handleMessage(message) {
   }
 
   if (message.method === "initialize") {
+    payload.initializeParams = message.params;
+    writeCapture();
+    const requestedExperimentalApi = message.params?.capabilities?.experimentalApi === true;
+    if (scenario === "initialize-rejects-experimental" && requestedExperimentalApi) {
+      send({
+        id: message.id,
+        error: {
+          message: "initialize.capabilities.experimentalApi is not supported by this server",
+        },
+      });
+      return;
+    }
     send({ id: message.id, result: { serverInfo: { name: "fake-codex", version: "0.0.0" } } });
     return;
   }
@@ -190,6 +203,25 @@ function handleMessage(message) {
     return;
   }
   if (message.method === "turn/start") {
+    const requestedExperimentalApi = payload.initializeParams?.capabilities?.experimentalApi === true;
+    if (message.params?.collaborationMode && !requestedExperimentalApi) {
+      send({
+        id: message.id,
+        error: {
+          message: "turn/start.collaborationMode requires experimentalApi capability",
+        },
+      });
+      return;
+    }
+    if (scenario === "reject-planning-experimental" && message.params?.collaborationMode) {
+      send({
+        id: message.id,
+        error: {
+          message: "turn/start.collaborationMode requires experimentalApi capability",
+        },
+      });
+      return;
+    }
     const turnId = "turn-" + nextTurn++;
     payload.turnStartParams.push(message.params);
     const prompt = extractPrompt(message.params);
@@ -248,6 +280,7 @@ type CapturePayload = {
   codexHome: string | null;
   paperclipWakePayloadJson: string | null;
   paperclipEnvKeys: string[];
+  initializeParams: Record<string, unknown> | null;
   threadStartParams: Record<string, unknown> | null;
   threadResumeParams: Record<string, unknown> | null;
   turnStartParams: Record<string, unknown>[];
@@ -1294,6 +1327,7 @@ describe("codex execute", () => {
           fast_mode: true,
         },
       });
+      expect(capture.initializeParams?.capabilities).toBeUndefined();
       expect(capture.threadStartParams?.serviceTier).toBe("fast");
       expect(capture.turnStartParams[0]?.serviceTier).toBe("fast");
       expect(capture.turnStartParams[0]?.collaborationMode).toBeUndefined();
@@ -1350,6 +1384,9 @@ describe("codex execute", () => {
 
       expect(result.exitCode).toBe(0);
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.initializeParams?.capabilities).toEqual({
+        experimentalApi: true,
+      });
       expect(capture.turnStartParams[0]?.collaborationMode).toEqual({
         mode: "plan",
         settings: {
@@ -1357,6 +1394,67 @@ describe("codex execute", () => {
           reasoning_effort: "high",
           developer_instructions: null,
         },
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails planning runs clearly when app-server rejects experimental planning negotiation", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-planning-reject-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-planning-reject",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Planner",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "gpt-5.4",
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            PAPERCLIP_TEST_SCENARIO: "reject-planning-experimental",
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          paperclipPlanningMode: true,
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.errorMessage).toContain(
+        "Paperclip requested native Codex Plan mode, but codex app-server rejected experimental capability negotiation.",
+      );
+      expect(result.errorMessage).toContain("Use PAPERCLIP_CODEX_LOCAL_TRANSPORT=exec");
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.initializeParams?.capabilities).toEqual({
+        experimentalApi: true,
       });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -1437,6 +1535,9 @@ describe("codex execute", () => {
       });
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.initializeParams?.capabilities).toEqual({
+        experimentalApi: true,
+      });
       expect(capture.requestUserInputResponses).toEqual([]);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -1506,6 +1607,7 @@ describe("codex execute", () => {
         },
         context: {
           wakeReason: "decision_question_answered",
+          paperclipPlanningMode: true,
           paperclipWake: {
             reason: "decision_question_answered",
             decisionQuestion: {
@@ -1531,6 +1633,9 @@ describe("codex execute", () => {
       expect((result.sessionParams ?? {}).pendingUserInput).toBeUndefined();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.initializeParams?.capabilities).toEqual({
+        experimentalApi: true,
+      });
       expect(capture.threadResumeParams?.threadId).toBe("codex-thread-1");
       expect(capture.turnStartParams).toEqual([]);
       expect(capture.requestUserInputResponses).toEqual([
