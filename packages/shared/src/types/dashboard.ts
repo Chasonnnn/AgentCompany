@@ -31,6 +31,12 @@ export interface DashboardSummary {
       state: ComputedAgentState;
       count: number;
       detailedStates: Array<{ state: string; count: number }>;
+      waitingOn: Array<{
+        issueId: string;
+        identifier: string | null;
+        openChildCount: number;
+        dependentCount: number;
+      }>;
     }>;
   };
   costs: {

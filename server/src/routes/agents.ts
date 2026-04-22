@@ -26,6 +26,7 @@ import {
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
   type AgentRole,
+  type ComputedAgentWaitingOn,
   type InstanceSchedulerHeartbeatAgent,
   upsertAgentInstructionsFileSchema,
   updateAgentInstructionsBundleSchema,
@@ -1451,12 +1452,7 @@ export function agentRoutes(
         });
         const readiness = dependencyReadiness.get(issue.id);
         const unresolvedBlockerIssueIds = readiness?.unresolvedBlockerIssueIds ?? [];
-        let waitingOn: {
-          issueId: string;
-          identifier: string | null;
-          openChildCount: number;
-          nextWakeReason: string | null;
-        } | null = null;
+        let waitingOn: ComputedAgentWaitingOn | null = null;
         if (computedAgentState === "dependency_blocked" && unresolvedBlockerIssueIds.length > 0) {
           const primaryBlockerId = unresolvedBlockerIssueIds[0];
           const info = blockerInfo.get(primaryBlockerId);
