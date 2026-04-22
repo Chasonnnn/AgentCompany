@@ -282,11 +282,9 @@ function buildAppServerThreadConfig(
   return threadConfig;
 }
 
-function resolveAppServerSandboxPolicy(bypass: boolean): Record<string, unknown> | null {
+function resolveAppServerSandboxPolicy(bypass: boolean): string | null {
   if (!bypass) return null;
-  return {
-    type: "dangerFullAccess",
-  };
+  return "danger-full-access";
 }
 
 function resolveAppServerApprovalPolicy(bypass: boolean): string | null {
@@ -942,7 +940,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           ...(serviceTier ? { serviceTier } : {}),
           ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
           ...(model ? { model } : {}),
-          persistExtendedHistory: true,
         });
         const thread = parseObject(parseObject(resumeResponse.result).thread);
         threadId = readNonEmptyString(thread.id) ?? threadId;
@@ -955,7 +952,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           ...(serviceTier ? { serviceTier } : {}),
           ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
           experimentalRawEvents: false,
-          persistExtendedHistory: true,
         });
         const thread = parseObject(parseObject(startResponse.result).thread);
         threadId = readNonEmptyString(thread.id) ?? threadId;
@@ -981,7 +977,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           input: [{ type: "text", text: prompt }],
           cwd,
           ...(approvalPolicy ? { approvalPolicy } : {}),
-          ...(sandboxPolicy ? { sandboxPolicy } : {}),
+          ...(sandboxPolicy ? { sandbox: sandboxPolicy } : {}),
           ...(serviceTier ? { serviceTier } : {}),
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
