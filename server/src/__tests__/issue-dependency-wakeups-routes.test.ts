@@ -45,6 +45,20 @@ function registerRouteMocks() {
       listCompanyIds: vi.fn(),
     }),
     issueApprovalService: () => ({}),
+    issueReferenceService: () => ({
+      syncIssue: vi.fn(async () => undefined),
+      syncComment: vi.fn(async () => undefined),
+      syncDocument: vi.fn(async () => undefined),
+      deleteCommentSource: vi.fn(async () => undefined),
+      deleteDocumentSource: vi.fn(async () => undefined),
+      listIssueReferenceSummary: vi.fn(async () => ({ outbound: [], inbound: [] })),
+      diffIssueReferenceSummary: vi.fn(() => ({
+        addedReferencedIssues: [],
+        removedReferencedIssues: [],
+        currentReferencedIssues: [],
+      })),
+      emptySummary: vi.fn(() => ({ outbound: [], inbound: [] })),
+    }),
     issueContinuityService: () => ({
       recomputeIssueContinuityState: vi.fn(async () => ({
         tier: "normal",

@@ -35,6 +35,7 @@ import {
   resolveInboxQuickArchiveKeyAction,
 } from "../lib/keyboardShortcuts";
 import {
+  applyLocalQueuedIssueCommentState,
   applyOptimisticIssueFieldUpdate,
   applyOptimisticIssueFieldUpdateToCollection,
   applyOptimisticIssueCommentUpdate,
@@ -60,6 +61,7 @@ import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTransc
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueContinuityPanel } from "../components/IssueContinuityPanel";
 import { IssueProperties } from "../components/IssueProperties";
+import { IssueRelatedWorkPanel } from "../components/IssueRelatedWorkPanel";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
@@ -377,6 +379,7 @@ export function IssueDetail() {
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
+  const [locallyQueuedCommentRunIds, setLocallyQueuedCommentRunIds] = useState<Map<string, string>>(() => new Map());
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] = useState(0);
   const [issueChatInitialTranscriptReady, setIssueChatInitialTranscriptReady] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -506,6 +509,12 @@ export function IssueDetail() {
   const activeRun = resolveIssueActiveRun(issue, rawActiveRun);
 
   const hasLiveRuns = (liveRuns ?? []).length > 0 || !!activeRun;
+  const liveRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const run of liveRuns ?? []) ids.add(run.id);
+    if (activeRun) ids.add(activeRun.id);
+    return ids;
+  }, [activeRun, liveRuns]);
   const runningIssueRun = useMemo(
     () => (
       activeRun?.status === "running"
@@ -514,6 +523,16 @@ export function IssueDetail() {
     ),
     [activeRun, liveRuns],
   );
+  useEffect(() => {
+    setLocallyQueuedCommentRunIds((current) => {
+      if (current.size === 0) return current;
+      const next = new Map([...current].filter(([, runId]) => liveRunIds.has(runId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [liveRunIds]);
+  useEffect(() => {
+    setLocallyQueuedCommentRunIds(new Map());
+  }, [issueId]);
   const sourceBreadcrumb = useMemo(
     () => readIssueDetailBreadcrumb(issueId, location.state, location.search) ?? { label: "Issues", href: "/issues" },
     [issueId, location.state, location.search],
@@ -521,18 +540,15 @@ export function IssueDetail() {
 
   // Filter out runs already shown by the live widget to avoid duplication
   const timelineRuns = useMemo(() => {
-    const liveIds = new Set<string>();
-    for (const r of liveRuns ?? []) liveIds.add(r.id);
-    if (activeRun) liveIds.add(activeRun.id);
-    const historicalRuns = liveIds.size === 0
+    const historicalRuns = liveRunIds.size === 0
       ? (linkedRuns ?? [])
-      : (linkedRuns ?? []).filter((r) => !liveIds.has(r.runId));
+      : (linkedRuns ?? []).filter((r) => !liveRunIds.has(r.runId));
     return historicalRuns.map((run) => ({
       ...run,
       adapterType: run.adapterType,
       hasStoredOutput: (run.logBytes ?? 0) > 0,
     }));
-  }, [linkedRuns, liveRuns, activeRun]);
+  }, [linkedRuns, liveRunIds]);
 
   const { data: rawChildIssues = [], isLoading: childIssuesLoading } = useQuery({
     queryKey:
@@ -762,6 +778,15 @@ export function IssueDetail() {
     return threadComments.map((comment) => {
       const meta = runMetaByCommentId.get(comment.id);
       const nextComment: IssueDetailComment = meta ? { ...comment, ...meta } : { ...comment };
+      const queuedTargetRunId = locallyQueuedCommentRunIds.get(comment.id) ?? null;
+      const locallyQueuedComment = applyLocalQueuedIssueCommentState(nextComment, {
+        queuedTargetRunId,
+        targetRunIsLive: queuedTargetRunId ? liveRunIds.has(queuedTargetRunId) : false,
+        runningRunId: runningIssueRun?.id ?? null,
+      });
+      if (locallyQueuedComment !== nextComment) {
+        return locallyQueuedComment;
+      }
       if (
         isQueuedIssueComment({
           comment: nextComment,
@@ -779,7 +804,7 @@ export function IssueDetail() {
       }
       return nextComment;
     });
-  }, [activity, threadComments, linkedRuns, runningIssueRun]);
+  }, [activity, threadComments, linkedRuns, liveRunIds, locallyQueuedCommentRunIds, runningIssueRun]);
 
   const timelineEvents = useMemo(
     () => extractIssueTimelineEvents(activity),
@@ -971,6 +996,7 @@ export function IssueDetail() {
 
       return {
         optimisticCommentId: optimisticComment?.clientId ?? null,
+        queuedTargetRunId: queuedComment ? runningIssueRun.id : null,
         previousIssue,
       };
     },
@@ -994,6 +1020,9 @@ export function IssueDetail() {
           pages: upsertIssueCommentInPages(undefined, comment),
         },
       );
+      if (context?.queuedTargetRunId) {
+        setLocallyQueuedCommentRunIds((current) => new Map(current).set(comment.id, context.queuedTargetRunId!));
+      }
     },
     onError: (err, _variables, context) => {
       if (context?.optimisticCommentId) {
@@ -1069,6 +1098,7 @@ export function IssueDetail() {
 
       return {
         optimisticCommentId: optimisticComment?.clientId ?? null,
+        queuedTargetRunId: queuedComment ? runningIssueRun.id : null,
         previousIssue,
       };
     },
@@ -1092,6 +1122,9 @@ export function IssueDetail() {
             pages: upsertIssueCommentInPages(undefined, comment),
           },
         );
+        if (context?.queuedTargetRunId) {
+          setLocallyQueuedCommentRunIds((current) => new Map(current).set(comment.id, context.queuedTargetRunId!));
+        }
       }
     },
     onError: (err, _variables, context) => {
@@ -1128,6 +1161,7 @@ export function IssueDetail() {
       const previousRuns = queryClient.getQueryData<RunForIssue[]>(queryKeys.issues.runs(issueId!));
       const previousLiveRuns = queryClient.getQueryData<typeof liveRuns>(queryKeys.issues.liveRuns(issueId!));
       const previousActiveRun = queryClient.getQueryData<typeof activeRun>(queryKeys.issues.activeRun(issueId!));
+      const previousLocalQueuedCommentRunIds = locallyQueuedCommentRunIds;
       const liveRunList = previousLiveRuns ?? liveRuns ?? [];
       const cachedActiveRun = previousActiveRun ?? activeRun;
       const targetRun =
@@ -1151,11 +1185,16 @@ export function IssueDetail() {
         queryKeys.issues.activeRun(issueId!),
         (current: typeof activeRun) => (current?.id === runId ? null : current),
       );
+      setLocallyQueuedCommentRunIds((current) => {
+        const next = new Map([...current].filter(([, targetRunId]) => targetRunId !== runId));
+        return next.size === current.size ? current : next;
+      });
 
       return {
         previousRuns,
         previousLiveRuns,
         previousActiveRun,
+        previousLocalQueuedCommentRunIds,
       };
     },
     onSuccess: () => {
@@ -1171,6 +1210,9 @@ export function IssueDetail() {
       queryClient.setQueryData(queryKeys.issues.runs(issueId!), context?.previousRuns);
       queryClient.setQueryData(queryKeys.issues.liveRuns(issueId!), context?.previousLiveRuns);
       queryClient.setQueryData(queryKeys.issues.activeRun(issueId!), context?.previousActiveRun);
+      if (context?.previousLocalQueuedCommentRunIds) {
+        setLocallyQueuedCommentRunIds(context.previousLocalQueuedCommentRunIds);
+      }
       pushToast({
         title: "Interrupt failed",
         body: err instanceof Error ? err.message : "Unable to interrupt the active run",
@@ -2131,6 +2173,9 @@ export function IssueDetail() {
             <ActivityIcon className="h-3.5 w-3.5" />
             Activity
           </TabsTrigger>
+          <TabsTrigger value="related-work">
+            Related Work
+          </TabsTrigger>
           {issuePluginTabItems.map((item) => (
             <TabsTrigger key={item.value} value={item.value}>
               {item.label}
@@ -2272,6 +2317,10 @@ export function IssueDetail() {
               )}
             </>
           )}
+        </TabsContent>
+
+        <TabsContent value="related-work">
+          <IssueRelatedWorkPanel relatedWork={issue.relatedWork} />
         </TabsContent>
 
         {activePluginTab && (
