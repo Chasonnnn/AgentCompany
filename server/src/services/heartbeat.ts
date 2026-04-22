@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
@@ -92,6 +92,7 @@ import {
   buildRunLivenessContinuationIdempotencyKey,
   decideRunLivenessContinuation,
   findExistingRunLivenessContinuationWake,
+  readContinuationAttempt,
   RUN_LIVENESS_CONTINUATION_REASON,
 } from "./run-continuations.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
@@ -120,6 +121,19 @@ const MAX_INLINE_WAKE_COMMENTS = 8;
 const MAX_INLINE_WAKE_COMMENT_BODY_CHARS = 4_000;
 const MAX_INLINE_WAKE_COMMENT_BODY_TOTAL_CHARS = 12_000;
 const execFile = promisify(execFileCallback);
+const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
+const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
+const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
+export const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS = [
+  2 * 60 * 1000,
+  10 * 60 * 1000,
+  30 * 60 * 1000,
+  2 * 60 * 60 * 1000,
+] as const;
+const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_JITTER_RATIO = 0.25;
+const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON = "transient_failure";
+const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_WAKE_REASON = "transient_failure_retry";
+const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS = BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS.length;
 const RUNNING_ISSUE_WAKE_REASONS_REQUIRING_FOLLOWUP = new Set(["approval_approved"]);
 const SESSIONED_LOCAL_ADAPTERS = new Set([
   "claude_local",
@@ -135,6 +149,30 @@ type RuntimeConfigSecretResolver = Pick<
   ReturnType<typeof secretService>,
   "resolveAdapterConfigForRuntime" | "resolveEnvBindings"
 >;
+
+function isHeartbeatRunTerminalStatus(status: unknown): status is (typeof HEARTBEAT_RUN_TERMINAL_STATUSES)[number] {
+  return typeof status === "string" && (HEARTBEAT_RUN_TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
+export function computeBoundedTransientHeartbeatRetrySchedule(
+  attempt: number,
+  now = new Date(),
+  random: () => number = Math.random,
+) {
+  if (!Number.isInteger(attempt) || attempt <= 0) return null;
+  const baseDelayMs = BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS[attempt - 1];
+  if (typeof baseDelayMs !== "number") return null;
+  const sample = Math.min(1, Math.max(0, random()));
+  const jitterMultiplier = 1 + (((sample * 2) - 1) * BOUNDED_TRANSIENT_HEARTBEAT_RETRY_JITTER_RATIO);
+  const delayMs = Math.max(1_000, Math.round(baseDelayMs * jitterMultiplier));
+  return {
+    attempt,
+    baseDelayMs,
+    delayMs,
+    dueAt: new Date(now.getTime() + delayMs),
+    maxAttempts: BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS,
+  };
+}
 
 export async function resolveExecutionRunAdapterConfig(input: {
   companyId: string;
@@ -351,6 +389,9 @@ const heartbeatRunListColumns = {
   processStartedAt: heartbeatRuns.processStartedAt,
   retryOfRunId: heartbeatRuns.retryOfRunId,
   processLossRetryCount: heartbeatRuns.processLossRetryCount,
+  scheduledRetryAt: heartbeatRuns.scheduledRetryAt,
+  scheduledRetryAttempt: heartbeatRuns.scheduledRetryAttempt,
+  scheduledRetryReason: heartbeatRuns.scheduledRetryReason,
   livenessState: heartbeatRuns.livenessState,
   livenessReason: heartbeatRuns.livenessReason,
   continuationAttempt: heartbeatRuns.continuationAttempt,
@@ -3285,6 +3326,212 @@ export function heartbeatService(db: Db) {
     return queued;
   }
 
+  async function scheduleBoundedRetryForRun(
+    run: typeof heartbeatRuns.$inferSelect,
+    agent: typeof agents.$inferSelect,
+    opts?: {
+      now?: Date;
+      random?: () => number;
+      retryReason?: string;
+      wakeReason?: string;
+    },
+  ) {
+    const now = opts?.now ?? new Date();
+    const retryReason = opts?.retryReason ?? BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON;
+    const wakeReason = opts?.wakeReason ?? BOUNDED_TRANSIENT_HEARTBEAT_RETRY_WAKE_REASON;
+    const nextAttempt = (run.scheduledRetryAttempt ?? 0) + 1;
+    const schedule = computeBoundedTransientHeartbeatRetrySchedule(nextAttempt, now, opts?.random);
+
+    if (!schedule) {
+      await appendRunEvent(run, await nextRunEventSeq(run.id), {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "warn",
+        message: `Bounded retry exhausted after ${run.scheduledRetryAttempt ?? 0} scheduled attempts; no further automatic retry will be queued`,
+        payload: {
+          retryReason,
+          scheduledRetryAttempt: run.scheduledRetryAttempt ?? 0,
+          maxAttempts: BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS,
+        },
+      });
+      return {
+        outcome: "retry_exhausted" as const,
+        attempt: nextAttempt,
+        maxAttempts: BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS,
+      };
+    }
+
+    const contextSnapshot = parseObject(run.contextSnapshot);
+    const issueId = readNonEmptyString(contextSnapshot.issueId);
+    const taskKey = deriveTaskKeyWithHeartbeatFallback(contextSnapshot, null);
+    const sessionBefore = await resolveSessionBeforeForWakeup(agent, taskKey);
+    const retryContextSnapshot: Record<string, unknown> = {
+      ...contextSnapshot,
+      retryOfRunId: run.id,
+      wakeReason,
+      retryReason,
+      scheduledRetryAttempt: schedule.attempt,
+      scheduledRetryAt: schedule.dueAt.toISOString(),
+    };
+
+    const retryRun = await db.transaction(async (tx) => {
+      const wakeupRequest = await tx
+        .insert(agentWakeupRequests)
+        .values({
+          companyId: run.companyId,
+          agentId: run.agentId,
+          source: "automation",
+          triggerDetail: "system",
+          reason: wakeReason,
+          payload: {
+            ...(issueId ? { issueId } : {}),
+            retryOfRunId: run.id,
+            retryReason,
+            scheduledRetryAttempt: schedule.attempt,
+            scheduledRetryAt: schedule.dueAt.toISOString(),
+          },
+          status: "queued",
+          requestedByActorType: "system",
+          requestedByActorId: null,
+          updatedAt: now,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      const scheduledRun = await tx
+        .insert(heartbeatRuns)
+        .values({
+          companyId: run.companyId,
+          agentId: run.agentId,
+          invocationSource: "automation",
+          triggerDetail: "system",
+          status: "scheduled_retry",
+          wakeupRequestId: wakeupRequest.id,
+          contextSnapshot: retryContextSnapshot,
+          sessionIdBefore: sessionBefore,
+          retryOfRunId: run.id,
+          scheduledRetryAt: schedule.dueAt,
+          scheduledRetryAttempt: schedule.attempt,
+          scheduledRetryReason: retryReason,
+          continuationAttempt: readContinuationAttempt(retryContextSnapshot.livenessContinuationAttempt),
+          updatedAt: now,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      await tx
+        .update(agentWakeupRequests)
+        .set({
+          runId: scheduledRun.id,
+          updatedAt: now,
+        })
+        .where(eq(agentWakeupRequests.id, wakeupRequest.id));
+
+      if (issueId) {
+        await tx
+          .update(issues)
+          .set({
+            executionRunId: scheduledRun.id,
+            executionAgentNameKey: normalizeAgentNameKey(agent.name),
+            executionLockedAt: now,
+            updatedAt: now,
+          })
+          .where(and(eq(issues.id, issueId), eq(issues.companyId, run.companyId), eq(issues.executionRunId, run.id)));
+      }
+
+      return scheduledRun;
+    });
+
+    await appendRunEvent(run, await nextRunEventSeq(run.id), {
+      eventType: "lifecycle",
+      stream: "system",
+      level: "warn",
+      message: `Scheduled bounded retry ${schedule.attempt}/${schedule.maxAttempts} for ${schedule.dueAt.toISOString()}`,
+      payload: {
+        retryRunId: retryRun.id,
+        retryReason,
+        scheduledRetryAttempt: schedule.attempt,
+        scheduledRetryAt: schedule.dueAt.toISOString(),
+        baseDelayMs: schedule.baseDelayMs,
+        delayMs: schedule.delayMs,
+      },
+    });
+
+    return {
+      outcome: "scheduled" as const,
+      run: retryRun,
+      dueAt: schedule.dueAt,
+      attempt: schedule.attempt,
+      maxAttempts: schedule.maxAttempts,
+    };
+  }
+
+  async function promoteDueScheduledRetries(now = new Date()) {
+    const dueRuns = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(
+        and(
+          eq(heartbeatRuns.status, "scheduled_retry"),
+          lte(heartbeatRuns.scheduledRetryAt, now),
+        ),
+      )
+      .orderBy(asc(heartbeatRuns.scheduledRetryAt), asc(heartbeatRuns.createdAt), asc(heartbeatRuns.id))
+      .limit(50);
+
+    const promotedRunIds: string[] = [];
+
+    for (const dueRun of dueRuns) {
+      const promoted = await db
+        .update(heartbeatRuns)
+        .set({
+          status: "queued",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(heartbeatRuns.id, dueRun.id),
+            eq(heartbeatRuns.status, "scheduled_retry"),
+            lte(heartbeatRuns.scheduledRetryAt, now),
+          ),
+        )
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      if (!promoted) continue;
+
+      promotedRunIds.push(promoted.id);
+
+      await appendRunEvent(promoted, await nextRunEventSeq(promoted.id), {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "info",
+        message: "Scheduled retry became due and was promoted to the queued run pool",
+        payload: {
+          scheduledRetryAttempt: promoted.scheduledRetryAttempt,
+          scheduledRetryAt: promoted.scheduledRetryAt ? new Date(promoted.scheduledRetryAt).toISOString() : null,
+          scheduledRetryReason: promoted.scheduledRetryReason,
+        },
+      });
+
+      publishLiveEvent({
+        companyId: promoted.companyId,
+        type: "heartbeat.run.queued",
+        payload: {
+          runId: promoted.id,
+          agentId: promoted.agentId,
+          invocationSource: promoted.invocationSource,
+          triggerDetail: promoted.triggerDetail,
+          wakeupRequestId: promoted.wakeupRequestId,
+        },
+      });
+    }
+
+    return {
+      promoted: promotedRunIds.length,
+      runIds: promotedRunIds,
+    };
+  }
+
   function parseHeartbeatPolicy(agent: typeof agents.$inferSelect) {
     const runtimeConfig = parseObject(agent.runtimeConfig);
     const heartbeat = parseObject(runtimeConfig.heartbeat);
@@ -3588,6 +3835,7 @@ export function heartbeatService(db: Db) {
   }
 
   async function resumeQueuedRuns() {
+    await promoteDueScheduledRetries();
     const queuedRuns = await db
       .select({ agentId: heartbeatRuns.agentId })
       .from(heartbeatRuns)
@@ -4582,8 +4830,8 @@ export function heartbeatService(db: Db) {
 
       let outcome: "succeeded" | "failed" | "cancelled" | "timed_out";
       const latestRun = await getRun(run.id);
-      if (latestRun?.status === "cancelled") {
-        outcome = "cancelled";
+      if (isHeartbeatRunTerminalStatus(latestRun?.status)) {
+        outcome = latestRun.status;
       } else if (adapterResult.timedOut) {
         outcome = "timed_out";
       } else if ((adapterResult.exitCode ?? 0) === 0 && !adapterResult.errorMessage) {
@@ -4591,6 +4839,24 @@ export function heartbeatService(db: Db) {
       } else {
         outcome = "failed";
       }
+
+      const runErrorMessage =
+        outcome === "cancelled"
+          ? (latestRun?.error ?? adapterResult.errorMessage ?? "Cancelled")
+          : outcome === "succeeded"
+            ? null
+            : redactCurrentUserText(
+                adapterResult.errorMessage ?? (outcome === "timed_out" ? "Timed out" : "Adapter failed"),
+                currentUserRedactionOptions,
+              );
+      const runErrorCode =
+        outcome === "timed_out"
+          ? "timeout"
+          : outcome === "cancelled"
+            ? (latestRun?.errorCode ?? "cancelled")
+            : outcome === "failed"
+              ? (adapterResult.errorCode ?? "adapter_failed")
+              : null;
 
       let logSummary: { bytes: number; sha256?: string; compressed: boolean } | null = null;
       if (handle) {
@@ -4638,34 +4904,14 @@ export function heartbeatService(db: Db) {
       );
       const persistedResultWithStopMetadata = mergeRunStopMetadataForAgent(agent, outcome, {
         resultJson: persistedResultJson,
-        errorCode:
-          outcome === "timed_out"
-            ? "timeout"
-            : outcome === "cancelled"
-              ? "cancelled"
-              : outcome === "failed"
-                ? (adapterResult.errorCode ?? "adapter_failed")
-                : null,
-        errorMessage: adapterResult.errorMessage ?? null,
+        errorCode: runErrorCode,
+        errorMessage: runErrorMessage,
       });
 
       await setRunStatus(run.id, status, {
         finishedAt: new Date(),
-        error:
-          outcome === "succeeded"
-            ? null
-            : redactCurrentUserText(
-                adapterResult.errorMessage ?? (outcome === "timed_out" ? "Timed out" : "Adapter failed"),
-                currentUserRedactionOptions,
-              ),
-        errorCode:
-          outcome === "timed_out"
-            ? "timeout"
-            : outcome === "cancelled"
-              ? "cancelled"
-              : outcome === "failed"
-                ? (adapterResult.errorCode ?? "adapter_failed")
-                : null,
+        error: runErrorMessage,
+        errorCode: runErrorCode,
         exitCode: adapterResult.exitCode,
         signal: adapterResult.signal,
         usageJson,
@@ -4680,7 +4926,7 @@ export function heartbeatService(db: Db) {
 
       await setWakeupStatus(run.wakeupRequestId, outcome === "succeeded" ? "completed" : status, {
         finishedAt: new Date(),
-        error: adapterResult.errorMessage ?? null,
+        error: runErrorMessage,
       });
 
       const finalizedRun = await getRun(run.id);
@@ -5161,7 +5407,7 @@ export function heartbeatService(db: Db) {
             .then((rows) => rows[0] ?? null)
           : null;
 
-        if (activeExecutionRun && activeExecutionRun.status !== "queued" && activeExecutionRun.status !== "running") {
+        if (activeExecutionRun && !EXECUTION_PATH_HEARTBEAT_RUN_STATUSES.includes(activeExecutionRun.status as typeof EXECUTION_PATH_HEARTBEAT_RUN_STATUSES[number])) {
           activeExecutionRun = null;
         }
 
@@ -5184,12 +5430,12 @@ export function heartbeatService(db: Db) {
             .where(
               and(
                 eq(heartbeatRuns.companyId, issue.companyId),
-                inArray(heartbeatRuns.status, ["queued", "running"]),
+                inArray(heartbeatRuns.status, [...EXECUTION_PATH_HEARTBEAT_RUN_STATUSES]),
                 sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
               ),
             )
             .orderBy(
-              sql`case when ${heartbeatRuns.status} = 'running' then 0 else 1 end`,
+              sql`case when ${heartbeatRuns.status} = 'running' then 0 when ${heartbeatRuns.status} = 'queued' then 1 else 2 end`,
               asc(heartbeatRuns.createdAt),
             )
             .limit(1)
@@ -5397,11 +5643,14 @@ export function heartbeatService(db: Db) {
     const activeRuns = await db
       .select()
       .from(heartbeatRuns)
-      .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])))
+      .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, [...EXECUTION_PATH_HEARTBEAT_RUN_STATUSES])))
       .orderBy(desc(heartbeatRuns.createdAt));
 
     const sameScopeQueuedRun = activeRuns.find(
       (candidate) => candidate.status === "queued" && isSameTaskScope(runTaskKey(candidate), taskKey),
+    );
+    const sameScopeScheduledRetryRun = activeRuns.find(
+      (candidate) => candidate.status === "scheduled_retry" && isSameTaskScope(runTaskKey(candidate), taskKey),
     );
     const sameScopeRunningRun = activeRuns.find(
       (candidate) => candidate.status === "running" && isSameTaskScope(runTaskKey(candidate), taskKey),
@@ -5413,6 +5662,7 @@ export function heartbeatService(db: Db) {
 
     const coalescedTargetRun =
       sameScopeQueuedRun ??
+      sameScopeScheduledRetryRun ??
       (shouldQueueFollowupForRunningWake ? null : sameScopeRunningRun ?? null);
 
     if (coalescedTargetRun) {
@@ -5522,7 +5772,7 @@ export function heartbeatService(db: Db) {
       .where(
         and(
           eq(heartbeatRuns.companyId, companyId),
-          inArray(heartbeatRuns.status, ["queued", "running"]),
+          inArray(heartbeatRuns.status, [...CANCELLABLE_HEARTBEAT_RUN_STATUSES]),
           sql`${effectiveProjectId} = ${projectId}`,
         ),
       );
@@ -5607,7 +5857,7 @@ export function heartbeatService(db: Db) {
   async function cancelRunInternal(runId: string, reason = "Cancelled by control plane") {
     const run = await getRun(runId);
     if (!run) throw notFound("Heartbeat run not found");
-    if (run.status !== "running" && run.status !== "queued") return run;
+    if (!CANCELLABLE_HEARTBEAT_RUN_STATUSES.includes(run.status as typeof CANCELLABLE_HEARTBEAT_RUN_STATUSES[number])) return run;
     const agent = await getAgent(run.agentId);
     if (!agent) throw notFound("Agent not found");
 
@@ -5665,7 +5915,7 @@ export function heartbeatService(db: Db) {
     const runs = await db
       .select()
       .from(heartbeatRuns)
-      .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])));
+      .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, [...CANCELLABLE_HEARTBEAT_RUN_STATUSES])));
 
     for (const run of runs) {
       await setRunStatus(run.id, "cancelled", {
@@ -5714,7 +5964,7 @@ export function heartbeatService(db: Db) {
           .where(
             and(
               eq(heartbeatRuns.companyId, scope.companyId),
-              inArray(heartbeatRuns.status, ["queued", "running"]),
+              inArray(heartbeatRuns.status, [...CANCELLABLE_HEARTBEAT_RUN_STATUSES]),
             ),
           )
           .then((rows) => rows.map((row) => row.id))
@@ -5877,7 +6127,25 @@ export function heartbeatService(db: Db) {
 
     reapOrphanedRuns,
 
+    promoteDueScheduledRetries,
+
     resumeQueuedRuns,
+
+    scheduleBoundedRetry: async (
+      runId: string,
+      opts?: {
+        now?: Date;
+        random?: () => number;
+        retryReason?: string;
+        wakeReason?: string;
+      },
+    ) => {
+      const run = await getRun(runId);
+      if (!run) return { outcome: "missing_run" as const };
+      const agent = await getAgent(run.agentId);
+      if (!agent) return { outcome: "missing_agent" as const };
+      return scheduleBoundedRetryForRun(run, agent, opts);
+    },
 
     tickTimers: async (now = new Date()) => {
       const allAgents = await db.select().from(agents);

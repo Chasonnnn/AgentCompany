@@ -15,6 +15,11 @@ export interface RunForIssue {
   usageJson: Record<string, unknown> | null;
   resultJson: Record<string, unknown> | null;
   logBytes?: number | null;
+  retryOfRunId?: string | null;
+  scheduledRetryAt?: string | null;
+  scheduledRetryAttempt?: number;
+  scheduledRetryReason?: string | null;
+  retryExhaustedReason?: string | null;
   livenessState?: RunLivenessState | null;
   livenessReason?: string | null;
   continuationAttempt?: number;

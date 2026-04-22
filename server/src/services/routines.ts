@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -46,7 +46,7 @@ import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "./is
 import { logActivity } from "./activity-log.js";
 
 const OPEN_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"];
-const LIVE_HEARTBEAT_RUN_STATUSES = ["queued", "running"];
+const LIVE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"];
 const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled"]);
 const MAX_CATCH_UP_RUNS = 25;
 const WEEKDAY_INDEX: Record<string, number> = {
@@ -348,6 +348,37 @@ function mergeRoutineRunPayload(
   };
 }
 
+function normalizeRoutineDispatchFingerprintValue(value: unknown): unknown {
+  if (value === undefined) return null;
+  if (value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map((item) => normalizeRoutineDispatchFingerprintValue(item));
+  if (isPlainRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, normalizeRoutineDispatchFingerprintValue(value[key])]),
+    );
+  }
+  return String(value);
+}
+
+function createRoutineDispatchFingerprint(input: {
+  payload: Record<string, unknown> | null;
+  projectId: string | null;
+  assigneeAgentId: string | null;
+  executionWorkspaceId?: string | null;
+  executionWorkspacePreference?: string | null;
+  executionWorkspaceSettings?: Record<string, unknown> | null;
+  title: string;
+  description: string | null;
+}) {
+  const canonical = JSON.stringify(normalizeRoutineDispatchFingerprintValue(input));
+  return crypto.createHash("sha256").update(canonical).digest("hex");
+}
+
 export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeupDeps } = {}) {
   const issueSvc = issueService(db);
   const secretsSvc = secretService(db);
@@ -449,6 +480,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
         triggeredAt: routineRuns.triggeredAt,
         idempotencyKey: routineRuns.idempotencyKey,
         triggerPayload: routineRuns.triggerPayload,
+        dispatchFingerprint: routineRuns.dispatchFingerprint,
         linkedIssueId: routineRuns.linkedIssueId,
         coalescedIntoRunId: routineRuns.coalescedIntoRunId,
         failureReason: routineRuns.failureReason,
@@ -481,6 +513,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
         triggeredAt: row.triggeredAt,
         idempotencyKey: row.idempotencyKey,
         triggerPayload: row.triggerPayload as Record<string, unknown> | null,
+        dispatchFingerprint: row.dispatchFingerprint,
         linkedIssueId: row.linkedIssueId,
         coalescedIntoRunId: row.coalescedIntoRunId,
         failureReason: row.failureReason,
@@ -629,9 +662,32 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
     }
   }
 
-  async function findLiveExecutionIssue(routine: typeof routines.$inferSelect, executor: Db = db) {
+  function matchesDispatchFingerprint(
+    issue: { originFingerprint: string | null },
+    dispatchFingerprint?: string | null,
+  ) {
+    const normalized = dispatchFingerprint?.trim() ?? "";
+    if (!normalized) return true;
+    return issue.originFingerprint === normalized || issue.originFingerprint === "default";
+  }
+
+  async function findLiveExecutionIssue(
+    routine: typeof routines.$inferSelect,
+    executor: Db = db,
+    dispatchFingerprint?: string | null,
+  ) {
     const executionBoundIssue = await executor
-      .select()
+      .select({
+        id: issues.id,
+        identifier: issues.identifier,
+        title: issues.title,
+        status: issues.status,
+        priority: issues.priority,
+        updatedAt: issues.updatedAt,
+        createdAt: issues.createdAt,
+        originRunId: issues.originRunId,
+        originFingerprint: issues.originFingerprint,
+      })
       .from(issues)
       .innerJoin(
         heartbeatRuns,
@@ -650,12 +706,22 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
         ),
       )
       .orderBy(desc(issues.updatedAt), desc(issues.createdAt))
-      .limit(1)
-      .then((rows) => rows[0]?.issues ?? null);
+      .limit(10)
+      .then((rows) => rows.find((row) => matchesDispatchFingerprint(row, dispatchFingerprint)) ?? null);
     if (executionBoundIssue) return executionBoundIssue;
 
     return executor
-      .select()
+      .select({
+        id: issues.id,
+        identifier: issues.identifier,
+        title: issues.title,
+        status: issues.status,
+        priority: issues.priority,
+        updatedAt: issues.updatedAt,
+        createdAt: issues.createdAt,
+        originRunId: issues.originRunId,
+        originFingerprint: issues.originFingerprint,
+      })
       .from(issues)
       .innerJoin(
         heartbeatRuns,
@@ -675,8 +741,8 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
         ),
       )
       .orderBy(desc(issues.updatedAt), desc(issues.createdAt))
-      .limit(1)
-      .then((rows) => rows[0]?.issues ?? null);
+      .limit(10)
+      .then((rows) => rows.find((row) => matchesDispatchFingerprint(row, dispatchFingerprint)) ?? null);
   }
 
   async function finalizeRun(runId: string, patch: Partial<typeof routineRuns.$inferInsert>, executor: Db = db) {
@@ -754,6 +820,16 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
     const title = interpolateRoutineTemplate(input.routine.title, allVariables) ?? input.routine.title;
     const description = interpolateRoutineTemplate(input.routine.description, allVariables);
     const triggerPayload = mergeRoutineRunPayload(input.payload, resolvedVariables);
+    const dispatchFingerprint = createRoutineDispatchFingerprint({
+      payload: triggerPayload,
+      projectId,
+      assigneeAgentId,
+      executionWorkspaceId: input.executionWorkspaceId ?? null,
+      executionWorkspacePreference: input.executionWorkspacePreference ?? null,
+      executionWorkspaceSettings: input.executionWorkspaceSettings ?? null,
+      title,
+      description,
+    });
     const run = await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
       await tx.execute(
@@ -791,6 +867,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
           triggeredAt,
           idempotencyKey: input.idempotencyKey ?? null,
           triggerPayload,
+          dispatchFingerprint,
         })
         .returning();
 
@@ -800,7 +877,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
 
       let createdIssue: Awaited<ReturnType<typeof issueSvc.create>> | null = null;
       try {
-        const activeIssue = await findLiveExecutionIssue(input.routine, txDb);
+        const activeIssue = await findLiveExecutionIssue(input.routine, txDb, dispatchFingerprint);
         if (activeIssue && input.routine.concurrencyPolicy !== "always_enqueue") {
           const status = input.routine.concurrencyPolicy === "skip_if_active" ? "skipped" : "coalesced";
           const updated = await finalizeRun(createdRun.id, {
@@ -833,6 +910,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
             originKind: "routine_execution",
             originId: input.routine.id,
             originRunId: createdRun.id,
+            originFingerprint: dispatchFingerprint,
             executionWorkspaceId: input.executionWorkspaceId ?? null,
             executionWorkspacePreference: input.executionWorkspacePreference ?? null,
             executionWorkspaceSettings: input.executionWorkspaceSettings ?? null,
@@ -849,7 +927,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
             throw error;
           }
 
-          const existingIssue = await findLiveExecutionIssue(input.routine, txDb);
+          const existingIssue = await findLiveExecutionIssue(input.routine, txDb, dispatchFingerprint);
           if (!existingIssue) throw error;
           const status = input.routine.concurrencyPolicy === "skip_if_active" ? "skipped" : "coalesced";
           const updated = await finalizeRun(createdRun.id, {
@@ -1003,6 +1081,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
             triggeredAt: routineRuns.triggeredAt,
             idempotencyKey: routineRuns.idempotencyKey,
             triggerPayload: routineRuns.triggerPayload,
+            dispatchFingerprint: routineRuns.dispatchFingerprint,
             linkedIssueId: routineRuns.linkedIssueId,
             coalescedIntoRunId: routineRuns.coalescedIntoRunId,
             failureReason: routineRuns.failureReason,
@@ -1034,6 +1113,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
               triggeredAt: run.triggeredAt,
               idempotencyKey: run.idempotencyKey,
               triggerPayload: run.triggerPayload as Record<string, unknown> | null,
+              dispatchFingerprint: run.dispatchFingerprint,
               linkedIssueId: run.linkedIssueId,
               coalescedIntoRunId: run.coalescedIntoRunId,
               failureReason: run.failureReason,
@@ -1446,6 +1526,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
           triggeredAt: routineRuns.triggeredAt,
           idempotencyKey: routineRuns.idempotencyKey,
           triggerPayload: routineRuns.triggerPayload,
+          dispatchFingerprint: routineRuns.dispatchFingerprint,
           linkedIssueId: routineRuns.linkedIssueId,
           coalescedIntoRunId: routineRuns.coalescedIntoRunId,
           failureReason: routineRuns.failureReason,
@@ -1477,6 +1558,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
         triggeredAt: row.triggeredAt,
         idempotencyKey: row.idempotencyKey,
         triggerPayload: row.triggerPayload as Record<string, unknown> | null,
+        dispatchFingerprint: row.dispatchFingerprint,
         linkedIssueId: row.linkedIssueId,
         coalescedIntoRunId: row.coalescedIntoRunId,
         failureReason: row.failureReason,

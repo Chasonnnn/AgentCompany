@@ -5,6 +5,7 @@ import { Link } from "@/lib/router";
 import { activityApi, type RunForIssue, type RunLivenessState } from "../api/activity";
 import { heartbeatsApi, type ActiveRunForIssue, type LiveRunForIssue } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
+import { describeRunRetryState } from "../lib/runRetryState";
 import { cn, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
 
 type IssueRunLedgerProps = {
@@ -68,6 +69,12 @@ const PENDING_LIVENESS_COPY: LivenessCopy = {
   label: "Checks after finish",
   tone: "border-border bg-background text-muted-foreground",
   description: "Liveness is evaluated after the run finishes.",
+};
+
+const RETRY_PENDING_LIVENESS_COPY: LivenessCopy = {
+  label: "Retry pending",
+  tone: "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+  description: "Paperclip queued an automatic retry that has not started yet.",
 };
 
 const MISSING_LIVENESS_COPY: LivenessCopy = {
@@ -162,6 +169,7 @@ function isActiveRun(run: Pick<LedgerRun, "status" | "isLive">) {
 }
 
 function livenessCopyForRun(run: LedgerRun) {
+  if (run.status === "scheduled_retry") return RETRY_PENDING_LIVENESS_COPY;
   if (run.livenessState) return LIVENESS_COPY[run.livenessState];
   return isActiveRun(run) ? PENDING_LIVENESS_COPY : MISSING_LIVENESS_COPY;
 }
@@ -185,6 +193,7 @@ function stopReasonLabel(run: RunForIssue) {
 
 function stopStatusLabel(run: LedgerRun, stopReason: string | null) {
   if (stopReason) return stopReason;
+  if (run.status === "scheduled_retry") return "Retry pending";
   if (run.status === "queued") return "Waiting to start";
   if (run.status === "running") return "Still running";
   if (!run.livenessState) return "Unavailable";
@@ -192,6 +201,7 @@ function stopStatusLabel(run: LedgerRun, stopReason: string | null) {
 }
 
 function lastUsefulActionLabel(run: LedgerRun) {
+  if (run.status === "scheduled_retry") return "Waiting for next attempt";
   if (run.lastUsefulActionAt) return relativeTime(run.lastUsefulActionAt);
   if (isActiveRun(run)) return "No action recorded yet";
   if (run.livenessState === "plan_only" || run.livenessState === "needs_followup") return "No concrete action";
@@ -376,6 +386,7 @@ export function IssueRunLedger({
             const duration = formatDuration(run.startedAt, run.finishedAt);
             const exhausted = hasExhaustedContinuation(run);
             const continuation = continuationLabel(run);
+            const retryState = describeRunRetryState(run);
             return (
               <article key={run.runId} className="space-y-2 px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -397,6 +408,11 @@ export function IssueRunLedger({
                   <span className={cn("rounded-md border px-1.5 py-0.5 text-[11px] font-medium", liveness.tone)} title={liveness.description}>
                     {liveness.label}
                   </span>
+                  {retryState ? (
+                    <span className={cn("rounded-md border px-1.5 py-0.5 text-[11px] font-medium", retryState.tone)}>
+                      {retryState.badgeLabel}
+                    </span>
+                  ) : null}
                   {exhausted ? (
                     <span className="rounded-md border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-300">
                       Exhausted
@@ -421,6 +437,31 @@ export function IssueRunLedger({
                   <p className="min-w-0 break-words text-xs leading-5 text-muted-foreground">
                     {run.livenessReason}
                   </p>
+                ) : null}
+
+                {retryState ? (
+                  <div className="min-w-0 rounded-md border border-border/70 bg-accent/20 px-2 py-1.5 text-xs leading-5">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="font-medium text-foreground">{retryState.badgeLabel}</span>
+                      {retryState.retryOfRunId ? (
+                        <>
+                          <span className="text-muted-foreground">after</span>
+                          <Link
+                            to={`/agents/${run.agentId}/runs/${retryState.retryOfRunId}`}
+                            className="font-mono text-foreground hover:underline"
+                          >
+                            {retryState.retryOfRunId.slice(0, 8)}
+                          </Link>
+                        </>
+                      ) : null}
+                    </div>
+                    {retryState.detail ? (
+                      <p className="min-w-0 break-words text-muted-foreground">{retryState.detail}</p>
+                    ) : null}
+                    {retryState.secondary ? (
+                      <p className="min-w-0 break-words text-muted-foreground">{retryState.secondary}</p>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 {run.nextAction ? (

@@ -621,7 +621,7 @@ export function buildHostServices(
     if (issueIds.length === 0) return [];
     const issueIdExpr = sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`;
     const statusCondition = options.activeOnly
-      ? inArray(heartbeatRuns.status, ["queued", "running"])
+      ? inArray(heartbeatRuns.status, ["queued", "running", "scheduled_retry"])
       : undefined;
     const rows = await db
       .select({
