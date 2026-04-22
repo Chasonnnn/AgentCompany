@@ -14,8 +14,11 @@ import type {
   CompanySkillDetail,
   CompanySkillFileDetail,
   CompanySkillFileInventoryEntry,
+  CompanySkillHardeningState,
   CompanySkillListItem,
   CompanySkillProjectScanResult,
+  CompanySkillReliabilityAudit,
+  CompanySkillReliabilityRepairPreview,
   CompanySkillSourceBadge,
   CompanySkillUpdateStatus,
   GlobalSkillCatalogItem,
@@ -66,7 +69,10 @@ import {
   RefreshCw,
   Save,
   Search,
+  ShieldAlert,
+  ShieldCheck,
   Trash2,
+  Workflow,
 } from "lucide-react";
 
 type SkillTreeNode = {
@@ -741,6 +747,218 @@ function coverageStatusClassName(status: CompanySkillCoverageAudit["agents"][num
     return "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200";
   }
   return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+}
+
+function reliabilityStatusLabel(status: CompanySkillReliabilityAudit["skills"][number]["status"]) {
+  if (status === "repairable_gap") return "Repairable gap";
+  if (status === "proposal_stale") return "Proposal stale";
+  if (status === "needs_review") return "Needs review";
+  return "Healthy";
+}
+
+function reliabilityStatusClassName(status: CompanySkillReliabilityAudit["skills"][number]["status"]) {
+  if (status === "repairable_gap") {
+    return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200";
+  }
+  if (status === "proposal_stale") {
+    return "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200";
+  }
+  if (status === "needs_review") {
+    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  }
+  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+}
+
+function hardeningStateLabel(state: CompanySkillHardeningState | null | undefined) {
+  if (!state) return "No hardening work";
+  return state.replaceAll("_", " ");
+}
+
+function SkillReliabilityAuditPanel({
+  audit,
+  loading,
+  error,
+  preview,
+  previewPending,
+  applyPending,
+  onPreview,
+  onApply,
+}: {
+  audit: CompanySkillReliabilityAudit | undefined;
+  loading: boolean;
+  error: Error | null;
+  preview: CompanySkillReliabilityRepairPreview | null;
+  previewPending: boolean;
+  applyPending: boolean;
+  onPreview: () => void;
+  onApply: () => void;
+}) {
+  if (loading && !audit) {
+    return (
+      <div className="rounded-md border border-border px-5 py-4 text-sm text-muted-foreground">
+        Auditing skill reliability...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-md border border-destructive/30 px-5 py-4 text-sm text-destructive">
+        {error.message}
+      </div>
+    );
+  }
+
+  if (!audit) return null;
+
+  const activePreview = preview ?? null;
+  const skills = activePreview?.skills ?? audit.skills;
+  const visibleSkills = skills.filter((skill) => skill.status !== "healthy");
+  const changedSkillCount = activePreview?.changedSkillCount ?? 0;
+  const canApply = Boolean(activePreview && changedSkillCount > 0 && !applyPending);
+
+  return (
+    <div className="rounded-md border border-border">
+      <div className="border-b border-border px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold">Skill Reliability</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Audit whether each skill is reachable, non-duplicative, and backed by the declared verification path.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={onPreview} disabled={previewPending || applyPending}>
+              {previewPending ? (
+                <>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Previewing...
+                </>
+              ) : (
+                "Preview hardening"
+              )}
+            </Button>
+            <Button onClick={onApply} disabled={!canApply}>
+              {applyPending
+                ? "Applying..."
+                : activePreview
+                  ? `Create or refresh ${changedSkillCount} issue${changedSkillCount === 1 ? "" : "s"}`
+                  : "Apply hardening"}
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Audited</div>
+            <div className="mt-2 text-xl font-semibold">{audit.auditedSkillCount}</div>
+          </div>
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Healthy</div>
+            <div className="mt-2 text-xl font-semibold">{audit.healthyCount}</div>
+          </div>
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Repairable</div>
+            <div className="mt-2 text-xl font-semibold">{audit.repairableGapCount}</div>
+          </div>
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Needs review</div>
+            <div className="mt-2 text-xl font-semibold">{audit.needsReviewCount}</div>
+          </div>
+          <div className="rounded-md border border-border px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Proposal stale</div>
+            <div className="mt-2 text-xl font-semibold">{audit.proposalStaleCount}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-5 px-5 py-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)]">
+        <div>
+          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Skill findings</div>
+          <div className="mt-3 rounded-md border border-border">
+            {visibleSkills.length === 0 ? (
+              <div className="px-3 py-4 text-sm text-muted-foreground">
+                Every installed skill currently passes the structural reliability audit.
+              </div>
+            ) : (
+              visibleSkills.map((skill) => (
+                <div key={skill.skillId} className="border-b border-border px-3 py-3 last:border-b-0">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link to={`/skills/${skill.skillId}`} className="font-medium text-foreground no-underline hover:underline">
+                        {skill.name}
+                      </Link>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {skill.key} · {hardeningStateLabel(skill.hardeningState)}
+                      </p>
+                    </div>
+                    <span className={cn("rounded-full border px-2 py-0.5 text-[10px] uppercase", reliabilityStatusClassName(skill.status))}>
+                      {reliabilityStatusLabel(skill.status)}
+                    </span>
+                  </div>
+                  <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+                    {skill.findings.slice(0, 3).map((finding) => (
+                      <li key={`${skill.skillId}-${finding.code}`}>• {finding.message}</li>
+                    ))}
+                  </ul>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    {skill.linkedHardeningIssue ? (
+                      <Link
+                        to={`/issues/${skill.linkedHardeningIssue.identifier ?? skill.linkedHardeningIssue.id}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-foreground no-underline hover:bg-accent/30"
+                      >
+                        <Workflow className="h-3 w-3" />
+                        Hardening issue {skill.linkedHardeningIssue.identifier ?? skill.linkedHardeningIssue.id.slice(0, 8)}
+                      </Link>
+                    ) : null}
+                    {skill.linkedProposal ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-muted-foreground">
+                        Proposal {skill.linkedProposal.status.replaceAll("_", " ")}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-md border border-border px-4 py-4">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+              Managed adapter policy
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Semantic promptfoo route/process coverage is required only when a skill is used by Paperclip-managed local adapters.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              {audit.managedAdapterTypes.map((adapterType) => (
+                <span key={adapterType} className="rounded-full border border-border px-2 py-1">
+                  {adapterType}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border px-4 py-4">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <ShieldAlert className="h-4 w-4 text-muted-foreground" />
+              Repair preview
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Repair creates or refreshes tracked hardening issues. It does not edit skill files or auto-approve shared-skill changes.
+            </p>
+            {activePreview ? (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Preview fingerprint: <span className="font-mono">{activePreview.selectionFingerprint.slice(0, 12)}</span>
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SkillCoverageAuditPanel({
@@ -1430,6 +1648,8 @@ function SkillPane({
   const removeDisabledReason = removeBlocked
     ? "Detach this skill from all agents before removing it."
     : null;
+  const reliabilityWarnings = detail.reliabilityParseWarnings ?? [];
+  const reliabilityMetadata = detail.reliabilityMetadata ?? null;
 
   return (
     <div className="min-w-0">
@@ -1556,6 +1776,81 @@ function SkillPane({
               </div>
             )}
           </div>
+          <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+            <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Reliability</span>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className={cn("rounded-full border px-2 py-0.5 text-[10px] uppercase", detail.hardeningState ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200" : "border-border bg-background/80 text-muted-foreground")}>
+                {hardeningStateLabel(detail.hardeningState)}
+              </span>
+              {detail.linkedHardeningIssue ? (
+                <Link
+                  to={`/issues/${detail.linkedHardeningIssue.identifier ?? detail.linkedHardeningIssue.id}`}
+                  className="inline-flex items-center gap-1 text-foreground no-underline hover:underline"
+                >
+                  Hardening issue {detail.linkedHardeningIssue.identifier ?? detail.linkedHardeningIssue.id.slice(0, 8)}
+                </Link>
+              ) : null}
+              {detail.linkedProposal ? (
+                <Link
+                  to={`/instance/settings/shared-skills/${detail.linkedProposal.id}`}
+                  className="inline-flex items-center gap-1 text-foreground no-underline hover:underline"
+                >
+                  Proposal {detail.linkedProposal.status.replaceAll("_", " ")}
+                </Link>
+              ) : null}
+            </div>
+          </div>
+          {reliabilityWarnings.length > 0 ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm text-amber-700 dark:text-amber-200">
+              <div className="font-medium">Reliability metadata warnings</div>
+              <ul className="mt-2 space-y-1">
+                {reliabilityWarnings.map((warning) => (
+                  <li key={warning}>• {warning}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {reliabilityMetadata ? (
+            <div className="grid gap-3 rounded-md border border-border px-3 py-3 md:grid-cols-2">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Activation hints</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {reliabilityMetadata.activationHints.length > 0 ? reliabilityMetadata.activationHints.map((hint) => (
+                    <span key={hint} className="rounded-full border border-border px-2 py-1 text-xs">{hint}</span>
+                  )) : <span className="text-sm text-muted-foreground">None declared</span>}
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Deterministic entrypoints</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {reliabilityMetadata.deterministicEntrypoints.length > 0 ? reliabilityMetadata.deterministicEntrypoints.map((entrypoint) => (
+                    <span key={entrypoint} className="rounded-full border border-border px-2 py-1 font-mono text-xs">{entrypoint}</span>
+                  )) : <span className="text-sm text-muted-foreground">None declared</span>}
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Verification</div>
+                <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                  <li>Unit commands: {reliabilityMetadata.verification?.unitCommands.length ?? 0}</li>
+                  <li>Integration commands: {reliabilityMetadata.verification?.integrationCommands.length ?? 0}</li>
+                  <li>Promptfoo cases: {reliabilityMetadata.verification?.promptfooCaseIds.length ?? 0}</li>
+                  <li>Architecture scenarios: {reliabilityMetadata.verification?.architectureScenarioIds.length ?? 0}</li>
+                  <li>Smoke checklist: {reliabilityMetadata.verification?.smokeChecklist.length ?? 0}</li>
+                </ul>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Overlap & disambiguation</div>
+                <div className="mt-2 space-y-2 text-sm text-muted-foreground">
+                  <div>
+                    Overlap domains: {reliabilityMetadata.overlapDomains.length > 0 ? reliabilityMetadata.overlapDomains.join(", ") : "none"}
+                  </div>
+                  <div>
+                    Disambiguation hints: {reliabilityMetadata.disambiguationHints.length > 0 ? reliabilityMetadata.disambiguationHints.join(", ") : "none"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -1690,6 +1985,13 @@ export function CompanySkills() {
   const coverageAuditQuery = useQuery({
     queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId ?? ""),
     queryFn: () => companySkillsApi.coverageAudit(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId && libraryView === "installed"),
+    staleTime: 60_000,
+  });
+
+  const reliabilityAuditQuery = useQuery({
+    queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId ?? ""),
+    queryFn: () => companySkillsApi.reliabilityAudit(selectedCompanyId!),
     enabled: Boolean(selectedCompanyId && libraryView === "installed"),
     staleTime: 60_000,
   });
@@ -1904,6 +2206,7 @@ export function CompanySkills() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
       ]);
       if (result.imported[0]) navigate(skillRoute(result.imported[0].id));
       pushToast({
@@ -1932,6 +2235,7 @@ export function CompanySkills() {
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.globalCatalog(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
       ]);
       pushToast({
         tone: "success",
@@ -1955,6 +2259,7 @@ export function CompanySkills() {
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.globalCatalog(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
       ]);
       const summaryParts = [
         `${result.installedCount} installed`,
@@ -2031,6 +2336,44 @@ export function CompanySkills() {
     },
   });
 
+  const previewReliabilityRepair = useMutation({
+    mutationFn: () => companySkillsApi.reliabilityRepairPreview(selectedCompanyId!),
+    onError: (error) => {
+      pushToast({
+        tone: "error",
+        title: "Reliability preview failed",
+        body: error instanceof Error ? error.message : "Failed to preview skill hardening work.",
+      });
+    },
+  });
+
+  const applyReliabilityRepair = useMutation({
+    mutationFn: (selectionFingerprint: string) =>
+      companySkillsApi.reliabilityRepairApply(selectedCompanyId!, { selectionFingerprint }),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
+      ]);
+      previewReliabilityRepair.reset();
+      pushToast({
+        tone: "success",
+        title: "Skill hardening issues refreshed",
+        body:
+          result.changedSkillCount === 0
+            ? "No skill hardening issues needed to change."
+            : `${result.changedSkillCount} skill${result.changedSkillCount === 1 ? "" : "s"} now have refreshed hardening work.`,
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        tone: "error",
+        title: "Reliability repair failed",
+        body: error instanceof Error ? error.message : "Failed to refresh skill hardening issues.",
+      });
+    },
+  });
+
   const previewBulkGrant = useMutation({
     mutationFn: ({ payload }: { payload: BulkSkillGrantRequest; requestKey: string }) =>
       companySkillsApi.bulkGrantPreview(selectedCompanyId!, selectedSkillId!, payload),
@@ -2057,6 +2400,7 @@ export function CompanySkills() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, selectedSkillId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId!, "department") }),
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.navigation(selectedCompanyId!, "project") }),
@@ -2092,6 +2436,7 @@ export function CompanySkills() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
       ]);
       navigate(skillRoute(skill.id));
       setCreateOpen(false);
@@ -2120,6 +2465,7 @@ export function CompanySkills() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
       ]);
       const summary = formatProjectScanSummary(result);
       setScanStatusMessage(summary);
@@ -2164,6 +2510,7 @@ export function CompanySkills() {
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, selectedSkillId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.file(selectedCompanyId!, selectedSkillId!, selectedPath) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
       ]);
       pushToast({
         tone: "success",
@@ -2189,6 +2536,7 @@ export function CompanySkills() {
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.updateStatus(selectedCompanyId!, selectedSkillId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.file(selectedCompanyId!, selectedSkillId!, selectedPath) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
       ]);
       navigate(skillRoute(skill.id, selectedPath));
       pushToast({
@@ -2215,6 +2563,7 @@ export function CompanySkills() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.coverageAudit(selectedCompanyId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(selectedCompanyId!) }),
         ...(deleteTargetSkillId ? [
           queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.detail(selectedCompanyId!, deleteTargetSkillId) }),
           queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.updateStatus(selectedCompanyId!, deleteTargetSkillId) }),
@@ -2575,6 +2924,21 @@ export function CompanySkills() {
                   const fingerprint = previewCoverageRepair.data?.selectionFingerprint;
                   if (!fingerprint) return;
                   applyCoverageRepair.mutate(fingerprint);
+                }}
+              />
+
+              <SkillReliabilityAuditPanel
+                audit={reliabilityAuditQuery.data}
+                loading={reliabilityAuditQuery.isLoading}
+                error={reliabilityAuditQuery.error instanceof Error ? reliabilityAuditQuery.error : null}
+                preview={previewReliabilityRepair.data ?? null}
+                previewPending={previewReliabilityRepair.isPending}
+                applyPending={applyReliabilityRepair.isPending}
+                onPreview={() => previewReliabilityRepair.mutate()}
+                onApply={() => {
+                  const fingerprint = previewReliabilityRepair.data?.selectionFingerprint;
+                  if (!fingerprint) return;
+                  applyReliabilityRepair.mutate(fingerprint);
                 }}
               />
 

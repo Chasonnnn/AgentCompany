@@ -25,9 +25,13 @@ import type {
   SharedSkillProposal,
   SharedSkillProposalComment,
   SharedSkillProposalCreateRequest,
+  SharedSkillProposalPayload,
+  SharedSkillProposalVerificationResults,
+  SharedSkillProposalVerificationUpdateRequest,
   SharedSkillRuntimeContext,
   SharedSkillSourceDriftState,
   SharedSkillMirrorState,
+  SkillVerificationMetadata,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
@@ -466,6 +470,74 @@ function normalizeProposalChanges(changes: SharedSkillProposalCreateRequest["cha
       ...(typeof change.content === "string" ? { content: change.content } : {}),
     }))
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+}
+
+function normalizeStringList(values: string[] | null | undefined) {
+  return Array.from(
+    new Set(
+      (values ?? [])
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeRequiredVerification(
+  verification: SkillVerificationMetadata | null | undefined,
+): SkillVerificationMetadata | null {
+  if (!verification) return null;
+  return {
+    unitCommands: normalizeStringList(verification.unitCommands),
+    integrationCommands: normalizeStringList(verification.integrationCommands),
+    promptfooCaseIds: normalizeStringList(verification.promptfooCaseIds),
+    architectureScenarioIds: normalizeStringList(verification.architectureScenarioIds),
+    smokeChecklist: normalizeStringList(verification.smokeChecklist),
+  };
+}
+
+function normalizeVerificationResults(
+  results: Partial<SharedSkillProposalVerificationResults> | null | undefined,
+): SharedSkillProposalVerificationResults {
+  return {
+    passedUnitCommands: normalizeStringList(results?.passedUnitCommands),
+    passedIntegrationCommands: normalizeStringList(results?.passedIntegrationCommands),
+    passedPromptfooCaseIds: normalizeStringList(results?.passedPromptfooCaseIds),
+    passedArchitectureScenarioIds: normalizeStringList(results?.passedArchitectureScenarioIds),
+    completedSmokeChecklist: normalizeStringList(results?.completedSmokeChecklist),
+  };
+}
+
+function verificationResultsCover(
+  required: SkillVerificationMetadata | null | undefined,
+  results: SharedSkillProposalVerificationResults | null | undefined,
+) {
+  if (!required) return true;
+  if (!results) return false;
+  const containsAll = (requiredItems: string[], actualItems: string[]) =>
+    requiredItems.every((item) => actualItems.includes(item));
+  return (
+    containsAll(required.unitCommands, results.passedUnitCommands)
+    && containsAll(required.integrationCommands, results.passedIntegrationCommands)
+    && containsAll(required.promptfooCaseIds, results.passedPromptfooCaseIds)
+    && containsAll(required.architectureScenarioIds, results.passedArchitectureScenarioIds)
+    && containsAll(required.smokeChecklist, results.completedSmokeChecklist)
+  );
+}
+
+function mergeVerificationResults(
+  current: SharedSkillProposalVerificationResults | null | undefined,
+  update: SharedSkillProposalVerificationUpdateRequest,
+): SharedSkillProposalVerificationResults {
+  return normalizeVerificationResults({
+    passedUnitCommands: [...(current?.passedUnitCommands ?? []), ...(update.passedUnitCommands ?? [])],
+    passedIntegrationCommands: [...(current?.passedIntegrationCommands ?? []), ...(update.passedIntegrationCommands ?? [])],
+    passedPromptfooCaseIds: [...(current?.passedPromptfooCaseIds ?? []), ...(update.passedPromptfooCaseIds ?? [])],
+    passedArchitectureScenarioIds: [
+      ...(current?.passedArchitectureScenarioIds ?? []),
+      ...(update.passedArchitectureScenarioIds ?? []),
+    ],
+    completedSmokeChecklist: [...(current?.completedSmokeChecklist ?? []), ...(update.completedSmokeChecklist ?? [])],
+  });
 }
 
 function buildProposalFingerprint(sharedSkillId: string, input: SharedSkillProposalCreateRequest) {
@@ -1045,6 +1117,12 @@ export function sharedSkillService(db: Db) {
         payload: {
           changes: normalizeProposalChanges(input.changes),
           evidence: input.evidence,
+          ...(input.requiredVerification
+            ? { requiredVerification: normalizeRequiredVerification(input.requiredVerification) }
+            : {}),
+          ...(input.verificationResults
+            ? { verificationResults: normalizeVerificationResults(input.verificationResults) }
+            : {}),
           ...(input.upstreamDecision ? { upstreamDecision: input.upstreamDecision } : {}),
         },
         updatedAt: new Date(),
@@ -1075,6 +1153,13 @@ export function sharedSkillService(db: Db) {
     const payload = isPlainRecord(proposalRow.payload)
       ? proposalRow.payload as unknown as SharedSkillProposal["payload"]
       : null;
+    const requiredVerification = normalizeRequiredVerification(payload?.requiredVerification ?? null);
+    const verificationResults = payload?.verificationResults
+      ? normalizeVerificationResults(payload.verificationResults)
+      : null;
+    if (requiredVerification && !verificationResultsCover(requiredVerification, verificationResults)) {
+      throw unprocessable("Required verification is incomplete for this shared-skill proposal.");
+    }
     const changes = Array.isArray(payload?.changes) ? payload!.changes : [];
     await applyProposalChanges(mirrorDir, changes);
     const refreshedMirror = await readMirrorSkillFromPath({
@@ -1176,6 +1261,38 @@ export function sharedSkillService(db: Db) {
     return toProposalComment(inserted);
   }
 
+  async function updateProposalVerification(
+    proposalId: string,
+    input: SharedSkillProposalVerificationUpdateRequest,
+  ) {
+    const proposalRow = await db
+      .select()
+      .from(sharedSkillProposals)
+      .where(eq(sharedSkillProposals.id, proposalId))
+      .then((rows) => rows[0] ?? null);
+    if (!proposalRow) throw notFound("Shared skill proposal not found.");
+
+    const payload: SharedSkillProposalPayload = isPlainRecord(proposalRow.payload)
+      ? proposalRow.payload as unknown as SharedSkillProposalPayload
+      : { changes: [], evidence: {} };
+    const nextPayload: SharedSkillProposalPayload = {
+      ...payload,
+      verificationResults: mergeVerificationResults(payload.verificationResults ?? null, input),
+    };
+
+    const updated = await db
+      .update(sharedSkillProposals)
+      .set({
+        payload: nextPayload as unknown as Record<string, unknown>,
+        updatedAt: new Date(),
+      })
+      .where(eq(sharedSkillProposals.id, proposalId))
+      .returning()
+      .then((rows) => rows[0] ?? null);
+    if (!updated) throw notFound("Shared skill proposal not found.");
+    return toProposal(updated);
+  }
+
   async function listLinkedCompanyIds(sharedSkillId: string) {
     const rows = await db
       .select({ companyId: companySkills.companyId })
@@ -1242,6 +1359,7 @@ export function sharedSkillService(db: Db) {
     approveProposal,
     rejectProposal,
     addComment,
+    updateProposalVerification,
     buildRuntimeContext,
     listLinkedCompanyIds,
     listOpenProposalSummaries,

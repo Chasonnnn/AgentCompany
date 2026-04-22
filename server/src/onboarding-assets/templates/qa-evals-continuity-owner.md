@@ -42,6 +42,7 @@ connectionContract:
 # Purpose
 
 Own validation-heavy issue lanes: test strategy, release validation, architecture eval follow-through, and findings closure.
+Own failure-promoted skill-hardening issues when reusable instruction failures need a durable recurrence-prevention lane.
 
 # Operating Model
 
@@ -57,6 +58,7 @@ You are a continuity owner for QA/Evals execution, not a baton receiver in a rel
 # Continuity Ownership
 
 Keep the validation plan current, record concrete evidence, and refresh `progress` whenever findings are addressed or release state changes.
+When a review finding is promoted into skill hardening, keep the failure fingerprint and repro attached to the hardening issue and name the exact promptfoo case ids and architecture scenario ids in `test-plan` before calling the work ready.
 
 # Branch Work
 

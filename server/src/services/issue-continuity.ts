@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
+  companySkills,
   assets,
   executionWorkspaces,
   issueAttachments,
@@ -9,6 +10,7 @@ import {
   issueDecisionQuestions,
   issueExecutionDecisions,
   issues,
+  sharedSkillProposals,
 } from "@paperclipai/db";
 import {
   ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
@@ -34,6 +36,7 @@ import {
   parseIssueProgressMarkdown,
   parseIssueReviewFindingsMarkdown,
   progressCheckpointIssueContinuitySchema,
+  promoteIssueReviewFindingSkillSchema,
   prepareIssueContinuitySchema,
   requestIssueSpecThawSchema,
   reviewResubmitIssueContinuitySchema,
@@ -56,6 +59,7 @@ import {
   type IssueContinuityStatus,
   type IssueContinuityTier,
   type ProgressCheckpointIssueContinuity,
+  type PromoteIssueReviewFindingSkill,
   type PrepareIssueContinuity,
   type RequestIssueSpecThaw,
   type ReviewResubmitIssueContinuity,
@@ -69,10 +73,13 @@ import {
   parseIssueExecutionState,
 } from "./issue-execution-policy.js";
 import { approvalService } from "./approvals.js";
+import { agentService } from "./agents.js";
+import { companySkillService } from "./company-skills.js";
 import { documentService } from "./documents.js";
 import { normalizeBundledOpenDecisionQuestions } from "./issue-decision-question-bundles.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
+import { buildSkillHardeningScaffolds, SKILL_HARDENING_FINDING_ORIGIN_KIND } from "./skill-reliability-lib.js";
 
 const CONTINUITY_STALE_PROGRESS_MS = 24 * 60 * 60 * 1000;
 const ACTIVE_CONTINUITY_STATUSES = new Set(["in_progress", "in_review", "blocked"]);
@@ -185,6 +192,34 @@ function buildStructuredFrontmatter(kind: string, fields: Record<string, unknown
   lines.push("---");
   if (note) lines.push("", note);
   return lines.join("\n");
+}
+
+function buildReviewFindingId(
+  issueId: string,
+  reviewStage: string,
+  finding: ReviewReturnIssueContinuity["findings"][number],
+  index: number,
+) {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      issueId,
+      reviewStage,
+      index,
+      severity: finding.severity,
+      category: finding.category.trim().toLowerCase(),
+      title: finding.title.trim().toLowerCase(),
+      detail: finding.detail.trim().toLowerCase(),
+      requiredAction: finding.requiredAction.trim().toLowerCase(),
+      evidence: [...(finding.evidence ?? [])].map((value) => value.trim()).sort(),
+    }))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function actorLabel(actor: { agentId?: string | null; userId?: string | null }) {
+  if (actor.agentId) return `agent:${actor.agentId}`;
+  if (actor.userId) return `user:${actor.userId}`;
+  return "unknown";
 }
 
 function currentAssigneeTarget(issue: { assigneeAgentId: string | null; assigneeUserId?: string | null }) {
@@ -345,6 +380,8 @@ function buildIssuePlanApprovalState(input: {
 export function issueContinuityService(db: Db) {
   const docsSvc = documentService(db);
   const issuesSvc = issueService(db);
+  const agentSvc = agentService(db);
+  const companySkillsSvc = companySkillService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const approvalsSvc = approvalService(db);
 
@@ -1474,7 +1511,10 @@ export function issueContinuityService(db: Db) {
           outcome: parsed.outcome,
           resolutionState: "open",
           ownerNextAction: parsed.ownerNextAction,
-          findings: parsed.findings,
+          findings: parsed.findings.map((finding, index) => ({
+            ...finding,
+            findingId: buildReviewFindingId(issue.id, executionState.currentStageType ?? "review", finding, index),
+          })),
         },
         "Structured reviewer findings returned to the continuity owner.",
       );
@@ -1571,6 +1611,202 @@ export function issueContinuityService(db: Db) {
       const continuityState = await recomputeIssueContinuityState(issueId);
       const continuityBundle = await buildContinuityBundle(issueId);
       return { issue: updated, continuityState, continuityBundle };
+    },
+
+    promoteReviewFindingSkill: async (
+      issueId: string,
+      findingId: string,
+      input: PromoteIssueReviewFindingSkill,
+      actor: { agentId?: string | null; userId?: string | null; runId?: string | null } = {},
+    ) => {
+      const parsed = promoteIssueReviewFindingSkillSchema.parse(input);
+      const issue = await getIssueOrThrow(issueId);
+      const findingsDocument = await docsSvc.getIssueDocumentByKey(issueId, "review-findings");
+      const parsedFindings = findingsDocument?.body ? parseIssueReviewFindingsMarkdown(findingsDocument.body) : null;
+      if (!findingsDocument || !parsedFindings || parsedFindings.document.resolutionState !== "open") {
+        throw unprocessable("Skill promotion requires open typed review findings");
+      }
+
+      const findingIndex = parsedFindings.document.findings.findIndex((finding) => finding.findingId === findingId);
+      if (findingIndex < 0) {
+        throw notFound("Review finding not found");
+      }
+      const finding = parsedFindings.document.findings[findingIndex]!;
+
+      let targetSkill = parsed.companySkillId
+        ? await companySkillsSvc.getById(parsed.companySkillId)
+        : null;
+      if (targetSkill && targetSkill.companyId !== issue.companyId) {
+        throw notFound("Skill not found");
+      }
+      if (!targetSkill && parsed.sharedSkillId) {
+        targetSkill = await db
+          .select()
+          .from(companySkills)
+          .where(and(eq(companySkills.companyId, issue.companyId), eq(companySkills.sharedSkillId, parsed.sharedSkillId)))
+          .then((rows) => rows[0] ? companySkillsSvc.getById(rows[0].id) : null);
+      }
+      if (!targetSkill) {
+        throw notFound("Skill not found");
+      }
+
+      const failureFingerprint = createHash("sha256")
+        .update(JSON.stringify([issue.id, findingId, targetSkill.key]))
+        .digest("hex");
+      const assigneeAgentId = (await agentSvc.list(issue.companyId))
+        .filter((candidate) => candidate.status !== "terminated" && candidate.archetypeKey === "qa_evals_continuity_owner")
+        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())[0]?.id
+        ?? issue.assigneeAgentId
+        ?? null;
+
+      const existingIssueId = finding.skillPromotion?.hardeningIssueId ?? null;
+      let hardeningIssue: ContinuityIssueRecord | null = existingIssueId ? await issuesSvc.getById(existingIssueId) : null;
+      if (!hardeningIssue) {
+        const existingHardeningId = await db
+          .select({ id: issues.id })
+          .from(issues)
+          .where(
+            and(
+              eq(issues.companyId, issue.companyId),
+              eq(issues.originKind, SKILL_HARDENING_FINDING_ORIGIN_KIND),
+              eq(issues.originId, targetSkill.key),
+              eq(issues.originFingerprint, failureFingerprint),
+            ),
+          )
+          .orderBy(desc(issues.updatedAt))
+          .then((rows) => rows[0]?.id ?? null);
+        hardeningIssue = existingHardeningId ? await getIssueOrThrow(existingHardeningId) : null;
+      }
+
+      const title = `Skill hardening: ${targetSkill.name}`;
+      const reproductionSummary = parsed.reproductionSummary ?? finding.detail;
+      const scaffolds = buildSkillHardeningScaffolds({
+        title,
+        skillName: targetSkill.name,
+        skillKey: targetSkill.key,
+        sourceIssueIdentifier: issue.identifier ?? issue.id,
+        sourceFindingTitle: finding.title,
+        failureFingerprint,
+        reproductionSummary,
+      });
+
+      if (hardeningIssue) {
+        if (["done", "cancelled"].includes(hardeningIssue.status)) {
+          await issuesSvc.update(hardeningIssue.id, {
+            status: "todo",
+            assigneeAgentId,
+            actorAgentId: actor.agentId ?? null,
+            actorUserId: actor.userId ?? null,
+          });
+          hardeningIssue = await getIssueOrThrow(hardeningIssue.id);
+        }
+      } else {
+        const created = await issuesSvc.create(issue.companyId, {
+          parentId: issue.id,
+          projectId: issue.projectId,
+          projectWorkspaceId: issue.projectWorkspaceId,
+          goalId: issue.goalId,
+          title,
+          description: reproductionSummary,
+          status: "todo",
+          priority: finding.severity === "critical" ? "critical" : finding.severity === "high" ? "high" : issue.priority,
+          assigneeAgentId,
+          assigneeUserId: null,
+          inheritExecutionWorkspaceFromIssueId: issue.id,
+          originKind: SKILL_HARDENING_FINDING_ORIGIN_KIND,
+          originId: targetSkill.key,
+          originFingerprint: failureFingerprint,
+          createdByAgentId: actor.agentId ?? null,
+          createdByUserId: actor.userId ?? null,
+        });
+        hardeningIssue = await getIssueOrThrow(created.id);
+      }
+
+      if (!hardeningIssue) {
+        throw conflict("Failed to create or load the skill hardening issue.");
+      }
+
+      await upsertScaffoldedIssueDocument({
+        issueId: hardeningIssue.id,
+        key: "spec",
+        body: scaffolds.spec,
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.userId ?? null,
+        createdByRunId: actor.runId ?? null,
+      });
+      await upsertScaffoldedIssueDocument({
+        issueId: hardeningIssue.id,
+        key: "plan",
+        body: scaffolds.plan,
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.userId ?? null,
+        createdByRunId: actor.runId ?? null,
+      });
+      await upsertScaffoldedIssueDocument({
+        issueId: hardeningIssue.id,
+        key: "test-plan",
+        body: scaffolds.testPlan,
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.userId ?? null,
+        createdByRunId: actor.runId ?? null,
+      });
+
+      const linkedProposal = targetSkill.sharedSkillId
+        ? await db
+          .select({
+            id: sharedSkillProposals.id,
+            status: sharedSkillProposals.status,
+          })
+          .from(sharedSkillProposals)
+          .where(and(eq(sharedSkillProposals.sharedSkillId, targetSkill.sharedSkillId), eq(sharedSkillProposals.companyId, issue.companyId)))
+          .orderBy(desc(sharedSkillProposals.createdAt))
+          .then((rows) => rows[0] ?? null)
+        : null;
+
+      const nextFindings = parsedFindings.document.findings.map((entry, index) =>
+        index !== findingIndex
+          ? entry
+          : {
+            ...entry,
+            skillPromotion: {
+              hardeningIssueId: hardeningIssue.id,
+              hardeningIssueIdentifier: hardeningIssue.identifier ?? null,
+              companySkillId: targetSkill.id,
+              companySkillKey: targetSkill.key,
+              sharedSkillId: targetSkill.sharedSkillId ?? null,
+              sharedSkillProposalId: linkedProposal?.id ?? null,
+              sharedSkillProposalStatus: linkedProposal?.status ?? null,
+              sourceRunId: parsed.sourceRunId ?? actor.runId ?? null,
+              failureFingerprint,
+              promotedAt: new Date().toISOString(),
+              promotedBy: actorLabel(actor),
+            },
+          },
+      );
+      const findingsBody = buildStructuredFrontmatter(
+        ISSUE_REVIEW_FINDINGS_DOCUMENT_KIND,
+        {
+          ...parsedFindings.document,
+          findings: nextFindings,
+        },
+        parsedFindings.body || "Structured reviewer findings returned to the continuity owner.",
+      );
+      await upsertScaffoldedIssueDocument({
+        issueId,
+        key: "review-findings",
+        body: findingsBody,
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.userId ?? null,
+        createdByRunId: actor.runId ?? null,
+      });
+
+      const continuityState = await recomputeIssueContinuityState(issueId);
+      const continuityBundle = await buildContinuityBundle(issueId);
+      return {
+        hardeningIssue,
+        continuityState,
+        continuityBundle,
+      };
     },
 
     handoffRepair: async (

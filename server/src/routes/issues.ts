@@ -28,6 +28,7 @@ import {
   parseIssueHandoffMarkdown,
   parseIssueProgressMarkdown,
   parseIssueReviewFindingsMarkdown,
+  promoteIssueReviewFindingSkillSchema,
   progressCheckpointIssueContinuitySchema,
   prepareIssueContinuitySchema,
   requestIssueSpecThawSchema,
@@ -185,6 +186,11 @@ function createFallbackIssueContinuityService() {
     }),
     reviewResubmit: async (_issueId: string) => ({
       issue: null,
+      continuityState: null,
+      continuityBundle: null,
+    }),
+    promoteReviewFindingSkill: async () => ({
+      hardeningIssue: null,
       continuityState: null,
       continuityBundle: null,
     }),
@@ -1423,6 +1429,47 @@ export function issueRoutes(
     }
     res.json(result);
   });
+
+  router.post(
+    "/issues/:id/continuity/review-findings/:findingId/promote-skill",
+    validate(promoteIssueReviewFindingSkillSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const findingId = req.params.findingId as string;
+      const issue = await svc.getById(id);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, issue.companyId);
+      if (!isContinuityOwnerActor(req, issue)) {
+        res.status(403).json({ error: "Only the continuity owner can promote review findings into skill hardening work" });
+        return;
+      }
+      const actor = getActorInfo(req);
+      const result = await continuitySvc.promoteReviewFindingSkill(issue.id, findingId, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      });
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.review_finding_skill_promoted",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          findingId,
+          hardeningIssueId: result.hardeningIssue?.id ?? null,
+          hardeningIssueIdentifier: result.hardeningIssue?.identifier ?? null,
+        },
+      });
+      res.json(result);
+    },
+  );
 
   router.post("/issues/:id/continuity/handoff-repair", validate(handoffRepairIssueContinuitySchema), async (req, res) => {
     const id = req.params.id as string;

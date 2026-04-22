@@ -2,6 +2,7 @@ export { companyService } from "./companies.js";
 export { portfolioClusterService } from "./portfolio-clusters.js";
 export { feedbackService } from "./feedback.js";
 export { companySkillService } from "./company-skills.js";
+export { skillReliabilityService } from "./skill-reliability.js";
 export { sharedSkillService } from "./shared-skills.js";
 export { agentSkillService } from "./agent-skills.js";
 export { officeCoordinationService } from "./office-coordination.js";

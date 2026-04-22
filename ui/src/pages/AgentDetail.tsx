@@ -13,7 +13,7 @@ import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { ApiError } from "../api/client";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
-import { activityApi } from "../api/activity";
+import { activityApi, type IssueForRun } from "../api/activity";
 import { issuesApi } from "../api/issues";
 import { usePanel } from "../context/PanelContext";
 import { useSidebar } from "../context/SidebarContext";
@@ -76,12 +76,14 @@ import {
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { AgentIcon, AgentIconPicker } from "../components/AgentIconPicker";
 import { ConnectionContractSummary } from "../components/ConnectionContractSummary";
 import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
 import {
   isUuidLike,
   parseConnectionContractMarkdown,
+  parseIssueReviewFindingsMarkdown,
   type Agent,
   type AgentSkillEntry,
   type AgentSkillSnapshot,
@@ -110,6 +112,161 @@ const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string 
   timed_out: { icon: Timer, color: "text-orange-600 dark:text-orange-400" },
   cancelled: { icon: Slash, color: "text-neutral-500 dark:text-neutral-400" },
 };
+
+function RunTouchedIssueRow({
+  issue,
+  runId,
+  companyId,
+}: {
+  issue: IssueForRun;
+  runId: string;
+  companyId: string;
+}) {
+  const queryClient = useQueryClient();
+  const { pushToast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [findingId, setFindingId] = useState("");
+  const [skillId, setSkillId] = useState("");
+  const [summary, setSummary] = useState("");
+
+  const continuityQuery = useQuery({
+    queryKey: queryKeys.issues.continuity(issue.issueId),
+    queryFn: () => issuesApi.getContinuity(issue.issueId),
+    enabled: open,
+  });
+
+  const skillsQuery = useQuery({
+    queryKey: queryKeys.companySkills.list(companyId),
+    queryFn: () => companySkillsApi.list(companyId),
+    enabled: open,
+    staleTime: 60_000,
+  });
+
+  const reviewFindingsDoc = continuityQuery.data?.continuityBundle?.issueDocuments["review-findings"]?.body
+    ? parseIssueReviewFindingsMarkdown(continuityQuery.data.continuityBundle.issueDocuments["review-findings"].body)
+    : null;
+  const openFindings = reviewFindingsDoc?.document.resolutionState === "open"
+    ? reviewFindingsDoc.document.findings.filter((finding) => Boolean(finding.findingId))
+    : [];
+
+  useEffect(() => {
+    if (!open) return;
+    if (!findingId && openFindings[0]?.findingId) {
+      setFindingId(openFindings[0].findingId);
+      setSummary(openFindings[0].detail);
+    }
+  }, [findingId, open, openFindings]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!skillId && skillsQuery.data?.[0]?.id) {
+      setSkillId(skillsQuery.data[0].id);
+    }
+  }, [open, skillId, skillsQuery.data]);
+
+  const promoteMutation = useMutation({
+    mutationFn: () =>
+      issuesApi.promoteReviewFindingSkill(issue.issueId, findingId, {
+        companySkillId: skillId,
+        sourceRunId: runId,
+        reproductionSummary: summary.trim() || null,
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.runIssues(runId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.issueId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.continuity(issue.issueId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(companyId) }),
+      ]);
+      setOpen(false);
+      setFindingId("");
+      setSkillId("");
+      setSummary("");
+      pushToast({
+        tone: "success",
+        title: "Finding promoted",
+        body: `${issue.title} now has linked skill hardening work.`,
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        tone: "error",
+        title: "Promotion failed",
+        body: error instanceof Error ? error.message : "Failed to promote review finding.",
+      });
+    },
+  });
+
+  return (
+    <div className="border-b border-border last:border-b-0">
+      <div className="flex items-center justify-between gap-3 px-3 py-2">
+        <Link
+          to={`/issues/${issue.identifier ?? issue.issueId}`}
+          className="flex min-w-0 items-center gap-2 text-left no-underline text-inherit"
+        >
+          <StatusBadge status={issue.status} />
+          <span className="truncate">{issue.title}</span>
+        </Link>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-muted-foreground shrink-0 text-xs">{issue.identifier ?? issue.issueId.slice(0, 8)}</span>
+          <Button size="sm" variant="outline" onClick={() => setOpen((value) => !value)}>
+            {open ? "Close" : "Promote finding"}
+          </Button>
+        </div>
+      </div>
+      {open ? (
+        <div className="border-t border-border/70 bg-muted/10 px-3 py-3">
+          {continuityQuery.isLoading ? (
+            <div className="text-xs text-muted-foreground">Loading review findings...</div>
+          ) : openFindings.length === 0 ? (
+            <div className="text-xs text-muted-foreground">
+              This issue does not currently have open typed review findings to promote from the run view.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <select
+                value={findingId}
+                onChange={(event) => {
+                  setFindingId(event.target.value);
+                  const next = openFindings.find((finding) => finding.findingId === event.target.value);
+                  setSummary(next?.detail ?? "");
+                }}
+                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+              >
+                {openFindings.map((finding) => (
+                  <option key={finding.findingId} value={finding.findingId ?? ""}>
+                    {finding.title}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={skillId}
+                onChange={(event) => setSkillId(event.target.value)}
+                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+              >
+                <option value="">Select target skill</option>
+                {(skillsQuery.data ?? []).map((skill) => (
+                  <option key={skill.id} value={skill.id}>
+                    {skill.name}
+                  </option>
+                ))}
+              </select>
+              <Textarea
+                value={summary}
+                onChange={(event) => setSummary(event.target.value)}
+                placeholder="Optional reproduction summary"
+                className="min-h-[88px]"
+              />
+              <Button onClick={() => promoteMutation.mutate()} disabled={promoteMutation.isPending || !findingId || !skillId}>
+                {promoteMutation.isPending ? "Promoting..." : "Create hardening issue"}
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const REDACTED_ENV_VALUE = "***REDACTED***";
 const SECRET_ENV_KEY_RE =
@@ -3480,17 +3637,12 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
           <span className="text-xs font-medium text-muted-foreground">Issues Touched ({touchedIssues.length})</span>
           <div className="border border-border rounded-lg divide-y divide-border">
             {touchedIssues.map((issue) => (
-              <Link
+              <RunTouchedIssueRow
                 key={issue.issueId}
-                to={`/issues/${issue.identifier ?? issue.issueId}`}
-                className="flex items-center justify-between w-full px-3 py-2 text-xs hover:bg-accent/20 transition-colors text-left no-underline text-inherit"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <StatusBadge status={issue.status} />
-                  <span className="truncate">{issue.title}</span>
-                </div>
-                <span className="font-mono text-muted-foreground shrink-0 ml-2">{issue.identifier ?? issue.issueId.slice(0, 8)}</span>
-              </Link>
+                issue={issue}
+                runId={run.id}
+                companyId={run.companyId}
+              />
             ))}
           </div>
         </div>

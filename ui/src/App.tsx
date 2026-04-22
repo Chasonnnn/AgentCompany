@@ -39,6 +39,7 @@ import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceAccess } from "./pages/InstanceAccess";
 import { InstanceEvals } from "./pages/InstanceEvals";
 import { InstanceSettings } from "./pages/InstanceSettings";
+import { InstanceSharedSkills } from "./pages/InstanceSharedSkills";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
 import { JoinRequestQueue } from "./pages/JoinRequestQueue";
 import { PluginManager } from "./pages/PluginManager";
@@ -348,6 +349,8 @@ export function App() {
             <Route path="access" element={<InstanceAccess />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
+            <Route path="shared-skills" element={<InstanceSharedSkills />} />
+            <Route path="shared-skills/:proposalId" element={<InstanceSharedSkills />} />
             <Route path="evals" element={<InstanceEvals />} />
             <Route path="evals/:runId" element={<InstanceEvals />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />

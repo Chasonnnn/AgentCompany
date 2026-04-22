@@ -5,6 +5,7 @@ import {
   sharedSkillProposalCommentCreateSchema,
   sharedSkillProposalCreateSchema,
   sharedSkillProposalDecisionSchema,
+  sharedSkillProposalVerificationUpdateSchema,
 } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import {
@@ -179,6 +180,27 @@ export function sharedSkillRoutes(db: Db, deps?: Partial<SharedSkillRouteDeps>) 
     },
   );
 
+  router.patch(
+    "/instance/shared-skills/proposals/:proposalId/verification",
+    validate(sharedSkillProposalVerificationUpdateSchema),
+    async (req, res) => {
+      assertInstanceAdmin(req);
+      const proposalId = String(req.params.proposalId);
+      const proposal = await svc.updateProposalVerification(proposalId, req.body);
+      await logInstanceMutation(proposal.sharedSkillId, "shared_skill.proposal_verification_updated", {
+        proposalId: proposal.id,
+        verificationCounts: {
+          unit: proposal.payload.verificationResults?.passedUnitCommands.length ?? 0,
+          integration: proposal.payload.verificationResults?.passedIntegrationCommands.length ?? 0,
+          promptfoo: proposal.payload.verificationResults?.passedPromptfooCaseIds.length ?? 0,
+          architecture: proposal.payload.verificationResults?.passedArchitectureScenarioIds.length ?? 0,
+          smoke: proposal.payload.verificationResults?.completedSmokeChecklist.length ?? 0,
+        },
+      });
+      res.json(proposal);
+    },
+  );
+
   router.get("/instance/shared-skills/:sharedSkillId/drift", async (req, res) => {
     assertInstanceAdmin(req);
     const result = await svc.drift(req.params.sharedSkillId);
@@ -256,6 +278,16 @@ export function sharedSkillRoutes(db: Db, deps?: Partial<SharedSkillRouteDeps>) 
           kind: proposal.kind,
           status: proposal.status,
           summary: proposal.summary,
+          failureFingerprint: proposal.payload.evidence.failureFingerprint ?? null,
+          requiredVerificationCounts: proposal.payload.requiredVerification
+            ? {
+              unit: proposal.payload.requiredVerification.unitCommands.length,
+              integration: proposal.payload.requiredVerification.integrationCommands.length,
+              promptfoo: proposal.payload.requiredVerification.promptfooCaseIds.length,
+              architecture: proposal.payload.requiredVerification.architectureScenarioIds.length,
+              smoke: proposal.payload.requiredVerification.smokeChecklist.length,
+            }
+            : null,
         },
       });
 

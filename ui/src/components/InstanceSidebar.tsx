@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ActivitySquare, Clock3, Cpu, FlaskConical, Puzzle, Settings, Shield, SlidersHorizontal, UserRoundPen } from "lucide-react";
+import { ActivitySquare, Clock3, Cpu, FlaskConical, GitPullRequest, Puzzle, Settings, Shield, SlidersHorizontal, UserRoundPen } from "lucide-react";
 import { NavLink } from "@/lib/router";
 import { pluginsApi } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
@@ -27,6 +27,7 @@ export function InstanceSidebar() {
           <SidebarNavItem to="/instance/settings/general" label="General" icon={SlidersHorizontal} end />
           <SidebarNavItem to="/instance/settings/access" label="Access" icon={Shield} end />
           <SidebarNavItem to="/instance/settings/heartbeats" label="Heartbeats" icon={Clock3} end />
+          <SidebarNavItem to="/instance/settings/shared-skills" label="Shared Skills" icon={GitPullRequest} />
           <SidebarNavItem to="/instance/settings/evals" label="Architecture Evals" icon={ActivitySquare} end />
           <SidebarNavItem to="/instance/settings/experimental" label="Experimental" icon={FlaskConical} />
           <SidebarNavItem to="/instance/settings/plugins" label="Plugins" icon={Puzzle} />

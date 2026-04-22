@@ -17,6 +17,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueContinuityPanel } from "./IssueContinuityPanel";
 import type { IssueContinuityResponse } from "../api/issues";
+import { ToastProvider } from "../context/ToastContext";
 
 const mockIssuesApi = vi.hoisted(() => ({
   getContinuity: vi.fn(),
@@ -39,8 +40,16 @@ const mockIssuesApi = vi.hoisted(() => ({
   escalateQuestionApproval: vi.fn(),
 }));
 
+const mockCompanySkillsApi = vi.hoisted(() => ({
+  list: vi.fn(),
+}));
+
 vi.mock("../api/issues", () => ({
   issuesApi: mockIssuesApi,
+}));
+
+vi.mock("../api/companySkills", () => ({
+  companySkillsApi: mockCompanySkillsApi,
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -356,6 +365,7 @@ describe("IssueContinuityPanel", () => {
     for (const mockFn of Object.values(mockIssuesApi)) {
       mockFn.mockResolvedValue({});
     }
+    mockCompanySkillsApi.list.mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -394,12 +404,14 @@ describe("IssueContinuityPanel", () => {
     await act(async () => {
       root?.render(
         <QueryClientProvider client={queryClient!}>
-          <IssueContinuityPanel
-            issue={issue}
-            agents={options.agents ?? [createAgent()]}
-            childIssues={options.childIssues ?? []}
-            onOpenArtifacts={options.onOpenArtifacts}
-          />
+          <ToastProvider>
+            <IssueContinuityPanel
+              issue={issue}
+              agents={options.agents ?? [createAgent()]}
+              childIssues={options.childIssues ?? []}
+              onOpenArtifacts={options.onOpenArtifacts}
+            />
+          </ToastProvider>
         </QueryClientProvider>,
       );
     });

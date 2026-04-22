@@ -5,6 +5,8 @@ import {
   bulkSkillGrantRequestSchema,
   companySkillCreateSchema,
   companySkillCoverageRepairApplyRequestSchema,
+  companySkillReliabilityRepairApplyRequestSchema,
+  companySkillReliabilitySweepRequestSchema,
   companySkillFileUpdateSchema,
   companySkillImportSchema,
   companySkillInstallGlobalSchema,
@@ -12,7 +14,14 @@ import {
 } from "@paperclipai/shared";
 import { trackSkillImported } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { accessService, agentService, agentSkillService, companySkillService, logActivity } from "../services/index.js";
+import {
+  accessService,
+  agentService,
+  agentSkillService,
+  companySkillService,
+  logActivity,
+  skillReliabilityService,
+} from "../services/index.js";
 import { forbidden } from "../errors.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -31,6 +40,7 @@ type CompanySkillRouteDeps = {
   agentService: ReturnType<typeof agentService>;
   agentSkillService: ReturnType<typeof agentSkillService>;
   companySkillService: ReturnType<typeof companySkillService>;
+  skillReliabilityService: ReturnType<typeof skillReliabilityService>;
   logActivity: typeof logActivity;
 };
 
@@ -50,6 +60,7 @@ export function companySkillRoutes(
   const access = opts?.services?.accessService ?? accessService(db);
   const svc = opts?.services?.companySkillService ?? companySkillService(db);
   const skillGrants = opts?.services?.agentSkillService ?? agentSkillService(db);
+  const reliability = opts?.services?.skillReliabilityService ?? skillReliabilityService(db);
   const logActivityFn = opts?.services?.logActivity ?? logActivity;
   const getTelemetryClientFn = opts?.telemetry?.getTelemetryClient ?? getTelemetryClient;
   const trackSkillImportedFn = opts?.telemetry?.trackSkillImported ?? trackSkillImported;
@@ -126,6 +137,12 @@ export function companySkillRoutes(
     res.json(result);
   });
 
+  router.get("/companies/:companyId/skills/reliability-audit", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await reliability.audit(companyId));
+  });
+
   router.post("/companies/:companyId/skills/coverage-audit/repair-preview", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertBoard(req);
@@ -165,11 +182,83 @@ export function companySkillRoutes(
     },
   );
 
+  router.post("/companies/:companyId/skills/reliability-audit/repair-preview", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertBoard(req);
+    await assertCanMutateCompanySkills(req, companyId);
+    res.json(await reliability.previewRepair(companyId));
+  });
+
+  router.post(
+    "/companies/:companyId/skills/reliability-audit/repair-apply",
+    validate(companySkillReliabilityRepairApplyRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertBoard(req);
+      await assertCanMutateCompanySkills(req, companyId);
+      const actor = getActorInfo(req);
+      const result = await reliability.applyRepair(companyId, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      });
+
+      await logActivityFn(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "company.skill_reliability_repair_applied",
+        entityType: "company",
+        entityId: companyId,
+        details: {
+          changedSkillCount: result.changedSkillCount,
+          createdIssueIds: result.createdIssueIds,
+          refreshedIssueIds: result.refreshedIssueIds,
+        },
+      });
+      res.json(result);
+    },
+  );
+
+  router.post(
+    "/companies/:companyId/skills/reliability-sweep",
+    validate(companySkillReliabilitySweepRequestSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertBoard(req);
+      await assertCanMutateCompanySkills(req, companyId);
+      const actor = getActorInfo(req);
+      const result = await reliability.sweep(companyId, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+        runId: actor.runId ?? null,
+      });
+      await logActivityFn(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "company.skill_reliability_sweep",
+        entityType: "company",
+        entityId: companyId,
+        details: {
+          mode: result.mode,
+          createdIssueIds: result.createdIssueIds,
+          refreshedIssueIds: result.refreshedIssueIds,
+        },
+      });
+      res.json(result);
+    },
+  );
+
   router.get("/companies/:companyId/skills/:skillId", async (req, res) => {
     const companyId = req.params.companyId as string;
     const skillId = req.params.skillId as string;
     assertCompanyAccess(req, companyId);
-    const result = await svc.detail(companyId, skillId);
+    const result = await reliability.detail(companyId, skillId);
     if (!result) {
       res.status(404).json({ error: "Skill not found" });
       return;

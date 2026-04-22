@@ -33,6 +33,47 @@ describe("architecture eval runner", () => {
     await expect(readFile(materialized.targetDir, "utf8")).rejects.toBeTruthy();
   });
 
+  it("materializes failure-promoted hardening fixtures with scaffolded verification docs", async () => {
+    const scenario = getScenarioById("failure-promoted-hardening-scaffold");
+    const materialized = await materializeScenarioFixture({
+      repoRoot: process.cwd(),
+      scenario,
+    });
+
+    const findings = await readFile(
+      path.join(materialized.targetDir, "projects/platform/issues/ISSUE-5/review-findings.md"),
+      "utf8",
+    );
+    const testPlan = await readFile(
+      path.join(materialized.targetDir, "projects/platform/issues/ISSUE-5A/test-plan.md"),
+      "utf8",
+    );
+
+    expect(findings).toContain("Failure-promoted skill hardening");
+    expect(testPlan).toContain("reliability.failure_promoted_hardening");
+    expect(testPlan).toContain("failure-promoted-hardening-scaffold");
+
+    await materialized.cleanup();
+  });
+
+  it("materializes scheduled reliability sweep fixtures for stale proposal refresh", async () => {
+    const scenario = getScenarioById("scheduled-reliability-sweep-refresh");
+    const materialized = await materializeScenarioFixture({
+      repoRoot: process.cwd(),
+      scenario,
+    });
+
+    const plan = await readFile(
+      path.join(materialized.targetDir, "projects/platform/issues/ISSUE-7/plan.md"),
+      "utf8",
+    );
+
+    expect(plan).toContain("report_and_refresh");
+    expect(plan).toContain("stale proposal");
+
+    await materialized.cleanup();
+  });
+
   it("rebuilds the summary index from raw artifacts", async () => {
     const artifactRoot = await createTempDir();
     const bundle = getBundlesForLane("canary")[0]!;

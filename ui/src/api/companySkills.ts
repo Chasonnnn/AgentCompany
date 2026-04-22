@@ -15,6 +15,12 @@ import type {
   CompanySkillInstallGlobalRequest,
   CompanySkillImportResult,
   CompanySkillListItem,
+  CompanySkillReliabilityAudit,
+  CompanySkillReliabilityRepairApplyRequest,
+  CompanySkillReliabilityRepairPreview,
+  CompanySkillReliabilityRepairResult,
+  CompanySkillReliabilitySweepRequest,
+  CompanySkillReliabilitySweepResult,
   CompanySkillProjectScanRequest,
   CompanySkillProjectScanResult,
   CompanySkillUpdateStatus,
@@ -41,6 +47,25 @@ export const companySkillsApi = {
   coverageRepairApply: (companyId: string, payload: CompanySkillCoverageRepairApplyRequest) =>
     api.post<CompanySkillCoverageRepairResult>(
       `/companies/${encodeURIComponent(companyId)}/skills/coverage-audit/repair-apply`,
+      payload,
+    ),
+  reliabilityAudit: (companyId: string) =>
+    api.get<CompanySkillReliabilityAudit>(
+      `/companies/${encodeURIComponent(companyId)}/skills/reliability-audit`,
+    ),
+  reliabilityRepairPreview: (companyId: string) =>
+    api.post<CompanySkillReliabilityRepairPreview>(
+      `/companies/${encodeURIComponent(companyId)}/skills/reliability-audit/repair-preview`,
+      {},
+    ),
+  reliabilityRepairApply: (companyId: string, payload: CompanySkillReliabilityRepairApplyRequest) =>
+    api.post<CompanySkillReliabilityRepairResult>(
+      `/companies/${encodeURIComponent(companyId)}/skills/reliability-audit/repair-apply`,
+      payload,
+    ),
+  reliabilitySweep: (companyId: string, payload: CompanySkillReliabilitySweepRequest) =>
+    api.post<CompanySkillReliabilitySweepResult>(
+      `/companies/${encodeURIComponent(companyId)}/skills/reliability-sweep`,
       payload,
     ),
   detail: (companyId: string, skillId: string) =>

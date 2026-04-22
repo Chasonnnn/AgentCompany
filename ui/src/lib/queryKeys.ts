@@ -23,6 +23,9 @@ export const queryKeys = {
     coverageAudit: (companyId: string) => ["company-skills", companyId, "coverage-audit"] as const,
     coverageRepairPreview: (companyId: string) =>
       ["company-skills", companyId, "coverage-audit", "repair-preview"] as const,
+    reliabilityAudit: (companyId: string) => ["company-skills", companyId, "reliability-audit"] as const,
+    reliabilityRepairPreview: (companyId: string) =>
+      ["company-skills", companyId, "reliability-audit", "repair-preview"] as const,
     detail: (companyId: string, skillId: string) => ["company-skills", companyId, skillId] as const,
     updateStatus: (companyId: string, skillId: string) =>
       ["company-skills", companyId, skillId, "update-status"] as const,
@@ -153,6 +156,8 @@ export const queryKeys = {
     evalsSummary: ["instance", "evals", "summary"] as const,
     evalRuns: ["instance", "evals", "runs"] as const,
     evalRun: (runId: string) => ["instance", "evals", "runs", runId] as const,
+    sharedSkillProposals: (status?: string) => ["instance", "shared-skills", "proposals", status ?? "__all__"] as const,
+    sharedSkillProposal: (proposalId: string) => ["instance", "shared-skills", "proposals", proposalId] as const,
   },
   health: ["health"] as const,
   secrets: {

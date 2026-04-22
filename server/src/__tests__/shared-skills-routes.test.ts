@@ -46,6 +46,20 @@ function createDefaultProposal() {
     payload: {
       changes: [{ path: "SKILL.md", op: "replace_file", content: "# New" }],
       evidence: { runId: "run-1" },
+      requiredVerification: {
+        unitCommands: ["pnpm -r typecheck"],
+        integrationCommands: ["pnpm test:run"],
+        promptfooCaseIds: ["reliability.skill_disambiguation"],
+        architectureScenarioIds: ["failure-promoted-hardening-scaffold"],
+        smokeChecklist: ["promote finding"],
+      },
+      verificationResults: {
+        passedUnitCommands: [],
+        passedIntegrationCommands: [],
+        passedPromptfooCaseIds: [],
+        passedArchitectureScenarioIds: [],
+        completedSmokeChecklist: [],
+      },
     },
     decisionNote: null,
     decidedByUserId: null,
@@ -119,6 +133,7 @@ async function createApp(actor: Record<string, unknown>) {
       status: "approved",
       summary: "Improve find-skills",
     },
+    approveProposalError: null as Error | null,
     rejectProposalResult: {
       id: "proposal-1",
       sharedSkillId: "shared-skill-1",
@@ -136,6 +151,19 @@ async function createApp(actor: Record<string, unknown>) {
       createdAt: new Date(),
       updatedAt: new Date(),
     },
+    updateProposalVerificationResult: {
+      ...createDefaultProposal(),
+      payload: {
+        ...createDefaultProposal().payload,
+        verificationResults: {
+          passedUnitCommands: ["pnpm -r typecheck"],
+          passedIntegrationCommands: ["pnpm test:run"],
+          passedPromptfooCaseIds: ["reliability.skill_disambiguation"],
+          passedArchitectureScenarioIds: ["failure-promoted-hardening-scaffold"],
+          completedSmokeChecklist: ["promote finding"],
+        },
+      },
+    },
   };
 
   const calls = {
@@ -149,6 +177,7 @@ async function createApp(actor: Record<string, unknown>) {
     approveProposal: [] as unknown[][],
     rejectProposal: [] as unknown[][],
     addComment: [] as unknown[][],
+    updateProposalVerification: [] as unknown[][],
     listLinkedCompanyIds: [] as unknown[][],
     isSkillVisibleToCompany: [] as unknown[][],
     isSkillAvailableForRun: [] as unknown[][],
@@ -192,6 +221,9 @@ async function createApp(actor: Record<string, unknown>) {
     },
     approveProposal: async (...args: unknown[]) => {
       calls.approveProposal.push(args);
+      if (state.approveProposalError) {
+        throw state.approveProposalError;
+      }
       return state.approveProposalResult;
     },
     rejectProposal: async (...args: unknown[]) => {
@@ -201,6 +233,10 @@ async function createApp(actor: Record<string, unknown>) {
     addComment: async (...args: unknown[]) => {
       calls.addComment.push(args);
       return state.addCommentResult;
+    },
+    updateProposalVerification: async (...args: unknown[]) => {
+      calls.updateProposalVerification.push(args);
+      return state.updateProposalVerificationResult;
     },
     buildRuntimeContext: async () => [],
     listLinkedCompanyIds: async (...args: unknown[]) => {
@@ -398,5 +434,53 @@ describe("shared skill routes", () => {
     expect(calls.isSkillAvailableForRun).toHaveLength(0);
     expect(calls.isSkillVisibleToCompany).toEqual([["shared-skill-1", "company-1"]]);
     expect(calls.createProposal).toHaveLength(1);
+  });
+
+  it("updates proposal verification evidence for instance admins", async () => {
+    const { app, calls } = await createApp({
+      type: "board",
+      userId: "user-1",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const payload = {
+      passedUnitCommands: ["pnpm -r typecheck"],
+      passedIntegrationCommands: ["pnpm test:run"],
+      passedPromptfooCaseIds: ["reliability.skill_disambiguation"],
+      passedArchitectureScenarioIds: ["failure-promoted-hardening-scaffold"],
+      completedSmokeChecklist: ["promote finding"],
+    };
+
+    const res = await request(app)
+      .patch("/api/instance/shared-skills/proposals/proposal-1/verification")
+      .send(payload);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(calls.updateProposalVerification).toEqual([["proposal-1", payload]]);
+    expect(calls.logActivity).toHaveLength(1);
+  });
+
+  it("surfaces proposal approval gating failures from the service", async () => {
+    const { app, state, calls } = await createApp({
+      type: "board",
+      userId: "user-1",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const { unprocessable } = await import("../errors.js");
+    state.approveProposalError = unprocessable("Required verification is incomplete for this proposal.");
+
+    const res = await request(app)
+      .post("/api/instance/shared-skills/proposals/proposal-1/approve")
+      .send({ decisionNote: "needs full verification" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body.error).toBe("Required verification is incomplete for this proposal.");
+    expect(calls.approveProposal).toEqual([["proposal-1", "user-1", "needs full verification"]]);
+    expect(calls.logActivity).toHaveLength(0);
   });
 });

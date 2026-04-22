@@ -1612,6 +1612,11 @@ function enrichSkill(skill: CompanySkill, attachedAgentCount: number, usedByAgen
     attachedAgentCount,
     usedByAgents,
     ...source,
+    reliabilityMetadata: null,
+    reliabilityParseWarnings: [],
+    linkedHardeningIssue: null,
+    linkedProposal: null,
+    hardeningState: null,
   };
 }
 

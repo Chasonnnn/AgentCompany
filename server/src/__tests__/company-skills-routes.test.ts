@@ -27,6 +27,14 @@ const mockAgentSkillService = vi.hoisted(() => ({
   applyCoverageRepair: vi.fn(),
 }));
 
+const mockSkillReliabilityService = vi.hoisted(() => ({
+  detail: vi.fn(),
+  audit: vi.fn(),
+  previewRepair: vi.fn(),
+  applyRepair: vi.fn(),
+  sweep: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackSkillImported = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
@@ -40,6 +48,7 @@ function testMocks() {
     accessService: mockAccessService,
     companySkillService: mockCompanySkillService,
     agentSkillService: mockAgentSkillService,
+    skillReliabilityService: mockSkillReliabilityService,
     logActivity: mockLogActivity,
     trackSkillImported: mockTrackSkillImported,
     getTelemetryClient: mockGetTelemetryClient,
@@ -183,6 +192,80 @@ function applyDefaultMocks() {
       agents: [],
     },
   });
+  mockSkillReliabilityService.detail.mockResolvedValue({
+    id: "skill-1",
+    companyId: "company-1",
+    key: "local/abc123/find-skills",
+    slug: "find-skills",
+    name: "Find Skills",
+    description: null,
+    markdown: "# Find Skills",
+    sourceType: "catalog",
+    sourceLocator: "/Users/chason/.paperclip/skills/company-1/__catalog__/find-skills",
+    sourceRef: null,
+    trustLevel: "markdown_only",
+    compatibility: "compatible",
+    fileInventory: [],
+    metadata: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    reliabilityMetadata: null,
+    reliabilityParseWarnings: [],
+    linkedHardeningIssue: null,
+    linkedProposal: null,
+    hardeningState: "scaffolded",
+  });
+  mockSkillReliabilityService.audit.mockResolvedValue({
+    companyId: "company-1",
+    auditedSkillCount: 1,
+    healthyCount: 0,
+    repairableGapCount: 1,
+    needsReviewCount: 0,
+    proposalStaleCount: 0,
+    skills: [],
+  });
+  mockSkillReliabilityService.previewRepair.mockResolvedValue({
+    companyId: "company-1",
+    auditedSkillCount: 1,
+    healthyCount: 0,
+    repairableGapCount: 1,
+    needsReviewCount: 0,
+    proposalStaleCount: 0,
+    skills: [],
+    changedSkillCount: 1,
+    selectionFingerprint: "reliability-fingerprint-1",
+  });
+  mockSkillReliabilityService.applyRepair.mockResolvedValue({
+    companyId: "company-1",
+    changedSkillCount: 1,
+    createdIssueIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+    refreshedIssueIds: [],
+    selectionFingerprint: "reliability-fingerprint-1",
+    audit: {
+      companyId: "company-1",
+      auditedSkillCount: 1,
+      healthyCount: 1,
+      repairableGapCount: 0,
+      needsReviewCount: 0,
+      proposalStaleCount: 0,
+      skills: [],
+    },
+  });
+  mockSkillReliabilityService.sweep.mockResolvedValue({
+    companyId: "company-1",
+    mode: "report_and_refresh",
+    createdIssueIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+    refreshedIssueIds: ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+    audit: {
+      companyId: "company-1",
+      auditedSkillCount: 1,
+      healthyCount: 0,
+      repairableGapCount: 1,
+      needsReviewCount: 0,
+      proposalStaleCount: 0,
+      skills: [],
+    },
+  });
   mockLogActivity.mockResolvedValue(undefined);
   mockAccessService.canUser.mockResolvedValue(true);
   mockAccessService.hasPermission.mockResolvedValue(false);
@@ -214,6 +297,7 @@ async function createApp(actor: Record<string, unknown>) {
       agentService: mockAgentService as any,
       agentSkillService: mockAgentSkillService as any,
       companySkillService: mockCompanySkillService as any,
+      skillReliabilityService: mockSkillReliabilityService as any,
       logActivity: mockLogActivity as any,
     },
     telemetry: {
@@ -351,6 +435,21 @@ describe("company skill mutation permissions", () => {
     expect(mocks.agentSkillService.coverageAudit).toHaveBeenCalledWith("company-1");
   });
 
+  it("returns the company skill reliability audit", async () => {
+    const { app, mocks } = await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app).get("/api/companies/company-1/skills/reliability-audit");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mocks.skillReliabilityService.audit).toHaveBeenCalledWith("company-1");
+  });
+
   it("previews a company skill coverage repair", async () => {
     const { app, mocks } = await createApp({
       type: "board",
@@ -441,6 +540,64 @@ describe("company skill mutation permissions", () => {
     } finally {
       (mocks.agentSkillService as any).applyCoverageRepair = originalApplyCoverageRepair;
     }
+  });
+
+  it("applies a company skill reliability repair", async () => {
+    const { app, mocks } = await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app)
+      .post("/api/companies/company-1/skills/reliability-audit/repair-apply")
+      .send({ selectionFingerprint: "reliability-fingerprint-1" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mocks.skillReliabilityService.applyRepair).toHaveBeenCalledWith(
+      "company-1",
+      { selectionFingerprint: "reliability-fingerprint-1" },
+      {
+        agentId: null,
+        userId: "local-board",
+        runId: null,
+      },
+    );
+    expect(mocks.logActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "company.skill_reliability_repair_applied",
+      entityId: "company-1",
+    }));
+  });
+
+  it("runs a company skill reliability sweep", async () => {
+    const { app, mocks } = await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: ["company-1"],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app)
+      .post("/api/companies/company-1/skills/reliability-sweep")
+      .send({ mode: "report_and_refresh" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mocks.skillReliabilityService.sweep).toHaveBeenCalledWith(
+      "company-1",
+      { mode: "report_and_refresh" },
+      {
+        agentId: null,
+        userId: "local-board",
+        runId: null,
+      },
+    );
+    expect(mocks.logActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "company.skill_reliability_sweep",
+      entityId: "company-1",
+    }));
   });
 
   it("previews a bulk skill grant for board actors", async () => {

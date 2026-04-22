@@ -10,7 +10,9 @@ import {
   parseIssueReviewFindingsMarkdown,
 } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
+import { companySkillsApi } from "../api/companySkills";
 import { issuesApi } from "../api/issues";
+import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, relativeTime } from "../lib/utils";
 import { Button } from "@/components/ui/button";
@@ -226,6 +228,7 @@ export function IssueContinuityPanel({
   onOpenArtifacts?: (documentKey?: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const { pushToast } = useToast();
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const childIssuesById = useMemo(() => new Map(childIssues.map((child) => [child.id, child])), [childIssues]);
   const [prepareTier, setPrepareTier] = useState<ContinuityTier>((issue.continuityState?.tier ?? "normal") as ContinuityTier);
@@ -284,6 +287,9 @@ export function IssueContinuityPanel({
   const [advancedActionsTouched, setAdvancedActionsTouched] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [showSpecThawForm, setShowSpecThawForm] = useState(false);
+  const [promotionFindingId, setPromotionFindingId] = useState<string | null>(null);
+  const [promotionSkillId, setPromotionSkillId] = useState("");
+  const [promotionSummary, setPromotionSummary] = useState("");
   const [questionTitle, setQuestionTitle] = useState("");
   const [questionBody, setQuestionBody] = useState("");
   const [questionWhyBlocked, setQuestionWhyBlocked] = useState("");
@@ -306,6 +312,11 @@ export function IssueContinuityPanel({
     queryKey: ["issues", "continuity", issue.id, "merge-preview", selectedMergeBranchId],
     queryFn: () => issuesApi.getBranchMergePreview(issue.id, selectedMergeBranchId!),
     enabled: Boolean(selectedMergeBranchId),
+  });
+
+  const skillsQuery = useQuery({
+    queryKey: queryKeys.companySkills.list(issue.companyId),
+    queryFn: () => companySkillsApi.list(issue.companyId),
   });
 
   useEffect(() => {
@@ -467,6 +478,30 @@ export function IssueContinuityPanel({
       await invalidate();
     },
     onError: (err) => setError(err instanceof Error ? err.message : "Failed to resubmit review"),
+  });
+
+  const promoteSkillMutation = useMutation({
+    mutationFn: () =>
+      issuesApi.promoteReviewFindingSkill(issue.id, promotionFindingId!, {
+        companySkillId: promotionSkillId,
+        reproductionSummary: promotionSummary.trim() || null,
+      }),
+    onSuccess: async () => {
+      setError(null);
+      setPromotionFindingId(null);
+      setPromotionSkillId("");
+      setPromotionSummary("");
+      await Promise.all([
+        invalidate(),
+        queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.reliabilityAudit(issue.companyId) }),
+      ]);
+      pushToast({
+        tone: "success",
+        title: "Finding promoted",
+        body: "The review finding is now linked to a skill hardening issue.",
+      });
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed to promote finding into skill hardening work"),
   });
 
   const repairHandoffMutation = useMutation({
@@ -1325,7 +1360,7 @@ export function IssueContinuityPanel({
                   <p className="text-muted-foreground">{reviewFindingsDoc.document.ownerNextAction}</p>
                   <ul className="space-y-2">
                     {reviewFindingsDoc.document.findings.map((finding, index) => (
-                      <li key={`${finding.title}-${index}`} className="rounded border border-border/60 px-2 py-2">
+                      <li key={finding.findingId ?? `${finding.title}-${index}`} className="rounded border border-border/60 px-2 py-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium text-foreground">{finding.title}</span>
                           <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase">
@@ -1339,6 +1374,82 @@ export function IssueContinuityPanel({
                         <p className="mt-1">
                           <span className="font-medium text-foreground">Required action:</span> {finding.requiredAction}
                         </p>
+                        {finding.skillPromotion?.hardeningIssueId ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                            <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-sky-700 dark:text-sky-200">
+                              promoted
+                            </span>
+                            <Link
+                              to={`/issues/${finding.skillPromotion.hardeningIssueIdentifier ?? finding.skillPromotion.hardeningIssueId}`}
+                              className="text-foreground no-underline hover:underline"
+                            >
+                              {finding.skillPromotion.hardeningIssueIdentifier ?? finding.skillPromotion.hardeningIssueId.slice(0, 8)}
+                            </Link>
+                            {finding.skillPromotion.sharedSkillProposalStatus ? (
+                              <span>proposal {finding.skillPromotion.sharedSkillProposalStatus.replaceAll("_", " ")}</span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {finding.findingId ? (
+                          <div className="mt-3 rounded border border-dashed border-border/60 px-3 py-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                                Promote to skill hardening
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  if (promotionFindingId === finding.findingId) {
+                                    setPromotionFindingId(null);
+                                    setPromotionSkillId("");
+                                    setPromotionSummary("");
+                                    return;
+                                  }
+                                  setPromotionFindingId(finding.findingId ?? null);
+                                  setPromotionSkillId((current) => current || skillsQuery.data?.[0]?.id || "");
+                                  setPromotionSummary(finding.detail);
+                                }}
+                              >
+                                {promotionFindingId === finding.findingId ? "Cancel" : "Promote"}
+                              </Button>
+                            </div>
+                            {promotionFindingId === finding.findingId ? (
+                              <div className="mt-3 space-y-2">
+                                <select
+                                  value={promotionSkillId}
+                                  onChange={(event) => setPromotionSkillId(event.target.value)}
+                                  className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+                                >
+                                  <option value="">Select target skill</option>
+                                  {(skillsQuery.data ?? []).map((skill) => (
+                                    <option key={skill.id} value={skill.id}>
+                                      {skill.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <Textarea
+                                  value={promotionSummary}
+                                  onChange={(event) => setPromotionSummary(event.target.value)}
+                                  placeholder="Optional reproduction summary"
+                                  className="min-h-[84px]"
+                                />
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => promoteSkillMutation.mutate()}
+                                    disabled={promoteSkillMutation.isPending || !promotionSkillId}
+                                  >
+                                    {promoteSkillMutation.isPending ? "Promoting..." : "Create hardening issue"}
+                                  </Button>
+                                  {skillsQuery.isLoading ? (
+                                    <span className="text-xs text-muted-foreground">Loading skill library...</span>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </li>
                     ))}
                   </ul>

@@ -21,6 +21,7 @@ import type {
   IssueExecutionStagePrincipal,
   IssueLabel,
   IssueWorkProduct,
+  PromoteIssueReviewFindingSkill,
   UpsertIssueDocument,
 } from "@paperclipai/shared";
 import { api } from "./client";
@@ -325,6 +326,15 @@ export const issuesApi = {
   ) =>
     api.post<{ issue: Issue; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
       `/issues/${id}/continuity/review-resubmit`,
+      data,
+    ),
+  promoteReviewFindingSkill: (
+    id: string,
+    findingId: string,
+    data: PromoteIssueReviewFindingSkill,
+  ) =>
+    api.post<{ hardeningIssue: Issue; continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+      `/issues/${id}/continuity/review-findings/${encodeURIComponent(findingId)}/promote-skill`,
       data,
     ),
   requestSpecThaw: (id: string, data: { approvalId?: string | null; reason?: string | null }) =>
