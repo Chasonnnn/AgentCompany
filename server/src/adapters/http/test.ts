@@ -4,6 +4,7 @@ import type {
   AdapterEnvironmentTestResult,
 } from "../types.js";
 import { asString, parseObject } from "../utils.js";
+import { validateTarget } from "./validate-target.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -74,36 +75,51 @@ export async function testEnvironment(
   });
 
   if (url && (url.protocol === "http:" || url.protocol === "https:")) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    let validatedUrl: URL | null = null;
     try {
-      const response = await fetch(url, {
-        method: "HEAD",
-        signal: controller.signal,
-      });
-      if (!response.ok && response.status !== 405 && response.status !== 501) {
-        checks.push({
-          code: "http_endpoint_probe_unexpected_status",
-          level: "warn",
-          message: `Endpoint probe returned HTTP ${response.status}.`,
-          hint: "Verify the endpoint is reachable from the Paperclip server host.",
-        });
-      } else {
-        checks.push({
-          code: "http_endpoint_probe_ok",
-          level: "info",
-          message: "Endpoint responded to a HEAD probe.",
-        });
-      }
+      validatedUrl = await validateTarget(urlValue);
     } catch (err) {
       checks.push({
-        code: "http_endpoint_probe_failed",
-        level: "warn",
-        message: err instanceof Error ? err.message : "Endpoint probe failed",
-        hint: "This may be expected in restricted networks; verify connectivity when invoking runs.",
+        code: "http_url_target_blocked",
+        level: "error",
+        message: err instanceof Error ? err.message : "HTTP adapter target blocked",
+        hint: "Use a public https endpoint, or enable local_trusted mode for explicit loopback targets.",
       });
-    } finally {
-      clearTimeout(timeout);
+    }
+
+    if (validatedUrl) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      try {
+        const response = await fetch(validatedUrl, {
+          method: "HEAD",
+          redirect: "error",
+          signal: controller.signal,
+        });
+        if (!response.ok && response.status !== 405 && response.status !== 501) {
+          checks.push({
+            code: "http_endpoint_probe_unexpected_status",
+            level: "warn",
+            message: `Endpoint probe returned HTTP ${response.status}.`,
+            hint: "Verify the endpoint is reachable from the Paperclip server host.",
+          });
+        } else {
+          checks.push({
+            code: "http_endpoint_probe_ok",
+            level: "info",
+            message: "Endpoint responded to a HEAD probe.",
+          });
+        }
+      } catch (err) {
+        checks.push({
+          code: "http_endpoint_probe_failed",
+          level: "warn",
+          message: err instanceof Error ? err.message : "Endpoint probe failed",
+          hint: "This may be expected in restricted networks; verify connectivity when invoking runs.",
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
     }
   }
 

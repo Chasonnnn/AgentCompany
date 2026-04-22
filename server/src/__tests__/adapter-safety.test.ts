@@ -148,6 +148,120 @@ describe("adapter safety guards", () => {
     });
   });
 
+  describe("http adapter testEnvironment", () => {
+    function makeTestContext(config: Record<string, unknown>) {
+      return {
+        companyId: "company-1",
+        adapterType: "http",
+        config,
+      } as const;
+    }
+
+    it("blocks HEAD probe for loopback URLs outside local_trusted mode", async () => {
+      httpMocks.dnsLookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+      const { testEnvironment } = await import("../adapters/http/test.js");
+
+      const result = await testEnvironment(
+        makeTestContext({ url: "http://127.0.0.1:3100/aiw6-probe" }) as any,
+      );
+
+      expect(result.status).toBe("fail");
+      const blocked = result.checks.find((c) => c.code === "http_url_target_blocked");
+      expect(blocked).toBeDefined();
+      expect(blocked?.level).toBe("error");
+      expect(blocked?.message).toMatch(/blocks local, private, link-local, metadata, multicast, and reserved targets/i);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it("blocks HEAD probe for metadata IPs even under local_trusted", async () => {
+      httpMocks.loadConfig.mockReturnValue({ deploymentMode: "local_trusted" });
+      httpMocks.dnsLookup.mockResolvedValue([{ address: "169.254.169.254", family: 4 }]);
+      const { testEnvironment } = await import("../adapters/http/test.js");
+
+      const result = await testEnvironment(
+        makeTestContext({ url: "http://169.254.169.254/latest/meta-data/" }) as any,
+      );
+
+      expect(result.status).toBe("fail");
+      expect(result.checks.some((c) => c.code === "http_url_target_blocked")).toBe(true);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it("blocks HEAD probe for RFC1918 private IPs", async () => {
+      httpMocks.dnsLookup.mockResolvedValue([{ address: "10.0.0.1", family: 4 }]);
+      const { testEnvironment } = await import("../adapters/http/test.js");
+
+      const result = await testEnvironment(
+        makeTestContext({ url: "http://10.0.0.1/internal" }) as any,
+      );
+
+      expect(result.status).toBe("fail");
+      expect(result.checks.some((c) => c.code === "http_url_target_blocked")).toBe(true);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it("blocks HEAD probe for public hostnames that resolve to private addresses", async () => {
+      httpMocks.dnsLookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+      const { testEnvironment } = await import("../adapters/http/test.js");
+
+      const result = await testEnvironment(
+        makeTestContext({ url: "https://gateway.example.test/hook" }) as any,
+      );
+
+      expect(result.status).toBe("fail");
+      expect(result.checks.some((c) => c.code === "http_url_target_blocked")).toBe(true);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it("allows HEAD probe for explicit loopback in local_trusted mode", async () => {
+      httpMocks.loadConfig.mockReturnValue({ deploymentMode: "local_trusted" });
+      httpMocks.dnsLookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+      vi.mocked(globalThis.fetch).mockResolvedValue({ ok: true, status: 200 } as Response);
+      const { testEnvironment } = await import("../adapters/http/test.js");
+
+      const result = await testEnvironment(
+        makeTestContext({ url: "http://localhost:3100/api/health" }) as any,
+      );
+
+      expect(result.status).toBe("pass");
+      expect(result.checks.some((c) => c.code === "http_endpoint_probe_ok")).toBe(true);
+      expect(globalThis.fetch).toHaveBeenCalledOnce();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.any(URL),
+        expect.objectContaining({ method: "HEAD", redirect: "error" }),
+      );
+    });
+
+    it("allows HEAD probe for public https targets after validation", async () => {
+      httpMocks.dnsLookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+      vi.mocked(globalThis.fetch).mockResolvedValue({ ok: true, status: 200 } as Response);
+      const { testEnvironment } = await import("../adapters/http/test.js");
+
+      const result = await testEnvironment(
+        makeTestContext({ url: "https://example.com/hook" }) as any,
+      );
+
+      expect(result.status).toBe("pass");
+      expect(result.checks.some((c) => c.code === "http_endpoint_probe_ok")).toBe(true);
+      expect(httpMocks.dnsLookup).toHaveBeenCalledWith("example.com", {
+        all: true,
+        verbatim: true,
+      });
+      expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it("does not probe when url is missing", async () => {
+      const { testEnvironment } = await import("../adapters/http/test.js");
+
+      const result = await testEnvironment(makeTestContext({}) as any);
+
+      expect(result.status).toBe("fail");
+      expect(result.checks.some((c) => c.code === "http_url_missing")).toBe(true);
+      expect(httpMocks.dnsLookup).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe("process adapter", () => {
     it("fails closed unless unsafeAllowLocalExecution is explicitly enabled", async () => {
       const { execute } = await import("../adapters/process/execute.js");
