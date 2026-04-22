@@ -3,9 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import express from "express";
 import request from "supertest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@paperclipai/db";
-import { healthRoutes } from "../routes/health.js";
 
 const tempDirs: string[] = [];
 
@@ -17,10 +16,24 @@ function createDevServerStatusFile(payload: unknown) {
   return filePath;
 }
 
+beforeEach(() => {
+  vi.resetModules();
+  vi.resetAllMocks();
+  vi.doUnmock("../routes/health.js");
+  vi.doUnmock("../dev-server-status.js");
+  vi.doUnmock("../services/instance-settings.js");
+  vi.doUnmock("../middleware/logger.js");
+});
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+  vi.restoreAllMocks();
+  vi.doUnmock("../routes/health.js");
+  vi.doUnmock("../dev-server-status.js");
+  vi.doUnmock("../services/instance-settings.js");
+  vi.doUnmock("../middleware/logger.js");
 });
 
 describe("GET /health dev-server supervisor access", () => {
@@ -73,6 +86,7 @@ describe("GET /health dev-server supervisor access", () => {
     } as unknown as Db;
 
     try {
+      const { healthRoutes } = await vi.importActual<typeof import("../routes/health.js")>("../routes/health.js");
       const app = express();
       app.use((req, _res, next) => {
         req.actor = { type: "none", source: "none" } as typeof req.actor;

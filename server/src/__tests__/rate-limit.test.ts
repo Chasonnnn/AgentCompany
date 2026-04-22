@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
-import { rateLimitMiddleware } from "../middleware/rate-limit.js";
 
 const DEFAULT_TEST_IP = "10.0.0.1";
 
-function createApp(maxRequests: number, windowMs: number) {
+async function createApp(maxRequests: number, windowMs: number) {
+  const { rateLimitMiddleware } = await vi.importActual<typeof import("../middleware/rate-limit.js")>("../middleware/rate-limit.js");
   const app = express();
   app.use(rateLimitMiddleware({ maxRequests, windowMs }));
   app.get("/test", (_req, res) => {
@@ -20,17 +20,20 @@ function sendFromIp(app: express.Express, ip = DEFAULT_TEST_IP) {
 
 describe("rateLimitMiddleware", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.restoreAllMocks();
     vi.useRealTimers();
+    vi.doUnmock("../middleware/rate-limit.js");
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.doUnmock("../middleware/rate-limit.js");
   });
 
   it("allows requests within the limit", async () => {
-    const app = createApp(3, 60_000);
+    const app = await createApp(3, 60_000);
     for (let i = 0; i < 3; i++) {
       const res = await sendFromIp(app);
       expect(res.status).toBe(200);
@@ -38,7 +41,7 @@ describe("rateLimitMiddleware", () => {
   });
 
   it("rejects requests that exceed the limit with 429", async () => {
-    const app = createApp(2, 60_000);
+    const app = await createApp(2, 60_000);
     await sendFromIp(app);
     await sendFromIp(app);
     const res = await sendFromIp(app);
@@ -47,7 +50,7 @@ describe("rateLimitMiddleware", () => {
   });
 
   it("includes rate-limit headers on every response", async () => {
-    const app = createApp(5, 60_000);
+    const app = await createApp(5, 60_000);
     const res = await sendFromIp(app);
     expect(res.status).toBe(200);
     expect(res.headers["x-ratelimit-limit"]).toBe("5");
@@ -56,7 +59,7 @@ describe("rateLimitMiddleware", () => {
   });
 
   it("includes Retry-After header on 429 responses", async () => {
-    const app = createApp(1, 60_000);
+    const app = await createApp(1, 60_000);
     await sendFromIp(app);
     const res = await sendFromIp(app);
     expect(res.status).toBe(429);
@@ -67,7 +70,7 @@ describe("rateLimitMiddleware", () => {
     let now = 1_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
 
-    const app = createApp(1, 60_000);
+    const app = await createApp(1, 60_000);
     await sendFromIp(app);
     const blocked = await sendFromIp(app);
     expect(blocked.status).toBe(429);
@@ -79,7 +82,7 @@ describe("rateLimitMiddleware", () => {
   });
 
   it("tracks different IPs independently", async () => {
-    const app = createApp(1, 60_000);
+    const app = await createApp(1, 60_000);
     // First IP exhausts limit
     await request(app).get("/test").set("X-Forwarded-For", "10.0.0.1");
     const ip1Blocked = await request(app).get("/test").set("X-Forwarded-For", "10.0.0.1");
