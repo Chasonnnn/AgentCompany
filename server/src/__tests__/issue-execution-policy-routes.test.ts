@@ -8,6 +8,7 @@ const mockIssueService = vi.hoisted(() => ({
   assertCheckoutOwner: vi.fn(),
   update: vi.fn(),
   addComment: vi.fn(),
+  resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
   getRelationSummaries: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
@@ -132,6 +133,7 @@ describe("issue execution policy routes", () => {
     vi.doUnmock("../middleware/validate.js");
     vi.doUnmock("../services/index.js");
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);

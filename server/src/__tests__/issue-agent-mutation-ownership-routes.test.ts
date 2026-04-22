@@ -22,6 +22,7 @@ const mockIssueService = vi.hoisted(() => ({
   remove: vi.fn(),
   removeAttachment: vi.fn(),
   update: vi.fn(),
+  resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
 }));
 
@@ -62,6 +63,10 @@ const mockIssueContinuityService = vi.hoisted(() => ({
   returnBranch: vi.fn(),
   getBranchMergePreview: vi.fn(),
   mergeBranch: vi.fn(),
+}));
+
+const mockIssueApprovalService = vi.hoisted(() => ({
+  listApprovalsForIssue: vi.fn(),
 }));
 
 const mockStorageService = vi.hoisted(() => ({
@@ -109,9 +114,7 @@ vi.mock("../services/index.js", () => ({
     listCompanyIds: vi.fn(async () => [companyId]),
   }),
   issueContinuityService: () => mockIssueContinuityService,
-  issueApprovalService: () => ({
-    listApprovalsForIssue: vi.fn(async () => []),
-  }),
+  issueApprovalService: () => mockIssueApprovalService,
   issueReferenceService: () => ({
     syncIssue: vi.fn(async () => undefined),
     syncComment: vi.fn(async () => undefined),
@@ -249,6 +252,7 @@ describe("agent issue mutation checkout ownership", () => {
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueContinuityService.recomputeIssueContinuityState.mockResolvedValue({
       status: "ready",
@@ -277,6 +281,7 @@ describe("agent issue mutation checkout ownership", () => {
     mockIssueContinuityService.returnBranch.mockResolvedValue({});
     mockIssueContinuityService.getBranchMergePreview.mockResolvedValue({});
     mockIssueContinuityService.mergeBranch.mockResolvedValue({});
+    mockIssueApprovalService.listApprovalsForIssue.mockResolvedValue([]);
     mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
       ...makeIssue(),
       ...patch,
@@ -369,6 +374,7 @@ describe("agent issue mutation checkout ownership", () => {
   });
 
   it("allows the checked-out owner with the matching run id to patch and update documents", async () => {
+    mockIssueApprovalService.listApprovalsForIssue.mockResolvedValue([{ status: "approved" }]);
     const app = await createApp(ownerActor());
 
     await request(app).patch(`/api/issues/${issueId}`).send({ title: "Updated" }).expect(200);
@@ -390,6 +396,7 @@ describe("agent issue mutation checkout ownership", () => {
   });
 
   it("preserves board mutations on active checkouts", async () => {
+    mockIssueApprovalService.listApprovalsForIssue.mockResolvedValue([{ status: "approved" }]);
     const app = await createApp(boardActor());
 
     await request(app).patch(`/api/issues/${issueId}`).send({ title: "Board update" }).expect(200);
@@ -401,6 +408,16 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
     expect(mockIssueService.update).toHaveBeenCalled();
     expect(mockDocumentService.upsertIssueDocument).toHaveBeenCalled();
+  });
+
+  it("blocks active plan edits without an approved linked approval", async () => {
+    const res = await request(await createApp(ownerActor()))
+      .put(`/api/issues/${issueId}/documents/plan`)
+      .send({ format: "markdown", body: "# needs approval" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Editing plan during active execution requires an approved linked approval");
+    expect(mockDocumentService.upsertIssueDocument).not.toHaveBeenCalled();
   });
 
   it("allows agents with the active-checkout management grant to mutate active checkouts", async () => {

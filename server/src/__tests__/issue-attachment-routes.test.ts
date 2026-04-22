@@ -53,6 +53,14 @@ function registerRouteMocks() {
           feedbackDataSharingPreference: "prompt",
         },
       })),
+      getGeneral: vi.fn(async () => ({
+        censorUsernameInLogs: false,
+        feedbackDataSharingPreference: "prompt",
+        enterprisePolicy: {
+          enforceAttachmentScanning: true,
+          defaultAttachmentRetentionClass: "evidence",
+        },
+      })),
       listCompanyIds: vi.fn(async () => ["company-1"]),
     }),
     issueApprovalService: () => ({}),
@@ -156,6 +164,15 @@ function makeAttachment(contentType: string, originalFilename: string) {
     contentType,
     byteSize: 4,
     sha256: "sha256-sample",
+    scanStatus: "clean",
+    scanProvider: "builtin_metadata_guard",
+    scanCompletedAt: now,
+    quarantinedAt: null,
+    quarantineReason: null,
+    retentionClass: "evidence",
+    expiresAt: null,
+    legalHold: false,
+    deletedAt: null,
     originalFilename,
     createdByAgentId: null,
     createdByUserId: "local-board",
@@ -169,6 +186,11 @@ describe("issue attachment routes", () => {
     vi.resetModules();
     registerRouteMocks();
     vi.clearAllMocks();
+    mockIssueService.getById.mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      identifier: "PAP-1",
+    });
   });
 
   it("accepts zip uploads for issue attachments", async () => {

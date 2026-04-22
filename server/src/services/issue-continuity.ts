@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { issueDecisionQuestions, issueExecutionDecisions, issues } from "@paperclipai/db";
+import {
+  assets,
+  executionWorkspaces,
+  issueAttachments,
+  issueComments,
+  issueDecisionQuestions,
+  issueExecutionDecisions,
+  issues,
+} from "@paperclipai/db";
 import {
   ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
   ISSUE_BRANCH_CHARTER_KIND,
@@ -340,14 +348,39 @@ export function issueContinuityService(db: Db) {
   const issueApprovalsSvc = issueApprovalService(db);
   const approvalsSvc = approvalService(db);
 
-  async function getIssueOrThrow(issueId: string) {
-    const issue = await issuesSvc.getById(issueId);
+  function resolveScopedServices(dbOrTx: Db) {
+    return {
+      docsSvc: documentService(dbOrTx),
+      issuesSvc: issueService(dbOrTx),
+      issueApprovalsSvc: issueApprovalService(dbOrTx),
+      approvalsSvc: approvalService(dbOrTx),
+    };
+  }
+
+  async function withLockedIssueRow<T>(issueId: string, fn: (dbOrTx: Db) => Promise<T>) {
+    return db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select ${issues.id} from ${issues} where ${issues.id} = ${issueId} for update`,
+      );
+      const lockedDb = tx as unknown as Db;
+      const lockedIssue = await lockedDb
+        .select({ id: issues.id })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0] ?? null);
+      if (!lockedIssue) throw notFound("Issue not found");
+      return fn(lockedDb);
+    });
+  }
+
+  async function getIssueOrThrow(issueId: string, dbOrTx: Db = db) {
+    const issue = await resolveScopedServices(dbOrTx).issuesSvc.getById(issueId);
     if (!issue) throw notFound("Issue not found");
     return issue;
   }
 
-  async function getChildBranchRows(issue: ContinuityIssueRecord) {
-    return db
+  async function getChildBranchRows(issue: ContinuityIssueRecord, dbOrTx: Db = db) {
+    return dbOrTx
       .select({
         id: issues.id,
         status: issues.status,
@@ -357,16 +390,17 @@ export function issueContinuityService(db: Db) {
       .where(and(eq(issues.companyId, issue.companyId), eq(issues.parentId, issue.id), isNull(issues.hiddenAt)));
   }
 
-  async function getContinuityMaterial(issueId: string) {
-    const issue = await getIssueOrThrow(issueId);
-    await normalizeBundledOpenDecisionQuestions(db, { issueId: issue.id, companyId: issue.companyId });
+  async function getContinuityMaterial(issueId: string, dbOrTx: Db = db) {
+    const scopedServices = resolveScopedServices(dbOrTx);
+    const issue = await getIssueOrThrow(issueId, dbOrTx);
+    await normalizeBundledOpenDecisionQuestions(dbOrTx, { issueId: issue.id, companyId: issue.companyId });
     const [issueDocs, projectContext, projectRunbook, linkedApprovals, childRows, questionRows] = await Promise.all([
-      docsSvc.listIssueDocuments(issue.id),
-      issue.projectId ? docsSvc.getProjectDocumentByKey(issue.projectId, "context") : Promise.resolve(null),
-      issue.projectId ? docsSvc.getProjectDocumentByKey(issue.projectId, "runbook") : Promise.resolve(null),
-      issueApprovalsSvc.listApprovalsForIssue(issue.id),
-      getChildBranchRows(issue),
-      db
+      scopedServices.docsSvc.listIssueDocuments(issue.id),
+      issue.projectId ? scopedServices.docsSvc.getProjectDocumentByKey(issue.projectId, "context") : Promise.resolve(null),
+      issue.projectId ? scopedServices.docsSvc.getProjectDocumentByKey(issue.projectId, "runbook") : Promise.resolve(null),
+      scopedServices.issueApprovalsSvc.listApprovalsForIssue(issue.id),
+      getChildBranchRows(issue, dbOrTx),
+      dbOrTx
         .select()
         .from(issueDecisionQuestions)
         .where(and(eq(issueDecisionQuestions.companyId, issue.companyId), eq(issueDecisionQuestions.issueId, issue.id))),
@@ -616,8 +650,18 @@ export function issueContinuityService(db: Db) {
     });
   }
 
-  async function persistContinuityState(issueId: string, nextState: IssueContinuityState) {
-    await db.update(issues).set({ continuityState: nextState as unknown as Record<string, unknown> }).where(eq(issues.id, issueId));
+  async function persistContinuityState(
+    issueId: string,
+    nextState: IssueContinuityState,
+    dbOrTx?: Db,
+  ): Promise<IssueContinuityState> {
+    if (!dbOrTx) {
+      return withLockedIssueRow(issueId, async (lockedDb) => persistContinuityState(issueId, nextState, lockedDb));
+    }
+    await dbOrTx
+      .update(issues)
+      .set({ continuityState: nextState as unknown as Record<string, unknown> })
+      .where(eq(issues.id, issueId));
     return nextState;
   }
 
@@ -631,95 +675,182 @@ export function issueContinuityService(db: Db) {
       forceSpecState?: IssueContinuityState["specState"] | null;
     },
   ) {
-    const material = await getContinuityMaterial(issueId);
-    const nextState = computeContinuityState({
-      issue: material.issue,
-      issueDocsByKey: material.issueDocsByKey,
-      linkedApprovals: material.linkedApprovals,
-      childRows: material.childRows,
-      decisionQuestions: material.decisionQuestions,
-      preparedTier: overrides?.tier ?? null,
-      lastPreparedAt: overrides?.lastPreparedAt ?? null,
-      forceBranchStatus: overrides?.forceBranchStatus ?? null,
-      forceStatus: overrides?.forceStatus ?? null,
-      forceSpecState: overrides?.forceSpecState ?? null,
+    return withLockedIssueRow(issueId, async (lockedDb) => {
+      const material = await getContinuityMaterial(issueId, lockedDb);
+      const nextState = computeContinuityState({
+        issue: material.issue,
+        issueDocsByKey: material.issueDocsByKey,
+        linkedApprovals: material.linkedApprovals,
+        childRows: material.childRows,
+        decisionQuestions: material.decisionQuestions,
+        preparedTier: overrides?.tier ?? null,
+        lastPreparedAt: overrides?.lastPreparedAt ?? null,
+        forceBranchStatus: overrides?.forceBranchStatus ?? null,
+        forceStatus: overrides?.forceStatus ?? null,
+        forceSpecState: overrides?.forceSpecState ?? null,
+      });
+      await persistContinuityState(issueId, nextState, lockedDb);
+      return nextState;
     });
-    await persistContinuityState(issueId, nextState);
-    return nextState;
   }
 
   async function buildContinuityBundle(issueId: string) {
-    const material = await getContinuityMaterial(issueId);
-    let continuityState = computeContinuityState({
-      issue: material.issue,
-      issueDocsByKey: material.issueDocsByKey,
-      linkedApprovals: material.linkedApprovals,
-      childRows: material.childRows,
-      decisionQuestions: material.decisionQuestions,
-    });
+    return withLockedIssueRow(issueId, async (lockedDb) => {
+      const material = await getContinuityMaterial(issueId, lockedDb);
+      let continuityState = computeContinuityState({
+        issue: material.issue,
+        issueDocsByKey: material.issueDocsByKey,
+        linkedApprovals: material.linkedApprovals,
+        childRows: material.childRows,
+        decisionQuestions: material.decisionQuestions,
+      });
 
-    const decisionQuestions = material.decisionQuestions;
-    const issueDocuments = {
-      spec: continuityDocumentSnapshot(material.issueDocsByKey.get("spec") ?? null),
-      plan: continuityDocumentSnapshot(material.issueDocsByKey.get("plan") ?? null),
-      runbook: continuityDocumentSnapshot(material.issueDocsByKey.get("runbook") ?? null),
-      progress: continuityDocumentSnapshot(material.issueDocsByKey.get("progress") ?? null),
-      "test-plan": continuityDocumentSnapshot(material.issueDocsByKey.get("test-plan") ?? null),
-      handoff: continuityDocumentSnapshot(material.issueDocsByKey.get("handoff") ?? null),
-      "review-findings": continuityDocumentSnapshot(material.issueDocsByKey.get("review-findings") ?? null),
-      "branch-return": continuityDocumentSnapshot(material.issueDocsByKey.get("branch-return") ?? null),
-    } as const;
-    const projectDocuments = {
-      context: continuityDocumentSnapshot(material.projectContext),
-      runbook: continuityDocumentSnapshot(material.projectRunbook),
-    } as const;
-    const referencedRevisionIds: Record<string, string | null> = {
-      spec: issueDocuments.spec?.latestRevisionId ?? null,
-      plan: issueDocuments.plan?.latestRevisionId ?? null,
-      runbook: issueDocuments.runbook?.latestRevisionId ?? null,
-      progress: issueDocuments.progress?.latestRevisionId ?? null,
-      "test-plan": issueDocuments["test-plan"]?.latestRevisionId ?? null,
-      handoff: issueDocuments.handoff?.latestRevisionId ?? null,
-      "review-findings": issueDocuments["review-findings"]?.latestRevisionId ?? null,
-      "branch-return": issueDocuments["branch-return"]?.latestRevisionId ?? null,
-      "project:context": projectDocuments.context?.latestRevisionId ?? null,
-      "project:runbook": projectDocuments.runbook?.latestRevisionId ?? null,
-    };
-    const generatedAt = new Date().toISOString();
-    const bundleInput = {
-      issueId: material.issue.id,
-      generatedAt,
-      bundleHash: "",
-      continuityState,
-      executionState: parseIssueExecutionState(material.issue.executionState ?? null),
-      decisionQuestions,
-      planApproval: continuityState.planApproval,
-      issueDocuments,
-      projectDocuments,
-      referencedRevisionIds,
-    };
-    const bundleHash = createHash("sha256")
-      .update(JSON.stringify({
+      const decisionQuestions = material.decisionQuestions;
+      const issueDocuments = {
+        spec: continuityDocumentSnapshot(material.issueDocsByKey.get("spec") ?? null),
+        plan: continuityDocumentSnapshot(material.issueDocsByKey.get("plan") ?? null),
+        runbook: continuityDocumentSnapshot(material.issueDocsByKey.get("runbook") ?? null),
+        progress: continuityDocumentSnapshot(material.issueDocsByKey.get("progress") ?? null),
+        "test-plan": continuityDocumentSnapshot(material.issueDocsByKey.get("test-plan") ?? null),
+        handoff: continuityDocumentSnapshot(material.issueDocsByKey.get("handoff") ?? null),
+        "review-findings": continuityDocumentSnapshot(material.issueDocsByKey.get("review-findings") ?? null),
+        "branch-return": continuityDocumentSnapshot(material.issueDocsByKey.get("branch-return") ?? null),
+      } as const;
+      const projectDocuments = {
+        context: continuityDocumentSnapshot(material.projectContext),
+        runbook: continuityDocumentSnapshot(material.projectRunbook),
+      } as const;
+      const [attachmentRows, commentRows, executionWorkspace] = await Promise.all([
+        lockedDb
+          .select({
+            attachmentId: issueAttachments.id,
+            assetId: assets.id,
+            issueCommentId: issueAttachments.issueCommentId,
+            originalFilename: assets.originalFilename,
+            contentType: assets.contentType,
+            sha256: assets.sha256,
+            scanStatus: assets.scanStatus,
+            contentPath: assets.objectKey,
+            createdAt: assets.createdAt,
+          })
+          .from(issueAttachments)
+          .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
+          .where(and(eq(issueAttachments.issueId, issueId), isNull(assets.deletedAt)))
+          .orderBy(sql`${assets.createdAt} desc`),
+        lockedDb
+          .select({
+            commentId: issueComments.id,
+            authorAgentId: issueComments.authorAgentId,
+            authorUserId: issueComments.authorUserId,
+            createdAt: issueComments.createdAt,
+            body: issueComments.body,
+          })
+          .from(issueComments)
+          .where(eq(issueComments.issueId, issueId))
+          .orderBy(sql`${issueComments.createdAt} desc`)
+          .limit(10),
+        material.issue.executionWorkspaceId
+          ? lockedDb
+              .select({
+                id: executionWorkspaces.id,
+                status: executionWorkspaces.status,
+                cwd: executionWorkspaces.cwd,
+                branchName: executionWorkspaces.branchName,
+                cleanupState: executionWorkspaces.cleanupState,
+                reconcileState: executionWorkspaces.reconcileState,
+                lastReconciledAt: executionWorkspaces.lastReconciledAt,
+              })
+              .from(executionWorkspaces)
+              .where(eq(executionWorkspaces.id, material.issue.executionWorkspaceId))
+              .then((rows) => rows[0] ?? null)
+          : null,
+      ]);
+      const evidenceManifest = {
+        attachments: attachmentRows.map((row) => ({
+          attachmentId: row.attachmentId,
+          assetId: row.assetId,
+          issueCommentId: row.issueCommentId ?? null,
+          originalFilename: row.originalFilename ?? null,
+          contentType: row.contentType,
+          sha256: row.sha256,
+          scanStatus: row.scanStatus as "pending_scan" | "clean" | "quarantined" | "scan_failed",
+          contentPath: row.contentPath,
+          createdAt: row.createdAt.toISOString(),
+        })),
+        recentComments: [...commentRows]
+          .reverse()
+          .map((row) => ({
+            commentId: row.commentId,
+            authorAgentId: row.authorAgentId ?? null,
+            authorUserId: row.authorUserId ?? null,
+            createdAt: row.createdAt.toISOString(),
+            bodyExcerpt: row.body.slice(0, 280),
+          })),
+        executionWorkspace: executionWorkspace
+          ? {
+              id: executionWorkspace.id,
+              status: executionWorkspace.status,
+              cwd: executionWorkspace.cwd ?? null,
+              branchName: executionWorkspace.branchName ?? null,
+              cleanupState: executionWorkspace.cleanupState ?? null,
+              reconcileState: executionWorkspace.reconcileState ?? null,
+              lastReconciledAt: toIsoString(executionWorkspace.lastReconciledAt),
+            }
+          : null,
+      } as const;
+      const referencedRevisionIds: Record<string, string | null> = {
+        spec: issueDocuments.spec?.latestRevisionId ?? null,
+        plan: issueDocuments.plan?.latestRevisionId ?? null,
+        runbook: issueDocuments.runbook?.latestRevisionId ?? null,
+        progress: issueDocuments.progress?.latestRevisionId ?? null,
+        "test-plan": issueDocuments["test-plan"]?.latestRevisionId ?? null,
+        handoff: issueDocuments.handoff?.latestRevisionId ?? null,
+        "review-findings": issueDocuments["review-findings"]?.latestRevisionId ?? null,
+        "branch-return": issueDocuments["branch-return"]?.latestRevisionId ?? null,
+        "project:context": projectDocuments.context?.latestRevisionId ?? null,
+        "project:runbook": projectDocuments.runbook?.latestRevisionId ?? null,
+      };
+      const generatedAt = new Date().toISOString();
+      const bundleInput = {
+        issueId: material.issue.id,
+        generatedAt,
+        bundleHash: "",
         continuityState,
-        executionState: bundleInput.executionState,
+        executionState: parseIssueExecutionState(material.issue.executionState ?? null),
         decisionQuestions,
-        planApproval: bundleInput.planApproval,
+        planApproval: continuityState.planApproval,
         issueDocuments,
         projectDocuments,
+        evidenceManifest,
         referencedRevisionIds,
-      }))
-      .digest("hex");
-    continuityState = issueContinuityStateSchema.parse({
-      ...continuityState,
-      lastBundleHash: bundleHash,
-    });
-    if (material.issue.continuityState == null || (material.issue.continuityState as Record<string, unknown>).lastBundleHash !== bundleHash) {
-      await persistContinuityState(issueId, continuityState);
-    }
-    return issueContinuityBundleSchema.parse({
-      ...bundleInput,
-      bundleHash,
-      continuityState,
+      };
+      const bundleHash = createHash("sha256")
+        .update(JSON.stringify({
+          continuityState,
+          executionState: bundleInput.executionState,
+          decisionQuestions,
+          planApproval: bundleInput.planApproval,
+          issueDocuments,
+          projectDocuments,
+          evidenceManifest,
+          referencedRevisionIds,
+        }))
+        .digest("hex");
+      continuityState = issueContinuityStateSchema.parse({
+        ...continuityState,
+        lastBundleHash: bundleHash,
+      });
+      if (
+        material.issue.continuityState == null ||
+        (material.issue.continuityState as Record<string, unknown>).lastBundleHash !== bundleHash
+      ) {
+        await persistContinuityState(issueId, continuityState, lockedDb);
+      }
+      return issueContinuityBundleSchema.parse({
+        ...bundleInput,
+        bundleHash,
+        continuityState,
+      });
     });
   }
 

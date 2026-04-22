@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, or } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { executionWorkspaces, issues, projects, projectWorkspaces, workspaceRuntimeServices } from "@paperclipai/db";
 import type {
@@ -250,6 +250,12 @@ function toExecutionWorkspace(
     closedAt: row.closedAt ?? null,
     cleanupEligibleAt: row.cleanupEligibleAt ?? null,
     cleanupReason: row.cleanupReason ?? null,
+    cleanupState: row.cleanupState as ExecutionWorkspace["cleanupState"],
+    cleanupAttemptCount: row.cleanupAttemptCount ?? 0,
+    lastCleanupError: row.lastCleanupError ?? null,
+    nextCleanupAttemptAt: row.nextCleanupAttemptAt ?? null,
+    reconcileState: row.reconcileState as ExecutionWorkspace["reconcileState"],
+    lastReconciledAt: row.lastReconciledAt ?? null,
     config: readExecutionWorkspaceConfig((row.metadata as Record<string, unknown> | null) ?? null),
     metadata: (row.metadata as Record<string, unknown> | null) ?? null,
     runtimeServices,
@@ -613,6 +619,23 @@ export function executionWorkspaceService(db: Db) {
         .returning()
         .then((rows) => rows[0] ?? null);
       return row ? toExecutionWorkspace(row) : null;
+    },
+
+    listCleanupCandidates: async (now: Date = new Date()) => {
+      const rows = await db
+        .select()
+        .from(executionWorkspaces)
+        .where(
+          and(
+            or(
+              lte(executionWorkspaces.cleanupEligibleAt, now),
+              lte(executionWorkspaces.nextCleanupAttemptAt, now),
+            ),
+            inArray(executionWorkspaces.status, ["active", "idle", "cleanup_failed"]),
+          ),
+        )
+        .orderBy(desc(executionWorkspaces.lastUsedAt), desc(executionWorkspaces.updatedAt));
+      return rows.map((row) => toExecutionWorkspace(row));
     },
   };
 }

@@ -7,6 +7,7 @@ import {
   companies,
   costEvents,
   createDb,
+  financeEvents,
   projects,
 } from "@paperclipai/db";
 import {
@@ -70,6 +71,7 @@ describeEmbeddedPostgres("costService api-equivalent estimates", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(financeEvents);
     await db.delete(costEvents);
     await db.delete(budgetPolicies);
     await db.delete(projects);

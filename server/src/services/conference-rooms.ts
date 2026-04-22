@@ -25,7 +25,7 @@ import type {
   CreateConferenceRoom,
 } from "@paperclipai/shared";
 import { normalizeRequestBoardApprovalPayload } from "@paperclipai/shared";
-import { notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { conferenceContextService } from "./conference-context.js";
 import { heartbeatService } from "./heartbeat.js";
@@ -50,6 +50,19 @@ function approvalTitleSummary(payload: Record<string, unknown>) {
     title: readTrimmed(payload.title) ?? "Board decision",
     summary: readTrimmed(payload.summary) ?? "",
   };
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+    return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJsonStringify(entryValue)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 export function conferenceRoomService(db: Db) {
@@ -684,6 +697,9 @@ export function conferenceRoomService(db: Db) {
     addComment: async (roomId: string, input: AddConferenceRoomComment, actor: ActorInfo) => {
       const room = await getRoomRow(roomId);
       if (!room) throw notFound("Conference room not found");
+      if (room.status === "closed" || room.status === "archived") {
+        throw conflict("Cannot comment on a closed or archived conference room");
+      }
       const messageType = input.messageType ?? "note";
       let parentComment: typeof conferenceRoomComments.$inferSelect | null = null;
       if (input.parentCommentId) {
@@ -770,22 +786,22 @@ export function conferenceRoomService(db: Db) {
           }
         }
 
-        return inserted;
-      });
+        await logActivity(tx as unknown as Db, {
+          companyId: room.companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId ?? null,
+          runId: actor.runId ?? null,
+          action: "conference_room.comment_added",
+          entityType: "conference_room",
+          entityId: roomId,
+          details: {
+            messageType,
+            parentCommentId: parentComment?.id ?? null,
+          },
+        });
 
-      await logActivity(db, {
-        companyId: room.companyId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        agentId: actor.agentId ?? null,
-        runId: actor.runId ?? null,
-        action: "conference_room.comment_added",
-        entityType: "conference_room",
-        entityId: roomId,
-        details: {
-          messageType,
-          parentCommentId: parentComment?.id ?? null,
-        },
+        return inserted;
       });
 
       if (messageType === "question") {
@@ -890,6 +906,31 @@ export function conferenceRoomService(db: Db) {
           ...(repoContext ? { repoContext } : {}),
         });
         const payload: RequestBoardApprovalPayload = normalizedPayload;
+        const normalizedPayloadJson = stableJsonStringify(payload);
+        const existingPendingApprovals = await tx
+          .select({ approval: approvals })
+          .from(conferenceRoomApprovals)
+          .innerJoin(approvals, eq(conferenceRoomApprovals.approvalId, approvals.id))
+          .where(
+            and(
+              eq(conferenceRoomApprovals.conferenceRoomId, roomId),
+              eq(approvals.companyId, room.companyId),
+              eq(approvals.type, "request_board_approval"),
+              eq(approvals.status, "pending"),
+            ),
+          );
+        const matchingPendingApproval = existingPendingApprovals
+          .map((row) => row.approval)
+          .find((approval) => {
+            try {
+              return stableJsonStringify(normalizeRequestBoardApprovalPayload(approval.payload)) === normalizedPayloadJson;
+            } catch {
+              return false;
+            }
+          });
+        if (matchingPendingApproval) {
+          return matchingPendingApproval;
+        }
         const approval = await tx
           .insert(approvals)
           .values({

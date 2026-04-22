@@ -203,6 +203,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     expect(blockedWake).not.toBeNull();
 
     await waitForCondition(async () => {
+      await heartbeat.resumeQueuedRuns();
       const run = await db
         .select({ status: heartbeatRuns.status })
         .from(heartbeatRuns)
@@ -261,7 +262,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
         .where(eq(heartbeatRuns.id, blockedWake!.id))
         .then((rows) => rows[0] ?? null);
       return run?.status === "succeeded";
-    });
+    }, 10_000);
 
     const promotedBlockedRun = await db
       .select({

@@ -5,6 +5,7 @@ import {
   approvals,
   budgetIncidents,
   budgetPolicies,
+  budgetReservations,
   companies,
   costEvents,
   projects,
@@ -164,6 +165,27 @@ async function computeObservedAmount(
   return Number(row?.total ?? 0);
 }
 
+async function computeReservedAmount(
+  db: Db,
+  policy: Pick<PolicyRow, "companyId" | "scopeType" | "scopeId" | "metric">,
+) {
+  if (policy.metric !== "billed_cents") return 0;
+  const [row] = await db
+    .select({
+      total: sql<number>`coalesce(sum(${budgetReservations.reservedCents}), 0)::int`,
+    })
+    .from(budgetReservations)
+    .where(
+      and(
+        eq(budgetReservations.companyId, policy.companyId),
+        eq(budgetReservations.scopeType, policy.scopeType),
+        eq(budgetReservations.scopeId, policy.scopeId),
+        eq(budgetReservations.status, "reserved"),
+      ),
+    );
+  return Number(row?.total ?? 0);
+}
+
 function buildApprovalPayload(input: {
   policy: PolicyRow;
   scopeName: string;
@@ -210,6 +232,90 @@ async function markApprovalStatus(
 }
 
 export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
+  async function reserveInvocation(
+    companyId: string,
+    agentId: string,
+    heartbeatRunId: string,
+    context?: { issueId?: string | null; projectId?: string | null; retryDisposition?: string | null },
+  ) {
+    const reservations: Array<typeof budgetReservations.$inferInsert> = [
+      {
+        companyId,
+        agentId,
+        issueId: context?.issueId ?? null,
+        projectId: context?.projectId ?? null,
+        heartbeatRunId,
+        scopeType: "company",
+        scopeId: companyId,
+        metric: "billed_cents",
+        reservedCents: 1,
+        status: "reserved",
+        retryDisposition: context?.retryDisposition === "non_billable_retry" ? "non_billable_retry" : "charge_full",
+        reason: "run_start_guard",
+      },
+      {
+        companyId,
+        agentId,
+        issueId: context?.issueId ?? null,
+        projectId: context?.projectId ?? null,
+        heartbeatRunId,
+        scopeType: "agent",
+        scopeId: agentId,
+        metric: "billed_cents",
+        reservedCents: 1,
+        status: "reserved",
+        retryDisposition: context?.retryDisposition === "non_billable_retry" ? "non_billable_retry" : "charge_full",
+        reason: "run_start_guard",
+      },
+    ];
+    if (context?.projectId) {
+      reservations.push({
+        companyId,
+        agentId,
+        issueId: context.issueId ?? null,
+        projectId: context.projectId,
+        heartbeatRunId,
+        scopeType: "project",
+        scopeId: context.projectId,
+        metric: "billed_cents",
+        reservedCents: 1,
+        status: "reserved",
+        retryDisposition: context?.retryDisposition === "non_billable_retry" ? "non_billable_retry" : "charge_full",
+        reason: "run_start_guard",
+      });
+    }
+    await db.insert(budgetReservations).values(reservations);
+  }
+
+  async function reconcileReservationsForRun(
+    heartbeatRunId: string,
+    actualCostEventId: string,
+    actualCostCents: number,
+  ) {
+    await db
+      .update(budgetReservations)
+      .set({
+        status: "reconciled",
+        actualCostEventId,
+        reservedCents: actualCostCents,
+        reconciledAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(budgetReservations.heartbeatRunId, heartbeatRunId), eq(budgetReservations.status, "reserved")));
+  }
+
+  async function releaseReservationsForRun(heartbeatRunId: string, reason?: string | null) {
+    await db
+      .update(budgetReservations)
+      .set({
+        status: "released",
+        reason: reason ?? "run_finalized_without_billable_cost",
+        releasedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(budgetReservations.heartbeatRunId, heartbeatRunId), eq(budgetReservations.status, "reserved")));
+  }
+
   async function pauseScopeForBudget(policy: PolicyRow) {
     const now = new Date();
     if (policy.scopeType === "agent") {
@@ -766,7 +872,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         )
         .then((rows) => rows[0] ?? null);
       if (companyPolicy && companyPolicy.hardStopEnabled && companyPolicy.amount > 0) {
-        const observed = await computeObservedAmount(db, companyPolicy);
+        const observed = await computeObservedAmount(db, companyPolicy) + await computeReservedAmount(db, companyPolicy);
         if (observed >= companyPolicy.amount) {
           return {
             scopeType: "company" as const,
@@ -800,7 +906,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         )
         .then((rows) => rows[0] ?? null);
       if (agentPolicy && agentPolicy.hardStopEnabled && agentPolicy.amount > 0) {
-        const observed = await computeObservedAmount(db, agentPolicy);
+        const observed = await computeObservedAmount(db, agentPolicy) + await computeReservedAmount(db, agentPolicy);
         if (observed >= agentPolicy.amount) {
           return {
             scopeType: "agent" as const,
@@ -841,7 +947,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         )
         .then((rows) => rows[0] ?? null);
       if (projectPolicy && projectPolicy.hardStopEnabled && projectPolicy.amount > 0) {
-        const observed = await computeObservedAmount(db, projectPolicy);
+        const observed = await computeObservedAmount(db, projectPolicy) + await computeReservedAmount(db, projectPolicy);
         if (observed >= projectPolicy.amount) {
           return {
             scopeType: "project" as const,
@@ -860,6 +966,9 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         reason: "Project is paused because its budget hard-stop was reached.",
       };
     },
+    reserveInvocation,
+    reconcileReservationsForRun,
+    releaseReservationsForRun,
 
     resolveIncident: async (
       companyId: string,

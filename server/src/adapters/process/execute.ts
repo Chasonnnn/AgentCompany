@@ -15,6 +15,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const { runId, agent, config, onLog, onMeta } = ctx;
   const command = asString(config.command, "");
   if (!command) throw new Error("Process adapter missing command");
+  if (config.unsafeAllowLocalExecution !== true) {
+    throw new Error(
+      "Process adapter is disabled by default. Set adapterConfig.unsafeAllowLocalExecution=true to allow local command execution.",
+    );
+  }
 
   const args = asStringArray(config.args);
   const cwd = asString(config.cwd, process.cwd());

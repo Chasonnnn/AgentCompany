@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   companies,
@@ -279,6 +279,12 @@ const teamDocumentSelect = {
 };
 
 export function documentService(db: Db) {
+  async function lockDocumentRow(tx: Pick<Db, "execute">, documentId: string) {
+    await tx.execute(
+      sql`select ${documents.id} from ${documents} where ${documents.id} = ${documentId} for update`,
+    );
+  }
+
   const filterSystemDocuments = <T extends { key: string }>(rows: T[], includeSystem: boolean) =>
     includeSystem ? rows : rows.filter((row) => !isSystemIssueDocumentKey(row.key));
 
@@ -411,23 +417,32 @@ export function documentService(db: Db) {
             .then((rows) => rows[0] ?? null);
 
           if (existing) {
+            await lockDocumentRow(tx, existing.id);
+            const lockedExisting = await tx
+              .select(issueDocumentSelect)
+              .from(issueDocuments)
+              .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
+              .where(and(eq(issueDocuments.issueId, issue.id), eq(issueDocuments.key, key)))
+              .then((rows) => rows[0] ?? null);
+            if (!lockedExisting) throw notFound("Document not found");
+
             if (!input.baseRevisionId) {
               throw conflict("Document update requires baseRevisionId", {
-                currentRevisionId: existing.latestRevisionId,
+                currentRevisionId: lockedExisting.latestRevisionId,
               });
             }
-            if (input.baseRevisionId !== existing.latestRevisionId) {
+            if (input.baseRevisionId !== lockedExisting.latestRevisionId) {
               throw conflict("Document was updated by someone else", {
-                currentRevisionId: existing.latestRevisionId,
+                currentRevisionId: lockedExisting.latestRevisionId,
               });
             }
 
-            const nextRevisionNumber = existing.latestRevisionNumber + 1;
+            const nextRevisionNumber = lockedExisting.latestRevisionNumber + 1;
             const [revision] = await tx
               .insert(documentRevisions)
               .values({
                 companyId: issue.companyId,
-                documentId: existing.id,
+                documentId: lockedExisting.id,
                 revisionNumber: nextRevisionNumber,
                 title: input.title ?? null,
                 format: input.format,
@@ -452,17 +467,17 @@ export function documentService(db: Db) {
                 updatedByUserId: input.createdByUserId ?? null,
                 updatedAt: now,
               })
-              .where(eq(documents.id, existing.id));
+              .where(eq(documents.id, lockedExisting.id));
 
             await tx
               .update(issueDocuments)
               .set({ updatedAt: now })
-              .where(eq(issueDocuments.documentId, existing.id));
+              .where(eq(issueDocuments.documentId, lockedExisting.id));
 
             return {
               created: false as const,
               document: {
-                ...existing,
+                ...lockedExisting,
                 title: input.title ?? null,
                 format: input.format,
                 body: input.body,
@@ -751,23 +766,32 @@ export function documentService(db: Db) {
             .then((rows) => rows[0] ?? null);
 
           if (existing) {
+            await lockDocumentRow(tx, existing.id);
+            const lockedExisting = await tx
+              .select(projectDocumentSelect)
+              .from(projectDocuments)
+              .innerJoin(documents, eq(projectDocuments.documentId, documents.id))
+              .where(and(eq(projectDocuments.projectId, project.id), eq(projectDocuments.key, key)))
+              .then((rows) => rows[0] ?? null);
+            if (!lockedExisting) throw notFound("Document not found");
+
             if (!input.baseRevisionId) {
               throw conflict("Document update requires baseRevisionId", {
-                currentRevisionId: existing.latestRevisionId,
+                currentRevisionId: lockedExisting.latestRevisionId,
               });
             }
-            if (input.baseRevisionId !== existing.latestRevisionId) {
+            if (input.baseRevisionId !== lockedExisting.latestRevisionId) {
               throw conflict("Document was updated by someone else", {
-                currentRevisionId: existing.latestRevisionId,
+                currentRevisionId: lockedExisting.latestRevisionId,
               });
             }
 
-            const nextRevisionNumber = existing.latestRevisionNumber + 1;
+            const nextRevisionNumber = lockedExisting.latestRevisionNumber + 1;
             const [revision] = await tx
               .insert(documentRevisions)
               .values({
                 companyId: project.companyId,
-                documentId: existing.id,
+                documentId: lockedExisting.id,
                 revisionNumber: nextRevisionNumber,
                 title: input.title ?? null,
                 format: input.format,
@@ -792,17 +816,17 @@ export function documentService(db: Db) {
                 updatedByUserId: input.createdByUserId ?? null,
                 updatedAt: now,
               })
-              .where(eq(documents.id, existing.id));
+              .where(eq(documents.id, lockedExisting.id));
 
             await tx
               .update(projectDocuments)
               .set({ updatedAt: now })
-              .where(eq(projectDocuments.documentId, existing.id));
+              .where(eq(projectDocuments.documentId, lockedExisting.id));
 
             return {
               created: false as const,
               document: {
-                ...existing,
+                ...lockedExisting,
                 title: input.title ?? null,
                 format: input.format,
                 body: input.body,
@@ -1090,23 +1114,32 @@ export function documentService(db: Db) {
             .then((rows) => rows[0] ?? null);
 
           if (existing) {
+            await lockDocumentRow(tx, existing.id);
+            const lockedExisting = await tx
+              .select(companyDocumentSelect)
+              .from(companyDocuments)
+              .innerJoin(documents, eq(companyDocuments.documentId, documents.id))
+              .where(and(eq(companyDocuments.companyId, company.id), eq(companyDocuments.key, key)))
+              .then((rows) => rows[0] ?? null);
+            if (!lockedExisting) throw notFound("Document not found");
+
             if (!input.baseRevisionId) {
               throw conflict("Document update requires baseRevisionId", {
-                currentRevisionId: existing.latestRevisionId,
+                currentRevisionId: lockedExisting.latestRevisionId,
               });
             }
-            if (input.baseRevisionId !== existing.latestRevisionId) {
+            if (input.baseRevisionId !== lockedExisting.latestRevisionId) {
               throw conflict("Document was updated by someone else", {
-                currentRevisionId: existing.latestRevisionId,
+                currentRevisionId: lockedExisting.latestRevisionId,
               });
             }
 
-            const nextRevisionNumber = existing.latestRevisionNumber + 1;
+            const nextRevisionNumber = lockedExisting.latestRevisionNumber + 1;
             const [revision] = await tx
               .insert(documentRevisions)
               .values({
                 companyId: company.id,
-                documentId: existing.id,
+                documentId: lockedExisting.id,
                 revisionNumber: nextRevisionNumber,
                 title: input.title ?? null,
                 format: input.format,
@@ -1131,17 +1164,17 @@ export function documentService(db: Db) {
                 updatedByUserId: input.createdByUserId ?? null,
                 updatedAt: now,
               })
-              .where(eq(documents.id, existing.id));
+              .where(eq(documents.id, lockedExisting.id));
 
             await tx
               .update(companyDocuments)
               .set({ updatedAt: now })
-              .where(eq(companyDocuments.documentId, existing.id));
+              .where(eq(companyDocuments.documentId, lockedExisting.id));
 
             return {
               created: false as const,
               document: {
-                ...existing,
+                ...lockedExisting,
                 title: input.title ?? null,
                 format: input.format,
                 body: input.body,

@@ -599,6 +599,16 @@ function normalizeBilledCostCents(costUsd: number | null | undefined, billingTyp
   return Math.max(0, Math.round(costUsd * 100));
 }
 
+function resolveRetryDispositionForRun(run: typeof heartbeatRuns.$inferSelect): "charge_full" | "non_billable_retry" {
+  const context = parseObject(run.contextSnapshot);
+  const retryReason = readNonEmptyString(context.retryReason);
+  if (!run.retryOfRunId) return "charge_full";
+  if (retryReason === "process_lost" || retryReason === "missing_issue_comment" || retryReason === BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON) {
+    return "non_billable_retry";
+  }
+  return "charge_full";
+}
+
 async function resolveLedgerScopeForRun(
   db: Db,
   companyId: string,
@@ -2497,6 +2507,9 @@ export function heartbeatService(db: Db) {
       .then((rows) => rows[0] ?? null);
 
     if (updated) {
+      if (status === "failed" || status === "cancelled" || status === "timed_out") {
+        await budgets.releaseReservationsForRun(updated.id, `run_${status}`);
+      }
       publishLiveEvent({
         companyId: updated.companyId,
         type: "heartbeat.run.status",
@@ -3627,6 +3640,12 @@ export function heartbeatService(db: Db) {
       .then((rows) => rows[0] ?? null);
     if (!claimed) return null;
 
+    await budgets.reserveInvocation(claimed.companyId, claimed.agentId, claimed.id, {
+      issueId: readNonEmptyString(parseObject(claimed.contextSnapshot).issueId),
+      projectId: readNonEmptyString(parseObject(claimed.contextSnapshot).projectId),
+      retryDisposition: resolveRetryDispositionForRun(claimed),
+    });
+
     publishLiveEvent({
       companyId: claimed.companyId,
       type: "heartbeat.run.status",
@@ -3884,7 +3903,7 @@ export function heartbeatService(db: Db) {
 
     if (additionalCostCents > 0 || hasTokenUsage) {
       const costs = costService(db, budgetHooks);
-      await costs.createEvent(agent.companyId, {
+      const event = await costs.createEvent(agent.companyId, {
         heartbeatRunId: run.id,
         agentId: agent.id,
         issueId: ledgerScope.issueId,
@@ -3897,8 +3916,12 @@ export function heartbeatService(db: Db) {
         cachedInputTokens,
         outputTokens,
         costCents: additionalCostCents,
+        retryDisposition: resolveRetryDispositionForRun(run),
         occurredAt: new Date(),
       });
+      await budgets.reconcileReservationsForRun(run.id, event.id, event.costCents);
+    } else {
+      await budgets.releaseReservationsForRun(run.id, "run_completed_without_billable_usage");
     }
   }
 
@@ -4253,8 +4276,17 @@ export function heartbeatService(db: Db) {
       projectEnv: projectContext?.env ?? null,
       secretsSvc,
     });
+    const generalSettings = await instanceSettings.getGeneral();
+    const resolvedEnv =
+      typeof resolvedConfig.env === "object" && resolvedConfig.env !== null && !Array.isArray(resolvedConfig.env)
+        ? { ...(resolvedConfig.env as Record<string, unknown>) }
+        : {};
     const runtimeConfig = {
       ...resolvedConfig,
+      env: {
+        ...resolvedEnv,
+        PAPERCLIP_DISABLE_SHARED_HOST_SKILLS: generalSettings.enterprisePolicy.disableSharedHostSkills ? "1" : "0",
+      },
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
     const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
@@ -4771,34 +4803,52 @@ export function heartbeatService(db: Db) {
           }
         }
       }
-      if (issueId && adapterResult.question?.prompt?.trim()) {
-        const suggestedOptions = Array.isArray(adapterResult.question.choices)
-          ? adapterResult.question.choices
-              .map((choice) => ({
-                key: typeof choice.key === "string" ? choice.key.trim() : "",
-                label: typeof choice.label === "string" ? choice.label.trim() : "",
-                ...(typeof choice.description === "string" && choice.description.trim()
-                  ? { description: choice.description.trim() }
-                  : {}),
-              }))
-              .filter((choice) => choice.key && choice.label)
-          : [];
-        const createdQuestion = await decisionQuestionsSvc.create(
-          issueId,
-          {
-            title:
-              adapterResult.question.prompt.trim().split(/\r?\n/, 1)[0]?.slice(0, 120) ||
-              "Agent decision question",
-            question: adapterResult.question.prompt.trim(),
-            whyBlocked: "The adapter asked for a structured decision before continuing.",
-            blocking: true,
-            recommendedOptions: suggestedOptions,
-            suggestedDefault: suggestedOptions[0]?.key ?? null,
-          },
-          { agentId: agent.id, userId: null, runId: run.id },
-        );
-        context.decisionQuestionId = createdQuestion.question?.id ?? null;
-        context.decisionQuestionStatus = createdQuestion.question?.status ?? "open";
+      const adapterQuestions =
+        Array.isArray(adapterResult.questions) && adapterResult.questions.length > 0
+          ? adapterResult.questions
+          : adapterResult.question
+            ? [adapterResult.question]
+            : [];
+      const normalizedAdapterQuestions = adapterQuestions
+        .map((question) => ({
+          prompt: typeof question.prompt === "string" ? question.prompt.trim() : "",
+          choices: Array.isArray(question.choices) ? question.choices : [],
+        }))
+        .filter((question) => question.prompt.length > 0);
+      if (issueId && normalizedAdapterQuestions.length > 0) {
+        let firstCreatedQuestionId: string | null = null;
+        let firstCreatedQuestionStatus: string | null = null;
+        for (const adapterQuestion of normalizedAdapterQuestions) {
+          const suggestedOptions = adapterQuestion.choices
+            .map((choice) => ({
+              key: typeof choice.key === "string" ? choice.key.trim() : "",
+              label: typeof choice.label === "string" ? choice.label.trim() : "",
+              ...(typeof choice.description === "string" && choice.description.trim()
+                ? { description: choice.description.trim() }
+                : {}),
+            }))
+            .filter((choice) => choice.key && choice.label);
+          const createdQuestion = await decisionQuestionsSvc.create(
+            issueId,
+            {
+              title:
+                adapterQuestion.prompt.split(/\r?\n/, 1)[0]?.slice(0, 120) ||
+                "Agent decision question",
+              question: adapterQuestion.prompt,
+              whyBlocked: "The adapter asked for a structured decision before continuing.",
+              blocking: true,
+              recommendedOptions: suggestedOptions,
+              suggestedDefault: suggestedOptions[0]?.key ?? null,
+            },
+            { agentId: agent.id, userId: null, runId: run.id },
+          );
+          if (!firstCreatedQuestionId) {
+            firstCreatedQuestionId = createdQuestion.question?.id ?? null;
+            firstCreatedQuestionStatus = createdQuestion.question?.status ?? "open";
+          }
+        }
+        context.decisionQuestionId = firstCreatedQuestionId;
+        context.decisionQuestionStatus = firstCreatedQuestionStatus ?? "open";
         context.decisionQuestionSource = "adapter.native_question";
         await db
           .update(heartbeatRuns)
@@ -4809,7 +4859,7 @@ export function heartbeatService(db: Db) {
           .where(eq(heartbeatRuns.id, run.id));
         await onLog(
           "stdout",
-          `[paperclip] Captured a blocking decision question for board review: ${adapterResult.question.prompt.trim()}\n`,
+          `[paperclip] Captured ${normalizedAdapterQuestions.length} blocking decision question${normalizedAdapterQuestions.length === 1 ? "" : "s"} for board review.\n`,
         );
       }
       const nextSessionState = resolveNextSessionState({
@@ -5695,6 +5745,14 @@ export function heartbeatService(db: Db) {
         runId: mergedRun.id,
         finishedAt: new Date(),
       });
+
+      // A coalesced queued run may have been blocked only by transient conditions
+      // like unresolved issue dependencies. Re-attempt dispatch after merging the
+      // new wake context so blocker-resolution wakes can promote the existing run.
+      if (mergedRun.status === "queued") {
+        await startNextQueuedRunForAgent(agent.id);
+      }
+
       return mergedRun;
     }
 

@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 import type { Request as ExpressRequest, RequestHandler } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   createDb,
   ensurePostgresDatabase,
@@ -21,7 +21,9 @@ import {
   authUsers,
   companies,
   companyMemberships,
+  executionWorkspaces,
   instanceUserRoles,
+  projectWorkspaces,
 } from "@paperclipai/db";
 import detectPort from "detect-port";
 import { createApp } from "./app.js";
@@ -34,12 +36,15 @@ import type {
   InstanceDatabaseBackupTrigger,
 } from "./routes/instance-database-backups.js";
 import {
+  assetService,
+  executionWorkspaceService,
   feedbackService,
   heartbeatService,
   instanceSettingsService,
   reconcilePersistedRuntimeServicesOnStartup,
   routineService,
 } from "./services/index.js";
+import { cleanupExecutionWorkspaceArtifacts } from "./services/workspace-runtime.js";
 import { createFeedbackTraceShareClientFromConfig } from "./services/feedback-share-client.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
@@ -78,6 +83,140 @@ type EmbeddedPostgresCtor = new (opts: {
   onLog?: (message: unknown) => void;
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
+
+async function runAssetRetentionSweep(
+  db: Awaited<ReturnType<typeof createDb>>,
+  storageService: ReturnType<typeof createStorageServiceFromConfig>,
+) {
+  const assetsSvc = assetService(db as any);
+  const expiredAssets = await assetsSvc.listRetentionCandidates(new Date());
+  let deleted = 0;
+
+  for (const asset of expiredAssets) {
+    try {
+      await storageService.deleteObject(asset.companyId, asset.objectKey);
+    } catch (err) {
+      logger.warn({ err, assetId: asset.id, objectKey: asset.objectKey }, "failed to delete retained asset content");
+      continue;
+    }
+    await assetsSvc.update(asset.id, { deletedAt: new Date() });
+    deleted += 1;
+  }
+
+  return { deleted };
+}
+
+async function runExecutionWorkspaceMaintenance(db: Awaited<ReturnType<typeof createDb>>) {
+  const svc = executionWorkspaceService(db as any);
+  const now = new Date();
+  const cleanupCandidates = await svc.listCleanupCandidates(now);
+  let cleaned = 0;
+  let cleanupFailed = 0;
+
+  for (const workspace of cleanupCandidates) {
+    if (workspace.cleanupState === "running") continue;
+    await svc.update(workspace.id, {
+      cleanupState: "running",
+      cleanupAttemptCount: workspace.cleanupAttemptCount + 1,
+      lastCleanupError: null,
+      nextCleanupAttemptAt: null,
+    });
+
+    const projectWorkspace = workspace.projectWorkspaceId
+      ? await (db as any)
+          .select({
+            cwd: projectWorkspaces.cwd,
+            cleanupCommand: projectWorkspaces.cleanupCommand,
+          })
+          .from(projectWorkspaces)
+          .where(eq(projectWorkspaces.id, workspace.projectWorkspaceId))
+          .then((rows: Array<{ cwd: string | null; cleanupCommand: string | null }>) => rows[0] ?? null)
+      : null;
+
+    const cleanupResult = await cleanupExecutionWorkspaceArtifacts({
+      workspace: {
+        id: workspace.id,
+        cwd: workspace.cwd,
+        providerType: workspace.providerType,
+        providerRef: workspace.providerRef,
+        branchName: workspace.branchName,
+        repoUrl: workspace.repoUrl,
+        baseRef: workspace.baseRef,
+        projectId: workspace.projectId,
+        projectWorkspaceId: workspace.projectWorkspaceId,
+        sourceIssueId: workspace.sourceIssueId,
+        metadata: workspace.metadata,
+      },
+      projectWorkspace,
+      cleanupCommand: workspace.config?.cleanupCommand ?? null,
+      teardownCommand: workspace.config?.teardownCommand ?? null,
+    });
+    const warnings = cleanupResult.warnings;
+
+    if (warnings.length > 0) {
+      cleanupFailed += 1;
+      await svc.update(workspace.id, {
+        status: "cleanup_failed",
+        cleanupState: "failed",
+        lastCleanupError: warnings.join("\n"),
+        nextCleanupAttemptAt: new Date(Date.now() + 10 * 60 * 1000),
+        reconcileState: "drift_detected",
+        lastReconciledAt: new Date(),
+      });
+      continue;
+    }
+
+    cleaned += 1;
+    await svc.update(workspace.id, {
+      status: "archived",
+      closedAt: workspace.closedAt ?? new Date(),
+      cleanupState: "completed",
+      lastCleanupError: null,
+      nextCleanupAttemptAt: null,
+      reconcileState: "reconciled",
+      lastReconciledAt: new Date(),
+    });
+  }
+
+  const reconcileTargets = await (db as any)
+    .select({
+      id: executionWorkspaces.id,
+      cwd: executionWorkspaces.cwd,
+      providerRef: executionWorkspaces.providerRef,
+      providerType: executionWorkspaces.providerType,
+      reconcileState: executionWorkspaces.reconcileState,
+      lastReconciledAt: executionWorkspaces.lastReconciledAt,
+      lastCleanupError: executionWorkspaces.lastCleanupError,
+    })
+    .from(executionWorkspaces)
+    .where(and(inArray(executionWorkspaces.status, ["active", "idle", "in_review", "cleanup_failed"])))
+    .then((rows: Array<{
+      id: string;
+      cwd: string | null;
+      providerRef: string | null;
+      providerType: string;
+      reconcileState: string;
+      lastReconciledAt: Date | null;
+      lastCleanupError: string | null;
+    }>) => rows);
+  let reconciled = 0;
+  for (const workspace of reconcileTargets) {
+    const workspacePath = workspace.providerRef ?? workspace.cwd;
+    const shouldCheckPath = workspace.providerType === "git_worktree" || workspace.providerType === "local_fs";
+    if (!shouldCheckPath || !workspacePath) continue;
+    const exists = existsSync(workspacePath);
+    const nextReconcileState = exists ? "clean" : "drift_detected";
+    if (workspace.reconcileState === nextReconcileState && workspace.lastReconciledAt) continue;
+    await svc.update(workspace.id, {
+      reconcileState: nextReconcileState,
+      lastReconciledAt: new Date(),
+      lastCleanupError: exists ? workspace.lastCleanupError : (workspace.lastCleanupError ?? "Workspace path missing during reconciliation."),
+    });
+    reconciled += 1;
+  }
+
+  return { cleaned, cleanupFailed, reconciled };
+}
 
 
 export interface StartedServer {
@@ -697,6 +836,26 @@ export async function startServer(): Promise<StartedServer> {
         .then(() => heartbeat.resumeQueuedRuns())
         .catch((err) => {
           logger.error({ err }, "periodic heartbeat recovery failed");
+        });
+
+      void runAssetRetentionSweep(db as any, storageService)
+        .then((result) => {
+          if (result.deleted > 0) {
+            logger.info({ deleted: result.deleted }, "asset retention sweep deleted expired assets");
+          }
+        })
+        .catch((err) => {
+          logger.error({ err }, "asset retention sweep failed");
+        });
+
+      void runExecutionWorkspaceMaintenance(db as any)
+        .then((result) => {
+          if (result.cleaned > 0 || result.cleanupFailed > 0 || result.reconciled > 0) {
+            logger.info(result, "execution workspace maintenance completed");
+          }
+        })
+        .catch((err) => {
+          logger.error({ err }, "execution workspace maintenance failed");
         });
     }, config.heartbeatSchedulerIntervalMs);
   }

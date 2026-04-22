@@ -8,6 +8,7 @@ import {
   companies,
   createDb,
   executionWorkspaces,
+  heartbeatRuns,
   instanceSettings,
   issueComments,
   issueInboxArchives,
@@ -66,6 +67,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     await db.delete(issueInboxArchives);
     await db.delete(activityLog);
     await db.delete(issues);
+    await db.delete(heartbeatRuns);
     await db.delete(executionWorkspaces);
     await db.delete(projectWorkspaces);
     await db.delete(projects);
@@ -729,7 +731,7 @@ describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
     await tempDb?.cleanup();
   });
 
-  it("inherits the parent issue workspace linkage when child workspace fields are omitted", async () => {
+  it("does not implicitly inherit the parent execution workspace linkage when child workspace fields are omitted", async () => {
     const companyId = randomUUID();
     const projectId = randomUUID();
     const parentIssueId = randomUUID();
@@ -797,12 +799,9 @@ describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
 
     expect(child.parentId).toBe(parentIssueId);
     expect(child.projectWorkspaceId).toBe(projectWorkspaceId);
-    expect(child.executionWorkspaceId).toBe(executionWorkspaceId);
-    expect(child.executionWorkspacePreference).toBe("reuse_existing");
-    expect(child.executionWorkspaceSettings).toEqual({
-      mode: "isolated_workspace",
-      workspaceRuntime: { profile: "agent" },
-    });
+    expect(child.executionWorkspaceId).toBeNull();
+    expect(child.executionWorkspacePreference).toBeNull();
+    expect(child.executionWorkspaceSettings).toBeNull();
   });
 
   it("keeps explicit workspace fields instead of inheriting the parent linkage", async () => {
@@ -1270,5 +1269,211 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
       assigneeAgentId,
       childIssueIds: [childA, childB],
     });
+  });
+
+  it("rejects illegal status transitions while still allowing terminal reopen to todo", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const doneIssueId = randomUUID();
+    const cancelledIssueId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: doneIssueId,
+        companyId,
+        title: "Completed issue",
+        status: "done",
+        priority: "medium",
+      },
+      {
+        id: cancelledIssueId,
+        companyId,
+        title: "Cancelled issue",
+        status: "cancelled",
+        priority: "medium",
+      },
+    ]);
+
+    await expect(
+      svc.update(doneIssueId, { status: "in_progress" }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    await expect(
+      svc.update(cancelledIssueId, { status: "blocked" }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    await expect(svc.update(doneIssueId, { status: "todo" })).resolves.toMatchObject({
+      id: doneIssueId,
+      status: "todo",
+    });
+  });
+
+  it("rejects checkout expectedStatuses outside the server allowlist", async () => {
+    const companyId = randomUUID();
+    const assigneeAgentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Checkout target",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await expect(
+      svc.checkout(issueId, assigneeAgentId, ["todo", "done"], null),
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("release keeps terminal issues terminal and clears execution lock fields", async () => {
+    const companyId = randomUUID();
+    const assigneeAgentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const issueId = randomUUID();
+    const checkoutRunId = randomUUID();
+    const executionRunId = randomUUID();
+    await db.insert(heartbeatRuns).values([
+      {
+        id: checkoutRunId,
+        companyId,
+        agentId: assigneeAgentId,
+        invocationSource: "assignment",
+        status: "succeeded",
+        contextSnapshot: { issueId },
+      },
+      {
+        id: executionRunId,
+        companyId,
+        agentId: assigneeAgentId,
+        invocationSource: "assignment",
+        status: "succeeded",
+        contextSnapshot: { issueId },
+      },
+    ]);
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Completed issue",
+      status: "done",
+      priority: "medium",
+      assigneeAgentId,
+      checkoutRunId,
+      executionRunId,
+      executionAgentNameKey: "codex-owner",
+      executionLockedAt: new Date("2026-04-22T12:00:00.000Z"),
+    });
+
+    const released = await svc.release(issueId, assigneeAgentId, null);
+
+    expect(released).toMatchObject({
+      id: issueId,
+      status: "done",
+      assigneeAgentId: null,
+      executionRunId: null,
+      executionAgentNameKey: null,
+      executionLockedAt: null,
+      checkoutRunId: null,
+    });
+
+    await db.delete(heartbeatRuns);
+  });
+
+  it("release returns active issues to todo and clears execution lock fields", async () => {
+    const companyId = randomUUID();
+    const assigneeAgentId = randomUUID();
+    const actorRunId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const issueId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: actorRunId,
+      companyId,
+      agentId: assigneeAgentId,
+      invocationSource: "assignment",
+      status: "running",
+      contextSnapshot: { issueId },
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Active issue",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId,
+      checkoutRunId: actorRunId,
+      executionRunId: actorRunId,
+      executionAgentNameKey: "codex-owner",
+      executionLockedAt: new Date("2026-04-22T12:00:00.000Z"),
+    });
+
+    const released = await svc.release(issueId, assigneeAgentId, actorRunId);
+
+    expect(released).toMatchObject({
+      id: issueId,
+      status: "todo",
+      assigneeAgentId: null,
+      executionRunId: null,
+      executionAgentNameKey: null,
+      executionLockedAt: null,
+      checkoutRunId: null,
+    });
+
+    await db.delete(heartbeatRuns);
   });
 });

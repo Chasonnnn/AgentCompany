@@ -103,6 +103,14 @@ function createRouteHarness(contentType = "image/png") {
 function registerAssetRouteMocks(harness: ReturnType<typeof createRouteHarness>) {
   vi.doMock("../services/index.js", () => ({
     assetService: () => harness.assetService,
+    instanceSettingsService: () => ({
+      getGeneral: vi.fn(async () => ({
+        enterprisePolicy: {
+          enforceAttachmentScanning: true,
+          defaultAttachmentRetentionClass: "standard",
+        },
+      })),
+    }),
     logActivity: harness.logActivity,
   }));
 }

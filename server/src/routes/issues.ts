@@ -73,6 +73,7 @@ import {
   routineService,
   workProductService,
 } from "../services/index.js";
+import { buildIssueOperatorState } from "../services/issue-operator-state.js";
 import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination-wakeup.js";
 import { issueDecisionQuestionService } from "../services/issue-decision-questions.js";
 import { logger } from "../middleware/logger.js";
@@ -314,6 +315,7 @@ const CONTINUITY_CONTROLLED_DOCUMENT_KEYS = new Set([
   "branch-return",
   ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
 ]);
+const EXECUTION_APPROVAL_GATED_DOCUMENT_KEYS = new Set(["spec", "plan", "runbook", "test-plan"]);
 
 function isContinuityActive(issue: {
   status: string;
@@ -332,9 +334,20 @@ function isContinuityActive(issue: {
 }
 
 function withIssueContinuitySummary<T extends { continuityState?: unknown; executionState?: unknown }>(issue: T) {
+  const continuitySummary = buildIssueContinuitySummary(issue);
+  const operatorState = buildIssueOperatorState({
+    issueId: (issue as { id?: string }).id ?? "",
+    status: ((issue as { status?: string }).status ?? "todo") as any,
+    hiddenAt: (issue as { hiddenAt?: Date | null }).hiddenAt ?? null,
+    continuitySummary,
+    activeRun: (issue as { activeRun?: { id: string; status: string } | null }).activeRun ?? null,
+  });
   return {
     ...issue,
-    continuitySummary: buildIssueContinuitySummary(issue),
+    continuitySummary,
+    operatorState: operatorState.operatorState,
+    operatorReason: operatorState.operatorReason,
+    operatorWaitTargets: operatorState.operatorWaitTargets,
   };
 }
 
@@ -648,10 +661,49 @@ export function issueRoutes(
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
   });
 
+  function activeExecutionDocumentApprovalError(documentKey: string, action: "Editing" | "Restoring" | "Deleting") {
+    if (documentKey === "spec") {
+      return `${action} a frozen spec requires an approved linked approval`;
+    }
+    return `${action} ${documentKey} during active execution requires an approved linked approval`;
+  }
+
+  async function requireApprovedLinkedApprovalForActiveDocumentEdit(
+    res: Response,
+    issueId: string,
+    documentKey: string,
+    continuityActive: boolean,
+    action: "Editing" | "Restoring" | "Deleting",
+  ) {
+    if (!continuityActive || !EXECUTION_APPROVAL_GATED_DOCUMENT_KEYS.has(documentKey)) return true;
+    const linkedApprovals = await issueApprovalsSvc.listApprovalsForIssue(issueId);
+    if (linkedApprovals.some((approval) => approval.status === "approved")) return true;
+    res.status(403).json({ error: activeExecutionDocumentApprovalError(documentKey, action) });
+    return false;
+  }
+
   function withContentPath<T extends { id: string }>(attachment: T) {
     return {
       ...attachment,
       contentPath: `/api/attachments/${attachment.id}/content`,
+    };
+  }
+
+  async function buildIssueAttachmentGovernance() {
+    const settings = await instanceSettings.getGeneral();
+    const retentionClass = settings.enterprisePolicy.defaultAttachmentRetentionClass;
+    const now = new Date();
+    return {
+      scanStatus: "clean" as const,
+      scanProvider: settings.enterprisePolicy.enforceAttachmentScanning ? "builtin_metadata_guard" : null,
+      scanCompletedAt: settings.enterprisePolicy.enforceAttachmentScanning ? now : null,
+      quarantinedAt: null,
+      quarantineReason: null,
+      retentionClass,
+      expiresAt: retentionClass === "temporary"
+        ? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+        : null,
+      legalHold: false,
     };
   }
 
@@ -1854,7 +1906,6 @@ export function issueRoutes(
       return;
     }
     const documentKey = keyParsed.data;
-    const existingDocument = await documentsSvc.getIssueDocumentByKey(issue.id, documentKey);
     const continuityActive = isContinuityActive(issue);
 
     if (documentKey === "progress" && !parseIssueProgressMarkdown(req.body.body)) {
@@ -1883,12 +1934,8 @@ export function issueRoutes(
       res.status(403).json({ error: "Only the continuity owner can edit this document while execution is active" });
       return;
     }
-    if (continuityActive && documentKey === "spec" && existingDocument) {
-      const linkedApprovals = await issueApprovalsSvc.listApprovalsForIssue(issue.id);
-      if (!linkedApprovals.some((approval) => approval.status === "approved")) {
-        res.status(403).json({ error: "Editing a frozen spec requires an approved linked approval" });
-        return;
-      }
+    if (!(await requireApprovedLinkedApprovalForActiveDocumentEdit(res, issue.id, documentKey, continuityActive, "Editing"))) {
+      return;
     }
 
     const actor = getActorInfo(req);
@@ -1989,6 +2036,9 @@ export function issueRoutes(
         res.status(403).json({ error: "Only the continuity owner can restore this document while execution is active" });
         return;
       }
+      if (!(await requireApprovedLinkedApprovalForActiveDocumentEdit(res, issue.id, documentKey, continuityActive, "Restoring"))) {
+        return;
+      }
       if (documentKey === "progress" && !parseIssueProgressMarkdown(revision.body)) {
         res.status(422).json({ error: "Progress documents require paperclip/issue-progress.v1 frontmatter" });
         return;
@@ -2007,14 +2057,6 @@ export function issueRoutes(
           return;
         }
       }
-      if (continuityActive && documentKey === "spec") {
-        const linkedApprovals = await issueApprovalsSvc.listApprovalsForIssue(issue.id);
-        if (!linkedApprovals.some((approval) => approval.status === "approved")) {
-          res.status(403).json({ error: "Restoring a frozen spec requires an approved linked approval" });
-          return;
-        }
-      }
-
       const actor = getActorInfo(req);
       const referenceSummaryBefore = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
       const result = await documentsSvc.restoreIssueDocumentRevision({
@@ -2074,6 +2116,10 @@ export function issueRoutes(
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
+      return;
+    }
+    const continuityActive = isContinuityActive(issue);
+    if (!(await requireApprovedLinkedApprovalForActiveDocumentEdit(res, issue.id, keyParsed.data, continuityActive, "Deleting"))) {
       return;
     }
     const referenceSummaryBefore = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
@@ -3180,7 +3226,7 @@ export function issueRoutes(
 
         let mentionedIds: string[] = [];
         try {
-          mentionedIds = await svc.findMentionedAgents(issue.companyId, commentBody);
+          mentionedIds = (await svc.resolveMentionedAgents(issue.companyId, commentBody)).agentIds;
         } catch (err) {
           logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
         }
@@ -3689,6 +3735,23 @@ export function issueRoutes(
     let interruptedRunId: string | null = null;
     let currentIssue = issue;
     const commentReferenceSummaryBefore = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
+    let mentionedIds: string[] = [];
+
+    try {
+      const mentionResolution = await svc.resolveMentionedAgents(issue.companyId, req.body.body);
+      if (mentionResolution.ambiguousTokens.length > 0) {
+        res.status(422).json({
+          error: "Ambiguous @-mentions must be disambiguated with agent:// links",
+          details: {
+            ambiguousTokens: mentionResolution.ambiguousTokens,
+          },
+        });
+        return;
+      }
+      mentionedIds = mentionResolution.agentIds;
+    } catch (err) {
+      logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+    }
 
     if (effectiveReopenRequested && isClosed) {
       const reopenedIssue = await svc.update(id, { status: "todo" });
@@ -3845,14 +3908,8 @@ export function issueRoutes(
         }
       }
 
-      let mentionedIds: string[] = [];
-      try {
-        mentionedIds = await svc.findMentionedAgents(issue.companyId, req.body.body);
-      } catch (err) {
-        logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
-      }
-
       for (const mentionedId of mentionedIds) {
+        if (isClosed && !reopened) continue;
         if (wakeups.has(mentionedId)) continue;
         if (actorIsAgent && actor.actorId === mentionedId) continue;
         wakeups.set(mentionedId, {
@@ -4060,6 +4117,7 @@ export function issueRoutes(
       originalFilename: stored.originalFilename,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      ...(await buildIssueAttachmentGovernance()),
     });
 
     await logActivity(db, {
@@ -4090,6 +4148,20 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, attachment.companyId);
+    const issue = await svc.getById(attachment.issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (attachment.deletedAt) {
+      res.status(410).json({ error: "Attachment has been deleted" });
+      return;
+    }
+    if (attachment.scanStatus !== "clean") {
+      res.status(423).json({ error: `Attachment is not available while scan status is ${attachment.scanStatus}` });
+      return;
+    }
 
     const object = await storage.getObject(attachment.companyId, attachment.objectKey);
     const responseContentType = normalizeContentType(attachment.contentType || object.contentType);

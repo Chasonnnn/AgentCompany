@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import type { Db } from "@paperclipai/db";
 import { createAssetImageMetadataSchema } from "@paperclipai/shared";
 import type { StorageService } from "../storage/types.js";
-import { assetService, logActivity } from "../services/index.js";
+import { assetService, instanceSettingsService, logActivity } from "../services/index.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 const SVG_CONTENT_TYPE = "image/svg+xml";
@@ -20,6 +20,7 @@ const ALLOWED_COMPANY_LOGO_CONTENT_TYPES = new Set([
 
 type AssetRouteDeps = {
   assetService: ReturnType<typeof assetService>;
+  instanceSettingsService: ReturnType<typeof instanceSettingsService>;
   logActivity: typeof logActivity;
 };
 
@@ -96,6 +97,7 @@ export function assetRoutes(
 ) {
   const router = Router();
   const svc = opts?.services?.assetService ?? assetService(db);
+  const instanceSettings = opts?.services?.instanceSettingsService ?? instanceSettingsService(db);
   const logActivityFn = opts?.services?.logActivity ?? logActivity;
   const assetUpload = multer({
     storage: multer.memoryStorage(),
@@ -117,6 +119,24 @@ export function assetRoutes(
         else resolve();
       });
     });
+  }
+
+  async function buildAssetGovernance(retentionClass: "standard" | "evidence" | "company_brand" | "temporary") {
+    const settings = await instanceSettings.getGeneral();
+    const now = new Date();
+    return {
+      scanStatus: "clean" as const,
+      scanProvider: settings.enterprisePolicy.enforceAttachmentScanning ? "builtin_metadata_guard" : null,
+      scanCompletedAt: settings.enterprisePolicy.enforceAttachmentScanning ? now : null,
+      quarantinedAt: null,
+      quarantineReason: null,
+      retentionClass,
+      expiresAt: retentionClass === "temporary"
+        ? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+        : null,
+      legalHold: false,
+      deletedAt: null,
+    };
   }
 
   router.post("/companies/:companyId/assets/images", async (req, res) => {
@@ -198,6 +218,7 @@ export function assetRoutes(
       originalFilename: stored.originalFilename,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      ...(await buildAssetGovernance("standard")),
     });
 
     await logActivityFn(db, {
@@ -227,6 +248,15 @@ export function assetRoutes(
       originalFilename: asset.originalFilename,
       createdByAgentId: asset.createdByAgentId,
       createdByUserId: asset.createdByUserId,
+      scanStatus: asset.scanStatus,
+      scanProvider: asset.scanProvider,
+      scanCompletedAt: asset.scanCompletedAt,
+      quarantinedAt: asset.quarantinedAt,
+      quarantineReason: asset.quarantineReason,
+      retentionClass: asset.retentionClass,
+      expiresAt: asset.expiresAt,
+      legalHold: asset.legalHold,
+      deletedAt: asset.deletedAt,
       createdAt: asset.createdAt,
       updatedAt: asset.updatedAt,
       contentPath: `/api/assets/${asset.id}/content`,
@@ -307,6 +337,7 @@ export function assetRoutes(
       originalFilename: stored.originalFilename,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      ...(await buildAssetGovernance("company_brand")),
     });
 
     await logActivityFn(db, {
@@ -337,6 +368,15 @@ export function assetRoutes(
       originalFilename: asset.originalFilename,
       createdByAgentId: asset.createdByAgentId,
       createdByUserId: asset.createdByUserId,
+      scanStatus: asset.scanStatus,
+      scanProvider: asset.scanProvider,
+      scanCompletedAt: asset.scanCompletedAt,
+      quarantinedAt: asset.quarantinedAt,
+      quarantineReason: asset.quarantineReason,
+      retentionClass: asset.retentionClass,
+      expiresAt: asset.expiresAt,
+      legalHold: asset.legalHold,
+      deletedAt: asset.deletedAt,
       createdAt: asset.createdAt,
       updatedAt: asset.updatedAt,
       contentPath: `/api/assets/${asset.id}/content`,
@@ -351,6 +391,14 @@ export function assetRoutes(
       return;
     }
     assertCompanyAccess(req, asset.companyId);
+    if (asset.deletedAt) {
+      res.status(410).json({ error: "Asset has been deleted" });
+      return;
+    }
+    if (asset.scanStatus !== "clean") {
+      res.status(423).json({ error: `Asset is not available while scan status is ${asset.scanStatus}` });
+      return;
+    }
 
     const object = await storage.getObject(asset.companyId, asset.objectKey);
     const responseContentType = asset.contentType || object.contentType || "application/octet-stream";

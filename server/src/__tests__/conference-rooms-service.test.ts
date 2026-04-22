@@ -5,6 +5,7 @@ import {
   activityLog,
   agentWakeupRequests,
   agents,
+  approvals,
   companies,
   conferenceRoomApprovals,
   conferenceRoomComments,
@@ -85,6 +86,7 @@ describeEmbeddedPostgres("conferenceRoomService", () => {
 
   afterEach(async () => {
     await db.delete(conferenceRoomApprovals);
+    await db.delete(approvals);
     await db.delete(agentWakeupRequests);
     await db.delete(conferenceRoomQuestionResponses);
     await db.delete(conferenceRoomComments);
@@ -369,5 +371,45 @@ describeEmbeddedPostgres("conferenceRoomService", () => {
 
     expect(responses).toHaveLength(2);
     expect(responses.map((response) => response.status)).toEqual(["dismissed", "dismissed"]);
+  });
+
+  it("rejects comments on archived rooms", async () => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent(companyId, { name: "Technical Project Lead" });
+    const room = await createRoom(companyId, [agentId]);
+
+    await svc.update(room.id, { status: "archived" }, boardActor);
+
+    await expect(
+      svc.addComment(room.id, {
+        body: "This room should stay quiet now.",
+        messageType: "note",
+      }, boardActor),
+    ).rejects.toThrow(/closed or archived/i);
+  });
+
+  it("deduplicates identical pending board-decision requests for the same room", async () => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent(companyId, { name: "Technical Project Lead" });
+    const room = await createRoom(companyId, [agentId]);
+
+    const requestInput = {
+      title: "Approve the kickoff direction",
+      summary: "The room wants approval to proceed with the kickoff plan.",
+      recommendedAction: "Approve the kickoff plan.",
+      nextActionOnApproval: "Tell the team to proceed.",
+      risks: ["Scope may still change after implementation details are reviewed."],
+      proposedComment: "Proceed with the kickoff plan.",
+    };
+
+    const first = await svc.requestBoardDecision(room.id, requestInput, boardActor);
+    const second = await svc.requestBoardDecision(room.id, requestInput, boardActor);
+
+    expect(second.id).toBe(first.id);
+
+    const storedApprovals = await db.select().from(approvals);
+    const roomApprovalLinks = await db.select().from(conferenceRoomApprovals);
+    expect(storedApprovals).toHaveLength(1);
+    expect(roomApprovalLinks).toHaveLength(1);
   });
 });

@@ -38,6 +38,17 @@ import { getDefaultCompanyGoal } from "./goals.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const EXECUTING_ISSUE_STATUSES = new Set(["in_progress", "in_review", "blocked"]);
+const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled"]);
+const CHECKOUT_ALLOWED_EXPECTED_STATUSES = new Set(["backlog", "todo", "blocked"]);
+const ISSUE_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
+  backlog: ["todo", "in_progress", "blocked", "done", "cancelled"],
+  todo: ["backlog", "in_progress", "blocked", "done", "cancelled"],
+  in_progress: ["todo", "in_review", "blocked", "done", "cancelled"],
+  in_review: ["todo", "in_progress", "blocked", "done", "cancelled"],
+  blocked: ["todo", "in_progress", "done", "cancelled"],
+  done: ["todo"],
+  cancelled: ["todo"],
+};
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
 export const ISSUE_LIST_DEFAULT_LIMIT = 500;
 export const ISSUE_LIST_MAX_LIMIT = 1000;
@@ -46,9 +57,32 @@ const CHILD_COMPLETION_SUMMARY_BODY_MAX_CHARS = 280;
 
 function assertTransition(from: string, to: string) {
   if (from === to) return;
+  if (!ALL_ISSUE_STATUSES.includes(from)) {
+    throw conflict(`Unknown issue status: ${from}`);
+  }
   if (!ALL_ISSUE_STATUSES.includes(to)) {
     throw conflict(`Unknown issue status: ${to}`);
   }
+  const allowedTransitions = ISSUE_STATUS_TRANSITIONS[from] ?? [];
+  if (!allowedTransitions.includes(to)) {
+    throw conflict("Illegal issue status transition", {
+      fromStatus: from,
+      toStatus: to,
+      allowedStatuses: allowedTransitions,
+    });
+  }
+}
+
+function normalizeCheckoutExpectedStatuses(expectedStatuses: string[]) {
+  const normalized = [...new Set(expectedStatuses)];
+  const invalidStatuses = normalized.filter((status) => !CHECKOUT_ALLOWED_EXPECTED_STATUSES.has(status));
+  if (invalidStatuses.length > 0) {
+    throw unprocessable("Checkout expectedStatuses can only include backlog, todo, or blocked", {
+      invalidExpectedStatuses: invalidStatuses,
+      allowedExpectedStatuses: [...CHECKOUT_ALLOWED_EXPECTED_STATUSES],
+    });
+  }
+  return normalized;
 }
 
 function applyStatusSideEffects(
@@ -1599,7 +1633,7 @@ export function issueService(db: Db) {
         let executionWorkspacePreference = issueData.executionWorkspacePreference ?? null;
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
-        const workspaceInheritanceIssueId = inheritExecutionWorkspaceFromIssueId ?? issueData.parentId ?? null;
+        const workspaceInheritanceIssueId = inheritExecutionWorkspaceFromIssueId ?? null;
         const hasExplicitExecutionWorkspaceOverride =
           issueData.executionWorkspaceId !== undefined ||
           issueData.executionWorkspacePreference !== undefined ||
@@ -1937,6 +1971,7 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!issueCompany) throw notFound("Issue not found");
       await assertAssignableAgent(issueCompany.companyId, agentId);
+      const allowedExpectedStatuses = normalizeCheckoutExpectedStatuses(expectedStatuses);
 
       const now = new Date();
 
@@ -2002,7 +2037,7 @@ export function issueService(db: Db) {
         .where(
           and(
             eq(issues.id, id),
-            inArray(issues.status, expectedStatuses),
+            inArray(issues.status, allowedExpectedStatuses),
             or(isNull(issues.assigneeAgentId), sameRunAssigneeCondition),
             executionLockCondition,
           ),
@@ -2179,12 +2214,17 @@ export function issueService(db: Db) {
         });
       }
 
+      const nextStatus = TERMINAL_ISSUE_STATUSES.has(existing.status) ? existing.status : "todo";
       const updated = await db
         .update(issues)
         .set({
-          status: "todo",
+          status: nextStatus,
           assigneeAgentId: null,
+          assigneeUserId: null,
           checkoutRunId: null,
+          executionRunId: null,
+          executionAgentNameKey: null,
+          executionLockedAt: null,
           updatedAt: new Date(),
         })
         .where(eq(issues.id, id))
@@ -2388,6 +2428,14 @@ export function issueService(db: Db) {
       originalFilename?: string | null;
       createdByAgentId?: string | null;
       createdByUserId?: string | null;
+      scanStatus?: "pending_scan" | "clean" | "quarantined" | "scan_failed";
+      scanProvider?: string | null;
+      scanCompletedAt?: Date | null;
+      quarantinedAt?: Date | null;
+      quarantineReason?: string | null;
+      retentionClass?: "standard" | "evidence" | "company_brand" | "temporary";
+      expiresAt?: Date | null;
+      legalHold?: boolean;
     }) => {
       const issue = await db
         .select({ id: issues.id, companyId: issues.companyId })
@@ -2421,6 +2469,14 @@ export function issueService(db: Db) {
             originalFilename: input.originalFilename ?? null,
             createdByAgentId: input.createdByAgentId ?? null,
             createdByUserId: input.createdByUserId ?? null,
+            scanStatus: input.scanStatus ?? "pending_scan",
+            scanProvider: input.scanProvider ?? null,
+            scanCompletedAt: input.scanCompletedAt ?? null,
+            quarantinedAt: input.quarantinedAt ?? null,
+            quarantineReason: input.quarantineReason ?? null,
+            retentionClass: input.retentionClass ?? "evidence",
+            expiresAt: input.expiresAt ?? null,
+            legalHold: input.legalHold ?? false,
           })
           .returning();
 
@@ -2448,6 +2504,15 @@ export function issueService(db: Db) {
           originalFilename: asset.originalFilename,
           createdByAgentId: asset.createdByAgentId,
           createdByUserId: asset.createdByUserId,
+          scanStatus: asset.scanStatus,
+          scanProvider: asset.scanProvider,
+          scanCompletedAt: asset.scanCompletedAt,
+          quarantinedAt: asset.quarantinedAt,
+          quarantineReason: asset.quarantineReason,
+          retentionClass: asset.retentionClass,
+          expiresAt: asset.expiresAt,
+          legalHold: asset.legalHold,
+          deletedAt: asset.deletedAt,
           createdAt: attachment.createdAt,
           updatedAt: attachment.updatedAt,
         };
@@ -2470,6 +2535,15 @@ export function issueService(db: Db) {
           originalFilename: assets.originalFilename,
           createdByAgentId: assets.createdByAgentId,
           createdByUserId: assets.createdByUserId,
+          scanStatus: assets.scanStatus,
+          scanProvider: assets.scanProvider,
+          scanCompletedAt: assets.scanCompletedAt,
+          quarantinedAt: assets.quarantinedAt,
+          quarantineReason: assets.quarantineReason,
+          retentionClass: assets.retentionClass,
+          expiresAt: assets.expiresAt,
+          legalHold: assets.legalHold,
+          deletedAt: assets.deletedAt,
           createdAt: issueAttachments.createdAt,
           updatedAt: issueAttachments.updatedAt,
         })
@@ -2494,6 +2568,15 @@ export function issueService(db: Db) {
           originalFilename: assets.originalFilename,
           createdByAgentId: assets.createdByAgentId,
           createdByUserId: assets.createdByUserId,
+          scanStatus: assets.scanStatus,
+          scanProvider: assets.scanProvider,
+          scanCompletedAt: assets.scanCompletedAt,
+          quarantinedAt: assets.quarantinedAt,
+          quarantineReason: assets.quarantineReason,
+          retentionClass: assets.retentionClass,
+          expiresAt: assets.expiresAt,
+          legalHold: assets.legalHold,
+          deletedAt: assets.deletedAt,
           createdAt: issueAttachments.createdAt,
           updatedAt: issueAttachments.updatedAt,
         })
@@ -2519,6 +2602,15 @@ export function issueService(db: Db) {
             originalFilename: assets.originalFilename,
             createdByAgentId: assets.createdByAgentId,
             createdByUserId: assets.createdByUserId,
+            scanStatus: assets.scanStatus,
+            scanProvider: assets.scanProvider,
+            scanCompletedAt: assets.scanCompletedAt,
+            quarantinedAt: assets.quarantinedAt,
+            quarantineReason: assets.quarantineReason,
+            retentionClass: assets.retentionClass,
+            expiresAt: assets.expiresAt,
+            legalHold: assets.legalHold,
+            deletedAt: assets.deletedAt,
             createdAt: issueAttachments.createdAt,
             updatedAt: issueAttachments.updatedAt,
           })
@@ -2529,11 +2621,14 @@ export function issueService(db: Db) {
         if (!existing) return null;
 
         await tx.delete(issueAttachments).where(eq(issueAttachments.id, id));
-        await tx.delete(assets).where(eq(assets.id, existing.assetId));
+        await tx
+          .update(assets)
+          .set({ deletedAt: new Date(), updatedAt: new Date() })
+          .where(eq(assets.id, existing.assetId));
         return existing;
       }),
 
-    findMentionedAgents: async (companyId: string, body: string) => {
+    resolveMentionedAgents: async (companyId: string, body: string) => {
       const re = /\B@([^\s@,!?.]+)/g;
       const tokens = new Set<string>();
       let m: RegExpExecArray | null;
@@ -2543,16 +2638,64 @@ export function issueService(db: Db) {
       }
 
       const explicitAgentMentionIds = extractAgentMentionIds(body);
-      if (tokens.size === 0 && explicitAgentMentionIds.length === 0) return [];
-      const rows = await db.select({ id: agents.id, name: agents.name })
-        .from(agents).where(eq(agents.companyId, companyId));
-      const resolved = new Set<string>(explicitAgentMentionIds);
-      for (const agent of rows) {
-        if (tokens.has(agent.name.toLowerCase())) {
-          resolved.add(agent.id);
+      if (tokens.size === 0 && explicitAgentMentionIds.length === 0) {
+        return { agentIds: [] as string[], ambiguousTokens: [] as string[] };
+      }
+      const rows = await db
+        .select({ id: agents.id, name: agents.name })
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
+      const rowsById = new Map(rows.map((row) => [row.id, row]));
+      const resolved = new Set<string>();
+      for (const explicitAgentId of explicitAgentMentionIds) {
+        if (rowsById.has(explicitAgentId)) {
+          resolved.add(explicitAgentId);
         }
       }
-      return [...resolved];
+      const ambiguousTokens: string[] = [];
+      for (const token of tokens) {
+        const matches = rows.filter((agent) => agent.name.toLowerCase() === token);
+        if (matches.length === 1) {
+          resolved.add(matches[0]!.id);
+          continue;
+        }
+        if (matches.length > 1) {
+          ambiguousTokens.push(token);
+        }
+      }
+      return {
+        agentIds: [...resolved],
+        ambiguousTokens,
+      };
+    },
+
+    findMentionedAgents: async (companyId: string, body: string) => {
+      const resolved = await db
+        .select({ id: agents.id, name: agents.name, status: agents.status })
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
+      const re = /\B@([^\s@,!?.]+)/g;
+      const tokens = new Set<string>();
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(body)) !== null) {
+        const normalized = normalizeAgentMentionToken(m[1]);
+        if (normalized) tokens.add(normalized.toLowerCase());
+      }
+      const explicitAgentMentionIds = extractAgentMentionIds(body);
+      const rowsById = new Map(resolved.map((row) => [row.id, row]));
+      const agentIds = new Set<string>();
+      for (const explicitAgentId of explicitAgentMentionIds) {
+        if (rowsById.has(explicitAgentId)) {
+          agentIds.add(explicitAgentId);
+        }
+      }
+      for (const token of tokens) {
+        const matches = resolved.filter((agent) => agent.name.toLowerCase() === token);
+        if (matches.length === 1) {
+          agentIds.add(matches[0]!.id);
+        }
+      }
+      return [...agentIds];
     },
 
     findMentionedProjectIds: async (issueId: string) => {

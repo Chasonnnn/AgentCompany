@@ -9,6 +9,7 @@ const mockIssueService = vi.hoisted(() => ({
   assertCheckoutOwner: vi.fn(),
   update: vi.fn(),
   addComment: vi.fn(),
+  resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
   getRelationSummaries: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
@@ -133,6 +134,7 @@ describe("issue activity event routes", () => {
     vi.resetModules();
     vi.clearAllMocks();
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);

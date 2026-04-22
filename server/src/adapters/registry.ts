@@ -86,6 +86,49 @@ import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
 
+const guardedProcessAdapter: ServerAdapterModule = {
+  ...processAdapter,
+  agentConfigurationDoc: `# process agent configuration
+
+Adapter: process
+
+Safety:
+- unsafeAllowLocalExecution (boolean, required): must be true or the adapter fails closed before spawning anything
+- This adapter is intended for explicitly trusted local development only
+
+Core fields:
+- command (string, required): command to execute
+- args (string[] | string, optional): command arguments
+- cwd (string, optional): absolute working directory
+- env (object, optional): KEY=VALUE environment variables
+
+Operational fields:
+- timeoutSec (number, optional): run timeout in seconds
+- graceSec (number, optional): SIGTERM grace period in seconds
+`,
+};
+
+const guardedHttpAdapter: ServerAdapterModule = {
+  ...httpAdapter,
+  agentConfigurationDoc: `# http agent configuration
+
+Adapter: http
+
+Safety:
+- Only absolute http:// and https:// endpoints are accepted
+- HTTPS is required for non-loopback targets
+- Loopback http:// targets are only allowed in local_trusted mode
+- Local, private, link-local, metadata, multicast, and reserved targets are blocked
+
+Core fields:
+- url (string, required): endpoint to invoke
+- method (string, optional): HTTP method, default POST
+- headers (object, optional): request headers
+- payloadTemplate (object, optional): JSON payload template
+- timeoutMs (number, optional): request timeout in milliseconds
+`,
+};
+
 const claudeLocalAdapter: ServerAdapterModule = {
   type: "claude_local",
   execute: claudeExecute,
@@ -244,8 +287,8 @@ function registerBuiltInAdapters() {
     geminiLocalAdapter,
     openclawGatewayAdapter,
     hermesLocalAdapter,
-    processAdapter,
-    httpAdapter,
+    guardedProcessAdapter,
+    guardedHttpAdapter,
   ]) {
     adaptersByType.set(adapter.type, adapter);
   }
@@ -351,7 +394,7 @@ export function requireServerAdapter(type: string): ServerAdapterModule {
 }
 
 export function getServerAdapter(type: string): ServerAdapterModule {
-  return findActiveServerAdapter(type) ?? processAdapter;
+  return findActiveServerAdapter(type) ?? guardedProcessAdapter;
 }
 
 export async function listAdapterModels(type: string): Promise<{ id: string; label: string }[]> {

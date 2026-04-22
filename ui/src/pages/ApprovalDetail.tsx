@@ -148,14 +148,14 @@ export function ApprovalDetail() {
     onError: (err) => setError(err instanceof Error ? err.message : "Comment failed"),
   });
 
-  const deleteAgentMutation = useMutation({
-    mutationFn: (agentId: string) => agentsApi.remove(agentId),
+  const terminateAgentMutation = useMutation({
+    mutationFn: (agentId: string) => agentsApi.terminate(agentId),
     onSuccess: () => {
       setError(null);
       refresh();
       navigate("/approvals");
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "Delete failed"),
+    onError: (err) => setError(err instanceof Error ? err.message : "Terminate failed"),
   });
 
   if (isLoading) return <PageSkeleton variant="detail" />;
@@ -329,12 +329,12 @@ export function ApprovalDetail() {
               variant="outline"
               className="text-destructive border-destructive/40"
               onClick={() => {
-                if (!window.confirm("Delete this disapproved agent? This cannot be undone.")) return;
-                deleteAgentMutation.mutate(linkedAgentId);
+                if (!window.confirm("Terminate this disapproved agent and preserve its audit history?")) return;
+                terminateAgentMutation.mutate(linkedAgentId);
               }}
-              disabled={deleteAgentMutation.isPending}
+              disabled={terminateAgentMutation.isPending}
             >
-              Delete disapproved agent
+              Terminate disapproved agent
             </Button>
           )}
         </div>

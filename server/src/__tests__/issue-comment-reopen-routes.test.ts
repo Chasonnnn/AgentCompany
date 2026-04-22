@@ -9,6 +9,7 @@ const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
   getComment: vi.fn(),
   removeComment: vi.fn(),
+  resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
@@ -177,6 +178,7 @@ describe("issue comment reopen routes", () => {
     mockIssueService.addComment.mockReset();
     mockIssueService.getComment.mockReset();
     mockIssueService.removeComment.mockReset();
+    mockIssueService.resolveMentionedAgents.mockReset();
     mockIssueService.findMentionedAgents.mockReset();
     mockIssueService.listWakeableBlockedDependents.mockReset();
     mockIssueService.getWakeableParentAfterChildCompletion.mockReset();
@@ -231,6 +233,7 @@ describe("issue comment reopen routes", () => {
       authorAgentId: null,
       authorUserId: "local-board",
     });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
@@ -260,6 +263,25 @@ describe("issue comment reopen routes", () => {
         details: expect.not.objectContaining({ reopened: true }),
       }),
     );
+  });
+
+  it("rejects ambiguous @-mentions before creating a comment", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({
+      agentIds: [],
+      ambiguousTokens: ["ceo"],
+    });
+
+    const res = await request(await installActor(createApp()))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "@CEO please decide." });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({
+      error: "Ambiguous @-mentions must be disambiguated with agent:// links",
+      details: { ambiguousTokens: ["ceo"] },
+    });
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
   });
 
   it("reopens closed issues via the PATCH comment path", async () => {

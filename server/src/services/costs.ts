@@ -4,6 +4,7 @@ import { activityLog, agents, companies, costEvents, issues, projects } from "@p
 import { notFound, unprocessable } from "../errors.js";
 import { budgetService, type BudgetServiceHooks } from "./budgets.js";
 import { estimateApiEquivalentCostCents } from "./api-equivalent-pricing.js";
+import { financeService } from "./finance.js";
 
 export interface CostDateRange {
   from?: Date;
@@ -88,20 +89,8 @@ async function ensureEstimatedApiCostBackfill(db: Db) {
 }
 
 export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
-  const budgets = budgetService(db, budgetHooks);
   return {
     createEvent: async (companyId: string, data: Omit<typeof costEvents.$inferInsert, "companyId">) => {
-      const agent = await db
-        .select()
-        .from(agents)
-        .where(eq(agents.id, data.agentId))
-        .then((rows) => rows[0] ?? null);
-
-      if (!agent) throw notFound("Agent not found");
-      if (agent.companyId !== companyId) {
-        throw unprocessable("Agent does not belong to company");
-      }
-
       const estimatedApiCostCents = estimateApiEquivalentCostCents({
         model: data.model,
         inputTokens: data.inputTokens ?? 0,
@@ -109,45 +98,86 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         cacheCreationInputTokens: data.cacheCreationInputTokens ?? 0,
         outputTokens: data.outputTokens ?? 0,
       });
+      return db.transaction(async (tx) => {
+        const txDb = tx as unknown as Db;
+        const budgets = budgetService(txDb, budgetHooks);
+        const finance = financeService(txDb);
+        const agent = await tx
+          .select()
+          .from(agents)
+          .where(eq(agents.id, data.agentId))
+          .then((rows) => rows[0] ?? null);
 
-      const event = await db
-        .insert(costEvents)
-        .values({
-          ...data,
-          companyId,
-          biller: data.biller ?? data.provider,
-          billingType: data.billingType ?? "unknown",
-          cachedInputTokens: data.cachedInputTokens ?? 0,
-          cacheCreationInputTokens: data.cacheCreationInputTokens ?? 0,
-          estimatedApiCostCents,
-        })
-        .returning()
-        .then((rows) => rows[0]);
+        if (!agent) throw notFound("Agent not found");
+        if (agent.companyId !== companyId) {
+          throw unprocessable("Agent does not belong to company");
+        }
 
-      const [agentMonthSpend, companyMonthSpend] = await Promise.all([
-        getMonthlySpendTotal(db, { companyId, agentId: event.agentId }),
-        getMonthlySpendTotal(db, { companyId }),
-      ]);
+        const event = await tx
+          .insert(costEvents)
+          .values({
+            ...data,
+            companyId,
+            biller: data.biller ?? data.provider,
+            billingType: data.billingType ?? "unknown",
+            cachedInputTokens: data.cachedInputTokens ?? 0,
+            cacheCreationInputTokens: data.cacheCreationInputTokens ?? 0,
+            estimatedApiCostCents,
+            retryDisposition: data.retryDisposition ?? "charge_full",
+          })
+          .returning()
+          .then((rows) => rows[0]);
 
-      await db
-        .update(agents)
-        .set({
-          spentMonthlyCents: agentMonthSpend,
-          updatedAt: new Date(),
-        })
-        .where(eq(agents.id, event.agentId));
+        await finance.createEvent(companyId, {
+          agentId: event.agentId,
+          issueId: event.issueId,
+          projectId: event.projectId,
+          heartbeatRunId: event.heartbeatRunId,
+          costEventId: event.id,
+          eventKind: "inference_charge",
+          biller: event.biller,
+          amountCents: event.costCents,
+          currency: "USD",
+          direction: "debit",
+          estimated: false,
+          unit: "cents",
+          quantity: 1,
+          occurredAt: event.occurredAt,
+          billingCode: event.billingCode ?? null,
+          metadataJson: {
+            provider: event.provider,
+            billingType: event.billingType,
+            model: event.model,
+            retryDisposition: event.retryDisposition ?? "charge_full",
+          },
+          retryDisposition: event.retryDisposition ?? "charge_full",
+        });
 
-      await db
-        .update(companies)
-        .set({
-          spentMonthlyCents: companyMonthSpend,
-          updatedAt: new Date(),
-        })
-        .where(eq(companies.id, companyId));
+        const [agentMonthSpend, companyMonthSpend] = await Promise.all([
+          getMonthlySpendTotal(txDb, { companyId, agentId: event.agentId }),
+          getMonthlySpendTotal(txDb, { companyId }),
+        ]);
 
-      await budgets.evaluateCostEvent(event);
+        await tx
+          .update(agents)
+          .set({
+            spentMonthlyCents: agentMonthSpend,
+            updatedAt: new Date(),
+          })
+          .where(eq(agents.id, event.agentId));
 
-      return event;
+        await tx
+          .update(companies)
+          .set({
+            spentMonthlyCents: companyMonthSpend,
+            updatedAt: new Date(),
+          })
+          .where(eq(companies.id, companyId));
+
+        await budgets.evaluateCostEvent(event);
+
+        return event;
+      });
     },
 
     summary: async (companyId: string, range?: CostDateRange) => {

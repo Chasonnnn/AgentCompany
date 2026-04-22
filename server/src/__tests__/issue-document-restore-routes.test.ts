@@ -41,7 +41,7 @@ function seedHarnessDefaults(harness: ReturnType<typeof createRouteHarness>) {
     companyId,
     identifier: "PAP-881",
     title: "Document revisions",
-    status: "in_progress",
+    status: "todo",
   });
   harness.documentsService.listIssueDocumentRevisions.mockResolvedValue([
     {
@@ -114,7 +114,9 @@ function registerRouteMocks(harness: ReturnType<typeof createRouteHarness>) {
       getExperimental: vi.fn(async () => ({})),
       getGeneral: vi.fn(async () => ({ feedbackDataSharingPreference: "prompt" })),
     }),
-    issueApprovalService: () => ({}),
+    issueApprovalService: () => ({
+      listApprovalsForIssue: vi.fn(async () => []),
+    }),
     issueContinuityService: () => ({
       recomputeIssueContinuityState: vi.fn(async () => ({
         tier: "normal",
