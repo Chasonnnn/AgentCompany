@@ -18,6 +18,7 @@ const mockIssueService = vi.hoisted(() => ({
   getByIdentifier: vi.fn(),
   list: vi.fn(),
   listDependencyReadiness: vi.fn(),
+  listBlockerWaitingOnInfo: vi.fn(),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -80,6 +81,7 @@ describe("agent live run routes", () => {
     mockIssueService.getById.mockResolvedValue(null);
     mockIssueService.list.mockResolvedValue([]);
     mockIssueService.listDependencyReadiness.mockResolvedValue(new Map());
+    mockIssueService.listBlockerWaitingOnInfo.mockResolvedValue(new Map());
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       companyId: "company-1",
@@ -170,7 +172,65 @@ describe("agent live run routes", () => {
         dependencyReady: true,
         unresolvedBlockerCount: 0,
         unresolvedBlockerIssueIds: [],
+        operatorState: "running",
+        operatorReason: "Issue is in active execution",
+        computedAgentState: "running",
+        waitingOn: null,
       },
     ]);
+  });
+
+  it("surfaces waitingOn details for dependency-blocked inbox rows", async () => {
+    mockIssueService.list.mockResolvedValue([
+      {
+        id: "issue-parent",
+        identifier: "AIW-5",
+        title: "Parent stuck on blocker",
+        status: "blocked",
+        priority: "high",
+        projectId: "project-1",
+        goalId: null,
+        parentId: null,
+        updatedAt: new Date("2026-04-22T09:30:00.000Z"),
+        activeRun: null,
+      },
+    ]);
+    mockIssueService.listDependencyReadiness.mockResolvedValue(
+      new Map([[
+        "issue-parent",
+        {
+          isDependencyReady: false,
+          unresolvedBlockerCount: 1,
+          unresolvedBlockerIssueIds: ["issue-blocker"],
+        },
+      ]]),
+    );
+    mockIssueService.listBlockerWaitingOnInfo.mockResolvedValue(
+      new Map([["issue-blocker", { identifier: "AIW-9", openChildCount: 2 }]]),
+    );
+
+    const res = await request(
+      createApp({
+        type: "agent",
+        agentId: "agent-1",
+        companyId: "company-1",
+        source: "agent_api_key",
+      }),
+    ).get("/api/agents/me/inbox-lite");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockIssueService.listBlockerWaitingOnInfo).toHaveBeenCalledWith("company-1", ["issue-blocker"]);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({
+      identifier: "AIW-5",
+      computedAgentState: "dependency_blocked",
+      operatorState: "dependency_blocked",
+      waitingOn: {
+        issueId: "issue-blocker",
+        identifier: "AIW-9",
+        openChildCount: 2,
+        nextWakeReason: "issue_blockers_resolved",
+      },
+    });
   });
 });
