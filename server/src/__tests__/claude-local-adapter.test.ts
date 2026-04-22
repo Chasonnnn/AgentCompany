@@ -174,6 +174,51 @@ describe("claude_local server parser", () => {
     });
   });
 
+  it("captures AskUserQuestion with Claude Code's native { questions: [...] } payload", () => {
+    const parsed = parseClaudeStreamJson([
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        model: "claude-sonnet-4-6",
+        session_id: "claude-session-1",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        session_id: "claude-session-1",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tool_1",
+              name: "AskUserQuestion",
+              input: {
+                questions: [
+                  {
+                    question: "Which audit slice should I start with?",
+                    header: "Audit slice",
+                    multiSelect: false,
+                    options: [
+                      { label: "Runtime", description: "Focus on execution and infra first." },
+                      { label: "Governance", description: "Start with instructions and approval flows." },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    ].join("\n"));
+
+    expect(parsed.question).toEqual({
+      prompt: "Which audit slice should I start with?",
+      choices: [
+        { key: "runtime", label: "Runtime", description: "Focus on execution and infra first." },
+        { key: "governance", label: "Governance", description: "Start with instructions and approval flows." },
+      ],
+    });
+  });
+
   it("ignores SendUserMessage tool_use blocks for native decision capture", () => {
     const parsed = parseClaudeStreamJson([
       JSON.stringify({

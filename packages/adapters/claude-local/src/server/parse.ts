@@ -21,6 +21,14 @@ function normalizeClaudeQuestionInput(input: unknown) {
   }
 
   const obj = parseObject(input);
+
+  // Claude Code's native AskUserQuestion tool wraps payloads in `{ questions: [...] }`
+  // where each entry is `{ question, header, multiSelect, options: [{ label, description }] }`.
+  // Capture the first entry — Paperclip decision questions are one-question artifacts.
+  if (Array.isArray(obj.questions) && obj.questions.length > 0) {
+    return normalizeClaudeQuestionInput(obj.questions[0]);
+  }
+
   const prompt =
     asString(obj.prompt, "").trim() ||
     asString(obj.question, "").trim() ||
