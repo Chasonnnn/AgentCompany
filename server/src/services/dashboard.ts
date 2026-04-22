@@ -13,6 +13,9 @@ import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { buildIssueContinuitySummary } from "./issue-continuity-summary.js";
 import { buildIssueOperatorState } from "./issue-operator-state.js";
+import { issueService } from "./issues.js";
+
+const DEPENDENCY_BLOCKED_WAITING_ON_LIMIT = 5;
 
 function getLast14Days() {
   return Array.from({ length: 14 }, (_, index) => {
@@ -23,9 +26,48 @@ function getLast14Days() {
   });
 }
 
+type DependencyBlockedWaitingOnEntry = DashboardSummary["tasks"]["computedAgentStates"][number]["waitingOn"][number];
+
+async function aggregateDependencyBlockedWaitingOn(
+  issuesSvc: ReturnType<typeof issueService>,
+  companyId: string,
+  dependencyBlockedIssueIds: string[],
+): Promise<DependencyBlockedWaitingOnEntry[]> {
+  if (dependencyBlockedIssueIds.length === 0) return [];
+  const readiness = await issuesSvc.listDependencyReadiness(companyId, dependencyBlockedIssueIds);
+  const dependentCountByBlockerId = new Map<string, number>();
+  for (const issueId of dependencyBlockedIssueIds) {
+    const primaryBlocker = readiness.get(issueId)?.unresolvedBlockerIssueIds[0];
+    if (!primaryBlocker) continue;
+    dependentCountByBlockerId.set(
+      primaryBlocker,
+      (dependentCountByBlockerId.get(primaryBlocker) ?? 0) + 1,
+    );
+  }
+  if (dependentCountByBlockerId.size === 0) return [];
+  const blockerIds = [...dependentCountByBlockerId.keys()];
+  const blockerInfo = await issuesSvc.listBlockerWaitingOnInfo(companyId, blockerIds);
+  const entries: DependencyBlockedWaitingOnEntry[] = blockerIds.map((issueId) => {
+    const info = blockerInfo.get(issueId);
+    return {
+      issueId,
+      identifier: info?.identifier ?? null,
+      openChildCount: info?.openChildCount ?? 0,
+      dependentCount: dependentCountByBlockerId.get(issueId) ?? 0,
+    };
+  });
+  entries.sort((a, b) =>
+    b.dependentCount - a.dependentCount
+    || b.openChildCount - a.openChildCount
+    || (a.identifier ?? "").localeCompare(b.identifier ?? ""),
+  );
+  return entries.slice(0, DEPENDENCY_BLOCKED_WAITING_ON_LIMIT);
+}
+
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
   const agentSvc = agentService(db);
+  const issuesSvc = issueService(db);
   return {
     summary: async (companyId: string): Promise<DashboardSummary> => {
       const company = await db
@@ -64,6 +106,7 @@ export function dashboardService(db: Db) {
           .then((rows) => Number(rows[0]?.count ?? 0)),
         db
           .select({
+            id: issues.id,
             assigneeAgentId: issues.assigneeAgentId,
             continuityState: issues.continuityState,
             executionState: issues.executionState,
@@ -177,6 +220,7 @@ export function dashboardService(db: Db) {
       const computedAgentStateDetail = new Map<ComputedAgentState, Map<string, number>>(
         COMPUTED_AGENT_STATES.map((state) => [state, new Map<string, number>()]),
       );
+      const dependencyBlockedIssueIds: string[] = [];
       const loggedCoverageMisses = new Set<string>();
       for (const row of taskRows) {
         const count = Number(row.count);
@@ -224,6 +268,9 @@ export function dashboardService(db: Db) {
             (detailBucket.get(operator.operatorState) ?? 0) + 1,
           );
         }
+        if (grouped === "dependency_blocked" && row.id) {
+          dependencyBlockedIssueIds.push(row.id);
+        }
         const state = row.continuityState as {
           status?: string | null;
           health?: string | null;
@@ -244,12 +291,18 @@ export function dashboardService(db: Db) {
         state,
         count,
       }));
+      const dependencyBlockedWaitingOn = await aggregateDependencyBlockedWaitingOn(
+        issuesSvc,
+        companyId,
+        dependencyBlockedIssueIds,
+      );
       taskCounts.computedAgentStates = COMPUTED_AGENT_STATES.map((state) => ({
         state,
         count: computedAgentStateCounts.get(state) ?? 0,
         detailedStates: Array.from(computedAgentStateDetail.get(state)?.entries() ?? [])
           .map(([detailed, count]) => ({ state: detailed, count }))
           .sort((a, b) => b.count - a.count || a.state.localeCompare(b.state)),
+        waitingOn: state === "dependency_blocked" ? dependencyBlockedWaitingOn : [],
       }));
 
       const now = new Date();
