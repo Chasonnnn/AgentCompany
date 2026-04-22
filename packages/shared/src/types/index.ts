@@ -252,6 +252,9 @@ export type {
 export type {
   Issue,
   IssueAssigneeAdapterOverrides,
+  IssueReferenceSource,
+  IssueRelatedWorkItem,
+  IssueRelatedWorkSummary,
   IssueContinuityBundle,
   IssueContinuityDocumentSnapshot,
   IssuePlanApprovalSummary,

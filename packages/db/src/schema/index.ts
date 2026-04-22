@@ -32,6 +32,7 @@ export { goals } from "./goals.js";
 export { issues } from "./issues.js";
 export { issueDecisionQuestions } from "./issue_decision_questions.js";
 export { issueRelations } from "./issue_relations.js";
+export { issueReferenceMentions } from "./issue_reference_mentions.js";
 export { routines, routineTriggers, routineRuns } from "./routines.js";
 export { issueWorkProducts } from "./issue_work_products.js";
 export { labels } from "./labels.js";
