@@ -3,7 +3,6 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseDocument } from "yaml";
 import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { companySkills } from "@paperclipai/db";
@@ -38,6 +37,7 @@ import { normalizeAgentUrlKey } from "@paperclipai/shared";
 import { findActiveServerAdapter } from "../adapters/index.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { parseFrontmatterMarkdown } from "./frontmatter.js";
 import { ghFetch, gitHubApiBase, resolveRawGitHubUrl } from "./github-fetch.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
@@ -454,36 +454,7 @@ function deriveTrustLevel(fileInventory: CompanySkillFileInventoryEntry[]): Comp
   return "markdown_only";
 }
 
-function parseYamlFrontmatter(raw: string): Record<string, unknown> {
-  if (!raw.trim()) return {};
-  const document = parseDocument(raw, {
-    prettyErrors: false,
-    strict: true,
-    uniqueKeys: true,
-  });
-  if (document.errors.length > 0) {
-    throw unprocessable(`Invalid SKILL.md frontmatter: ${document.errors[0]?.message ?? "failed to parse YAML"}`);
-  }
-  const parsed = document.toJSON();
-  return isPlainRecord(parsed) ? parsed : {};
-}
-
-function parseFrontmatterMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
-  const normalized = raw.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---\n")) {
-    return { frontmatter: {}, body: normalized.trim() };
-  }
-  const closing = normalized.indexOf("\n---\n", 4);
-  if (closing < 0) {
-    return { frontmatter: {}, body: normalized.trim() };
-  }
-  const frontmatterRaw = normalized.slice(4, closing).trim();
-  const body = normalized.slice(closing + 5).trim();
-  return {
-    frontmatter: parseYamlFrontmatter(frontmatterRaw),
-    body,
-  };
-}
+const SKILL_FRONTMATTER_ERROR_LABEL = "SKILL.md frontmatter";
 
 async function fetchText(url: string) {
   const response = await ghFetch(url);
@@ -753,7 +724,7 @@ function readInlineSkillImports(companyId: string, files: Record<string, string>
     const skillDir = dir === "." ? "" : dir;
     const slugFallback = path.posix.basename(skillDir || path.posix.dirname(skillPath));
     const markdown = normalizedFiles[skillPath]!;
-    const parsed = parseFrontmatterMarkdown(markdown);
+    const parsed = parseFrontmatterMarkdown(markdown, { errorLabel: SKILL_FRONTMATTER_ERROR_LABEL });
     const slug = deriveImportedSkillSlug(parsed.frontmatter, slugFallback);
     const source = deriveImportedSkillSource(parsed.frontmatter, slug);
     const inventory = Object.keys(normalizedFiles)
@@ -908,7 +879,7 @@ export async function readLocalSkillImportFromDirectory(
   const resolvedSkillDir = path.resolve(skillDir);
   const skillFilePath = path.join(resolvedSkillDir, "SKILL.md");
   const markdown = await fs.readFile(skillFilePath, "utf8");
-  const parsed = parseFrontmatterMarkdown(markdown);
+  const parsed = parseFrontmatterMarkdown(markdown, { errorLabel: SKILL_FRONTMATTER_ERROR_LABEL });
   const slug = deriveImportedSkillSlug(parsed.frontmatter, path.basename(resolvedSkillDir));
   const parsedMetadata = isPlainRecord(parsed.frontmatter.metadata) ? parsed.frontmatter.metadata : null;
   const skillKey = readCanonicalSkillKey(parsed.frontmatter, parsedMetadata);
@@ -980,7 +951,7 @@ async function readLocalSkillImports(companyId: string, sourcePath: string): Pro
 
   if (stat.isFile()) {
     const markdown = await fs.readFile(resolvedPath, "utf8");
-    const parsed = parseFrontmatterMarkdown(markdown);
+    const parsed = parseFrontmatterMarkdown(markdown, { errorLabel: SKILL_FRONTMATTER_ERROR_LABEL });
     const slug = deriveImportedSkillSlug(parsed.frontmatter, path.basename(path.dirname(resolvedPath)));
     const parsedMetadata = isPlainRecord(parsed.frontmatter.metadata) ? parsed.frontmatter.metadata : null;
     const skillKey = readCanonicalSkillKey(parsed.frontmatter, parsedMetadata);
@@ -1093,7 +1064,7 @@ async function readUrlSkillImports(
     for (const relativeSkillPath of skillPaths) {
       const repoSkillPath = basePrefix ? `${basePrefix}${relativeSkillPath}` : relativeSkillPath;
       const markdown = await fetchText(resolveRawGitHubUrl(parsed.hostname, parsed.owner, parsed.repo, ref, repoSkillPath));
-      const parsedMarkdown = parseFrontmatterMarkdown(markdown);
+      const parsedMarkdown = parseFrontmatterMarkdown(markdown, { errorLabel: SKILL_FRONTMATTER_ERROR_LABEL });
       const skillDir = path.posix.dirname(relativeSkillPath);
       const slug = deriveImportedSkillSlug(parsedMarkdown.frontmatter, path.posix.basename(skillDir));
       const skillKey = readCanonicalSkillKey(
@@ -1155,7 +1126,7 @@ async function readUrlSkillImports(
 
   if (url.startsWith("http://") || url.startsWith("https://")) {
     const markdown = await fetchText(url);
-    const parsedMarkdown = parseFrontmatterMarkdown(markdown);
+    const parsedMarkdown = parseFrontmatterMarkdown(markdown, { errorLabel: SKILL_FRONTMATTER_ERROR_LABEL });
     const urlObj = new URL(url);
     const fileName = path.posix.basename(urlObj.pathname);
     const slug = deriveImportedSkillSlug(parsedMarkdown.frontmatter, fileName.replace(/\.md$/i, ""));
@@ -2020,7 +1991,7 @@ export function companySkillService(db: Db) {
 
     await fs.writeFile(skillFilePath, markdown, "utf8");
 
-    const parsed = parseFrontmatterMarkdown(markdown);
+    const parsed = parseFrontmatterMarkdown(markdown, { errorLabel: SKILL_FRONTMATTER_ERROR_LABEL });
     const imported = await upsertImportedSkills(companyId, [{
       key: `company/${companyId}/${slug}`,
       slug,
@@ -2057,7 +2028,7 @@ export function companySkillService(db: Db) {
     await fs.writeFile(absolutePath, content, "utf8");
 
     if (normalizedPath === "SKILL.md") {
-      const parsed = parseFrontmatterMarkdown(content);
+      const parsed = parseFrontmatterMarkdown(content, { errorLabel: SKILL_FRONTMATTER_ERROR_LABEL });
       await db
         .update(companySkills)
         .set({

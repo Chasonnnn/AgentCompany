@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { parseDocument } from "yaml";
 import {
   companySkills,
   heartbeatRuns,
@@ -35,6 +34,7 @@ import type {
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { parseFrontmatterMarkdown } from "./frontmatter.js";
 
 type SharedSkillRow = typeof sharedSkills.$inferSelect;
 type SharedSkillProposalRow = typeof sharedSkillProposals.$inferSelect;
@@ -188,33 +188,7 @@ function deriveTrustLevel(fileInventory: CompanySkillFileInventoryEntry[]): Shar
   return "markdown_only";
 }
 
-function parseYamlFrontmatter(raw: string): Record<string, unknown> {
-  if (!raw.trim()) return {};
-  const document = parseDocument(raw, {
-    prettyErrors: false,
-    strict: true,
-    uniqueKeys: true,
-  });
-  if (document.errors.length > 0) {
-    throw unprocessable(`Invalid shared skill frontmatter: ${document.errors[0]?.message ?? "failed to parse YAML"}`);
-  }
-  const parsed = document.toJSON();
-  return isPlainRecord(parsed) ? parsed : {};
-}
-
-function parseFrontmatterMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
-  const normalized = raw.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---\n")) {
-    return { frontmatter: {}, body: normalized.trim() };
-  }
-  const closing = normalized.indexOf("\n---\n", 4);
-  if (closing < 0) {
-    return { frontmatter: {}, body: normalized.trim() };
-  }
-  const frontmatterRaw = normalized.slice(4, closing).trim();
-  const body = normalized.slice(closing + 5).trim();
-  return { frontmatter: parseYamlFrontmatter(frontmatterRaw), body };
-}
+const SHARED_SKILL_FRONTMATTER_ERROR_LABEL = "shared skill frontmatter";
 
 async function statPath(targetPath: string) {
   return fs.stat(targetPath).catch(() => null);
@@ -294,7 +268,7 @@ async function readSharedSkillFromDirectory(
 ): Promise<DiscoveredSharedSkill> {
   const skillDir = path.resolve(sourcePath);
   const markdown = await fs.readFile(path.join(skillDir, "SKILL.md"), "utf8");
-  const parsed = parseFrontmatterMarkdown(markdown);
+  const parsed = parseFrontmatterMarkdown(markdown, { errorLabel: SHARED_SKILL_FRONTMATTER_ERROR_LABEL });
   const slug = normalizeSkillSlug(asString(parsed.frontmatter.slug) ?? path.basename(skillDir)) ?? "skill";
   const parsedMetadata = isPlainRecord(parsed.frontmatter.metadata) ? parsed.frontmatter.metadata : null;
   const fileInventory = await collectLocalSkillInventory(skillDir);
@@ -348,7 +322,7 @@ async function readMirrorSkillFromPath(row: SharedSkillRow): Promise<DiscoveredS
   const mirrorDir = resolveSharedSkillMirrorDir({ key: row.key, slug: row.slug });
   const fileInventory = await collectLocalSkillInventory(mirrorDir);
   const markdown = await fs.readFile(path.join(mirrorDir, "SKILL.md"), "utf8");
-  const parsed = parseFrontmatterMarkdown(markdown);
+  const parsed = parseFrontmatterMarkdown(markdown, { errorLabel: SHARED_SKILL_FRONTMATTER_ERROR_LABEL });
   return {
     sourceRoot: row.sourceRoot as GlobalSkillCatalogSourceRoot,
     sourcePath: row.sourcePath,
