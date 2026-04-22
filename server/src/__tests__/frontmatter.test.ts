@@ -112,6 +112,43 @@ describe("parseYamlFrontmatter", () => {
   });
 });
 
+describe("parseYamlFrontmatter CORE_SCHEMA scalar coercion", () => {
+  it("keeps YAML 1.1 bool aliases (yes/no/on/off) as strings", () => {
+    expect(parseYamlFrontmatter("key: yes\n")).toEqual({ key: "yes" });
+    expect(parseYamlFrontmatter("key: no\n")).toEqual({ key: "no" });
+    expect(parseYamlFrontmatter("key: on\n")).toEqual({ key: "on" });
+    expect(parseYamlFrontmatter("key: off\n")).toEqual({ key: "off" });
+  });
+
+  it("keeps unquoted ISO 8601 dates as strings instead of coercing to Date", () => {
+    const parsed = parseYamlFrontmatter("key: 2026-04-22\n");
+    expect(parsed).toEqual({ key: "2026-04-22" });
+    expect(typeof parsed.key).toBe("string");
+  });
+
+  it("keeps sexagesimal-looking strings like 10:30 as strings", () => {
+    const parsed = parseYamlFrontmatter("key: 10:30\n");
+    expect(parsed).toEqual({ key: "10:30" });
+    expect(typeof parsed.key).toBe("string");
+  });
+
+  it("still coerces canonical YAML 1.2 booleans", () => {
+    expect(parseYamlFrontmatter("key: true\n")).toEqual({ key: true });
+    expect(parseYamlFrontmatter("key: false\n")).toEqual({ key: false });
+  });
+
+  it("still coerces canonical YAML 1.2 null", () => {
+    expect(parseYamlFrontmatter("key: null\n")).toEqual({ key: null });
+    expect(parseYamlFrontmatter("key: ~\n")).toEqual({ key: null });
+  });
+
+  it("still coerces canonical YAML 1.2 numbers", () => {
+    expect(parseYamlFrontmatter("key: 42\n")).toEqual({ key: 42 });
+    expect(parseYamlFrontmatter("key: -7\n")).toEqual({ key: -7 });
+    expect(parseYamlFrontmatter("key: 1.5\n")).toEqual({ key: 1.5 });
+  });
+});
+
 describe("parseYamlFile", () => {
   it("parses a standalone YAML document", () => {
     const raw = [

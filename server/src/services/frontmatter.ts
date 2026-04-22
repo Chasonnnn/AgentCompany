@@ -1,4 +1,4 @@
-import { load, YAMLException } from "js-yaml";
+import { CORE_SCHEMA, load, YAMLException } from "js-yaml";
 import { unprocessable } from "../errors.js";
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -33,9 +33,18 @@ function formatYamlError(err: unknown, label: string): string {
 /**
  * Parse a YAML frontmatter block into a plain record.
  *
- * Uses js-yaml's default (safe) schema: scalars, arrays, and maps only.
- * Unknown explicit tags (for example `!!python/object`, `!!js/function`)
- * raise a YAMLException which is rethrown as a 422 Unprocessable error.
+ * Uses js-yaml's `CORE_SCHEMA` (YAML 1.2-compatible). Legitimate
+ * `true`/`false`/`null`/int/float scalars are still coerced to their native
+ * types, but the YAML 1.1 bool aliases (`yes`/`no`/`on`/`off`/`y`/`n`) and
+ * auto-conversion of unquoted ISO 8601 dates stay as strings. Downstream
+ * consumers (`asString`, `asBoolean`, ...) would silently drop values coerced
+ * to `Date` or unexpected booleans, so keeping those as strings is what
+ * actually matches the shared-parser contract.
+ *
+ * `load()` in js-yaml v4 is safe against code-exec-style tags regardless of
+ * schema choice; unknown explicit tags (for example `!!python/object`,
+ * `!!js/function`) raise a `YAMLException` which is rethrown as a 422
+ * Unprocessable error.
  */
 export function parseYamlFrontmatter(
   raw: string,
@@ -45,7 +54,7 @@ export function parseYamlFrontmatter(
   const label = options.errorLabel ?? "YAML frontmatter";
   let parsed: unknown;
   try {
-    parsed = load(raw);
+    parsed = load(raw, { schema: CORE_SCHEMA });
   } catch (err) {
     throw unprocessable(formatYamlError(err, label));
   }
@@ -54,7 +63,8 @@ export function parseYamlFrontmatter(
 
 /**
  * Parse a standalone YAML document (no frontmatter delimiters).
- * Shares the safe schema and error handling with `parseYamlFrontmatter`.
+ * Shares the `CORE_SCHEMA` parser and error handling with
+ * `parseYamlFrontmatter`.
  */
 export function parseYamlFile(
   raw: string,
