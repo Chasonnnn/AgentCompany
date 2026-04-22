@@ -24,7 +24,14 @@ import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle, 
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
-import type { Agent, Issue, IssueOperatorState } from "@paperclipai/shared";
+import type {
+  Agent,
+  ComputedAgentState,
+  DashboardSummary,
+  Issue,
+  IssueOperatorState,
+} from "@paperclipai/shared";
+import { formatComputedAgentStateLabel } from "@paperclipai/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { formatIssueOperatorStateLabel } from "../lib/issue-operator-state";
 
@@ -97,6 +104,10 @@ export function Dashboard() {
   const operatorStateReasons = useMemo(
     () => sortOperatorStateReasons(data?.operatorStateReasons ?? []).slice(0, 4),
     [data?.operatorStateReasons],
+  );
+  const computedAgentStates = useMemo<DashboardSummary["tasks"]["computedAgentStates"]>(
+    () => data?.tasks.computedAgentStates ?? [],
+    [data?.tasks.computedAgentStates],
   );
 
   useEffect(() => {
@@ -396,30 +407,43 @@ export function Dashboard() {
           <div className="rounded-lg border border-border/70 bg-card/60 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold">Operator states</h3>
+                <h3 className="text-sm font-semibold">Agent states</h3>
                 <p className="text-xs text-muted-foreground">
-                  Server-owned execution posture for open work, separate from raw issue status.
+                  Four grouped buckets across open work. Hover a badge for the detailed operator reason.
                 </p>
               </div>
               <Link to="/issues" className="text-xs text-muted-foreground underline underline-offset-2">
                 Inspect issues
               </Link>
             </div>
-            {operatorStateCounts.length > 0 ? (
+            {computedAgentStates.length > 0 ? (
               <>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {operatorStateCounts.map((entry) => (
-                    <span
-                      key={entry.state}
-                      className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/60 px-3 py-1 text-xs"
-                    >
-                      <span className="font-medium">
-                        {formatIssueOperatorStateLabel(entry.state as IssueOperatorState)}
-                      </span>
-                      <span className="text-muted-foreground">{entry.count}</span>
-                    </span>
+                <div className="mt-3 flex flex-wrap gap-2" data-testid="computed-agent-state-row">
+                  {computedAgentStates.map((entry) => (
+                    <ComputedAgentStateBadge key={entry.state} entry={entry} />
                   ))}
                 </div>
+                {operatorStateCounts.length > 0 ? (
+                  <div className="mt-4">
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                      Detailed operator states
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {operatorStateCounts.map((entry) => (
+                        <span
+                          key={entry.state}
+                          className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/60 px-3 py-1 text-xs"
+                          title={`Detailed operator state: ${entry.state}`}
+                        >
+                          <span className="font-medium">
+                            {formatIssueOperatorStateLabel(entry.state as IssueOperatorState)}
+                          </span>
+                          <span className="text-muted-foreground">{entry.count}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 {operatorStateReasons.length > 0 ? (
                   <div className="mt-3 space-y-1.5 text-xs text-muted-foreground">
                     {operatorStateReasons.map((entry) => (
@@ -439,7 +463,7 @@ export function Dashboard() {
               </>
             ) : (
               <div className="mt-3 rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                No operator-state summaries yet.
+                No open work to summarize.
               </div>
             )}
           </div>
@@ -546,5 +570,37 @@ export function Dashboard() {
         </>
       )}
     </div>
+  );
+}
+
+const COMPUTED_AGENT_STATE_CLASSES: Record<ComputedAgentState, string> = {
+  idle: "border-border/70 bg-background/60 text-muted-foreground",
+  queued: "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+  dependency_blocked: "border-purple-500/30 bg-purple-500/10 text-purple-900 dark:text-purple-100",
+  running: "border-cyan-500/30 bg-cyan-500/10 text-cyan-900 dark:text-cyan-100",
+};
+
+function ComputedAgentStateBadge({
+  entry,
+}: {
+  entry: DashboardSummary["tasks"]["computedAgentStates"][number];
+}) {
+  const detailedSummary = entry.detailedStates.length === 0
+    ? "No open issues in this group."
+    : entry.detailedStates
+      .map((d) => `${formatIssueOperatorStateLabel(d.state as IssueOperatorState)}: ${d.count}`)
+      .join(" · ");
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs",
+        COMPUTED_AGENT_STATE_CLASSES[entry.state],
+      )}
+      title={detailedSummary}
+      data-state={entry.state}
+    >
+      <span className="font-medium">{formatComputedAgentStateLabel(entry.state)}</span>
+      <span className="opacity-70">{entry.count}</span>
+    </span>
   );
 }

@@ -1,3 +1,4 @@
+import type { ComputedAgentState } from "../computed-agent-state.js";
 import type { CompanyAgentCompositionSummary } from "./agent.js";
 
 export interface DashboardRunActivityDay {
@@ -25,6 +26,11 @@ export interface DashboardSummary {
     operatorStates: Array<{
       state: string;
       count: number;
+    }>;
+    computedAgentStates: Array<{
+      state: ComputedAgentState;
+      count: number;
+      detailedStates: Array<{ state: string; count: number }>;
     }>;
   };
   costs: {

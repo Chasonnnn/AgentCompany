@@ -1238,6 +1238,15 @@ export {
   gitSnapshotSchema,
   gitSnapshotStatusCodeSchema,
 } from "./validators/conference-context.js";
+export {
+  COMPUTED_AGENT_STATES,
+  groupOperatorState,
+  formatComputedAgentStateLabel,
+  type ComputedAgentState,
+  type ComputedAgentStateCoverageMiss,
+  type ComputedAgentWaitingOn,
+  type GroupOperatorStateOptions,
+} from "./computed-agent-state.js";
 export { normalizeAgentUrlKey, deriveAgentUrlKey, isUuidLike } from "./agent-url-key.js";
 export { deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "./project-url-key.js";
 export {

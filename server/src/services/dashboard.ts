@@ -1,8 +1,14 @@
 import { and, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, heartbeatRuns, issueDecisionQuestions, issues } from "@paperclipai/db";
-import type { DashboardSummary } from "@paperclipai/shared";
+import {
+  COMPUTED_AGENT_STATES,
+  groupOperatorState,
+  type ComputedAgentState,
+  type DashboardSummary,
+} from "@paperclipai/shared";
 import { notFound } from "../errors.js";
+import { logger } from "../middleware/logger.js";
 import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { buildIssueContinuitySummary } from "./issue-continuity-summary.js";
@@ -151,6 +157,7 @@ export function dashboardService(db: Db) {
         blocked: 0,
         done: 0,
         operatorStates: [],
+        computedAgentStates: [],
       };
       const activeContinuityOwners = new Set<string>();
       const executionHealth = {
@@ -164,6 +171,13 @@ export function dashboardService(db: Db) {
       };
       const operatorStateCounts = new Map<string, number>();
       const operatorStateReasons = new Map<string, number>();
+      const computedAgentStateCounts = new Map<ComputedAgentState, number>(
+        COMPUTED_AGENT_STATES.map((state) => [state, 0]),
+      );
+      const computedAgentStateDetail = new Map<ComputedAgentState, Map<string, number>>(
+        COMPUTED_AGENT_STATES.map((state) => [state, new Map<string, number>()]),
+      );
+      const loggedCoverageMisses = new Set<string>();
       for (const row of taskRows) {
         const count = Number(row.count);
         if (row.status === "in_progress") taskCounts.inProgress += count;
@@ -187,6 +201,29 @@ export function dashboardService(db: Db) {
           `${operator.operatorState}::${operator.operatorReason}`,
           (operatorStateReasons.get(`${operator.operatorState}::${operator.operatorReason}`) ?? 0) + 1,
         );
+        const grouped = groupOperatorState(operator.operatorState, {
+          onCoverageMiss: (miss) => {
+            if (loggedCoverageMisses.has(miss.detailed)) return;
+            loggedCoverageMisses.add(miss.detailed);
+            logger.warn(
+              {
+                companyId,
+                detailedOperatorState: miss.detailed,
+                fallbackComputedAgentState: miss.fallback,
+                event: "computed_agent_state.coverage_miss",
+              },
+              "Unmapped detailed operator state fell back to idle; update groupOperatorState mapping.",
+            );
+          },
+        });
+        computedAgentStateCounts.set(grouped, (computedAgentStateCounts.get(grouped) ?? 0) + 1);
+        const detailBucket = computedAgentStateDetail.get(grouped);
+        if (detailBucket) {
+          detailBucket.set(
+            operator.operatorState,
+            (detailBucket.get(operator.operatorState) ?? 0) + 1,
+          );
+        }
         const state = row.continuityState as {
           status?: string | null;
           health?: string | null;
@@ -206,6 +243,13 @@ export function dashboardService(db: Db) {
       taskCounts.operatorStates = Array.from(operatorStateCounts.entries()).map(([state, count]) => ({
         state,
         count,
+      }));
+      taskCounts.computedAgentStates = COMPUTED_AGENT_STATES.map((state) => ({
+        state,
+        count: computedAgentStateCounts.get(state) ?? 0,
+        detailedStates: Array.from(computedAgentStateDetail.get(state)?.entries() ?? [])
+          .map(([detailed, count]) => ({ state: detailed, count }))
+          .sort((a, b) => b.count - a.count || a.state.localeCompare(b.state)),
       }));
 
       const now = new Date();

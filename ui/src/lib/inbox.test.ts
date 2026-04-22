@@ -288,6 +288,7 @@ const dashboard: DashboardSummary = {
     blocked: 0,
     done: 0,
     operatorStates: [],
+    computedAgentStates: [],
   },
   costs: {
     monthSpendCents: 900,

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, not, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -1496,6 +1496,44 @@ export function issueService(db: Db) {
 
     listDependencyReadiness: async (companyId: string, issueIds: string[], dbOrTx: any = db) => {
       return listIssueDependencyReadinessMap(dbOrTx, companyId, issueIds);
+    },
+
+    listBlockerWaitingOnInfo: async (
+      companyId: string,
+      blockerIssueIds: string[],
+    ): Promise<Map<string, { identifier: string | null; openChildCount: number }>> => {
+      if (blockerIssueIds.length === 0) return new Map();
+      const blockerRows = await db
+        .select({ id: issues.id, identifier: issues.identifier })
+        .from(issues)
+        .where(and(eq(issues.companyId, companyId), inArray(issues.id, blockerIssueIds)));
+      const childrenRows = await db
+        .select({
+          parentId: issues.parentId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            inArray(issues.parentId, blockerIssueIds),
+            not(inArray(issues.status, ["done", "cancelled"])),
+            isNull(issues.hiddenAt),
+          ),
+        )
+        .groupBy(issues.parentId);
+      const childCountByBlockerId = new Map<string, number>();
+      for (const row of childrenRows) {
+        if (row.parentId) childCountByBlockerId.set(row.parentId, Number(row.count));
+      }
+      const result = new Map<string, { identifier: string | null; openChildCount: number }>();
+      for (const row of blockerRows) {
+        result.set(row.id, {
+          identifier: row.identifier ?? null,
+          openChildCount: childCountByBlockerId.get(row.id) ?? 0,
+        });
+      }
+      return result;
     },
 
     listWakeableBlockedDependents: async (blockerIssueId: string) => {

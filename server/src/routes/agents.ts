@@ -21,6 +21,7 @@ import {
   createAgentSchema,
   deriveAgentUrlKey,
   getDefaultDesiredSkillSlugsForAgent,
+  groupOperatorState,
   isUuidLike,
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
@@ -35,6 +36,9 @@ import {
 } from "@paperclipai/shared";
 import { trackAgentCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
+import { logger } from "../middleware/logger.js";
+import { buildIssueContinuitySummary } from "../services/issue-continuity-summary.js";
+import { buildIssueOperatorState } from "../services/issue-operator-state.js";
 import {
   agentService,
   agentSkillService,
@@ -1409,22 +1413,80 @@ export function agentRoutes(
       rows.map((issue) => issue.id),
     );
 
+    const primaryBlockerIds = new Set<string>();
+    for (const issue of rows) {
+      const blockers = dependencyReadiness.get(issue.id)?.unresolvedBlockerIssueIds ?? [];
+      if (blockers.length > 0) primaryBlockerIds.add(blockers[0]);
+    }
+    const blockerInfo = primaryBlockerIds.size > 0
+      ? await issuesSvc.listBlockerWaitingOnInfo(req.actor.companyId, [...primaryBlockerIds])
+      : new Map<string, { identifier: string | null; openChildCount: number }>();
+
+    const loggedMisses = new Set<string>();
     res.json(
-      rows.map((issue) => ({
-        id: issue.id,
-        identifier: issue.identifier,
-        title: issue.title,
-        status: issue.status,
-        priority: issue.priority,
-        projectId: issue.projectId,
-        goalId: issue.goalId,
-        parentId: issue.parentId,
-        updatedAt: issue.updatedAt,
-        activeRun: issue.activeRun,
-        dependencyReady: dependencyReadiness.get(issue.id)?.isDependencyReady ?? true,
-        unresolvedBlockerCount: dependencyReadiness.get(issue.id)?.unresolvedBlockerCount ?? 0,
-        unresolvedBlockerIssueIds: dependencyReadiness.get(issue.id)?.unresolvedBlockerIssueIds ?? [],
-      })),
+      rows.map((issue) => {
+        const continuitySummary = buildIssueContinuitySummary(issue);
+        const operator = buildIssueOperatorState({
+          issueId: issue.id,
+          status: issue.status as any,
+          hiddenAt: issue.hiddenAt ?? null,
+          continuitySummary,
+          activeRun: issue.activeRun ?? null,
+        });
+        const computedAgentState = groupOperatorState(operator.operatorState, {
+          onCoverageMiss: (miss) => {
+            if (loggedMisses.has(miss.detailed)) return;
+            loggedMisses.add(miss.detailed);
+            logger.warn(
+              {
+                companyId: req.actor.companyId,
+                detailedOperatorState: miss.detailed,
+                fallbackComputedAgentState: miss.fallback,
+                event: "computed_agent_state.coverage_miss",
+                route: "/agents/me/inbox-lite",
+              },
+              "Unmapped detailed operator state fell back to idle; update groupOperatorState mapping.",
+            );
+          },
+        });
+        const readiness = dependencyReadiness.get(issue.id);
+        const unresolvedBlockerIssueIds = readiness?.unresolvedBlockerIssueIds ?? [];
+        let waitingOn: {
+          issueId: string;
+          identifier: string | null;
+          openChildCount: number;
+          nextWakeReason: string | null;
+        } | null = null;
+        if (computedAgentState === "dependency_blocked" && unresolvedBlockerIssueIds.length > 0) {
+          const primaryBlockerId = unresolvedBlockerIssueIds[0];
+          const info = blockerInfo.get(primaryBlockerId);
+          waitingOn = {
+            issueId: primaryBlockerId,
+            identifier: info?.identifier ?? null,
+            openChildCount: info?.openChildCount ?? 0,
+            nextWakeReason: "issue_blockers_resolved",
+          };
+        }
+        return {
+          id: issue.id,
+          identifier: issue.identifier,
+          title: issue.title,
+          status: issue.status,
+          priority: issue.priority,
+          projectId: issue.projectId,
+          goalId: issue.goalId,
+          parentId: issue.parentId,
+          updatedAt: issue.updatedAt,
+          activeRun: issue.activeRun,
+          dependencyReady: readiness?.isDependencyReady ?? true,
+          unresolvedBlockerCount: readiness?.unresolvedBlockerCount ?? 0,
+          unresolvedBlockerIssueIds,
+          operatorState: operator.operatorState,
+          operatorReason: operator.operatorReason,
+          computedAgentState,
+          waitingOn,
+        };
+      }),
     );
   });
 
