@@ -1,149 +1,79 @@
+import { load, YAMLException } from "js-yaml";
+import { unprocessable } from "../errors.js";
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseYamlScalar(raw: string): unknown {
-  const value = raw.trim();
-  if (!value.length) return "";
-  if (value === "true") return true;
-  if (value === "false") return false;
-  if (value === "null" || value === "~") return null;
-  if (/^-?\d+$/.test(value)) return Number.parseInt(value, 10);
-  if (/^-?\d+\.\d+$/.test(value)) return Number.parseFloat(value);
-  if (
-    (value.startsWith("\"") && value.endsWith("\""))
-    || (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  if (value.startsWith("[") && value.endsWith("]")) {
-    const inner = value.slice(1, -1).trim();
-    if (!inner.length) return [];
-    return inner
-      .split(",")
-      .map((entry) => parseYamlScalar(entry));
-  }
-  if (value.startsWith("{") && value.endsWith("}")) {
-    const inner = value.slice(1, -1).trim();
-    if (!inner.length) return {};
-    const record: Record<string, unknown> = {};
-    for (const part of inner.split(",")) {
-      const separator = part.indexOf(":");
-      if (separator <= 0) continue;
-      const key = part.slice(0, separator).trim().replace(/^["']|["']$/g, "");
-      const nextValue = part.slice(separator + 1).trim();
-      record[key] = parseYamlScalar(nextValue);
-    }
-    return record;
-  }
-  return value;
+export interface FrontmatterParseOptions {
+  /**
+   * Label inserted into the 422 error message thrown when the YAML payload
+   * cannot be parsed. Lets callers produce context-specific messages like
+   * "Invalid SKILL.md frontmatter: ..." without leaking js-yaml's internals.
+   */
+  errorLabel?: string;
 }
 
-type PreparedYamlLine = {
-  indent: number;
-  content: string;
-};
-
-function prepareYamlLines(raw: string): PreparedYamlLine[] {
-  return raw
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => line.replace(/\t/g, "  "))
-    .filter((line) => line.trim().length > 0 && !line.trimStart().startsWith("#"))
-    .map((line) => ({
-      indent: line.length - line.trimStart().length,
-      content: line.trim(),
-    }));
+export interface FrontmatterDoc {
+  frontmatter: Record<string, unknown>;
+  body: string;
 }
 
-function parseYamlBlock(
-  lines: PreparedYamlLine[],
-  startIndex: number,
-  indentLevel: number,
-): { value: unknown; nextIndex: number } {
-  let index = startIndex;
-  while (index < lines.length && lines[index]!.content.length === 0) index += 1;
-  if (index >= lines.length || lines[index]!.indent < indentLevel) {
-    return { value: {}, nextIndex: index };
+function formatYamlError(err: unknown, label: string): string {
+  if (err instanceof YAMLException) {
+    const reason = err.reason?.trim() || err.message;
+    return `Invalid ${label}: ${reason}`;
   }
-
-  const isArray = lines[index]!.indent === indentLevel && lines[index]!.content.startsWith("-");
-  if (isArray) {
-    const values: unknown[] = [];
-    while (index < lines.length) {
-      const line = lines[index]!;
-      if (line.indent < indentLevel) break;
-      if (line.indent !== indentLevel || !line.content.startsWith("-")) break;
-      const remainder = line.content.slice(1).trim();
-      index += 1;
-      if (!remainder) {
-        const nested = parseYamlBlock(lines, index, indentLevel + 2);
-        values.push(nested.value);
-        index = nested.nextIndex;
-        continue;
-      }
-      const inlineObjectSeparator = remainder.indexOf(":");
-      if (
-        inlineObjectSeparator > 0
-        && !remainder.startsWith("\"")
-        && !remainder.startsWith("{")
-        && !remainder.startsWith("[")
-      ) {
-        const key = remainder.slice(0, inlineObjectSeparator).trim();
-        const rawValue = remainder.slice(inlineObjectSeparator + 1).trim();
-        const nextObject: Record<string, unknown> = {
-          [key]: parseYamlScalar(rawValue),
-        };
-        if (index < lines.length && lines[index]!.indent > indentLevel) {
-          const nested = parseYamlBlock(lines, index, indentLevel + 2);
-          if (isPlainRecord(nested.value)) {
-            Object.assign(nextObject, nested.value);
-          }
-          index = nested.nextIndex;
-        }
-        values.push(nextObject);
-        continue;
-      }
-      values.push(parseYamlScalar(remainder));
-    }
-    return { value: values, nextIndex: index };
+  if (err instanceof Error && err.message) {
+    return `Invalid ${label}: ${err.message}`;
   }
-
-  const record: Record<string, unknown> = {};
-  while (index < lines.length) {
-    const line = lines[index]!;
-    if (line.indent < indentLevel) break;
-    if (line.indent !== indentLevel) {
-      index += 1;
-      continue;
-    }
-    const separatorIndex = line.content.indexOf(":");
-    if (separatorIndex <= 0) {
-      index += 1;
-      continue;
-    }
-    const key = line.content.slice(0, separatorIndex).trim();
-    const remainder = line.content.slice(separatorIndex + 1).trim();
-    index += 1;
-    if (!remainder) {
-      const nested = parseYamlBlock(lines, index, indentLevel + 2);
-      record[key] = nested.value;
-      index = nested.nextIndex;
-      continue;
-    }
-    record[key] = parseYamlScalar(remainder);
-  }
-  return { value: record, nextIndex: index };
+  return `Invalid ${label}: failed to parse YAML`;
 }
 
-export function parseYamlFrontmatter(raw: string): Record<string, unknown> {
-  const prepared = prepareYamlLines(raw);
-  if (prepared.length === 0) return {};
-  const parsed = parseYamlBlock(prepared, 0, prepared[0]!.indent);
-  return isPlainRecord(parsed.value) ? parsed.value : {};
+/**
+ * Parse a YAML frontmatter block into a plain record.
+ *
+ * Uses js-yaml's default (safe) schema: scalars, arrays, and maps only.
+ * Unknown explicit tags (for example `!!python/object`, `!!js/function`)
+ * raise a YAMLException which is rethrown as a 422 Unprocessable error.
+ */
+export function parseYamlFrontmatter(
+  raw: string,
+  options: FrontmatterParseOptions = {},
+): Record<string, unknown> {
+  if (!raw.trim()) return {};
+  const label = options.errorLabel ?? "YAML frontmatter";
+  let parsed: unknown;
+  try {
+    parsed = load(raw);
+  } catch (err) {
+    throw unprocessable(formatYamlError(err, label));
+  }
+  return isPlainRecord(parsed) ? parsed : {};
 }
 
-export function parseFrontmatterMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
+/**
+ * Parse a standalone YAML document (no frontmatter delimiters).
+ * Shares the safe schema and error handling with `parseYamlFrontmatter`.
+ */
+export function parseYamlFile(
+  raw: string,
+  options: FrontmatterParseOptions = {},
+): Record<string, unknown> {
+  return parseYamlFrontmatter(raw, {
+    errorLabel: options.errorLabel ?? "YAML file",
+  });
+}
+
+/**
+ * Split a markdown document into its leading YAML frontmatter block and body.
+ * Only the first `---`-delimited block is interpreted as frontmatter, so any
+ * subsequent `---` separators inside the body are preserved verbatim.
+ */
+export function parseFrontmatterMarkdown(
+  raw: string,
+  options: FrontmatterParseOptions = {},
+): FrontmatterDoc {
   const normalized = raw.replace(/\r\n/g, "\n");
   if (!normalized.startsWith("---\n")) {
     return { frontmatter: {}, body: normalized.trim() };
@@ -155,7 +85,7 @@ export function parseFrontmatterMarkdown(raw: string): { frontmatter: Record<str
   const frontmatterRaw = normalized.slice(4, closing).trim();
   const body = normalized.slice(closing + 5).trim();
   return {
-    frontmatter: parseYamlFrontmatter(frontmatterRaw),
+    frontmatter: parseYamlFrontmatter(frontmatterRaw, options),
     body,
   };
 }
