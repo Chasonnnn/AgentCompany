@@ -209,7 +209,10 @@ describe("agent instructions bundle routes", () => {
       expect.objectContaining({ id: "11111111-1111-4111-8111-111111111111" }),
       "AGENTS.md",
       "# Updated Agent\n",
-      { clearLegacyPromptTemplate: true },
+      expect.objectContaining({
+        clearLegacyPromptTemplate: true,
+        resetMemory: false,
+      }),
     );
     expect(mockAgentService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",

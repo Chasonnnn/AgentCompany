@@ -2205,9 +2205,10 @@ describe("company portability", () => {
     });
     expect(agentSvc.create).toHaveBeenCalledWith("company-imported", expect.objectContaining({
       adapterConfig: expect.objectContaining({
-        paperclipSkillSync: {
+        paperclipSkillSync: expect.objectContaining({
           desiredSkills: [paperclipKey],
-        },
+          desiredSkillIds: [],
+        }),
       }),
     }));
   });

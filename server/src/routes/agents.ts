@@ -1,5 +1,6 @@
 import { Router, type Request } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
@@ -64,6 +65,8 @@ import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
+import { loadConfig } from "../config.js";
+import { resolveHomeAwarePath } from "../home-paths.js";
 import { runClaudeLogin } from "@paperclipai/adapter-claude-local/server";
 import {
   defaultCodexLocalFastModeForModel,
@@ -154,6 +157,9 @@ export function agentRoutes(
   const KNOWN_INSTRUCTIONS_PATH_KEYS = new Set(["instructionsFilePath", "agentsMdPath"]);
   const KNOWN_INSTRUCTIONS_BUNDLE_KEYS = [
     "instructionsBundleMode",
+    "instructionsBundleRole",
+    "instructionsRootPolicy",
+    "instructionsMemoryOwnership",
     "instructionsRootPath",
     "instructionsEntryFile",
     "instructionsFilePath",
@@ -180,6 +186,7 @@ export function agentRoutes(
     opts?.services?.workspaceOperationService ?? workspaceOperationService(db);
   const instanceSettings =
     opts?.services?.instanceSettingsService ?? instanceSettingsService(db);
+  const runtimeConfig = loadConfig();
   const logActivity = opts?.services?.logActivity ?? baseLogActivity;
   const getTelemetryClientFn =
     opts?.telemetry?.getTelemetryClient ?? getTelemetryClient;
@@ -655,6 +662,46 @@ export function agentRoutes(
     return path.resolve(cwd, trimmed);
   }
 
+  async function assertAllowedExternalInstructionsRoot(rootPath: string) {
+    const absoluteRoot = path.resolve(resolveHomeAwarePath(rootPath));
+    if (!path.isAbsolute(absoluteRoot)) {
+      throw unprocessable("External instructions bundles require an absolute rootPath");
+    }
+
+    const settings = await instanceSettings.getGeneral();
+    const policy = settings.enterprisePolicy;
+    if (
+      runtimeConfig.deploymentMode === "local_trusted"
+      && policy.unsafeHostBehavior === "allow_local_trusted"
+    ) {
+      return absoluteRoot;
+    }
+
+    const allowedRoots = policy.allowedExternalInstructionRoots
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => path.resolve(resolveHomeAwarePath(value)));
+    if (allowedRoots.length === 0) {
+      throw unprocessable("External instructions bundles are disabled by instance policy");
+    }
+
+    const realRoot = await fs.realpath(absoluteRoot).catch(() => null);
+    if (!realRoot) {
+      throw unprocessable("External instructions bundle roots must already exist");
+    }
+
+    for (const allowedRoot of allowedRoots) {
+      const realAllowedRoot = await fs.realpath(allowedRoot).catch(() => null);
+      if (!realAllowedRoot) continue;
+      const relative = path.relative(realAllowedRoot, realRoot);
+      if (relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..")) {
+        return realRoot;
+      }
+    }
+
+    throw unprocessable("External instructions bundle root is not within an allowlisted root");
+  }
+
   async function materializeDefaultInstructionsBundleForNewAgent<T extends {
     id: string;
     companyId: string;
@@ -704,7 +751,13 @@ export function agentRoutes(
     const materialized = await instructions.materializeManagedBundle(
       agent,
       files,
-      { entryFile: "AGENTS.md", replaceExisting: false },
+      {
+        entryFile: "AGENTS.md",
+        replaceExisting: false,
+        bundleRole: resolveDefaultAgentInstructionsBundleRole(agent.role),
+        rootPolicy: "managed_only",
+        memoryOwnership: "agent_authored",
+      },
     );
     const nextAdapterConfig = { ...materialized.adapterConfig };
     delete nextAdapterConfig.promptTemplate;
@@ -1059,7 +1112,12 @@ export function agentRoutes(
       assertCompanyAccess(req, agent.companyId);
 
       const actor = getActorInfo(req);
-      const snapshot = await skillSync.syncAgentSkills(agent, req.body.desiredSkills as string[], actor);
+      const snapshot = await skillSync.syncAgentSkills(
+        agent,
+        (req.body.desiredSkills as string[] | undefined) ?? [],
+        actor,
+        { desiredSkillIds: (req.body.desiredSkillIds as string[] | undefined) ?? [] },
+      );
       res.json(snapshot);
     },
   );
@@ -2190,10 +2248,17 @@ export function agentRoutes(
     if (req.body.path === null) {
       delete nextAdapterConfig[adapterConfigKey];
     } else {
-      nextAdapterConfig[adapterConfigKey] = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      const resolvedPath = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      await assertAllowedExternalInstructionsRoot(path.dirname(resolvedPath));
+      nextAdapterConfig[adapterConfigKey] = resolvedPath;
     }
 
     const syncedAdapterConfig = syncInstructionsBundleConfigFromFilePath(existing, nextAdapterConfig);
+    if (req.body.path !== null) {
+      syncedAdapterConfig.instructionsBundleRole ??= resolveDefaultAgentInstructionsBundleRole(existing.role);
+      syncedAdapterConfig.instructionsRootPolicy = "allowlisted_external";
+      syncedAdapterConfig.instructionsMemoryOwnership ??= "agent_authored";
+    }
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       existing.companyId,
       syncedAdapterConfig,
@@ -2251,7 +2316,15 @@ export function agentRoutes(
       return;
     }
     await assertCanReadAgent(req, existing);
-    res.json(await instructions.getBundle(existing));
+    const bundle = await instructions.getBundle(existing);
+    if (bundle.mode === "external" && bundle.rootPath) {
+      bundle.externalRootAllowed = await assertAllowedExternalInstructionsRoot(bundle.rootPath)
+        .then(() => true)
+        .catch(() => false);
+    } else {
+      bundle.externalRootAllowed = true;
+    }
+    res.json(bundle);
   });
 
   router.patch("/agents/:id/instructions-bundle", validate(updateAgentInstructionsBundleSchema), async (req, res) => {
@@ -2262,6 +2335,20 @@ export function agentRoutes(
       return;
     }
     await assertCanManageInstructionsPath(req, existing);
+    if (req.body.resetMemory === true) {
+      assertBoard(req);
+      assertCompanyAccess(req, existing.companyId);
+    }
+    if ((req.body.mode ?? undefined) === "external") {
+      const requestedRoot = typeof req.body.rootPath === "string" ? req.body.rootPath : null;
+      const currentRoot = asNonEmptyString(asRecord(existing.adapterConfig)?.instructionsRootPath);
+      const externalRoot = requestedRoot ?? currentRoot;
+      if (!externalRoot) {
+        res.status(422).json({ error: "External instructions bundles require an absolute rootPath" });
+        return;
+      }
+      await assertAllowedExternalInstructionsRoot(externalRoot);
+    }
 
     const actor = getActorInfo(req);
     const { bundle, adapterConfig } = await instructions.updateBundle(existing, req.body);
@@ -2293,12 +2380,23 @@ export function agentRoutes(
       entityId: existing.id,
       details: {
         mode: bundle.mode,
+        bundleRole: bundle.bundleRole,
+        rootPolicy: bundle.rootPolicy,
+        memoryOwnership: bundle.memoryOwnership,
         rootPath: bundle.rootPath,
         entryFile: bundle.entryFile,
         clearLegacyPromptTemplate: req.body.clearLegacyPromptTemplate === true,
+        resetMemory: req.body.resetMemory === true,
       },
     });
 
+    if (bundle.mode === "external" && bundle.rootPath) {
+      bundle.externalRootAllowed = await assertAllowedExternalInstructionsRoot(bundle.rootPath)
+        .then(() => true)
+        .catch(() => false);
+    } else {
+      bundle.externalRootAllowed = true;
+    }
     res.json(bundle);
   });
 
@@ -2318,6 +2416,7 @@ export function agentRoutes(
     );
     const result = await instructions.repairManagedBundleDefaults(existing, defaults, {
       entryFile: "AGENTS.md",
+      resetMemory: false,
     });
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       existing.companyId,
@@ -2382,10 +2481,15 @@ export function agentRoutes(
       return;
     }
     await assertCanManageInstructionsPath(req, existing);
+    if (req.body.resetMemory === true) {
+      assertBoard(req);
+      assertCompanyAccess(req, existing.companyId);
+    }
 
     const actor = getActorInfo(req);
     const result = await instructions.writeFile(existing, req.body.path, req.body.content, {
       clearLegacyPromptTemplate: req.body.clearLegacyPromptTemplate,
+      resetMemory: req.body.resetMemory,
     });
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       existing.companyId,
@@ -2417,6 +2521,7 @@ export function agentRoutes(
         path: result.file.path,
         size: result.file.size,
         clearLegacyPromptTemplate: req.body.clearLegacyPromptTemplate === true,
+        resetMemory: req.body.resetMemory === true,
       },
     });
 
@@ -2588,6 +2693,12 @@ export function agentRoutes(
   router.post("/agents/:id/pause", async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
     const agent = await svc.pause(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -2611,6 +2722,12 @@ export function agentRoutes(
   router.post("/agents/:id/resume", async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
     const agent = await svc.resume(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -2632,6 +2749,12 @@ export function agentRoutes(
   router.post("/agents/:id/terminate", async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
     const agent = await svc.terminate(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -2655,22 +2778,15 @@ export function agentRoutes(
   router.delete("/agents/:id", async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
-    const agent = await svc.remove(id);
-    if (!agent) {
+    const existing = await svc.getById(id);
+    if (!existing) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-
-    await logActivity(db, {
-      companyId: agent.companyId,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "agent.deleted",
-      entityType: "agent",
-      entityId: agent.id,
+    assertCompanyAccess(req, existing.companyId);
+    res.status(409).json({
+      error: "Hard-deleting agents is disabled to preserve audit history. Use /api/agents/:id/terminate instead.",
     });
-
-    res.json({ ok: true });
   });
 
   router.get("/agents/:id/keys", async (req, res) => {

@@ -36,6 +36,7 @@ import { conflict, notFound, unprocessable, HttpError } from "../errors.js";
 import { findActiveServerAdapter } from "../adapters/index.js";
 import { agentService, type NormalizedAgentRow } from "./agents.js";
 import { companySkillService, readLocalSkillImportFromDirectory } from "./company-skills.js";
+import { enterprisePolicyService } from "./enterprise-policy.js";
 import { secretService } from "./secrets.js";
 import { logActivity, type LogActivityInput } from "./activity-log.js";
 
@@ -56,6 +57,7 @@ interface ActorInfo {
 interface DesiredSkillAssignment {
   adapterConfig: Record<string, unknown>;
   desiredSkills: string[] | null;
+  desiredSkillIds: string[] | null;
   runtimeSkillEntries: PaperclipSkillEntry[] | null;
 }
 
@@ -280,7 +282,17 @@ function buildSkillCoverageFingerprint(
 export function agentSkillService(db: Db) {
   const agents = agentService(db);
   const companySkills = companySkillService(db);
+  const enterprisePolicy = enterprisePolicyService(db);
   const secrets = secretService(db);
+
+  function isSkillAllowedByPolicy(
+    skill: Pick<CompanySkill, "trustLevel" | "compatibility">,
+    maxSkillTrustLevel: "markdown_only" | "assets" | "scripts_executables",
+  ) {
+    const rank = { markdown_only: 0, assets: 1, scripts_executables: 2 } as const;
+    if (skill.compatibility === "invalid") return false;
+    return rank[skill.trustLevel] <= rank[maxSkillTrustLevel];
+  }
 
   function shouldMaterializeRuntimeSkillsForAdapter(adapterType: string) {
     return ADAPTERS_REQUIRING_MATERIALIZED_RUNTIME_SKILLS.has(adapterType);
@@ -289,7 +301,7 @@ export function agentSkillService(db: Db) {
   function buildUnsupportedSkillSnapshot(
     adapterType: string,
     desiredSkills: string[],
-    options?: { canManage?: boolean },
+    options?: { canManage?: boolean; desiredSkillIds?: string[] },
   ): AgentSkillSnapshot {
     return {
       adapterType,
@@ -297,6 +309,7 @@ export function agentSkillService(db: Db) {
       mode: "unsupported",
       canManage: options?.canManage,
       desiredSkills,
+      desiredSkillIds: options?.desiredSkillIds,
       entries: [],
       warnings: ["This adapter does not implement skill sync yet."],
     };
@@ -307,11 +320,20 @@ export function agentSkillService(db: Db) {
     adapterType: string,
     config: Record<string, unknown>,
   ) {
+    const policy = await enterprisePolicy.get();
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(companyId, {
       materializeMissing: shouldMaterializeRuntimeSkillsForAdapter(adapterType),
     });
+    const currentEnv =
+      typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
+        ? { ...(config.env as Record<string, unknown>) }
+        : {};
     return {
       ...config,
+      env: {
+        ...currentEnv,
+        PAPERCLIP_DISABLE_SHARED_HOST_SKILLS: policy.settings.disableSharedHostSkills ? "1" : "0",
+      },
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
   }
@@ -326,14 +348,29 @@ export function agentSkillService(db: Db) {
       return {
         adapterConfig,
         desiredSkills: null,
+        desiredSkillIds: null,
         runtimeSkillEntries: null,
       };
     }
 
-    const resolvedRequestedSkills = await companySkills.resolveRequestedSkillKeys(
-      companyId,
-      requestedDesiredSkills,
-    );
+    const [resolvedRequestedSkills, allSkills, policy] = await Promise.all([
+      companySkills.resolveRequestedSkillKeys(companyId, requestedDesiredSkills),
+      companySkills.listFull(companyId),
+      enterprisePolicy.get(),
+    ]);
+    const skillByKey = new Map(allSkills.map((skill) => [skill.key, skill] as const));
+    const desiredSkillIds = resolvedRequestedSkills
+      .map((skillKey) => skillByKey.get(skillKey)?.id ?? null)
+      .filter((value): value is string => Boolean(value));
+    for (const skillKey of resolvedRequestedSkills) {
+      const skill = skillByKey.get(skillKey);
+      if (!skill) continue;
+      if (!isSkillAllowedByPolicy(skill, policy.settings.maxSkillTrustLevel)) {
+        throw unprocessable(
+          `Skill "${skill.name}" is blocked by enterprise policy (trust=${skill.trustLevel}, compatibility=${skill.compatibility}).`,
+        );
+      }
+    }
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(companyId, {
       materializeMissing: shouldMaterializeRuntimeSkillsForAdapter(adapterType),
     });
@@ -343,8 +380,9 @@ export function agentSkillService(db: Db) {
     const desiredSkills = Array.from(new Set([...requiredSkills, ...resolvedRequestedSkills]));
 
     return {
-      adapterConfig: writePaperclipSkillSyncPreference(adapterConfig, desiredSkills),
+      adapterConfig: writePaperclipSkillSyncPreference(adapterConfig, desiredSkills, desiredSkillIds),
       desiredSkills,
+      desiredSkillIds,
       runtimeSkillEntries,
     };
   }
@@ -363,7 +401,7 @@ export function agentSkillService(db: Db) {
       return buildUnsupportedSkillSnapshot(
         agent.adapterType,
         Array.from(new Set([...requiredSkills, ...preference.desiredSkills])),
-        { canManage: canManageSkills },
+        { canManage: canManageSkills, desiredSkillIds: preference.desiredSkillIds },
       );
     }
 
@@ -471,16 +509,27 @@ export function agentSkillService(db: Db) {
     agent: NormalizedAgentRow,
     requestedDesiredSkills: string[],
     actor: ActorInfo,
+    options?: { desiredSkillIds?: string[] },
   ) {
     const normalizedRequestedSkills = normalizeDesiredSkillReferences(requestedDesiredSkills);
+    const normalizedDesiredSkillIds = Array.from(new Set((options?.desiredSkillIds ?? []).map((value) => value.trim()).filter(Boolean)));
     const {
       adapterConfig: nextAdapterConfig,
       desiredSkills,
+      desiredSkillIds: _desiredSkillIds,
     } = await resolveDesiredSkillAssignment(
       agent.companyId,
       agent.adapterType,
       agent.adapterConfig as Record<string, unknown>,
-      normalizedRequestedSkills,
+      normalizedRequestedSkills.length > 0
+        ? normalizedRequestedSkills
+        : normalizedDesiredSkillIds.length > 0
+          ? await Promise.all(normalizedDesiredSkillIds.map(async (skillId) => {
+            const skill = await companySkills.getById(skillId);
+            if (!skill) throw notFound("Skill not found");
+            return skill.key;
+          }))
+          : normalizedRequestedSkills,
     );
     if (!desiredSkills) {
       throw unprocessable("Skill sync requires desiredSkills.");

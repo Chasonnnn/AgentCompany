@@ -56,12 +56,14 @@ export {
   RUN_LIVENESS_CONTINUATION_REASON,
 } from "./run-continuations.js";
 export { dashboardService } from "./dashboard.js";
+export { buildIssueOperatorState } from "./issue-operator-state.js";
 export { evalService } from "./evals.js";
 export { sidebarBadgeService } from "./sidebar-badges.js";
 export { inboxDismissalService } from "./inbox-dismissals.js";
 export { accessService } from "./access.js";
 export { boardAuthService } from "./board-auth.js";
 export { instanceSettingsService } from "./instance-settings.js";
+export { enterprisePolicyService } from "./enterprise-policy.js";
 export { companyPortabilityService } from "./company-portability.js";
 export { executionWorkspaceService } from "./execution-workspaces.js";
 export { workspaceOperationService } from "./workspace-operations.js";

@@ -632,7 +632,13 @@ describe("agent skill routes", () => {
         "AGENTS.md": "You are QA.",
         "MEMORY.md": expect.stringContaining("# MEMORY.md"),
       }),
-      { entryFile: "AGENTS.md", replaceExisting: false },
+      expect.objectContaining({
+        entryFile: "AGENTS.md",
+        replaceExisting: false,
+        bundleRole: "default",
+        rootPolicy: "managed_only",
+        memoryOwnership: "agent_authored",
+      }),
     );
     expect(mockAgentService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
@@ -671,11 +677,17 @@ describe("agent skill routes", () => {
       expect.objectContaining({
         "AGENTS.md": expect.stringContaining("You are the CEO."),
         "MEMORY.md": expect.stringContaining("# MEMORY.md"),
-        "HEARTBEAT.md": expect.stringContaining("CEO Heartbeat Checklist"),
+        "HEARTBEAT.md": expect.stringContaining("CEO Delta"),
         "SOUL.md": expect.stringContaining("CEO Persona"),
         "TOOLS.md": expect.stringContaining("# Tools"),
       }),
-      { entryFile: "AGENTS.md", replaceExisting: false },
+      expect.objectContaining({
+        entryFile: "AGENTS.md",
+        replaceExisting: false,
+        bundleRole: "ceo",
+        rootPolicy: "managed_only",
+        memoryOwnership: "agent_authored",
+      }),
     );
   });
 
@@ -700,7 +712,13 @@ describe("agent skill routes", () => {
         "AGENTS.md": expect.stringContaining("Keep the work moving until it's done."),
         "MEMORY.md": expect.stringContaining("# MEMORY.md"),
       }),
-      { entryFile: "AGENTS.md", replaceExisting: false },
+      expect.objectContaining({
+        entryFile: "AGENTS.md",
+        replaceExisting: false,
+        bundleRole: "default",
+        rootPolicy: "managed_only",
+        memoryOwnership: "agent_authored",
+      }),
     );
   });
 

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseDocument } from "yaml";
 import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { companySkills } from "@paperclipai/db";
@@ -12,6 +13,7 @@ import type {
   CompanySkill,
   CompanySkillCreateRequest,
   CompanySkillCompatibility,
+  CompanySkillCompatibilityMetadata,
   CompanySkillDetail,
   CompanySkillFileDetail,
   CompanySkillFileInventoryEntry,
@@ -28,6 +30,7 @@ import type {
   CompanySkillTrustLevel,
   CompanySkillUpdateStatus,
   CompanySkillUsageAgent,
+  CompanySkillVerificationState,
   GlobalSkillCatalogItem,
   GlobalSkillCatalogSourceRoot,
 } from "@paperclipai/shared";
@@ -40,6 +43,7 @@ import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
 import { secretService } from "./secrets.js";
 import { sharedSkillService } from "./shared-skills.js";
+import { enterprisePolicyService } from "./enterprise-policy.js";
 
 type CompanySkillRow = typeof companySkills.$inferSelect;
 
@@ -172,6 +176,12 @@ const GLOBAL_SKILL_CATALOG_ROOTS: Array<{
   { sourceRoot: "claude", relativeRoot: ".claude/skills" },
 ];
 
+const SKILL_TRUST_ORDER: Record<CompanySkillTrustLevel, number> = {
+  markdown_only: 0,
+  assets: 1,
+  scripts_executables: 2,
+};
+
 function globalCatalogSourceRootLabel(sourceRoot: GlobalSkillCatalogSourceRoot | string | null) {
   if (sourceRoot === "claude") return "Claude";
   if (sourceRoot === "agents") return "Agents";
@@ -238,6 +248,64 @@ export function normalizeGitHubSkillDirectory(
 
 function hashSkillValue(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 10);
+}
+
+function hashSkillDigest(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeVerificationState(value: unknown): CompanySkillVerificationState {
+  return value === "pending" || value === "verified" || value === "failed" ? value : "verified";
+}
+
+function emptyCompatibilityMetadata(): CompanySkillCompatibilityMetadata {
+  return {
+    paperclipApiRange: null,
+    minAdapterVersion: null,
+    requiredTools: [],
+    requiredCapabilities: [],
+  };
+}
+
+function readCompatibilityMetadata(value: unknown): CompanySkillCompatibilityMetadata | null {
+  if (!isPlainRecord(value)) return null;
+  return {
+    paperclipApiRange: asString(value.paperclipApiRange),
+    minAdapterVersion: asString(value.minAdapterVersion),
+    requiredTools: Array.isArray(value.requiredTools)
+      ? value.requiredTools.flatMap((entry) => asString(entry) ?? [])
+      : [],
+    requiredCapabilities: Array.isArray(value.requiredCapabilities)
+      ? value.requiredCapabilities.flatMap((entry) => asString(entry) ?? [])
+      : [],
+  };
+}
+
+function serializeCompatibilityMetadata(
+  value: CompanySkillCompatibilityMetadata | null | undefined,
+): Record<string, unknown> | null {
+  if (!value) return null;
+  return {
+    paperclipApiRange: value.paperclipApiRange,
+    minAdapterVersion: value.minAdapterVersion,
+    requiredTools: [...value.requiredTools],
+    requiredCapabilities: [...value.requiredCapabilities],
+  };
+}
+
+function deriveIdentityDigest(skillKey: string) {
+  return hashSkillDigest(skillKey);
+}
+
+function deriveContentDigest(markdown: string, fileInventory: CompanySkillFileInventoryEntry[]) {
+  return hashSkillDigest(JSON.stringify({
+    markdown,
+    fileInventory: fileInventory.map((entry) => ({
+      path: entry.path,
+      kind: entry.kind,
+      sha256: entry.sha256 ?? null,
+    })),
+  }));
 }
 
 function resolveGlobalSkillCatalogHome(options?: { homeDir?: string }) {
@@ -386,120 +454,18 @@ function deriveTrustLevel(fileInventory: CompanySkillFileInventoryEntry[]): Comp
   return "markdown_only";
 }
 
-function prepareYamlLines(raw: string) {
-  return raw
-    .split("\n")
-    .map((line) => ({
-      indent: line.match(/^ */)?.[0].length ?? 0,
-      content: line.trim(),
-    }))
-    .filter((line) => line.content.length > 0 && !line.content.startsWith("#"));
-}
-
-function parseYamlScalar(rawValue: string): unknown {
-  const trimmed = rawValue.trim();
-  if (trimmed === "") return "";
-  if (trimmed === "null" || trimmed === "~") return null;
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (trimmed === "[]") return [];
-  if (trimmed === "{}") return {};
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-  if (trimmed.startsWith("\"") || trimmed.startsWith("[") || trimmed.startsWith("{")) {
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      return trimmed;
-    }
-  }
-  return trimmed;
-}
-
-function parseYamlBlock(
-  lines: Array<{ indent: number; content: string }>,
-  startIndex: number,
-  indentLevel: number,
-): { value: unknown; nextIndex: number } {
-  let index = startIndex;
-  while (index < lines.length && lines[index]!.content.length === 0) index += 1;
-  if (index >= lines.length || lines[index]!.indent < indentLevel) {
-    return { value: {}, nextIndex: index };
-  }
-
-  const isArray = lines[index]!.indent === indentLevel && lines[index]!.content.startsWith("-");
-  if (isArray) {
-    const values: unknown[] = [];
-    while (index < lines.length) {
-      const line = lines[index]!;
-      if (line.indent < indentLevel) break;
-      if (line.indent !== indentLevel || !line.content.startsWith("-")) break;
-      const remainder = line.content.slice(1).trim();
-      index += 1;
-      if (!remainder) {
-        const nested = parseYamlBlock(lines, index, indentLevel + 2);
-        values.push(nested.value);
-        index = nested.nextIndex;
-        continue;
-      }
-      const inlineObjectSeparator = remainder.indexOf(":");
-      if (
-        inlineObjectSeparator > 0 &&
-        !remainder.startsWith("\"") &&
-        !remainder.startsWith("{") &&
-        !remainder.startsWith("[")
-      ) {
-        const key = remainder.slice(0, inlineObjectSeparator).trim();
-        const rawValue = remainder.slice(inlineObjectSeparator + 1).trim();
-        const nextObject: Record<string, unknown> = {
-          [key]: parseYamlScalar(rawValue),
-        };
-        if (index < lines.length && lines[index]!.indent > indentLevel) {
-          const nested = parseYamlBlock(lines, index, indentLevel + 2);
-          if (isPlainRecord(nested.value)) {
-            Object.assign(nextObject, nested.value);
-          }
-          index = nested.nextIndex;
-        }
-        values.push(nextObject);
-        continue;
-      }
-      values.push(parseYamlScalar(remainder));
-    }
-    return { value: values, nextIndex: index };
-  }
-
-  const record: Record<string, unknown> = {};
-  while (index < lines.length) {
-    const line = lines[index]!;
-    if (line.indent < indentLevel) break;
-    if (line.indent !== indentLevel) {
-      index += 1;
-      continue;
-    }
-    const separatorIndex = line.content.indexOf(":");
-    if (separatorIndex <= 0) {
-      index += 1;
-      continue;
-    }
-    const key = line.content.slice(0, separatorIndex).trim();
-    const remainder = line.content.slice(separatorIndex + 1).trim();
-    index += 1;
-    if (!remainder) {
-      const nested = parseYamlBlock(lines, index, indentLevel + 2);
-      record[key] = nested.value;
-      index = nested.nextIndex;
-      continue;
-    }
-    record[key] = parseYamlScalar(remainder);
-  }
-  return { value: record, nextIndex: index };
-}
-
 function parseYamlFrontmatter(raw: string): Record<string, unknown> {
-  const prepared = prepareYamlLines(raw);
-  if (prepared.length === 0) return {};
-  const parsed = parseYamlBlock(prepared, 0, prepared[0]!.indent);
-  return isPlainRecord(parsed.value) ? parsed.value : {};
+  if (!raw.trim()) return {};
+  const document = parseDocument(raw, {
+    prettyErrors: false,
+    strict: true,
+    uniqueKeys: true,
+  });
+  if (document.errors.length > 0) {
+    throw unprocessable(`Invalid SKILL.md frontmatter: ${document.errors[0]?.message ?? "failed to parse YAML"}`);
+  }
+  const parsed = document.toJSON();
+  return isPlainRecord(parsed) ? parsed : {};
 }
 
 function parseFrontmatterMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
@@ -1230,6 +1196,16 @@ async function readUrlSkillImports(
 }
 
 function toCompanySkill(row: CompanySkillRow): CompanySkill {
+  const fileInventory = Array.isArray(row.fileInventory)
+    ? row.fileInventory.flatMap((entry) => {
+      if (!isPlainRecord(entry)) return [];
+      return [{
+        path: String(entry.path ?? ""),
+        kind: (String(entry.kind ?? "other") as CompanySkillFileInventoryEntry["kind"]),
+        sha256: asString(entry.sha256),
+      }];
+    })
+    : [];
   return {
     ...row,
     sharedSkillId: row.sharedSkillId ?? null,
@@ -1239,15 +1215,13 @@ function toCompanySkill(row: CompanySkillRow): CompanySkill {
     sourceRef: row.sourceRef ?? null,
     trustLevel: row.trustLevel as CompanySkillTrustLevel,
     compatibility: row.compatibility as CompanySkillCompatibility,
-    fileInventory: Array.isArray(row.fileInventory)
-      ? row.fileInventory.flatMap((entry) => {
-        if (!isPlainRecord(entry)) return [];
-        return [{
-          path: String(entry.path ?? ""),
-          kind: (String(entry.kind ?? "other") as CompanySkillFileInventoryEntry["kind"]),
-        }];
-      })
-      : [],
+    manifestVersion: row.manifestVersion ?? 1,
+    identityDigest: row.identityDigest ?? deriveIdentityDigest(row.key),
+    contentDigest: row.contentDigest ?? deriveContentDigest(row.markdown, fileInventory),
+    sourceVerifiedAt: row.sourceVerifiedAt ?? null,
+    verificationState: normalizeVerificationState(row.verificationState),
+    compatibilityMetadata: readCompatibilityMetadata(row.compatibilityMetadata) ?? emptyCompatibilityMetadata(),
+    fileInventory,
     metadata: isPlainRecord(row.metadata) ? row.metadata : null,
   };
 }
@@ -1258,6 +1232,7 @@ function serializeFileInventory(
   return fileInventory.map((entry) => ({
     path: entry.path,
     kind: entry.kind,
+    sha256: entry.sha256 ?? null,
   }));
 }
 
@@ -1655,6 +1630,12 @@ function toCompanySkillListItem(skill: CompanySkill, attachedAgentCount: number)
     sourceRef: skill.sourceRef,
     trustLevel: skill.trustLevel,
     compatibility: skill.compatibility,
+    manifestVersion: skill.manifestVersion,
+    identityDigest: skill.identityDigest,
+    contentDigest: skill.contentDigest,
+    sourceVerifiedAt: skill.sourceVerifiedAt,
+    verificationState: skill.verificationState,
+    compatibilityMetadata: skill.compatibilityMetadata,
     fileInventory: skill.fileInventory,
     createdAt: skill.createdAt,
     updatedAt: skill.updatedAt,
@@ -1668,6 +1649,16 @@ function toCompanySkillListItem(skill: CompanySkill, attachedAgentCount: number)
 }
 
 export function companySkillService(db: Db) {
+  const enterprisePolicy = enterprisePolicyService(db);
+
+  function isRuntimeAllowedSkill(
+    skill: Pick<CompanySkill, "trustLevel" | "compatibility">,
+    maxSkillTrustLevel: CompanySkillTrustLevel,
+  ) {
+    if (skill.compatibility === "invalid") return false;
+    return SKILL_TRUST_ORDER[skill.trustLevel] <= SKILL_TRUST_ORDER[maxSkillTrustLevel];
+  }
+
   const agents = agentService(db);
   const projects = projectService(db);
   const secretsSvc = secretService(db);
@@ -2356,10 +2347,14 @@ export function companySkillService(db: Db) {
     companyId: string,
     options: RuntimeSkillEntryOptions = {},
   ): Promise<PaperclipSkillEntry[]> {
-    const skills = await listFull(companyId);
+    const [skills, policy] = await Promise.all([
+      listFull(companyId),
+      enterprisePolicy.get(),
+    ]);
+    const allowedSkills = skills.filter((skill) => isRuntimeAllowedSkill(skill, policy.settings.maxSkillTrustLevel));
 
     const out: PaperclipSkillEntry[] = [];
-    for (const skill of skills) {
+    for (const skill of allowedSkills) {
       const sourceKind = asString(getSkillMeta(skill).sourceKind);
       let source = normalizeSkillDirectory(skill);
       if (!source) {
@@ -2561,6 +2556,12 @@ export function companySkillService(db: Db) {
         sourceRef: skill.sourceRef,
         trustLevel: skill.trustLevel,
         compatibility: skill.compatibility,
+        manifestVersion: 1,
+        identityDigest: deriveIdentityDigest(persistedKey),
+        contentDigest: deriveContentDigest(skill.markdown, skill.fileInventory),
+        sourceVerifiedAt: new Date(),
+        verificationState: "verified" as const,
+        compatibilityMetadata: serializeCompatibilityMetadata(emptyCompatibilityMetadata()),
         fileInventory: serializeFileInventory(skill.fileInventory),
         metadata,
         updatedAt: new Date(),
@@ -2596,6 +2597,16 @@ export function companySkillService(db: Db) {
     await ensureSkillInventoryCurrent(companyId);
     const parsed = parseSkillImportSourceInput(source);
     const local = !/^https?:\/\//i.test(parsed.resolvedSource);
+    if (!local) {
+      const policy = await enterprisePolicy.get();
+      if (policy.deploymentMode !== "local_trusted") {
+        const hostname = new URL(parsed.resolvedSource).hostname.trim().toLowerCase();
+        const allowedHosts = new Set(policy.settings.allowedSkillSourceHosts.map((value) => value.trim().toLowerCase()));
+        if (!allowedHosts.has(hostname)) {
+          throw unprocessable(`Skill source host "${hostname}" is not allowlisted by enterprise policy.`);
+        }
+      }
+    }
     const { skills, warnings } = local
       ? {
         skills: (await readLocalSkillImports(companyId, parsed.resolvedSource))

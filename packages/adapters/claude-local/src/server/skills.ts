@@ -47,6 +47,13 @@ export async function listClaudeSharedHostSkillEntries(
   config: Record<string, unknown>,
   managedRuntimeNames: Iterable<string> = [],
 ): Promise<ClaudeSharedHostSkillEntry[]> {
+  const env =
+    typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
+      ? (config.env as Record<string, unknown>)
+      : {};
+  if (env.PAPERCLIP_DISABLE_SHARED_HOST_SKILLS === "1") {
+    return [];
+  }
   const sharedSkillsHome = resolveClaudeSharedSkillsHome(config);
   const managedNames = new Set(managedRuntimeNames);
   const installed = await readInstalledSkillTargets(sharedSkillsHome);

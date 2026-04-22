@@ -2102,15 +2102,23 @@ export async function readPaperclipSkillMarkdown(
 export function readPaperclipSkillSyncPreference(config: Record<string, unknown>): {
   explicit: boolean;
   desiredSkills: string[];
+  desiredSkillIds: string[];
 } {
   const raw = config.paperclipSkillSync;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return { explicit: false, desiredSkills: [] };
+    return { explicit: false, desiredSkills: [], desiredSkillIds: [] };
   }
   const syncConfig = raw as Record<string, unknown>;
   const desiredValues = syncConfig.desiredSkills;
+  const desiredSkillIdValues = syncConfig.desiredSkillIds;
   const desired = Array.isArray(desiredValues)
     ? desiredValues
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : [];
+  const desiredSkillIds = Array.isArray(desiredSkillIdValues)
+    ? desiredSkillIdValues
         .filter((value): value is string => typeof value === "string")
         .map((value) => value.trim())
         .filter(Boolean)
@@ -2118,6 +2126,7 @@ export function readPaperclipSkillSyncPreference(config: Record<string, unknown>
   return {
     explicit: Object.prototype.hasOwnProperty.call(raw, "desiredSkills"),
     desiredSkills: Array.from(new Set(desired)),
+    desiredSkillIds: Array.from(new Set(desiredSkillIds)),
   };
 }
 
@@ -2164,6 +2173,7 @@ export function resolvePaperclipDesiredSkillNames(
 export function writePaperclipSkillSyncPreference(
   config: Record<string, unknown>,
   desiredSkills: string[],
+  desiredSkillIds: string[] = [],
 ): Record<string, unknown> {
   const next = { ...config };
   const raw = next.paperclipSkillSync;
@@ -2174,6 +2184,13 @@ export function writePaperclipSkillSyncPreference(
   current.desiredSkills = Array.from(
     new Set(
       desiredSkills
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
+  current.desiredSkillIds = Array.from(
+    new Set(
+      desiredSkillIds
         .map((value) => value.trim())
         .filter(Boolean),
     ),

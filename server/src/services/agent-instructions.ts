@@ -7,6 +7,9 @@ const ENTRY_FILE_DEFAULT = "AGENTS.md";
 const MODE_KEY = "instructionsBundleMode";
 const ROOT_KEY = "instructionsRootPath";
 const ENTRY_KEY = "instructionsEntryFile";
+const ROLE_KEY = "instructionsBundleRole";
+const ROOT_POLICY_KEY = "instructionsRootPolicy";
+const MEMORY_OWNERSHIP_KEY = "instructionsMemoryOwnership";
 const FILE_KEY = "instructionsFilePath";
 const PROMPT_KEY = "promptTemplate";
 /** @deprecated Use the managed instructions bundle system instead. */
@@ -26,11 +29,15 @@ const IGNORED_INSTRUCTIONS_DIRECTORY_NAMES = new Set([
 ]);
 
 type BundleMode = "managed" | "external";
+type BundleRole = "default" | "manager" | "ceo";
+type RootPolicy = "managed_only" | "allowlisted_external";
+type MemoryOwnership = "agent_authored" | "bundle_managed";
 
 type AgentLike = {
   id: string;
   companyId: string;
   name: string;
+  role?: string | null;
   adapterConfig: unknown;
 };
 
@@ -54,11 +61,15 @@ type AgentInstructionsBundle = {
   agentId: string;
   companyId: string;
   mode: BundleMode | null;
+  bundleRole: BundleRole;
+  rootPolicy: RootPolicy;
+  memoryOwnership: MemoryOwnership;
   rootPath: string | null;
   managedRootPath: string;
   entryFile: string;
   resolvedEntryPath: string | null;
   editable: boolean;
+  externalRootAllowed: boolean;
   warnings: string[];
   legacyPromptTemplateActive: boolean;
   legacyBootstrapPromptTemplateActive: boolean;
@@ -68,6 +79,9 @@ type AgentInstructionsBundle = {
 type BundleState = {
   config: Record<string, unknown>;
   mode: BundleMode | null;
+  bundleRole: BundleRole;
+  rootPolicy: RootPolicy;
+  memoryOwnership: MemoryOwnership;
   rootPath: string | null;
   entryFile: string;
   resolvedEntryPath: string | null;
@@ -89,6 +103,24 @@ function asString(value: unknown): string | null {
 
 function isBundleMode(value: unknown): value is BundleMode {
   return value === "managed" || value === "external";
+}
+
+function isBundleRole(value: unknown): value is BundleRole {
+  return value === "default" || value === "manager" || value === "ceo";
+}
+
+function isRootPolicy(value: unknown): value is RootPolicy {
+  return value === "managed_only" || value === "allowlisted_external";
+}
+
+function isMemoryOwnership(value: unknown): value is MemoryOwnership {
+  return value === "agent_authored" || value === "bundle_managed";
+}
+
+function deriveDefaultBundleRole(agent: AgentLike): BundleRole {
+  if (agent.role === "ceo") return "ceo";
+  if (["cto", "cmo", "cfo", "coo", "pm"].includes(agent.role ?? "")) return "manager";
+  return "default";
 }
 
 function inferLanguage(relativePath: string): string {
@@ -139,6 +171,10 @@ function resolveManagedInstructionsRoot(agent: AgentLike): string {
     agent.id,
     "instructions",
   );
+}
+
+function isProtectedMemoryFile(relativePath: string) {
+  return normalizeRelativeFilePath(relativePath) === "MEMORY.md";
 }
 
 function resolveLegacyInstructionsPath(candidatePath: string, config: Record<string, unknown>): string {
@@ -230,6 +266,13 @@ function deriveBundleState(agent: AgentLike): BundleState {
   const legacyInstructionsPath = asString(config[FILE_KEY]);
 
   let mode: BundleMode | null = isBundleMode(storedModeRaw) ? storedModeRaw : null;
+  const bundleRole = isBundleRole(config[ROLE_KEY]) ? (config[ROLE_KEY] as BundleRole) : deriveDefaultBundleRole(agent);
+  const rootPolicy = isRootPolicy(config[ROOT_POLICY_KEY])
+    ? (config[ROOT_POLICY_KEY] as RootPolicy)
+    : (mode === "external" ? "allowlisted_external" : "managed_only");
+  const memoryOwnership = isMemoryOwnership(config[MEMORY_OWNERSHIP_KEY])
+    ? (config[MEMORY_OWNERSHIP_KEY] as MemoryOwnership)
+    : "agent_authored";
   let rootPath = storedRootRaw ? resolveHomeAwarePath(storedRootRaw) : null;
   let entryFile = ENTRY_FILE_DEFAULT;
 
@@ -264,6 +307,9 @@ function deriveBundleState(agent: AgentLike): BundleState {
   return {
     config,
     mode,
+    bundleRole,
+    rootPolicy,
+    memoryOwnership,
     rootPath,
     entryFile,
     resolvedEntryPath,
@@ -322,6 +368,9 @@ async function recoverManagedBundleState(agent: AgentLike, state: BundleState): 
   return {
     ...state,
     mode: "managed",
+    bundleRole: state.bundleRole,
+    rootPolicy: state.rootPolicy,
+    memoryOwnership: state.memoryOwnership,
     rootPath: managedRootPath,
     entryFile: recoveredEntryFile,
     resolvedEntryPath: path.resolve(managedRootPath, recoveredEntryFile),
@@ -349,11 +398,15 @@ function toBundle(agent: AgentLike, state: BundleState, files: AgentInstructions
     agentId: agent.id,
     companyId: agent.companyId,
     mode: state.mode,
+    bundleRole: state.bundleRole,
+    rootPolicy: state.rootPolicy,
+    memoryOwnership: state.memoryOwnership,
     rootPath: state.rootPath,
     managedRootPath: resolveManagedInstructionsRoot(agent),
     entryFile: state.entryFile,
     resolvedEntryPath: state.resolvedEntryPath,
     editable: Boolean(state.rootPath),
+    externalRootAllowed: state.mode !== "external",
     warnings: state.warnings,
     legacyPromptTemplateActive: state.legacyPromptTemplateActive,
     legacyBootstrapPromptTemplateActive: state.legacyBootstrapPromptTemplateActive,
@@ -365,6 +418,9 @@ function applyBundleConfig(
   config: Record<string, unknown>,
   input: {
     mode: BundleMode;
+    bundleRole?: BundleRole;
+    rootPolicy?: RootPolicy;
+    memoryOwnership?: MemoryOwnership;
     rootPath: string;
     entryFile: string;
     clearLegacyPromptTemplate?: boolean;
@@ -373,6 +429,9 @@ function applyBundleConfig(
   const next: Record<string, unknown> = {
     ...config,
     [MODE_KEY]: input.mode,
+    [ROLE_KEY]: input.bundleRole ?? (isBundleRole(config[ROLE_KEY]) ? config[ROLE_KEY] : "default"),
+    [ROOT_POLICY_KEY]: input.rootPolicy ?? (input.mode === "external" ? "allowlisted_external" : "managed_only"),
+    [MEMORY_OWNERSHIP_KEY]: input.memoryOwnership ?? (isMemoryOwnership(config[MEMORY_OWNERSHIP_KEY]) ? config[MEMORY_OWNERSHIP_KEY] : "agent_authored"),
     [ROOT_KEY]: input.rootPath,
     [ENTRY_KEY]: input.entryFile,
     [FILE_KEY]: path.resolve(input.rootPath, input.entryFile),
@@ -417,10 +476,17 @@ function buildPersistedBundleConfig(
 async function writeBundleFiles(
   rootPath: string,
   files: Record<string, string>,
-  options?: { overwriteExisting?: boolean },
+  options?: { overwriteExisting?: boolean; memoryOwnership?: MemoryOwnership; resetMemory?: boolean },
 ) {
   for (const [relativePath, content] of Object.entries(files)) {
     const normalizedPath = normalizeRelativeFilePath(relativePath);
+    if (
+      isProtectedMemoryFile(normalizedPath)
+      && options?.memoryOwnership === "agent_authored"
+      && options?.resetMemory !== true
+    ) {
+      continue;
+    }
     const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
     const existingStat = await statIfExists(absolutePath);
     if (existingStat?.isFile() && !options?.overwriteExisting) continue;
@@ -549,13 +615,20 @@ export function agentInstructionsService() {
     agent: AgentLike,
     input: {
       mode?: BundleMode;
+      bundleRole?: BundleRole;
+      rootPolicy?: RootPolicy;
+      memoryOwnership?: MemoryOwnership;
       rootPath?: string | null;
       entryFile?: string;
       clearLegacyPromptTemplate?: boolean;
+      resetMemory?: boolean;
     },
   ): Promise<{ bundle: AgentInstructionsBundle; adapterConfig: Record<string, unknown> }> {
     const state = await recoverManagedBundleState(agent, deriveBundleState(agent));
     const nextMode = input.mode ?? state.mode ?? "managed";
+    const nextBundleRole = input.bundleRole ?? state.bundleRole;
+    const nextRootPolicy = input.rootPolicy ?? state.rootPolicy;
+    const nextMemoryOwnership = input.memoryOwnership ?? state.memoryOwnership;
     const nextEntryFile = input.entryFile ? normalizeRelativeFilePath(input.entryFile) : state.entryFile;
     let nextRootPath: string;
 
@@ -578,16 +651,25 @@ export function agentInstructionsService() {
     const existingFiles = await listFilesRecursive(nextRootPath);
     const exported = await exportFiles(agent);
     if (existingFiles.length === 0) {
-      await writeBundleFiles(nextRootPath, exported.files);
+      await writeBundleFiles(nextRootPath, exported.files, {
+        memoryOwnership: nextMemoryOwnership,
+        resetMemory: input.resetMemory,
+      });
     }
     const refreshedFiles = existingFiles.length === 0 ? await listFilesRecursive(nextRootPath) : existingFiles;
     if (!refreshedFiles.includes(nextEntryFile)) {
       const nextEntryContent = exported.files[nextEntryFile] ?? exported.files[exported.entryFile] ?? "";
-      await writeBundleFiles(nextRootPath, { [nextEntryFile]: nextEntryContent });
+      await writeBundleFiles(nextRootPath, { [nextEntryFile]: nextEntryContent }, {
+        memoryOwnership: nextMemoryOwnership,
+        resetMemory: input.resetMemory,
+      });
     }
 
     const nextConfig = applyBundleConfig(state.config, {
       mode: nextMode,
+      bundleRole: nextBundleRole,
+      rootPolicy: nextRootPolicy,
+      memoryOwnership: nextMemoryOwnership,
       rootPath: nextRootPath,
       entryFile: nextEntryFile,
       clearLegacyPromptTemplate: input.clearLegacyPromptTemplate,
@@ -600,7 +682,7 @@ export function agentInstructionsService() {
     agent: AgentLike,
     relativePath: string,
     content: string,
-    options?: { clearLegacyPromptTemplate?: boolean },
+    options?: { clearLegacyPromptTemplate?: boolean; resetMemory?: boolean },
   ): Promise<{
     bundle: AgentInstructionsBundle;
     file: AgentInstructionsFileDetail;
@@ -621,6 +703,13 @@ export function agentInstructionsService() {
     }
 
     const prepared = await ensureWritableBundle(agent, options);
+    if (
+      isProtectedMemoryFile(relativePath)
+      && prepared.state.memoryOwnership === "agent_authored"
+      && options?.resetMemory !== true
+    ) {
+      throw unprocessable("MEMORY.md is agent-authored and requires resetMemory to overwrite");
+    }
     const absolutePath = resolvePathWithinRoot(prepared.state.rootPath!, relativePath);
     await fs.mkdir(path.dirname(absolutePath), { recursive: true });
     await fs.writeFile(absolutePath, content, "utf8");
@@ -645,6 +734,9 @@ export function agentInstructionsService() {
     const normalizedPath = normalizeRelativeFilePath(relativePath);
     if (normalizedPath === state.entryFile) {
       throw unprocessable("Cannot delete the bundle entry file");
+    }
+    if (isProtectedMemoryFile(normalizedPath) && state.memoryOwnership === "agent_authored") {
+      throw unprocessable("Cannot delete agent-authored MEMORY.md");
     }
     const absolutePath = resolvePathWithinRoot(state.rootPath, normalizedPath);
     await fs.rm(absolutePath, { force: true });
@@ -689,6 +781,10 @@ export function agentInstructionsService() {
       clearLegacyPromptTemplate?: boolean;
       replaceExisting?: boolean;
       entryFile?: string;
+      bundleRole?: BundleRole;
+      rootPolicy?: RootPolicy;
+      memoryOwnership?: MemoryOwnership;
+      resetMemory?: boolean;
     },
   ): Promise<{ bundle: AgentInstructionsBundle; adapterConfig: Record<string, unknown> }> {
     const rootPath = resolveManagedInstructionsRoot(agent);
@@ -704,6 +800,13 @@ export function agentInstructionsService() {
       content,
     ] as const);
     for (const [relativePath, content] of normalizedEntries) {
+      if (
+        isProtectedMemoryFile(relativePath)
+        && (options?.memoryOwnership ?? "agent_authored") === "agent_authored"
+        && options?.resetMemory !== true
+      ) {
+        continue;
+      }
       const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, content, "utf8");
@@ -714,6 +817,9 @@ export function agentInstructionsService() {
 
     const adapterConfig = applyBundleConfig(asRecord(agent.adapterConfig), {
       mode: "managed",
+      bundleRole: options?.bundleRole,
+      rootPolicy: options?.rootPolicy,
+      memoryOwnership: options?.memoryOwnership,
       rootPath,
       entryFile,
       clearLegacyPromptTemplate: options?.clearLegacyPromptTemplate,
@@ -728,6 +834,7 @@ export function agentInstructionsService() {
     options?: {
       clearLegacyPromptTemplate?: boolean;
       entryFile?: string;
+      resetMemory?: boolean;
     },
   ): Promise<{
     bundle: AgentInstructionsBundle;
@@ -746,6 +853,13 @@ export function agentInstructionsService() {
       const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
       const existing = await statIfExists(absolutePath);
       if (existing?.isFile()) continue;
+      if (
+        isProtectedMemoryFile(normalizedPath)
+        && prepared.state.memoryOwnership === "agent_authored"
+        && options?.resetMemory !== true
+      ) {
+        continue;
+      }
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, content, "utf8");
       createdFiles.push(normalizedPath);

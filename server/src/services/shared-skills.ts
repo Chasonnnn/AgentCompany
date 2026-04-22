@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { parseDocument } from "yaml";
 import {
   companySkills,
   heartbeatRuns,
@@ -13,7 +14,9 @@ import {
 } from "@paperclipai/db";
 import { normalizeAgentUrlKey } from "@paperclipai/shared";
 import type {
+  CompanySkillCompatibilityMetadata,
   CompanySkillFileInventoryEntry,
+  CompanySkillVerificationState,
   GlobalSkillCatalogItem,
   GlobalSkillCatalogSourceRoot,
   SharedSkill,
@@ -118,6 +121,33 @@ function digestString(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function normalizeVerificationState(value: unknown): CompanySkillVerificationState {
+  return value === "pending" || value === "verified" || value === "failed" ? value : "verified";
+}
+
+function emptyCompatibilityMetadata(): CompanySkillCompatibilityMetadata {
+  return {
+    paperclipApiRange: null,
+    minAdapterVersion: null,
+    requiredTools: [],
+    requiredCapabilities: [],
+  };
+}
+
+function readCompatibilityMetadata(value: unknown): CompanySkillCompatibilityMetadata | null {
+  if (!isPlainRecord(value)) return null;
+  return {
+    paperclipApiRange: asString(value.paperclipApiRange),
+    minAdapterVersion: asString(value.minAdapterVersion),
+    requiredTools: Array.isArray(value.requiredTools)
+      ? value.requiredTools.flatMap((entry) => asString(entry) ?? [])
+      : [],
+    requiredCapabilities: Array.isArray(value.requiredCapabilities)
+      ? value.requiredCapabilities.flatMap((entry) => asString(entry) ?? [])
+      : [],
+  };
+}
+
 function buildSharedSkillRuntimeName(key: string, slug: string) {
   if (key.startsWith("paperclipai/paperclip/")) return slug;
   return `${slug}--${hashValue(key)}`;
@@ -154,110 +184,18 @@ function deriveTrustLevel(fileInventory: CompanySkillFileInventoryEntry[]): Shar
   return "markdown_only";
 }
 
-type PreparedYamlLine = { indent: number; content: string };
-
-function parseYamlScalar(raw: string): unknown {
-  const trimmed = raw.trim();
-  if (!trimmed.length) return "";
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (trimmed === "null") return null;
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-  if (
-    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
-    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-}
-
-function prepareYamlLines(raw: string): PreparedYamlLine[] {
-  return raw
-    .split("\n")
-    .map((line) => line.replace(/\r/g, ""))
-    .map((line) => ({
-      indent: line.match(/^ */)?.[0].length ?? 0,
-      content: line.trimEnd(),
-    }))
-    .filter((line) => line.content.trim().length > 0 && !line.content.trimStart().startsWith("#"));
-}
-
-function parseYamlBlock(
-  lines: PreparedYamlLine[],
-  startIndex: number,
-  indentLevel: number,
-): { value: unknown; nextIndex: number } {
-  let index = startIndex;
-  if (index >= lines.length) return { value: {}, nextIndex: index };
-  if (lines[index]?.content.trimStart().startsWith("- ")) {
-    const values: unknown[] = [];
-    while (index < lines.length) {
-      const line = lines[index]!;
-      if (line.indent < indentLevel || !line.content.trimStart().startsWith("- ")) break;
-      const remainder = line.content.trimStart().slice(2).trim();
-      index += 1;
-      if (!remainder) {
-        const nested = parseYamlBlock(lines, index, indentLevel + 2);
-        values.push(nested.value);
-        index = nested.nextIndex;
-        continue;
-      }
-      const inlineObjectSeparator = remainder.indexOf(":");
-      if (
-        inlineObjectSeparator > 0
-        && !remainder.startsWith("\"")
-        && !remainder.startsWith("{")
-        && !remainder.startsWith("[")
-      ) {
-        const key = remainder.slice(0, inlineObjectSeparator).trim();
-        const rawValue = remainder.slice(inlineObjectSeparator + 1).trim();
-        const nextObject: Record<string, unknown> = { [key]: parseYamlScalar(rawValue) };
-        if (index < lines.length && lines[index]!.indent > indentLevel) {
-          const nested = parseYamlBlock(lines, index, indentLevel + 2);
-          if (isPlainRecord(nested.value)) Object.assign(nextObject, nested.value);
-          index = nested.nextIndex;
-        }
-        values.push(nextObject);
-        continue;
-      }
-      values.push(parseYamlScalar(remainder));
-    }
-    return { value: values, nextIndex: index };
-  }
-
-  const record: Record<string, unknown> = {};
-  while (index < lines.length) {
-    const line = lines[index]!;
-    if (line.indent < indentLevel) break;
-    if (line.indent !== indentLevel) {
-      index += 1;
-      continue;
-    }
-    const separatorIndex = line.content.indexOf(":");
-    if (separatorIndex <= 0) {
-      index += 1;
-      continue;
-    }
-    const key = line.content.slice(0, separatorIndex).trim();
-    const remainder = line.content.slice(separatorIndex + 1).trim();
-    index += 1;
-    if (!remainder) {
-      const nested = parseYamlBlock(lines, index, indentLevel + 2);
-      record[key] = nested.value;
-      index = nested.nextIndex;
-      continue;
-    }
-    record[key] = parseYamlScalar(remainder);
-  }
-  return { value: record, nextIndex: index };
-}
-
 function parseYamlFrontmatter(raw: string): Record<string, unknown> {
-  const prepared = prepareYamlLines(raw);
-  if (prepared.length === 0) return {};
-  const parsed = parseYamlBlock(prepared, 0, prepared[0]!.indent);
-  return isPlainRecord(parsed.value) ? parsed.value : {};
+  if (!raw.trim()) return {};
+  const document = parseDocument(raw, {
+    prettyErrors: false,
+    strict: true,
+    uniqueKeys: true,
+  });
+  if (document.errors.length > 0) {
+    throw unprocessable(`Invalid shared skill frontmatter: ${document.errors[0]?.message ?? "failed to parse YAML"}`);
+  }
+  const parsed = document.toJSON();
+  return isPlainRecord(parsed) ? parsed : {};
 }
 
 function parseFrontmatterMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
@@ -427,6 +365,7 @@ function serializeFileInventory(fileInventory: CompanySkillFileInventoryEntry[])
   return fileInventory.map((entry) => ({
     path: entry.path,
     kind: entry.kind,
+    sha256: entry.sha256 ?? null,
   }));
 }
 
@@ -444,6 +383,7 @@ function toSharedSkill(row: SharedSkillRow): SharedSkill {
         return [{
           path: String(entry.path ?? ""),
           kind: String(entry.kind ?? "other") as CompanySkillFileInventoryEntry["kind"],
+          sha256: asString(entry.sha256),
         }];
       })
       : [],
@@ -904,6 +844,11 @@ export function sharedSkillService(db: Db) {
         sourcePath: skill.sourcePath,
         trustLevel: skill.trustLevel,
         compatibility: skill.compatibility,
+        manifestVersion: 1,
+        identityDigest: digestString(skill.key),
+        contentDigest: skill.mirrorDigest ?? digestString(skill.markdown),
+        verificationState: "verified",
+        compatibilityMetadata: emptyCompatibilityMetadata(),
         fileInventory: skill.fileInventory,
         installedSkillId: installed?.id ?? null,
         installedSkillKey: installed?.key ?? null,
@@ -1145,7 +1090,7 @@ export function sharedSkillService(db: Db) {
       metadata: sharedSkill.metadata,
       createdAt: sharedSkill.createdAt,
       updatedAt: sharedSkill.updatedAt,
-    } as SharedSkillRow);
+    } as unknown as SharedSkillRow);
     const sourceStillExists = (await statPath(path.join(sharedSkill.sourcePath, "SKILL.md")))?.isFile() ?? false;
     const sourceDigest = sourceStillExists
       ? await digestDirectory(sharedSkill.sourcePath, sharedSkill.fileInventory).catch(() => null)
