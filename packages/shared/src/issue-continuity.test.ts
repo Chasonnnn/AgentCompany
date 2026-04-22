@@ -136,6 +136,40 @@ describe("issue continuity schemas", () => {
         context: null,
         runbook: null,
       },
+      evidenceManifest: {
+        attachments: [
+          {
+            attachmentId: "88888888-8888-4888-8888-888888888888",
+            assetId: "99999999-9999-4999-8999-999999999999",
+            issueCommentId: null,
+            originalFilename: "evidence.txt",
+            contentType: "text/plain",
+            byteSize: 12,
+            sha256: "sha256-evidence",
+            scanStatus: "clean",
+            contentPath: "/api/attachments/88888888-8888-4888-8888-888888888888/content",
+            createdAt: "2026-04-14T12:10:00.000Z",
+          },
+        ],
+        recentComments: [
+          {
+            commentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            authorAgentId: "77777777-7777-4777-8777-777777777777",
+            authorUserId: null,
+            createdAt: "2026-04-14T12:11:00.000Z",
+            bodyExcerpt: "Need board confirmation before rollout.",
+          },
+        ],
+        executionWorkspace: {
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          status: "active",
+          cwd: "/tmp/paperclip/worktree",
+          branchName: "feature/continuity",
+          cleanupState: "active",
+          reconcileState: "synced",
+          lastReconciledAt: "2026-04-14T12:12:00.000Z",
+        },
+      },
       decisionQuestions: [
         {
           id: "66666666-6666-4666-8666-666666666666",

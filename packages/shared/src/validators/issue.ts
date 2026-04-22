@@ -231,6 +231,40 @@ const issueContinuityDocumentSnapshotSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+const issueEvidenceManifestAttachmentSchema = z.object({
+  attachmentId: z.string().uuid(),
+  assetId: z.string().uuid(),
+  issueCommentId: z.string().uuid().nullable(),
+  originalFilename: z.string().nullable(),
+  contentType: z.string().min(1),
+  sha256: z.string().min(1),
+  scanStatus: z.enum(["pending_scan", "clean", "quarantined", "scan_failed"]),
+  contentPath: z.string().min(1),
+  createdAt: z.string().datetime(),
+});
+
+const issueEvidenceManifestCommentSchema = z.object({
+  commentId: z.string().uuid(),
+  authorAgentId: z.string().uuid().nullable(),
+  authorUserId: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  bodyExcerpt: z.string(),
+});
+
+const issueEvidenceManifestSchema = z.object({
+  attachments: z.array(issueEvidenceManifestAttachmentSchema).default([]),
+  recentComments: z.array(issueEvidenceManifestCommentSchema).default([]),
+  executionWorkspace: z.object({
+    id: z.string().uuid(),
+    status: z.string().min(1),
+    cwd: z.string().nullable(),
+    branchName: z.string().nullable(),
+    cleanupState: z.string().nullable().optional(),
+    reconcileState: z.string().nullable().optional(),
+    lastReconciledAt: z.string().datetime().nullable().optional(),
+  }).nullable(),
+});
+
 export const issueContinuityBundleSchema = z.object({
   issueId: z.string().uuid(),
   generatedAt: z.string().datetime(),
@@ -253,6 +287,7 @@ export const issueContinuityBundleSchema = z.object({
     context: issueContinuityDocumentSnapshotSchema.nullable(),
     runbook: issueContinuityDocumentSnapshotSchema.nullable(),
   }),
+  evidenceManifest: issueEvidenceManifestSchema,
   referencedRevisionIds: z.record(z.string(), z.string().uuid().nullable()),
 });
 

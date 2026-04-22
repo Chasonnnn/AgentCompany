@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SHARED_SERVICE_ENGAGEMENT_STATUSES } from "../constants.js";
+import { ADVISOR_KINDS, SHARED_SERVICE_ENGAGEMENT_STATUSES } from "../constants.js";
 import type {
   SharedServiceEngagement,
   SharedServiceEngagementAssignment,
@@ -36,6 +36,8 @@ export const sharedServiceEngagementSchema = z.object({
   approvedAt: z.coerce.date().nullable(),
   closedAt: z.coerce.date().nullable(),
   outcomeSummary: z.string().nullable(),
+  advisorKind: z.enum(ADVISOR_KINDS).nullable().optional(),
+  advisorEnabled: z.boolean().optional(),
   metadata: z.record(z.unknown()).nullable(),
   assignments: z.array(sharedServiceEngagementAssignmentSchema),
   createdAt: z.coerce.date(),
@@ -48,6 +50,8 @@ export const createSharedServiceEngagementSchema = z.object({
   serviceAreaLabel: z.string().trim().min(1).optional().nullable(),
   title: z.string().trim().min(1),
   summary: z.string().trim().min(1),
+  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
+  advisorEnabled: z.boolean().optional().default(false),
   assignedAgentIds: z.array(z.string().uuid()).optional(),
   metadata: z.record(z.unknown()).optional().nullable(),
 }).strict() satisfies z.ZodType<SharedServiceEngagementCreateRequest>;
@@ -57,6 +61,8 @@ export const updateSharedServiceEngagementSchema = z.object({
   serviceAreaLabel: z.string().trim().min(1).optional().nullable(),
   title: z.string().trim().min(1).optional(),
   summary: z.string().trim().min(1).optional(),
+  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
+  advisorEnabled: z.boolean().optional(),
   assignedAgentIds: z.array(z.string().uuid()).optional(),
   outcomeSummary: z.string().optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),

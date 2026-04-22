@@ -25,11 +25,14 @@ export const agentSkillSyncModeSchema = z.enum([
 
 export const agentSkillEntrySchema = z.object({
   key: z.string().min(1),
+  companySkillId: z.string().uuid().nullable().optional(),
   runtimeName: z.string().min(1).nullable(),
   desired: z.boolean(),
   managed: z.boolean(),
   required: z.boolean().optional(),
   requiredReason: z.string().nullable().optional(),
+  trustLevel: z.enum(["markdown_only", "assets", "scripts_executables"]).nullable().optional(),
+  compatibility: z.enum(["compatible", "unknown", "invalid"]).nullable().optional(),
   state: agentSkillStateSchema,
   origin: agentSkillOriginSchema.optional(),
   originLabel: z.string().nullable().optional(),
@@ -46,12 +49,16 @@ export const agentSkillSnapshotSchema = z.object({
   mode: agentSkillSyncModeSchema,
   canManage: z.boolean().optional(),
   desiredSkills: z.array(z.string().min(1)),
+  desiredSkillIds: z.array(z.string().uuid()).optional(),
   entries: z.array(agentSkillEntrySchema),
   warnings: z.array(z.string()),
 });
 
 export const agentSkillSyncSchema = z.object({
-  desiredSkills: z.array(z.string().min(1)),
+  desiredSkills: z.array(z.string().min(1)).optional(),
+  desiredSkillIds: z.array(z.string().uuid()).optional(),
+}).refine((value) => Array.isArray(value.desiredSkillIds) || Array.isArray(value.desiredSkills), {
+  message: "desiredSkillIds or desiredSkills is required",
 });
 
 export type AgentSkillSync = z.infer<typeof agentSkillSyncSchema>;

@@ -3,6 +3,7 @@ import { z } from "zod";
 export const companySkillSourceTypeSchema = z.enum(["local_path", "github", "url", "catalog", "skills_sh", "shared_mirror"]);
 export const companySkillTrustLevelSchema = z.enum(["markdown_only", "assets", "scripts_executables"]);
 export const companySkillCompatibilitySchema = z.enum(["compatible", "unknown", "invalid"]);
+export const companySkillVerificationStateSchema = z.enum(["pending", "verified", "failed"]);
 export const companySkillSourceBadgeSchema = z.enum(["paperclip", "github", "local", "url", "catalog", "skills_sh", "shared_mirror"]);
 export const globalSkillCatalogSourceRootSchema = z.enum(["codex", "claude", "agents"]);
 export const companySkillCoverageStatusSchema = z.enum([
@@ -15,6 +16,14 @@ export const companySkillCoverageStatusSchema = z.enum([
 export const companySkillFileInventoryEntrySchema = z.object({
   path: z.string().min(1),
   kind: z.enum(["skill", "markdown", "reference", "script", "asset", "other"]),
+  sha256: z.string().nullable().optional(),
+});
+
+export const companySkillCompatibilityMetadataSchema = z.object({
+  paperclipApiRange: z.string().nullable(),
+  minAdapterVersion: z.string().nullable(),
+  requiredTools: z.array(z.string().min(1)).default([]),
+  requiredCapabilities: z.array(z.string().min(1)).default([]),
 });
 
 export const companySkillSchema = z.object({
@@ -31,6 +40,12 @@ export const companySkillSchema = z.object({
   sourceRef: z.string().nullable(),
   trustLevel: companySkillTrustLevelSchema,
   compatibility: companySkillCompatibilitySchema,
+  manifestVersion: z.number().int().positive(),
+  identityDigest: z.string().min(1),
+  contentDigest: z.string().min(1),
+  sourceVerifiedAt: z.coerce.date().nullable(),
+  verificationState: companySkillVerificationStateSchema,
+  compatibilityMetadata: companySkillCompatibilityMetadataSchema.nullable(),
   fileInventory: z.array(companySkillFileInventoryEntrySchema).default([]),
   metadata: z.record(z.unknown()).nullable(),
   createdAt: z.coerce.date(),
@@ -55,6 +70,11 @@ export const globalSkillCatalogItemSchema = z.object({
   sourcePath: z.string().min(1),
   trustLevel: companySkillTrustLevelSchema,
   compatibility: companySkillCompatibilitySchema,
+  manifestVersion: z.number().int().positive(),
+  identityDigest: z.string().min(1),
+  contentDigest: z.string().min(1),
+  verificationState: companySkillVerificationStateSchema,
+  compatibilityMetadata: companySkillCompatibilityMetadataSchema.nullable(),
   fileInventory: z.array(companySkillFileInventoryEntrySchema).default([]),
   installedSkillId: z.string().uuid().nullable(),
   installedSkillKey: z.string().nullable(),

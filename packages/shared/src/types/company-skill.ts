@@ -6,6 +6,8 @@ export type CompanySkillTrustLevel = "markdown_only" | "assets" | "scripts_execu
 
 export type CompanySkillCompatibility = "compatible" | "unknown" | "invalid";
 
+export type CompanySkillVerificationState = "pending" | "verified" | "failed";
+
 export type CompanySkillSourceBadge = "paperclip" | "github" | "local" | "url" | "catalog" | "skills_sh" | "shared_mirror";
 
 export type GlobalSkillCatalogSourceRoot = "codex" | "claude" | "agents";
@@ -20,6 +22,14 @@ export type CompanySkillCoverageStatus =
 export interface CompanySkillFileInventoryEntry {
   path: string;
   kind: "skill" | "markdown" | "reference" | "script" | "asset" | "other";
+  sha256?: string | null;
+}
+
+export interface CompanySkillCompatibilityMetadata {
+  paperclipApiRange: string | null;
+  minAdapterVersion: string | null;
+  requiredTools: string[];
+  requiredCapabilities: string[];
 }
 
 export interface CompanySkill {
@@ -36,6 +46,12 @@ export interface CompanySkill {
   sourceRef: string | null;
   trustLevel: CompanySkillTrustLevel;
   compatibility: CompanySkillCompatibility;
+  manifestVersion: number;
+  identityDigest: string;
+  contentDigest: string;
+  sourceVerifiedAt: Date | null;
+  verificationState: CompanySkillVerificationState;
+  compatibilityMetadata: CompanySkillCompatibilityMetadata | null;
   fileInventory: CompanySkillFileInventoryEntry[];
   metadata: Record<string, unknown> | null;
   createdAt: Date;
@@ -55,6 +71,12 @@ export interface CompanySkillListItem {
   sourceRef: string | null;
   trustLevel: CompanySkillTrustLevel;
   compatibility: CompanySkillCompatibility;
+  manifestVersion: number;
+  identityDigest: string;
+  contentDigest: string;
+  sourceVerifiedAt: Date | null;
+  verificationState: CompanySkillVerificationState;
+  compatibilityMetadata: CompanySkillCompatibilityMetadata | null;
   fileInventory: CompanySkillFileInventoryEntry[];
   createdAt: Date;
   updatedAt: Date;
@@ -75,6 +97,11 @@ export interface GlobalSkillCatalogItem {
   sourcePath: string;
   trustLevel: CompanySkillTrustLevel;
   compatibility: CompanySkillCompatibility;
+  manifestVersion: number;
+  identityDigest: string;
+  contentDigest: string;
+  verificationState: CompanySkillVerificationState;
+  compatibilityMetadata: CompanySkillCompatibilityMetadata | null;
   fileInventory: CompanySkillFileInventoryEntry[];
   installedSkillId: string | null;
   installedSkillKey: string | null;

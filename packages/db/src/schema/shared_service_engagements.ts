@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { SharedServiceEngagementStatus } from "@paperclipai/shared";
 import { companies } from "./companies.js";
 import { projects } from "./projects.js";
@@ -15,6 +15,8 @@ export const sharedServiceEngagements = pgTable(
     title: text("title").notNull(),
     summary: text("summary").notNull(),
     status: text("status").$type<SharedServiceEngagementStatus>().notNull().default("requested"),
+    advisorKind: text("advisor_kind"),
+    advisorEnabled: boolean("advisor_enabled").notNull().default(false),
     requestedByAgentId: uuid("requested_by_agent_id").references(() => agents.id),
     requestedByUserId: text("requested_by_user_id"),
     approvedByAgentId: uuid("approved_by_agent_id").references(() => agents.id),

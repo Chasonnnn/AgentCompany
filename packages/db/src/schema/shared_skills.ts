@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, jsonb, index, uniqueIndex, integer } from "drizzle-orm/pg-core";
 
 export const sharedSkills = pgTable(
   "shared_skills",
@@ -12,6 +12,12 @@ export const sharedSkills = pgTable(
     fileInventory: jsonb("file_inventory").$type<Array<Record<string, unknown>>>().notNull().default([]),
     trustLevel: text("trust_level").notNull().default("markdown_only"),
     compatibility: text("compatibility").notNull().default("compatible"),
+    manifestVersion: integer("manifest_version").notNull().default(1),
+    identityDigest: text("identity_digest").notNull().default(""),
+    contentDigest: text("content_digest").notNull().default(""),
+    sourceVerifiedAt: timestamp("source_verified_at", { withTimezone: true }),
+    verificationState: text("verification_state").notNull().default("pending"),
+    compatibilityMetadata: jsonb("compatibility_metadata").$type<Record<string, unknown> | null>(),
     sourceRoot: text("source_root").notNull(),
     sourcePath: text("source_path").notNull(),
     sourceDigest: text("source_digest"),

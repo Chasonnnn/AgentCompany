@@ -5,7 +5,9 @@ import {
   WEEKLY_RETENTION_PRESETS,
   MONTHLY_RETENTION_PRESETS,
   DEFAULT_BACKUP_RETENTION,
+  DEFAULT_ENTERPRISE_POLICY,
 } from "../types/instance.js";
+import { companySkillTrustLevelSchema } from "./company-skill.js";
 import { feedbackDataSharingPreferenceSchema } from "./feedback.js";
 
 function presetSchema<T extends readonly number[]>(presets: T, label: string) {
@@ -21,6 +23,25 @@ export const backupRetentionPolicySchema = z.object({
   monthlyMonths: presetSchema(MONTHLY_RETENTION_PRESETS, "monthlyMonths").default(DEFAULT_BACKUP_RETENTION.monthlyMonths),
 });
 
+export const enterprisePolicySchema = z.object({
+  allowedExternalInstructionRoots: z.array(z.string().trim().min(1)).default(
+    DEFAULT_ENTERPRISE_POLICY.allowedExternalInstructionRoots,
+  ),
+  allowedSkillSourceHosts: z.array(z.string().trim().min(1)).default(
+    DEFAULT_ENTERPRISE_POLICY.allowedSkillSourceHosts,
+  ),
+  maxSkillTrustLevel: companySkillTrustLevelSchema.default(DEFAULT_ENTERPRISE_POLICY.maxSkillTrustLevel),
+  enforceAttachmentScanning: z.boolean().default(DEFAULT_ENTERPRISE_POLICY.enforceAttachmentScanning),
+  defaultAttachmentRetentionClass: z.enum(["standard", "evidence", "company_brand", "temporary"]).default(
+    DEFAULT_ENTERPRISE_POLICY.defaultAttachmentRetentionClass,
+  ),
+  unsafeHostBehavior: z.enum(["deny", "allow_local_trusted"]).default(
+    DEFAULT_ENTERPRISE_POLICY.unsafeHostBehavior,
+  ),
+  advisorsEnabled: z.boolean().default(DEFAULT_ENTERPRISE_POLICY.advisorsEnabled),
+  disableSharedHostSkills: z.boolean().default(DEFAULT_ENTERPRISE_POLICY.disableSharedHostSkills),
+}).strict();
+
 export const instanceGeneralSettingsSchema = z.object({
   censorUsernameInLogs: z.boolean().default(false),
   keyboardShortcuts: z.boolean().default(false),
@@ -28,6 +49,7 @@ export const instanceGeneralSettingsSchema = z.object({
     DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
   ),
   backupRetention: backupRetentionPolicySchema.default(DEFAULT_BACKUP_RETENTION),
+  enterprisePolicy: enterprisePolicySchema.default(DEFAULT_ENTERPRISE_POLICY),
 }).strict();
 
 export const patchInstanceGeneralSettingsSchema = instanceGeneralSettingsSchema.partial();

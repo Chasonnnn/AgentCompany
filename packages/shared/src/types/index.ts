@@ -26,12 +26,26 @@ export type {
   FeedbackTraceBundleFile,
   FeedbackTraceBundle,
 } from "./feedback.js";
-export type { InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings, BackupRetentionPolicy } from "./instance.js";
-export { DAILY_RETENTION_PRESETS, WEEKLY_RETENTION_PRESETS, MONTHLY_RETENTION_PRESETS, DEFAULT_BACKUP_RETENTION } from "./instance.js";
+export type {
+  InstanceExperimentalSettings,
+  InstanceGeneralSettings,
+  InstanceSettings,
+  BackupRetentionPolicy,
+  EnterprisePolicy,
+  EnterpriseUnsafeHostBehavior,
+} from "./instance.js";
+export {
+  DAILY_RETENTION_PRESETS,
+  WEEKLY_RETENTION_PRESETS,
+  MONTHLY_RETENTION_PRESETS,
+  DEFAULT_BACKUP_RETENTION,
+  DEFAULT_ENTERPRISE_POLICY,
+} from "./instance.js";
 export type {
   CompanySkillSourceType,
   CompanySkillTrustLevel,
   CompanySkillCompatibility,
+  CompanySkillCompatibilityMetadata,
   CompanySkillSourceBadge,
   GlobalSkillCatalogSourceRoot,
   CompanySkillFileInventoryEntry,
@@ -71,6 +85,7 @@ export type {
   CompanySkillCreateRequest,
   CompanySkillFileDetail,
   CompanySkillFileUpdateRequest,
+  CompanySkillVerificationState,
 } from "./company-skill.js";
 export type {
   SharedSkillMirrorState,
@@ -160,6 +175,7 @@ export type {
   SharedServiceEngagementAssignment,
   SharedServiceEngagementCreateRequest,
   SharedServiceEngagementUpdateRequest,
+  AdvisorEngagementTemplate,
 } from "./shared-service-engagement.js";
 export type { AssetImage } from "./asset.js";
 export type {
@@ -286,8 +302,14 @@ export type {
   IssueAncestorProject,
   IssueAncestorGoal,
   IssueAttachment,
+  IssueOperatorWaitTarget,
+  IssueEvidenceManifest,
+  IssueEvidenceManifestAttachment,
+  IssueEvidenceManifestComment,
+  IssueEvidenceManifestWorkspace,
   IssueLabel,
 } from "./issue.js";
+export type { IssueOperatorState } from "../constants.js";
 export type { Goal } from "./goal.js";
 export type {
   Approval,
@@ -326,6 +348,7 @@ export type {
   RoutineRunSummary,
   RoutineExecutionIssueOrigin,
   RoutineListItem,
+  AdvisorRoutineTemplate,
 } from "./routine.js";
 export type { CostEvent, CostSummary, CostByAgent, CostByProviderModel, CostByBiller, CostByAgentModel, CostWindowSpendRow, CostByProject } from "./cost.js";
 export type { FinanceEvent, FinanceSummary, FinanceByBiller, FinanceByKind } from "./finance.js";

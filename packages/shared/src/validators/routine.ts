@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  ADVISOR_KINDS,
   ISSUE_PRIORITIES,
   ROUTINE_CATCH_UP_POLICIES,
   ROUTINE_CONCURRENCY_POLICIES,
@@ -56,6 +57,8 @@ export const createRoutineSchema = z.object({
   assigneeAgentId: z.string().uuid().optional().nullable(),
   priority: z.enum(ISSUE_PRIORITIES).optional().default("medium"),
   status: z.enum(ROUTINE_STATUSES).optional().default("active"),
+  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
+  advisorEnabled: z.boolean().optional().default(false),
   concurrencyPolicy: z.enum(ROUTINE_CONCURRENCY_POLICIES).optional().default("coalesce_if_active"),
   catchUpPolicy: z.enum(ROUTINE_CATCH_UP_POLICIES).optional().default("skip_missed"),
   variables: z.array(routineVariableSchema).optional().default([]),

@@ -1,4 +1,5 @@
 import type { IssueOriginKind, RoutineVariableType } from "../constants.js";
+import type { AdvisorKind } from "../constants.js";
 
 export interface RoutineProjectSummary {
   id: string;
@@ -50,6 +51,8 @@ export interface Routine {
   concurrencyPolicy: string;
   catchUpPolicy: string;
   variables: RoutineVariable[];
+  advisorKind?: AdvisorKind | null;
+  advisorEnabled?: boolean;
   createdByAgentId: string | null;
   createdByUserId: string | null;
   updatedByAgentId: string | null;
@@ -133,4 +136,12 @@ export interface RoutineListItem extends Routine {
   triggers: Pick<RoutineTrigger, "id" | "kind" | "label" | "enabled" | "cronExpression" | "timezone" | "nextRunAt" | "lastFiredAt" | "lastResult">[];
   lastRun: RoutineRunSummary | null;
   activeIssue: RoutineIssueSummary | null;
+}
+
+export interface AdvisorRoutineTemplate {
+  advisorKind: AdvisorKind;
+  title: string;
+  description: string;
+  disabledByDefault: boolean;
+  variables: RoutineVariable[];
 }

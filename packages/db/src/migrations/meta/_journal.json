@@ -498,6 +498,13 @@
       "when": 1776835138795,
       "tag": "0070_flimsy_senator_kelly",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1776879792937,
+      "tag": "0071_bitter_doctor_octopus",
+      "breakpoints": true
     }
   ]
 }

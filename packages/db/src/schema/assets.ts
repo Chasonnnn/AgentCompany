@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, timestamp, index, uniqueIndex, boolean } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { agents } from "./agents.js";
 
@@ -15,6 +15,15 @@ export const assets = pgTable(
     originalFilename: text("original_filename"),
     createdByAgentId: uuid("created_by_agent_id").references(() => agents.id),
     createdByUserId: text("created_by_user_id"),
+    scanStatus: text("scan_status").notNull().default("pending_scan"),
+    scanProvider: text("scan_provider"),
+    scanCompletedAt: timestamp("scan_completed_at", { withTimezone: true }),
+    quarantinedAt: timestamp("quarantined_at", { withTimezone: true }),
+    quarantineReason: text("quarantine_reason"),
+    retentionClass: text("retention_class").notNull().default("evidence"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    legalHold: boolean("legal_hold").notNull().default(false),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

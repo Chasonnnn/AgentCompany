@@ -123,6 +123,15 @@ export const AGENT_EXECUTION_MODELS = [
 ] as const;
 export type AgentExecutionModel = (typeof AGENT_EXECUTION_MODELS)[number];
 
+export const AGENT_INSTRUCTIONS_BUNDLE_ROLES = ["default", "manager", "ceo"] as const;
+export type AgentInstructionsBundleRole = (typeof AGENT_INSTRUCTIONS_BUNDLE_ROLES)[number];
+
+export const AGENT_INSTRUCTIONS_ROOT_POLICIES = ["managed_only", "allowlisted_external"] as const;
+export type AgentInstructionsRootPolicy = (typeof AGENT_INSTRUCTIONS_ROOT_POLICIES)[number];
+
+export const AGENT_MEMORY_OWNERSHIP_MODES = ["agent_authored", "bundle_managed"] as const;
+export type AgentMemoryOwnershipMode = (typeof AGENT_MEMORY_OWNERSHIP_MODES)[number];
+
 export const AGENT_TEMPLATE_LIFECYCLE_STATUSES = ["active", "legacy"] as const;
 export type AgentTemplateLifecycleStatus = (typeof AGENT_TEMPLATE_LIFECYCLE_STATUSES)[number];
 
@@ -213,6 +222,19 @@ export const ISSUE_STATUSES = [
 ] as const;
 export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 
+export const ISSUE_OPERATOR_STATES = [
+  "ready",
+  "running",
+  "queued_followup",
+  "decision_blocked",
+  "dependency_blocked",
+  "continuity_blocked",
+  "budget_blocked",
+  "review_waiting",
+  "archived",
+] as const;
+export type IssueOperatorState = (typeof ISSUE_OPERATOR_STATES)[number];
+
 export const INBOX_MINE_ISSUE_STATUSES = [
   "backlog",
   "todo",
@@ -279,6 +301,20 @@ export type PortfolioClusterStatus = (typeof PORTFOLIO_CLUSTER_STATUSES)[number]
 
 export const SHARED_SERVICE_ENGAGEMENT_STATUSES = ["requested", "approved", "closed"] as const;
 export type SharedServiceEngagementStatus = (typeof SHARED_SERVICE_ENGAGEMENT_STATUSES)[number];
+
+export const ADVISOR_KINDS = [
+  "security_audit",
+  "continuity_audit",
+  "instruction_drift",
+  "skill_review",
+  "skill_janitor",
+  "budget_analyst",
+  "evidence_librarian",
+  "workspace_janitor",
+  "adapter_qa",
+  "conversation_qa",
+] as const;
+export type AdvisorKind = (typeof ADVISOR_KINDS)[number];
 
 export const ROUTINE_STATUSES = ["active", "paused", "archived"] as const;
 export type RoutineStatus = (typeof ROUTINE_STATUSES)[number];
@@ -447,6 +483,9 @@ export const BILLING_TYPES = [
 ] as const;
 export type BillingType = (typeof BILLING_TYPES)[number];
 
+export const COST_RETRY_DISPOSITIONS = ["charge_full", "non_billable_retry"] as const;
+export type CostRetryDisposition = (typeof COST_RETRY_DISPOSITIONS)[number];
+
 export const FINANCE_EVENT_KINDS = [
   "inference_charge",
   "platform_fee",
@@ -504,6 +543,9 @@ export const BUDGET_INCIDENT_RESOLUTION_ACTIONS = [
 ] as const;
 export type BudgetIncidentResolutionAction = (typeof BUDGET_INCIDENT_RESOLUTION_ACTIONS)[number];
 
+export const BUDGET_RESERVATION_STATUSES = ["reserved", "reconciled", "released", "expired"] as const;
+export type BudgetReservationStatus = (typeof BUDGET_RESERVATION_STATUSES)[number];
+
 export const HEARTBEAT_INVOCATION_SOURCES = [
   "timer",
   "assignment",
@@ -537,6 +579,15 @@ export const HEARTBEAT_RUN_STATUSES = [
   "timed_out",
 ] as const;
 export type HeartbeatRunStatus = (typeof HEARTBEAT_RUN_STATUSES)[number];
+
+export const COMPANY_SKILL_VERIFICATION_STATES = ["pending", "verified", "failed"] as const;
+export type CompanySkillVerificationState = (typeof COMPANY_SKILL_VERIFICATION_STATES)[number];
+
+export const ASSET_SCAN_STATUSES = ["pending_scan", "clean", "quarantined", "scan_failed"] as const;
+export type AssetScanStatus = (typeof ASSET_SCAN_STATUSES)[number];
+
+export const ASSET_RETENTION_CLASSES = ["standard", "evidence", "company_brand", "temporary"] as const;
+export type AssetRetentionClass = (typeof ASSET_RETENTION_CLASSES)[number];
 
 export const RUN_LIVENESS_STATES = [
   "completed",

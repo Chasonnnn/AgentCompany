@@ -31,6 +31,20 @@ export type ExecutionWorkspaceStatus =
   | "archived"
   | "cleanup_failed";
 
+export type ExecutionWorkspaceCleanupState =
+  | "idle"
+  | "pending"
+  | "running"
+  | "failed"
+  | "completed";
+
+export type ExecutionWorkspaceReconcileState =
+  | "pending"
+  | "clean"
+  | "drift_detected"
+  | "reconciled"
+  | "failed";
+
 export type ExecutionWorkspaceCloseReadinessState =
   | "ready"
   | "ready_with_warnings"
@@ -154,6 +168,12 @@ export interface ExecutionWorkspace {
   closedAt: Date | null;
   cleanupEligibleAt: Date | null;
   cleanupReason: string | null;
+  cleanupState: ExecutionWorkspaceCleanupState;
+  cleanupAttemptCount: number;
+  lastCleanupError: string | null;
+  nextCleanupAttemptAt: Date | null;
+  reconcileState: ExecutionWorkspaceReconcileState;
+  lastReconciledAt: Date | null;
   config: ExecutionWorkspaceConfig | null;
   metadata: Record<string, unknown> | null;
   runtimeServices?: WorkspaceRuntimeService[];

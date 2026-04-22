@@ -1,4 +1,6 @@
 import type { FeedbackDataSharingPreference } from "./feedback.js";
+import type { CompanySkillTrustLevel } from "./company-skill.js";
+import type { AssetRetentionClass } from "../constants.js";
 
 export const DAILY_RETENTION_PRESETS = [3, 7, 14] as const;
 export const WEEKLY_RETENTION_PRESETS = [1, 2, 4] as const;
@@ -16,11 +18,36 @@ export const DEFAULT_BACKUP_RETENTION: BackupRetentionPolicy = {
   monthlyMonths: 1,
 };
 
+export type EnterpriseUnsafeHostBehavior = "deny" | "allow_local_trusted";
+
+export interface EnterprisePolicy {
+  allowedExternalInstructionRoots: string[];
+  allowedSkillSourceHosts: string[];
+  maxSkillTrustLevel: CompanySkillTrustLevel;
+  enforceAttachmentScanning: boolean;
+  defaultAttachmentRetentionClass: AssetRetentionClass;
+  unsafeHostBehavior: EnterpriseUnsafeHostBehavior;
+  advisorsEnabled: boolean;
+  disableSharedHostSkills: boolean;
+}
+
+export const DEFAULT_ENTERPRISE_POLICY: EnterprisePolicy = {
+  allowedExternalInstructionRoots: [],
+  allowedSkillSourceHosts: [],
+  maxSkillTrustLevel: "markdown_only",
+  enforceAttachmentScanning: true,
+  defaultAttachmentRetentionClass: "evidence",
+  unsafeHostBehavior: "deny",
+  advisorsEnabled: false,
+  disableSharedHostSkills: true,
+};
+
 export interface InstanceGeneralSettings {
   censorUsernameInLogs: boolean;
   keyboardShortcuts: boolean;
   feedbackDataSharingPreference: FeedbackDataSharingPreference;
   backupRetention: BackupRetentionPolicy;
+  enterprisePolicy: EnterprisePolicy;
 }
 
 export interface InstanceExperimentalSettings {

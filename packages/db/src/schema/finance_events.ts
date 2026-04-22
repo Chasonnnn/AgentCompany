@@ -19,6 +19,7 @@ export const financeEvents = pgTable(
     heartbeatRunId: uuid("heartbeat_run_id").references(() => heartbeatRuns.id),
     costEventId: uuid("cost_event_id").references(() => costEvents.id),
     billingCode: text("billing_code"),
+    retryDisposition: text("retry_disposition").notNull().default("charge_full"),
     description: text("description"),
     eventKind: text("event_kind").notNull(),
     direction: text("direction").notNull().default("debit"),

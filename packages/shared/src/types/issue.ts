@@ -11,6 +11,7 @@ import type {
   IssueExecutionPolicyMode,
   IssueExecutionStageType,
   IssueExecutionStateStatus,
+  IssueOperatorState,
   IssueOriginKind,
   IssuePriority,
   IssueReferenceSourceKind,
@@ -315,6 +316,7 @@ export interface IssueContinuityBundle {
     context: IssueContinuityDocumentSnapshot | null;
     runbook: IssueContinuityDocumentSnapshot | null;
   };
+  evidenceManifest: IssueEvidenceManifest;
   referencedRevisionIds: Record<string, string | null>;
 }
 
@@ -442,6 +444,9 @@ export interface Issue {
   lastExternalCommentAt?: Date | null;
   lastActivityAt?: Date | null;
   isUnreadForMe?: boolean;
+  operatorState?: IssueOperatorState;
+  operatorReason?: string | null;
+  operatorWaitTargets?: IssueOperatorWaitTarget[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -471,7 +476,58 @@ export interface IssueAttachment {
   originalFilename: string | null;
   createdByAgentId: string | null;
   createdByUserId: string | null;
+  scanStatus: "pending_scan" | "clean" | "quarantined" | "scan_failed";
+  scanProvider: string | null;
+  scanCompletedAt: Date | null;
+  quarantinedAt: Date | null;
+  quarantineReason: string | null;
+  retentionClass: "standard" | "evidence" | "company_brand" | "temporary";
+  expiresAt: Date | null;
+  legalHold: boolean;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   contentPath: string;
+}
+
+export interface IssueOperatorWaitTarget {
+  type: "issue" | "approval" | "decision_question" | "run" | "budget_incident";
+  id: string;
+  label: string;
+}
+
+export interface IssueEvidenceManifestAttachment {
+  attachmentId: string;
+  assetId: string;
+  issueCommentId: string | null;
+  originalFilename: string | null;
+  contentType: string;
+  sha256: string;
+  scanStatus: "pending_scan" | "clean" | "quarantined" | "scan_failed";
+  contentPath: string;
+  createdAt: string;
+}
+
+export interface IssueEvidenceManifestComment {
+  commentId: string;
+  authorAgentId: string | null;
+  authorUserId: string | null;
+  createdAt: string;
+  bodyExcerpt: string;
+}
+
+export interface IssueEvidenceManifestWorkspace {
+  id: string;
+  status: string;
+  cwd: string | null;
+  branchName: string | null;
+  cleanupState?: string | null;
+  reconcileState?: string | null;
+  lastReconciledAt?: string | null;
+}
+
+export interface IssueEvidenceManifest {
+  attachments: IssueEvidenceManifestAttachment[];
+  recentComments: IssueEvidenceManifestComment[];
+  executionWorkspace: IssueEvidenceManifestWorkspace | null;
 }

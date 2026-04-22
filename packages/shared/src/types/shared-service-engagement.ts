@@ -1,4 +1,5 @@
 import type { SharedServiceEngagementStatus } from "../constants.js";
+import type { AdvisorKind } from "../constants.js";
 
 export interface SharedServiceEngagementAssignment {
   id: string;
@@ -27,6 +28,8 @@ export interface SharedServiceEngagement {
   approvedAt: Date | null;
   closedAt: Date | null;
   outcomeSummary: string | null;
+  advisorKind?: AdvisorKind | null;
+  advisorEnabled?: boolean;
   metadata: Record<string, unknown> | null;
   assignments: SharedServiceEngagementAssignment[];
   createdAt: Date;
@@ -39,6 +42,8 @@ export interface SharedServiceEngagementCreateRequest {
   serviceAreaLabel?: string | null;
   title: string;
   summary: string;
+  advisorKind?: AdvisorKind | null;
+  advisorEnabled?: boolean;
   assignedAgentIds?: string[];
   metadata?: Record<string, unknown> | null;
 }
@@ -48,7 +53,18 @@ export interface SharedServiceEngagementUpdateRequest {
   serviceAreaLabel?: string | null;
   title?: string;
   summary?: string;
+  advisorKind?: AdvisorKind | null;
+  advisorEnabled?: boolean;
   assignedAgentIds?: string[];
   outcomeSummary?: string | null;
   metadata?: Record<string, unknown> | null;
+}
+
+export interface AdvisorEngagementTemplate {
+  advisorKind: AdvisorKind;
+  serviceAreaKey: string;
+  serviceAreaLabel: string;
+  title: string;
+  summary: string;
+  disabledByDefault: boolean;
 }

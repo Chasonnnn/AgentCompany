@@ -22,6 +22,10 @@ export interface DashboardSummary {
     inProgress: number;
     blocked: number;
     done: number;
+    operatorStates: Array<{
+      state: string;
+      count: number;
+    }>;
   };
   costs: {
     monthSpendCents: number;
@@ -51,6 +55,11 @@ export interface DashboardSummary {
     returnedBranches: number;
     handoffPending: number;
   };
+  operatorStateReasons: Array<{
+    state: string;
+    reason: string;
+    count: number;
+  }>;
   budgets: {
     activeIncidents: number;
     pendingApprovals: number;

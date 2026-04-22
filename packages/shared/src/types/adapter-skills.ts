@@ -17,11 +17,14 @@ export type AgentSkillOrigin =
 
 export interface AgentSkillEntry {
   key: string;
+  companySkillId?: string | null;
   runtimeName: string | null;
   desired: boolean;
   managed: boolean;
   required?: boolean;
   requiredReason?: string | null;
+  trustLevel?: "markdown_only" | "assets" | "scripts_executables" | null;
+  compatibility?: "compatible" | "unknown" | "invalid" | null;
   state: AgentSkillState;
   origin?: AgentSkillOrigin;
   originLabel?: string | null;
@@ -38,10 +41,12 @@ export interface AgentSkillSnapshot {
   mode: AgentSkillSyncMode;
   canManage?: boolean;
   desiredSkills: string[];
+  desiredSkillIds?: string[];
   entries: AgentSkillEntry[];
   warnings: string[];
 }
 
 export interface AgentSkillSyncRequest {
-  desiredSkills: string[];
+  desiredSkills?: string[];
+  desiredSkillIds?: string[];
 }

@@ -1,3 +1,5 @@
+import type { AssetRetentionClass, AssetScanStatus } from "../constants.js";
+
 export interface AssetImage {
   assetId: string;
   companyId: string;
@@ -9,8 +11,16 @@ export interface AssetImage {
   originalFilename: string | null;
   createdByAgentId: string | null;
   createdByUserId: string | null;
+  scanStatus: AssetScanStatus;
+  scanProvider: string | null;
+  scanCompletedAt: Date | null;
+  quarantinedAt: Date | null;
+  quarantineReason: string | null;
+  retentionClass: AssetRetentionClass;
+  expiresAt: Date | null;
+  legalHold: boolean;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   contentPath: string;
 }
-

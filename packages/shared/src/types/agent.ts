@@ -3,6 +3,9 @@ import type {
   AgentCapabilityProfileKey,
   AgentDepartmentKey,
   AgentExecutionModel,
+  AgentInstructionsBundleRole,
+  AgentInstructionsRootPolicy,
+  AgentMemoryOwnershipMode,
   AgentNavigationLayout,
   AgentOperatingClass,
   AgentOrgLevel,
@@ -48,11 +51,15 @@ export interface AgentInstructionsBundle {
   agentId: string;
   companyId: string;
   mode: AgentInstructionsBundleMode | null;
+  bundleRole: AgentInstructionsBundleRole;
+  rootPolicy: AgentInstructionsRootPolicy;
+  memoryOwnership: AgentMemoryOwnershipMode;
   rootPath: string | null;
   managedRootPath: string;
   entryFile: string;
   resolvedEntryPath: string | null;
   editable: boolean;
+  externalRootAllowed: boolean;
   warnings: string[];
   legacyPromptTemplateActive: boolean;
   legacyBootstrapPromptTemplateActive: boolean;

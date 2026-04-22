@@ -67,13 +67,20 @@ export const agentPermissionsSchema = z.object({
 });
 
 export const agentInstructionsBundleModeSchema = z.enum(["managed", "external"]);
+export const agentInstructionsBundleRoleSchema = z.enum(["default", "manager", "ceo"]);
+export const agentInstructionsRootPolicySchema = z.enum(["managed_only", "allowlisted_external"]);
+export const agentMemoryOwnershipModeSchema = z.enum(["agent_authored", "bundle_managed"]);
 
 export const updateAgentInstructionsBundleSchema = z.object({
   mode: agentInstructionsBundleModeSchema.optional(),
+  bundleRole: agentInstructionsBundleRoleSchema.optional(),
+  rootPolicy: agentInstructionsRootPolicySchema.optional(),
+  memoryOwnership: agentMemoryOwnershipModeSchema.optional(),
   rootPath: z.string().trim().min(1).nullable().optional(),
   entryFile: z.string().trim().min(1).optional(),
   clearLegacyPromptTemplate: z.boolean().optional().default(false),
-});
+  resetMemory: z.boolean().optional().default(false),
+}).strict();
 
 export type UpdateAgentInstructionsBundle = z.infer<typeof updateAgentInstructionsBundleSchema>;
 
@@ -81,7 +88,8 @@ export const upsertAgentInstructionsFileSchema = z.object({
   path: z.string().trim().min(1),
   content: z.string(),
   clearLegacyPromptTemplate: z.boolean().optional().default(false),
-});
+  resetMemory: z.boolean().optional().default(false),
+}).strict();
 
 export type UpsertAgentInstructionsFile = z.infer<typeof upsertAgentInstructionsFileSchema>;
 
