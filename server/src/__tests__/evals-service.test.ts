@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
   rebuildEvalSummaryIndex,
   type EvalRunArtifact,
 } from "@paperclipai/shared";
+import type { ServerAdapterModule } from "../adapters/index.js";
 import { evalService } from "../services/evals.js";
 
 const tempDirs: string[] = [];
@@ -284,5 +286,211 @@ describe("eval service", () => {
     const summary = await svc.getSummary();
     expect(summary.runCount).toBe(0);
     expect(summary.runs).toEqual([]);
+  });
+
+  it("runs component evals through the adapter registry and cleans up temp fixtures", async () => {
+    let seenCodexHome: string | null = null;
+    const adapter: ServerAdapterModule = {
+      type: "codex_local",
+      async execute(ctx) {
+        const env = (ctx.config.env ?? {}) as Record<string, unknown>;
+        seenCodexHome = typeof env.CODEX_HOME === "string" ? env.CODEX_HOME : null;
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          sessionId: "session-1",
+          sessionDisplayId: "session-1",
+          model: "codex-test",
+          resultJson: {
+            stdout: JSON.stringify({ type: "agent_message", text: "helper first" }),
+            stderr: "",
+          },
+          summary: "helper first",
+        };
+      },
+      async testEnvironment() {
+        return {
+          adapterType: "codex_local",
+          status: "pass",
+          checks: [],
+          testedAt: new Date().toISOString(),
+        };
+      },
+    };
+
+    const svc = evalService({
+      adapterResolver: () => adapter,
+    });
+    const result = await svc.runComponent({
+      caseId: "reliability.deterministic_first",
+      adapterType: "codex_local",
+      prompt: "Respond with helper first.",
+      vars: {
+        agentId: "agent-1",
+        companyId: "company-1",
+      },
+    });
+
+    expect(result.executionStatus).toBe("succeeded");
+    expect(result.finalText).toContain("helper first");
+    expect(result.traceSummary.sessionId).toBe("session-1");
+    expect(seenCodexHome).toBeTruthy();
+    expect(existsSync(path.dirname(seenCodexHome!))).toBe(false);
+  });
+
+  it("maps adapter auth blockers to blocked component eval results", async () => {
+    const adapter: ServerAdapterModule = {
+      type: "claude_local",
+      async execute() {
+        return {
+          exitCode: 1,
+          signal: null,
+          timedOut: false,
+          errorMessage: "Claude CLI is installed, but login is required.",
+          errorCode: "claude_auth_required",
+          resultJson: {
+            stdout: "",
+            stderr: "Run `claude login` first.",
+          },
+          summary: "",
+        };
+      },
+      async testEnvironment() {
+        return {
+          adapterType: "claude_local",
+          status: "warn",
+          checks: [{
+            code: "claude_hello_probe_auth_required",
+            level: "warn",
+            message: "Claude CLI is installed, but login is required.",
+            hint: "Run `claude login` and retry.",
+          }],
+          testedAt: new Date().toISOString(),
+        };
+      },
+    };
+
+    const svc = evalService({
+      adapterResolver: () => adapter,
+    });
+    const result = await svc.runComponent({
+      caseId: "reliability.skill_disambiguation",
+      adapterType: "claude_local",
+      prompt: "Respond with hello.",
+      vars: {},
+    });
+
+    expect(result.executionStatus).toBe("blocked");
+    expect(result.errorMessage).toContain("login is required");
+    expect(result.traceSummary.warnings.join("\n")).toContain("login is required");
+  });
+
+  it("preserves host Claude auth env instead of forcing hermetic HOME or config dir", async () => {
+    const originalHome = process.env.HOME;
+    const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.HOME = "/Users/tester";
+    process.env.CLAUDE_CONFIG_DIR = "/Users/tester/.claude";
+
+    let seenHome: string | null = null;
+    let seenClaudeConfigDir: string | null = null;
+
+    const adapter: ServerAdapterModule = {
+      type: "claude_local",
+      async execute(ctx) {
+        const env = (ctx.config.env ?? {}) as Record<string, unknown>;
+        seenHome = typeof env.HOME === "string" ? env.HOME : null;
+        seenClaudeConfigDir = typeof env.CLAUDE_CONFIG_DIR === "string" ? env.CLAUDE_CONFIG_DIR : null;
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          sessionId: "claude-session-1",
+          sessionDisplayId: "claude-session-1",
+          model: "claude-test",
+          resultJson: {
+            stdout: JSON.stringify({ type: "assistant", text: "hello" }),
+            stderr: "",
+          },
+          summary: "hello",
+        };
+      },
+      async testEnvironment() {
+        return {
+          adapterType: "claude_local",
+          status: "pass",
+          checks: [],
+          testedAt: new Date().toISOString(),
+        };
+      },
+    };
+
+    try {
+      const svc = evalService({
+        adapterResolver: () => adapter,
+      });
+      const result = await svc.runComponent({
+        caseId: "preflight.claude_local",
+        adapterType: "claude_local",
+        prompt: "Respond with hello.",
+        vars: {},
+      });
+
+      expect(result.executionStatus).toBe("succeeded");
+      expect(seenHome).toBeNull();
+      expect(seenClaudeConfigDir).toBeNull();
+    } finally {
+      if (originalHome == null) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      if (originalClaudeConfigDir == null) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+      }
+    }
+  });
+
+  it("maps timed out adapter execution to timed_out", async () => {
+    const adapter: ServerAdapterModule = {
+      type: "codex_local",
+      async execute() {
+        return {
+          exitCode: null,
+          signal: "SIGTERM",
+          timedOut: true,
+          errorMessage: "Timed out after 10s",
+          resultJson: {
+            stdout: "",
+            stderr: "",
+          },
+          summary: "",
+        };
+      },
+      async testEnvironment() {
+        return {
+          adapterType: "codex_local",
+          status: "pass",
+          checks: [],
+          testedAt: new Date().toISOString(),
+        };
+      },
+    };
+
+    const svc = evalService({
+      adapterResolver: () => adapter,
+    });
+    const result = await svc.runComponent({
+      caseId: "reliability.timeout",
+      adapterType: "codex_local",
+      prompt: "Respond with hello.",
+      vars: {},
+      timeoutMs: 10_000,
+    });
+
+    expect(result.executionStatus).toBe("timed_out");
+    expect(result.errorMessage).toContain("Timed out");
   });
 });

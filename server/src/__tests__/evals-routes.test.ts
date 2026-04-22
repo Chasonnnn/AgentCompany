@@ -6,6 +6,7 @@ async function createHarness(
   actor: any,
   overrides?: {
     getRun?: (runId: string) => Promise<unknown> | unknown;
+    runComponent?: (input: unknown) => Promise<unknown> | unknown;
   },
 ) {
   vi.doUnmock("../routes/evals.js");
@@ -57,6 +58,27 @@ async function createHarness(
         status: "passed",
         redactionMode: "redacted",
         sourceKind: "seeded",
+      };
+    }),
+    runComponent: vi.fn(async (input: any) => {
+      if (overrides?.runComponent) {
+        return await overrides.runComponent(input);
+      }
+      return {
+        executionStatus: "succeeded",
+        adapterType: input.adapterType,
+        modelId: "test-model",
+        finalText: "hello",
+        durationMs: 12,
+        stderrExcerpt: null,
+        traceSummary: {
+          eventKinds: ["assistant"],
+          toolNames: [],
+          sessionId: "session-1",
+          warnings: [],
+        },
+        rawTranscript: [{ type: "assistant", text: "hello" }],
+        errorMessage: null,
       };
     }),
   };
@@ -157,5 +179,51 @@ describe("eval routes", () => {
     expect(res.status).toBe(404);
     expect(res.body.error).toContain("Eval run not found");
     expect(missingRun).toHaveBeenCalledWith("missing-run");
+  });
+
+  it("allows instance admins to run component evals", async () => {
+    const { app, evalService } = await createHarness({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app)
+      .post("/api/instance/evals/component-run")
+      .send({
+        caseId: "reliability.deterministic_first",
+        adapterType: "codex_local",
+        prompt: "Respond with hello.",
+        vars: {},
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.executionStatus).toBe("succeeded");
+    expect(evalService.runComponent).toHaveBeenCalledWith(expect.objectContaining({
+      caseId: "reliability.deterministic_first",
+      adapterType: "codex_local",
+    }));
+  });
+
+  it("returns 422 for unsupported component eval adapters", async () => {
+    const { app } = await createHarness({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app)
+      .post("/api/instance/evals/component-run")
+      .send({
+        caseId: "reliability.deterministic_first",
+        adapterType: "gemini_local",
+        prompt: "Respond with hello.",
+        vars: {},
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("Unsupported component eval adapter type");
   });
 });

@@ -4,6 +4,6 @@ export default defineConfig({
   test: {
     environment: "node",
     globalSetup: "../scripts/vitest-process-guard.mjs",
-    include: ["architecture/**/*.test.ts"],
+    include: ["architecture/**/*.test.ts", "promptfoo/**/*.test.ts"],
   },
 });

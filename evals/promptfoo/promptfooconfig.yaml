@@ -1,36 +1,38 @@
-# Paperclip Agent Evals - Phase 0: Promptfoo Bootstrap
+# Paperclip Agent Evals
 #
-# Tests narrow heartbeat behaviors across models with deterministic assertions.
-# Test cases are organized by category in tests/*.yaml files.
-# See doc/plans/2026-03-13-agent-evals-framework.md for the full framework plan.
+# Tests narrow heartbeat behaviors through the local Paperclip component-eval
+# endpoint. Promptfoo remains the case/assertion harness; Paperclip executes the
+# real local adapters.
 #
 # Usage:
-#   cd evals/promptfoo && promptfoo eval
+#   cd evals/promptfoo && PAPERCLIP_COMPONENT_EVAL_BASE_URL=http://127.0.0.1:3100 promptfoo eval
 #   promptfoo view  # open results in browser
 #
 # Validate config before committing:
 #   promptfoo validate
 #
-# Requires OPENROUTER_API_KEY or individual provider keys.
+# Requires a reachable local Paperclip server with /api/instance/evals/component-run.
 
-description: "Paperclip heartbeat behavior evals"
+description: "Paperclip local component evals"
 
 prompts:
   - file://prompts/heartbeat-system.txt
 
 providers:
-  - id: openrouter:anthropic/claude-sonnet-4-20250514
-    label: claude-sonnet-4
-  - id: openrouter:openai/gpt-4.1
-    label: gpt-4.1
-  - id: openrouter:openai/codex-5.4
-    label: codex-5.4
-  - id: openrouter:google/gemini-2.5-pro
-    label: gemini-2.5-pro
+  - id: file://providers/paperclip-local-provider.mjs
+    label: codex_local
+    config:
+      adapterType: codex_local
+      timeoutMs: 180000
+  - id: file://providers/paperclip-local-provider.mjs
+    label: claude_local
+    config:
+      adapterType: claude_local
+      timeoutMs: 180000
 
 defaultTest:
   options:
-    transformVars: "{ ...vars, apiUrl: 'http://localhost:18080', runId: 'run-eval-001' }"
+    transformVars: "{ ...vars, apiUrl: process.env.PAPERCLIP_COMPONENT_EVAL_BASE_URL || 'http://127.0.0.1:3100', runId: vars.runId || 'component-eval-001' }"
 
 tests:
   - file://tests/*.yaml

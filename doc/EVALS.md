@@ -13,6 +13,14 @@ Wave 1 is internal-only and artifact-backed.
 - no eval-driven workflow mutations are introduced
 
 `evals/promptfoo` remains the component lane for narrow prompt and skill behavior.
+That lane runs through Paperclip itself:
+
+- promptfoo is the case and assertion harness
+- `POST /api/instance/evals/component-run` is the execution surface
+- Paperclip runs the real local adapters (`codex_local`, `claude_local`) behind that endpoint
+- `claude_local` preserves the host Claude auth environment during component evals because temp `HOME` or `CLAUDE_CONFIG_DIR` values deauthenticate Claude Max on macOS
+- component eval runs are transient and do not enter the architecture artifact index
+
 `evals/architecture` is the architecture lane for reliability, runtime stability, and utility.
 
 ## Versions
@@ -61,6 +69,7 @@ Wave 1 reliability coverage starts with:
 - deterministic invariants
 - role evals
 - handoff evals
+- failure-promoted skill hardening from open typed review findings
 - a small seeded end-to-end canary set
 - shared-state execution baselines against relay-style execution
 
@@ -251,7 +260,7 @@ PR gating stays light:
 
 - invariants
 - a very small canary seed set
-- promptfoo component evals
+- promptfoo component evals through the local Paperclip endpoint
 
 Nightly lanes report:
 
@@ -283,6 +292,16 @@ Every recurring failure should enter the eval loop:
 3. convert that bundle into a scenario, grader, or hard check
 4. add it to the nightly matrix
 5. promote it to PR canary only after it stabilizes
+
+### Failure-promoted skill hardening
+
+Reusable skill failures follow the same flywheel with one extra durability rule:
+
+1. start from an open typed `review-findings` entry, not a loose comment thread
+2. promote the failure into one hardening issue keyed by the skill plus a stable failure fingerprint
+3. scaffold `spec`, `plan`, and `test-plan` before drafting or approving shared-mirror changes
+4. record exact promptfoo case ids and architecture scenario ids in the verification plan
+5. treat mirrored-skill proposals as approval-ready only after that evidence exists
 
 ## Observed continuity lane
 

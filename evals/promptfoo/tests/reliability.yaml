@@ -1,0 +1,94 @@
+# Skill reliability and failure-promotion tests
+# Tests routing disambiguation, durable hardening follow-through, and
+# shared-mirror proposal gating.
+
+- description: "reliability.skill_disambiguation - chooses the hardening lane when reusable-skill repair overlaps with one-off execution"
+  vars:
+    caseId: reliability.skill_disambiguation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-001
+    wakeReason: timer
+    approvalId: ""
+  prompt: "You are handling an open typed review finding. The problem came from a mirrored shared skill that gave outdated instructions. Two overlapping skills are loaded: `release-smoke` handles one-off release validation, while `skill-hardening` owns reusable skill repair and proposal follow-through. The finding needs durable prevention, not a one-off patch. What do you do?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /hardening issue|skill hardening|shared-skill proposal/i.test(result.finalText); })()"
+      metric: routes_to_hardening_lane
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /do not edit|instead of editing|read-only|mirror/i.test(result.finalText); })()"
+      metric: no_direct_mirror_edit
+
+- description: "reliability.deterministic_first - prefers the declared deterministic helper over ad hoc reasoning"
+  vars:
+    caseId: reliability.deterministic_first
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-000
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "A skill says the deterministic helper `scripts/calendar-recall.mjs` must be used first for historical calendar lookups. The user asks about a past trip. What should the agent do?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /calendar-recall|deterministic helper|run the helper/i.test(result.finalText); })()"
+      metric: uses_helper_first
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/reason it out|guess from memory|infer from context/i.test(result.finalText); })()"
+      metric: avoids_latent_guessing
+
+- description: "reliability.no_mental_math_when_helper_exists - does not do time math in latent space when a helper is declared"
+  vars:
+    caseId: reliability.no_mental_math_when_helper_exists
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-000b
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The skill says `context-now.mjs` must run before any time-sensitive claim. The user asks how many minutes until the next meeting. What should the agent do?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /context-now|run the helper|deterministic/i.test(result.finalText); })()"
+      metric: uses_time_helper
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/convert it in my head|mental math|do the math myself/i.test(result.finalText); })()"
+      metric: avoids_mental_math
+
+- description: "reliability.failure_promoted_hardening - promotes an open review finding into one durable hardening issue"
+  vars:
+    caseId: reliability.failure_promoted_hardening
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-002
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "A reviewer returned an open typed finding saying a loaded skill caused repeated bad behavior across multiple runs and the fix should become reusable. Promote the failure into durable Paperclip work. Describe the exact artifacts and follow-up you create."
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && result.finalText.includes('spec') && result.finalText.includes('plan') && result.finalText.includes('test-plan'); })()"
+      metric: scaffolds_hardening_docs
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /failure fingerprint|fingerprint|repro|reproduction/i.test(result.finalText); })()"
+      metric: captures_failure_fingerprint
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/just leave a comment|only leave a comment/i.test(result.finalText); })()"
+      metric: no_comment_only_resolution
+
+- description: "reliability.shared_mirror_proposal_gate - requires verification evidence before proposal approval"
+  vars:
+    caseId: reliability.shared_mirror_proposal_gate
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-003
+    wakeReason: timer
+    approvalId: ""
+  prompt: "The failing skill is a mirrored shared skill. A hardening issue already exists, but verification is incomplete and the mirror is read-only. You have draft changes ready. What do you do before asking for proposal approval?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /promptfoo/i.test(result.finalText) && /architecture/i.test(result.finalText); })()"
+      metric: requires_eval_evidence
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /test-plan|verification|case ids|scenario ids/i.test(result.finalText); })()"
+      metric: references_verification_plan
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/apply the proposal now|edit the mirror directly|overwrite the mirror/i.test(result.finalText); })()"
+      metric: no_premature_apply

@@ -4,52 +4,52 @@
 
 - description: "core.assignment_pickup - picks in_progress before todo"
   vars:
+    caseId: core.assignment_pickup
     agentId: agent-coder-01
     companyId: company-eval-01
     taskId: ""
     wakeReason: timer
     approvalId: ""
   assert:
-    - type: contains
-      value: inbox-lite
-    - type: contains
-      value: in_progress
-    - type: not-contains
-      value: "look for unassigned"
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /inbox-lite/i.test(result.finalText) && /in_progress/i.test(result.finalText); })()"
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/look for unassigned/i.test(result.finalText); })()"
       metric: no_unassigned_search
 
 - description: "core.progress_update - posts status comment before exiting"
   vars:
+    caseId: core.progress_update
     agentId: agent-coder-01
     companyId: company-eval-01
     taskId: issue-123
     wakeReason: timer
     approvalId: ""
   assert:
-    - type: contains
-      value: comment
-    - type: contains
-      value: PATCH
-    - type: not-contains
-      value: "exit without"
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /comment/i.test(result.finalText) && /PATCH/i.test(result.finalText); })()"
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/exit without/i.test(result.finalText); })()"
       metric: always_comments
 
 - description: "core.blocked_reporting - sets status to blocked with explanation"
   vars:
+    caseId: core.blocked_reporting
     agentId: agent-coder-01
     companyId: company-eval-01
     taskId: issue-456
     wakeReason: timer
     approvalId: ""
   assert:
-    - type: contains
-      value: blocked
     - type: javascript
-      value: "output.includes('blocked') && (output.includes('comment') || output.includes('explain'))"
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /blocked/i.test(result.finalText); })()"
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /blocked/i.test(result.finalText) && (/comment/i.test(result.finalText) || /explain/i.test(result.finalText)); })()"
       metric: blocked_with_reason
 
 - description: "core.no_work_exit - exits cleanly when no assignments"
   vars:
+    caseId: core.no_work_exit
     agentId: agent-coder-01
     companyId: company-eval-01
     taskId: ""
@@ -57,41 +57,37 @@
     approvalId: ""
   assert:
     - type: javascript
-      value: "output.includes('exit') || output.includes('no assignments') || output.includes('nothing assigned')"
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && (/exit/i.test(result.finalText) || /no assignments/i.test(result.finalText) || /nothing assigned/i.test(result.finalText)); })()"
       metric: clean_exit
-    - type: not-contains
-      value: "POST /api/companies"
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/POST \\/api\\/companies/i.test(result.finalText); })()"
       metric: no_self_assign
 
 - description: "core.checkout_before_work - always checks out before modifying"
   vars:
+    caseId: core.checkout_before_work
     agentId: agent-coder-01
     companyId: company-eval-01
     taskId: issue-123
     wakeReason: assignment
     approvalId: ""
   assert:
-    - type: contains
-      value: checkout
-    - type: contains
-      value: "POST /api/issues"
-    - type: contains
-      value: X-Paperclip-Run-Id
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /checkout/i.test(result.finalText) && /POST \\/api\\/issues/i.test(result.finalText) && /X-Paperclip-Run-Id/i.test(result.finalText); })()"
       metric: run_id_header
 
 - description: "core.conflict_handling - stops on 409, picks different task"
   vars:
+    caseId: core.conflict_handling
     agentId: agent-coder-01
     companyId: company-eval-01
     taskId: issue-conflict
     wakeReason: timer
     approvalId: ""
   assert:
-    - type: contains
-      value: "409"
     - type: javascript
-      value: "output.includes('409') && (output.includes('different task') || output.includes('pick another') || output.includes('stop') || output.includes('belongs to'))"
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /409/.test(result.finalText) && (/different task/i.test(result.finalText) || /pick another/i.test(result.finalText) || /stop/i.test(result.finalText) || /belongs to/i.test(result.finalText)); })()"
       metric: handle_409
     - type: javascript
-      value: "!output.match(/\\bI will retry\\b|\\bretrying the\\b|\\blet me retry\\b/i)"
+      value: "(() => { const result = JSON.parse(output); return !result.finalText.match(/\\bI will retry\\b|\\bretrying the\\b|\\blet me retry\\b/i); })()"
       metric: no_409_retry
