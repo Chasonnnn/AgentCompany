@@ -78,11 +78,18 @@ describeEmbeddedPostgres("issueContinuityService.prepare scaffolds continuity do
   async function seedCompanyAndParentIssue() {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     await db.insert(companies).values({
       id: companyId,
       name: "Paperclip",
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Continuity scaffolds",
+      status: "in_progress",
     });
     await db.insert(agents).values({
       id: agentId,
@@ -96,6 +103,7 @@ describeEmbeddedPostgres("issueContinuityService.prepare scaffolds continuity do
       permissions: {},
     });
     const parent = await issues$.create(companyId, {
+      projectId,
       title: "Parent issue",
       status: "todo",
       priority: "medium",
