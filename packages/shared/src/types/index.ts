@@ -14,6 +14,7 @@ export type {
   PortfolioClusterCreateRequest,
   PortfolioClusterUpdateRequest,
 } from "./portfolio-cluster.js";
+export type { Environment, EnvironmentLease, LocalEnvironmentConfig } from "./environment.js";
 export type {
   FeedbackVote,
   FeedbackDataSharingPreference,

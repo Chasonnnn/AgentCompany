@@ -47,6 +47,16 @@ export {
   type UpdatePortfolioCluster,
 } from "./portfolio-cluster.js";
 export {
+  environmentDriverSchema,
+  environmentStatusSchema,
+  environmentLeaseStatusSchema,
+  environmentLeaseCleanupStatusSchema,
+  createEnvironmentSchema,
+  updateEnvironmentSchema,
+  type CreateEnvironment,
+  type UpdateEnvironment,
+} from "./environment.js";
+export {
   feedbackDataSharingPreferenceSchema,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,

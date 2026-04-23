@@ -617,4 +617,303 @@ describe("heartbeat comment wake batching", () => {
     }
   }, 20_000);
 
+  it("defers mentioned-agent wakes while another agent is actively executing the same issue", async () => {
+    const gateway = await createControlledGatewayServer();
+    const companyId = randomUUID();
+    const primaryAgentId = randomUUID();
+    const mentionedAgentId = randomUUID();
+    const issueId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    const heartbeat = heartbeatService(db);
+
+    try {
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Paperclip",
+        issuePrefix,
+        requireBoardApprovalForNewAgents: false,
+      });
+
+      await db.insert(agents).values([
+        {
+          id: primaryAgentId,
+          companyId,
+          name: "Primary Agent",
+          role: "engineer",
+          status: "idle",
+          adapterType: "openclaw_gateway",
+          adapterConfig: {
+            url: gateway.url,
+            headers: {
+              "x-openclaw-token": "gateway-token",
+            },
+            payloadTemplate: {
+              message: "wake now",
+            },
+            waitTimeoutMs: 2_000,
+          },
+          runtimeConfig: {},
+          permissions: {},
+        },
+        {
+          id: mentionedAgentId,
+          companyId,
+          name: "Mentioned Agent",
+          role: "engineer",
+          status: "idle",
+          adapterType: "openclaw_gateway",
+          adapterConfig: {
+            url: gateway.url,
+            headers: {
+              "x-openclaw-token": "gateway-token",
+            },
+            payloadTemplate: {
+              message: "wake now",
+            },
+            waitTimeoutMs: 2_000,
+          },
+          runtimeConfig: {},
+          permissions: {},
+        },
+      ]);
+
+      await db.insert(issues).values({
+        id: issueId,
+        companyId,
+        title: "Prevent concurrent mention execution",
+        status: "todo",
+        priority: "high",
+        assigneeAgentId: primaryAgentId,
+        issueNumber: 1,
+        identifier: `${issuePrefix}-1`,
+      });
+
+      const primaryRun = await heartbeat.wakeup(primaryAgentId, {
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "issue_assigned",
+        payload: { issueId },
+        contextSnapshot: {
+          issueId,
+          taskId: issueId,
+          wakeReason: "issue_assigned",
+        },
+        requestedByActorType: "system",
+        requestedByActorId: null,
+      });
+
+      expect(primaryRun).not.toBeNull();
+      await waitFor(() => gateway.getAgentPayloads().length === 1);
+
+      const mentionComment = await db
+        .insert(issueComments)
+        .values({
+          companyId,
+          issueId,
+          authorUserId: "user-1",
+          body: "@Mentioned Agent please inspect this after the current run.",
+        })
+        .returning()
+        .then((rows) => rows[0]);
+
+      const mentionRun = await heartbeat.wakeup(mentionedAgentId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "issue_comment_mentioned",
+        payload: { issueId, commentId: mentionComment.id },
+        contextSnapshot: {
+          issueId,
+          taskId: issueId,
+          commentId: mentionComment.id,
+          wakeCommentId: mentionComment.id,
+          wakeReason: "issue_comment_mentioned",
+          source: "comment.mention",
+        },
+        requestedByActorType: "user",
+        requestedByActorId: "user-1",
+      });
+
+      expect(mentionRun).toBeNull();
+
+      await waitFor(async () => {
+        const deferred = await db
+          .select()
+          .from(agentWakeupRequests)
+          .where(
+            and(
+              eq(agentWakeupRequests.companyId, companyId),
+              eq(agentWakeupRequests.agentId, mentionedAgentId),
+              eq(agentWakeupRequests.status, "deferred_issue_execution"),
+            ),
+          )
+          .then((rows) => rows[0] ?? null);
+        return Boolean(deferred);
+      });
+
+      expect(gateway.getAgentPayloads()).toHaveLength(1);
+
+      gateway.releaseFirstWait();
+
+      await waitFor(async () => {
+        const runs = await db
+          .select()
+          .from(heartbeatRuns)
+          .where(eq(heartbeatRuns.agentId, mentionedAgentId))
+          .orderBy(asc(heartbeatRuns.createdAt));
+        return runs.length === 1 && runs[0]?.status === "succeeded";
+      }, 90_000);
+      expect(gateway.getAgentPayloads().length).toBeGreaterThanOrEqual(2);
+
+      const mentionedRuns = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, mentionedAgentId))
+        .orderBy(asc(heartbeatRuns.createdAt));
+
+      expect(mentionedRuns).toHaveLength(1);
+      expect(mentionedRuns[0]?.contextSnapshot).toMatchObject({
+        issueId,
+        wakeReason: "issue_comment_mentioned",
+      });
+
+      const primaryRuns = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, primaryAgentId))
+        .orderBy(asc(heartbeatRuns.createdAt));
+      expect(primaryRuns).toHaveLength(2);
+      expect(primaryRuns[0]?.issueCommentStatus).toBe("retry_queued");
+      expect(primaryRuns[1]?.retryOfRunId).toBe(primaryRuns[0]?.id);
+      expect(primaryRuns[1]?.issueCommentStatus).toBe("retry_exhausted");
+
+      const missingCommentRetries = await db
+        .select()
+        .from(agentWakeupRequests)
+        .where(
+          and(
+            eq(agentWakeupRequests.companyId, companyId),
+            eq(agentWakeupRequests.agentId, primaryAgentId),
+            eq(agentWakeupRequests.reason, "missing_issue_comment"),
+          ),
+        );
+      expect(missingCommentRetries).toHaveLength(1);
+    } finally {
+      gateway.releaseFirstWait();
+      await gateway.close();
+    }
+  }, 120_000);
+  it("treats the automatic run summary as fallback-only when the run already posted a comment", async () => {
+    const gateway = await createControlledGatewayServer();
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    const heartbeat = heartbeatService(db);
+
+    try {
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Paperclip",
+        issuePrefix,
+        requireBoardApprovalForNewAgents: false,
+      });
+
+      await db.insert(agents).values({
+        id: agentId,
+        companyId,
+        name: "Gateway Agent",
+        role: "engineer",
+        status: "idle",
+        adapterType: "openclaw_gateway",
+        adapterConfig: {
+          url: gateway.url,
+          headers: {
+            "x-openclaw-token": "gateway-token",
+          },
+          payloadTemplate: {
+            message: "wake now",
+          },
+          waitTimeoutMs: 2_000,
+        },
+        runtimeConfig: {},
+        permissions: {},
+      });
+
+      await db.insert(issues).values({
+        id: issueId,
+        companyId,
+        title: "Use existing comment",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        issueNumber: 1,
+        identifier: `${issuePrefix}-1`,
+      });
+
+      const firstRun = await heartbeat.wakeup(agentId, {
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "issue_assigned",
+        payload: { issueId },
+        contextSnapshot: {
+          issueId,
+          taskId: issueId,
+          wakeReason: "issue_assigned",
+        },
+        requestedByActorType: "system",
+        requestedByActorId: null,
+      });
+
+      expect(firstRun).not.toBeNull();
+      await waitFor(() => gateway.getAgentPayloads().length === 1);
+
+      await db.insert(issueComments).values({
+        companyId,
+        issueId,
+        authorAgentId: agentId,
+        authorUserId: null,
+        createdByRunId: firstRun!.id,
+        body: "Manual completion comment from the run.",
+      });
+
+      gateway.releaseFirstWait();
+
+      await waitFor(async () => {
+        const runs = await db
+          .select()
+          .from(heartbeatRuns)
+          .where(eq(heartbeatRuns.agentId, agentId));
+        return runs.length === 1 && runs[0]?.status === "succeeded" && runs[0]?.issueCommentStatus === "satisfied";
+      });
+
+      const runs = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+
+      expect(runs).toHaveLength(1);
+      expect(runs[0]?.issueCommentStatus).toBe("satisfied");
+      expect(runs[0]?.issueCommentSatisfiedByCommentId).not.toBeNull();
+
+      const comments = await db
+        .select()
+        .from(issueComments)
+        .where(eq(issueComments.issueId, issueId))
+        .orderBy(asc(issueComments.createdAt));
+
+      expect(comments).toHaveLength(1);
+      expect(comments[0]?.body).toBe("Manual completion comment from the run.");
+      expect(comments[0]?.createdByRunId).toBe(firstRun?.id);
+
+      const wakeups = await db
+        .select()
+        .from(agentWakeupRequests)
+        .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.agentId, agentId)));
+
+      expect(wakeups).toHaveLength(1);
+    } finally {
+      gateway.releaseFirstWait();
+      await gateway.close();
+    }
+  }, 20_000);
 });
