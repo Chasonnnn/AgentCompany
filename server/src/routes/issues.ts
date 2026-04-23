@@ -2920,8 +2920,8 @@ export function issueRoutes(
       reviewer: { id: string; name: string };
       executor: { id: string; name: string } | null;
       routedBy: "auto" | "explicit";
-      openIssueCount: number;
-      candidateCount: number;
+      openIssueCount: number | null;
+      candidateCount: number | null;
     } | null = null;
     if (inReviewRoutingApplies) {
       const explicitReviewerAgentId =
@@ -2948,8 +2948,8 @@ export function issueRoutes(
           reviewer: { id: reviewer.id, name: reviewer.name },
           executor: executor ? { id: executor.id, name: executor.name } : null,
           routedBy: "explicit",
-          openIssueCount: 0,
-          candidateCount: 1,
+          openIssueCount: null,
+          candidateCount: null,
         };
       } else if (bodyProvidedAssignee && explicitAssigneeUserId) {
         // User-assignee path: caller chose a human reviewer. Skip auto-route

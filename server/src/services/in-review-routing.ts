@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, issues } from "@paperclipai/db";
 
@@ -137,11 +137,3 @@ export function inReviewRoutingMissingReviewerError(): InReviewRoutingGateError 
   };
 }
 
-export const IN_REVIEW_ROUTING_OPEN_ISSUE_STATUSES = OPEN_ISSUE_STATUSES;
-export const IN_REVIEW_ROUTING_QA_ARCHETYPE_KEY = QA_ARCHETYPE_KEY;
-
-// `inArray`, `notInArray` are imported for potential downstream callers; keep
-// the explicit re-exports contained so the helper module exposes only what it
-// intends to.
-void inArray;
-void notInArray;
