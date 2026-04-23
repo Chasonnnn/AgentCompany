@@ -1,4 +1,5 @@
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
+import type { AgentStatus } from "@paperclipai/shared";
 import type { Db } from "@paperclipai/db";
 import { agents, issues } from "@paperclipai/db";
 
@@ -14,7 +15,11 @@ import { agents, issues } from "@paperclipai/db";
  */
 
 const QA_ARCHETYPE_KEY = "qa_evals_continuity_owner";
-const TERMINATED_STATUS = "terminated";
+// Agent statuses that disqualify a candidate from auto-routing. Mirrors the
+// `assertAssignableAgent()` rejections in `services/issues.ts` — otherwise a
+// pending_approval candidate with low load would be selected and then bounce
+// the entire `status: in_review` transition with a 409 (AIW-137 F-PM2).
+const INELIGIBLE_AGENT_STATUSES: AgentStatus[] = ["terminated", "pending_approval"];
 
 /**
  * Open-issue load definition. Matches the convention in the office-coordination
@@ -65,7 +70,7 @@ export async function selectLeastLoadedQaReviewer(
   const baseFilter = and(
     eq(agents.companyId, companyId),
     eq(agents.archetypeKey, QA_ARCHETYPE_KEY),
-    ne(agents.status, TERMINATED_STATUS),
+    notInArray(agents.status, INELIGIBLE_AGENT_STATUSES),
     excludeAgentId ? ne(agents.id, excludeAgentId) : undefined,
   );
 
@@ -137,3 +142,9 @@ export function inReviewRoutingMissingReviewerError(): InReviewRoutingGateError 
   };
 }
 
+export const IN_REVIEW_ROUTING_OPEN_ISSUE_STATUSES = OPEN_ISSUE_STATUSES;
+export const IN_REVIEW_ROUTING_QA_ARCHETYPE_KEY = QA_ARCHETYPE_KEY;
+
+// `inArray` is imported for potential downstream callers; keep the explicit
+// re-exports contained so the helper module exposes only what it intends to.
+void inArray;

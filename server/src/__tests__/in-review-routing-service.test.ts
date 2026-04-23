@@ -158,6 +158,42 @@ describeEmbeddedPostgres("selectLeastLoadedQaReviewer", () => {
     expect(reviewer?.id).toBe(liveQa);
   });
 
+  // AIW-137 review finding F-PM2: pending_approval agents were previously
+  // eligible for auto-routing. `assertAssignableAgent()` would then reject the
+  // transition with 409, failing the whole `status: in_review` move even when
+  // active QA reviewers were available with higher load.
+  it("skips pending_approval QA agents even when they have the lowest load", async () => {
+    const companyId = await seedCompany();
+    const projectId = await seedProject(companyId);
+
+    const pending = await seedAgent(companyId, {
+      name: "Pending-QA",
+      status: "pending_approval",
+      createdAt: new Date("2026-01-01"),
+    });
+    const active = await seedAgent(companyId, {
+      name: "Active-QA",
+      status: "active",
+      createdAt: new Date("2026-02-01"),
+    });
+    const terminated = await seedAgent(companyId, {
+      name: "Terminated-QA",
+      status: "terminated",
+      createdAt: new Date("2026-01-15"),
+    });
+
+    // Lowest-load candidate is the pending_approval one; the active one is
+    // loaded. The filter must still return the active reviewer.
+    await seedOpenIssues(companyId, projectId, pending, 2);
+    await seedOpenIssues(companyId, projectId, active, 5);
+    await seedOpenIssues(companyId, projectId, terminated, 0);
+
+    const { reviewer, candidateCount } = await selectLeastLoadedQaReviewer(db, { companyId });
+    expect(candidateCount).toBe(1);
+    expect(reviewer?.id).toBe(active);
+    expect(reviewer?.openIssueCount).toBe(5);
+  });
+
   it("ignores non-open statuses when counting load", async () => {
     const companyId = await seedCompany();
     const projectId = await seedProject(companyId);

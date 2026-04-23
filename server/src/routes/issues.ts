@@ -2786,6 +2786,7 @@ export function issueRoutes(
       hiddenAt: hiddenAtRaw,
       pullRequestUrl: _pullRequestUrl,
       selfAttest: _selfAttest,
+      autoRouteReviewer: _autoRouteReviewer,
       ...updateFields
     } = req.body;
     const effectiveReopenRequested =
