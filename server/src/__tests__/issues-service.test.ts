@@ -1210,6 +1210,74 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     });
   });
 
+  it("returns unresolvedBlockerIssueIds ordered deterministically by blocker identifier", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const projectId = await insertProject(db, companyId, "Dependency order");
+
+    const blockerAlpha = randomUUID();
+    const blockerBravo = randomUUID();
+    const blockerCharlie = randomUUID();
+    const blockedId = randomUUID();
+
+    // Insert blockers in non-alphabetical order to force the query's orderBy to do the work.
+    await db.insert(issues).values([
+      {
+        id: blockerCharlie,
+        companyId,
+        projectId,
+        identifier: "AIW-C-3",
+        title: "Blocker Charlie",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: blockerAlpha,
+        companyId,
+        projectId,
+        identifier: "AIW-C-1",
+        title: "Blocker Alpha",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: blockerBravo,
+        companyId,
+        projectId,
+        identifier: "AIW-C-2",
+        title: "Blocker Bravo",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: blockedId,
+        companyId,
+        projectId,
+        identifier: "AIW-C-4",
+        title: "Blocked",
+        status: "todo",
+        priority: "medium",
+      },
+    ]);
+    await svc.update(blockedId, {
+      blockedByIssueIds: [blockerBravo, blockerCharlie, blockerAlpha],
+    });
+
+    const readinessMap = await svc.listDependencyReadiness(companyId, [blockedId]);
+    const readiness = readinessMap.get(blockedId);
+    expect(readiness?.unresolvedBlockerIssueIds).toEqual([
+      blockerAlpha,
+      blockerBravo,
+      blockerCharlie,
+    ]);
+    expect(readiness?.unresolvedBlockerCount).toBe(3);
+  });
+
   it("rejects execution when unresolved blockers remain", async () => {
     const companyId = randomUUID();
     const assigneeAgentId = randomUUID();
