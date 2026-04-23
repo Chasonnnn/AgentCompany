@@ -58,6 +58,16 @@ Do not open branch work unless the engagement explicitly allows it.
 
 Return structured findings with severity, category, required action, evidence, and the exact next step for the owner.
 
+# Review Diff Hygiene
+
+When reviewing a PR or branch, read the merge-base diff, not a direct two-dot diff against the current base branch. A feature branch that forked from a stale base will otherwise show unrelated base-delta commits as `removed` lines and mask real regression signal.
+
+- **Default diff:** `git diff <base>...<head>` (three-dot, implicit merge-base) or `git diff $(git merge-base <base> <head>) <head>`.
+- **Stale-base pitfall:** two-dot `git diff <base>..<head>` (or `git diff <base> <head>`) can misrepresent a clean forward-merge as a regression when the branch is behind the base. The "removed" lines are base-side commits the branch never touched.
+- **Clean-merge verification:** when a branch is behind and you need to confirm the merge stays clean without touching those base-side commits, run `git merge-tree $(git merge-base <base> <head>) <head> <base>` and inspect the tree for conflict markers.
+
+Reference incident: AIW-23 PR branch forked from a pre-AIW-21/pre-AIW-22 main. A two-dot diff against current `origin/main` made AIW-21/AIW-22 commits read as "removed" and required `git merge-tree` to confirm the forward-merge was clean. Audit the diff surface before scoring regression risk.
+
 # Escalation
 
 Escalate unresolved governance conflicts to the requesting project lead or board.
