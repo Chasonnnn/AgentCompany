@@ -22,7 +22,8 @@ export const MANAGED_LOCAL_ADAPTER_TYPES = new Set([
 
 export const SKILL_HARDENING_FINDING_ORIGIN_KIND = "skill_hardening_finding";
 export const SKILL_RELIABILITY_AUDIT_ORIGIN_KIND = "skill_reliability_audit";
-const HARDENING_DOC_KEYS = ["spec", "plan", "progress", "test-plan"] as const;
+export const HARDENING_DOC_KEYS = ["spec", "plan", "progress", "test-plan"] as const;
+export type HardeningDocumentKey = typeof HARDENING_DOC_KEYS[number];
 
 function normalizePortablePath(value: string) {
   return value.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "");
@@ -174,8 +175,12 @@ export function buildSkillHardeningScaffolds(input: {
   return { spec, plan, progress, testPlan };
 }
 
+export function shouldUpsertHardeningDocument(key: HardeningDocumentKey, hasExistingDocument: boolean) {
+  return key !== "progress" || !hasExistingDocument;
+}
+
 export function summarizeHardeningDocumentProgress(input: {
-  documentsByKey: Partial<Record<typeof HARDENING_DOC_KEYS[number], string | null>>;
+  documentsByKey: Partial<Record<HardeningDocumentKey, string | null>>;
   issueTitle: string;
   issueDescription?: string | null;
 }) {
@@ -201,7 +206,7 @@ export function summarizeHardeningDocumentProgress(input: {
 }
 
 export function computeHardeningState(input: {
-  documentsByKey: Partial<Record<typeof HARDENING_DOC_KEYS[number], string | null>>;
+  documentsByKey: Partial<Record<HardeningDocumentKey, string | null>>;
   issueTitle: string;
   issueDescription?: string | null;
   proposal: CompanySkillLinkedProposalSummary | null;

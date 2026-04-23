@@ -36,18 +36,20 @@ import {
   buildSkillHardeningScaffolds,
   commandMentionsInventoryPath,
   computeHardeningState,
+  HARDENING_DOC_KEYS,
+  type HardeningDocumentKey,
   inventoryContainsPath,
   MANAGED_LOCAL_ADAPTER_TYPES,
   normalizeSkillReliabilityMetadata,
   SKILL_RELIABILITY_AUDIT_ORIGIN_KIND,
   stableDigest,
+  shouldUpsertHardeningDocument,
   summarizeHardeningDocumentProgress,
 } from "./skill-reliability-lib.js";
 
 const OPEN_PROPOSAL_STATUSES = new Set(["pending", "revision_requested"]);
 const REPAIRABLE_AUDIT_STATUSES = new Set<CompanySkillReliabilityStatus>(["repairable_gap", "proposal_stale"]);
 const STALE_PROPOSAL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const HARDENING_DOC_KEYS = ["spec", "plan", "progress", "test-plan"] as const;
 
 type ReliabilityActor = {
   agentId?: string | null;
@@ -68,7 +70,7 @@ type HardeningIssueRow = {
 };
 
 type HardeningIssueWithDocs = HardeningIssueRow & {
-  docs: Partial<Record<(typeof HARDENING_DOC_KEYS)[number], string | null>>;
+  docs: Partial<Record<HardeningDocumentKey, string | null>>;
 };
 
 function normalize(value: string) {
@@ -180,7 +182,7 @@ async function readLinkedHardeningIssues(
     .orderBy(desc(issues.updatedAt));
 
   const issueIds = rows.map((row) => row.id);
-  const docsByIssue = new Map<string, Partial<Record<(typeof HARDENING_DOC_KEYS)[number], string | null>>>();
+  const docsByIssue = new Map<string, Partial<Record<HardeningDocumentKey, string | null>>>();
   if (issueIds.length > 0) {
     const docRows = await db
       .select({
@@ -193,7 +195,7 @@ async function readLinkedHardeningIssues(
       .where(and(inArray(issueDocuments.issueId, issueIds), inArray(issueDocuments.key, [...HARDENING_DOC_KEYS])));
     for (const row of docRows) {
       const current = docsByIssue.get(row.issueId) ?? {};
-      current[row.key as (typeof HARDENING_DOC_KEYS)[number]] = row.body;
+      current[row.key as HardeningDocumentKey] = row.body;
       docsByIssue.set(row.issueId, current);
     }
   }
@@ -508,20 +510,21 @@ export function skillReliabilityService(db: Db) {
   }
 
   async function upsertHardeningDocs(issueId: string, scaffolds: ReturnType<typeof buildSkillHardeningScaffolds>, actor: ReliabilityActor) {
-    const docs = {
+    const docs: Record<HardeningDocumentKey, string> = {
       spec: scaffolds.spec,
       plan: scaffolds.plan,
       progress: scaffolds.progress,
       "test-plan": scaffolds.testPlan,
-    } as const;
-    for (const [key, body] of Object.entries(docs)) {
+    };
+    for (const key of HARDENING_DOC_KEYS) {
       const existing = await docsSvc.getIssueDocumentByKey(issueId, key);
+      if (!shouldUpsertHardeningDocument(key, Boolean(existing))) continue;
       await docsSvc.upsertIssueDocument({
         issueId,
         key,
         title: null,
         format: "markdown",
-        body,
+        body: docs[key],
         changeSummary: existing ? "Refresh skill hardening scaffold" : "Create skill hardening scaffold",
         baseRevisionId: existing?.latestRevisionId ?? null,
         createdByAgentId: actor.agentId ?? null,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseIssueProgressMarkdown } from "@paperclipai/shared";
 import {
   buildSkillHardeningScaffolds,
+  shouldUpsertHardeningDocument,
   summarizeHardeningDocumentProgress,
 } from "../services/skill-reliability-lib.ts";
 
@@ -35,5 +36,14 @@ describe("skill reliability hardening scaffolds", () => {
         issueDescription: "Reliability audit follow-up for qa-only.",
       }).missingCount,
     ).toBe(0);
+  });
+
+  it("preserves existing progress checkpoints during hardening doc refreshes", () => {
+    expect(shouldUpsertHardeningDocument("progress", false)).toBe(true);
+    expect(shouldUpsertHardeningDocument("progress", true)).toBe(false);
+
+    expect(shouldUpsertHardeningDocument("spec", true)).toBe(true);
+    expect(shouldUpsertHardeningDocument("plan", true)).toBe(true);
+    expect(shouldUpsertHardeningDocument("test-plan", true)).toBe(true);
   });
 });

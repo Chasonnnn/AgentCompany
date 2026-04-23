@@ -90,7 +90,7 @@
       value: "(() => { const result = JSON.parse(output); return /responsive|breakpoint|mobile|touch target|cross-device/i.test(result.finalText); })()"
       metric: mentions_adaptation_signal
     - type: javascript
-      value: "(() => { const result = JSON.parse(output); return !/design-review|visual polish|just tweak the css/i.test(result.finalText); })()"
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const disambiguatesAway = /\\b(?:not|instead of|rather than)\\s+`?design-review`?\\b|\\bnot\\s+(?:just\\s+)?visual polish\\b/i.test(text); const recommendsDesignReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?design-review`?\\b/i.test(text); const recommendsPolish = /\\b(?:use|invoke|choose|select|route to)\\b.{0,40}\\bvisual polish\\b/i.test(text); return disambiguatesAway || (!recommendsDesignReview && !recommendsPolish && !/just tweak the css/i.test(text)); })()"
       metric: avoids_design_review_drift
 
 - description: "reliability.shared_mirror_proposal_gate - requires verification evidence before proposal approval"
