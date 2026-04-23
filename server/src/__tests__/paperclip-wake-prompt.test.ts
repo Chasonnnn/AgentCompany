@@ -77,6 +77,7 @@ describe("Paperclip room wake prompts", () => {
         status: "todo",
         priority: "high",
       },
+      mode: "planning",
       planningMode: true,
       continuityStatus: "planning",
       openDecisionQuestionCount: 1,
@@ -118,7 +119,7 @@ describe("Paperclip room wake prompts", () => {
 
     const prompt = renderPaperclipWakePrompt(payload);
 
-    expect(prompt).toContain("planning mode: yes");
+    expect(prompt).toContain("mode: planning");
     expect(prompt).toContain("Decision question context:");
     expect(prompt).toContain("board answer: Start with runtime hardening first.");
     expect(prompt).toContain("The board answered your decision question.");
@@ -134,6 +135,7 @@ describe("Paperclip room wake prompts", () => {
         status: "todo",
         priority: "high",
       },
+      mode: "planning",
       planningMode: true,
       continuityStatus: "planning",
       openDecisionQuestionCount: 0,
@@ -188,6 +190,7 @@ describe("Paperclip room wake prompts", () => {
         status: "todo",
         priority: "high",
       },
+      mode: "approval",
       planningMode: true,
       continuityStatus: "awaiting_decision",
       openDecisionQuestionCount: 0,

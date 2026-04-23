@@ -22,6 +22,7 @@ import {
   renderTemplate,
   renderPaperclipWakePrompt,
   renderPaperclipProjectContext,
+  normalizePaperclipWakePayload,
   stringifyPaperclipWakePayload,
   joinPromptSections,
   runChildProcess,
@@ -219,6 +220,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
+  const wakeMode = normalizePaperclipWakePayload(context.paperclipWake)?.mode ?? null;
   if (wakeTaskId) {
     env.PAPERCLIP_TASK_ID = wakeTaskId;
   }
@@ -236,6 +238,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   if (linkedIssueIds.length > 0) {
     env.PAPERCLIP_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
+  }
+  if (wakeMode) {
+    env.PAPERCLIP_CONTINUITY_MODE = wakeMode;
   }
   if (wakePayloadJson) {
     env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;

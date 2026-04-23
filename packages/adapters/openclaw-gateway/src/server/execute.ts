@@ -7,6 +7,7 @@ import {
   asNumber,
   asString,
   buildPaperclipEnv,
+  normalizePaperclipWakePayload,
   parseObject,
   renderPaperclipWakePrompt,
   stringifyPaperclipWakePayload,
@@ -338,6 +339,7 @@ function resolveClaimedApiKeyPath(value: unknown): string {
 
 function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: WakePayload): Record<string, string> {
   const paperclipApiUrlOverride = resolvePaperclipApiUrlOverride(ctx.config.paperclipApiUrl);
+  const structuredWakeMode = normalizePaperclipWakePayload(ctx.context.paperclipWake)?.mode ?? null;
   const paperclipEnv: Record<string, string> = {
     ...buildPaperclipEnv(ctx.agent),
     PAPERCLIP_RUN_ID: ctx.runId,
@@ -353,6 +355,9 @@ function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: Wak
   if (wakePayload.approvalStatus) paperclipEnv.PAPERCLIP_APPROVAL_STATUS = wakePayload.approvalStatus;
   if (wakePayload.issueIds.length > 0) {
     paperclipEnv.PAPERCLIP_LINKED_ISSUE_IDS = wakePayload.issueIds.join(",");
+  }
+  if (structuredWakeMode) {
+    paperclipEnv.PAPERCLIP_CONTINUITY_MODE = structuredWakeMode;
   }
 
   return paperclipEnv;
@@ -372,6 +377,7 @@ function buildWakeText(
     "PAPERCLIP_TASK_ID",
     "PAPERCLIP_WAKE_REASON",
     "PAPERCLIP_WAKE_COMMENT_ID",
+    "PAPERCLIP_CONTINUITY_MODE",
     "PAPERCLIP_APPROVAL_ID",
     "PAPERCLIP_APPROVAL_STATUS",
     "PAPERCLIP_LINKED_ISSUE_IDS",

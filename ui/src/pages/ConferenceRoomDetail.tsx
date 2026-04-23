@@ -51,6 +51,12 @@ function replyPlaceholder(type: ConferenceRoomMessageType, replying: boolean) {
   return "Add context, direction, or a new room message.";
 }
 
+function toTimestamp(value: Date | string | null | undefined) {
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
 export function ConferenceRoomDetail() {
   const { roomId } = useParams<{ roomId: string }>();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -130,7 +136,7 @@ export function ConferenceRoomDetail() {
       children.set(comment.parentCommentId, group);
     }
     for (const group of children.values()) {
-      group.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+      group.sort((left, right) => toTimestamp(left.createdAt) - toTimestamp(right.createdAt));
     }
     return children;
   }, [comments]);
@@ -139,7 +145,7 @@ export function ConferenceRoomDetail() {
     () =>
       comments
         .filter((comment) => !comment.parentCommentId)
-        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()),
+        .sort((left, right) => toTimestamp(left.createdAt) - toTimestamp(right.createdAt)),
     [comments],
   );
 

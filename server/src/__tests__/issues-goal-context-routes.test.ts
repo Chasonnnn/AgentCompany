@@ -35,11 +35,82 @@ const projectGoal = {
   updatedAt: new Date("2026-03-20T00:00:00Z"),
 };
 
-async function createHarness() {
+function buildContinuityResponse(overrides?: {
+  continuityStatus?: string;
+  planApprovalStatus?: string | null;
+  planApprovalRequiresApproval?: boolean;
+  executionState?: Record<string, unknown> | null;
+}) {
+  return {
+    issueId: legacyProjectLinkedIssue.id,
+    continuityState: {
+      tier: "normal",
+      status: overrides?.continuityStatus ?? "ready",
+      health: "healthy",
+      requiredDocumentKeys: [],
+      missingDocumentKeys: [],
+      specState: "editable",
+      branchRole: "none",
+      branchStatus: "none",
+      unresolvedBranchIssueIds: [],
+      returnedBranchIssueIds: [],
+      openDecisionQuestionCount: 0,
+      blockingDecisionQuestionCount: 0,
+      lastProgressAt: null,
+      lastHandoffAt: null,
+      lastPreparedAt: null,
+      lastBundleHash: null,
+      planApproval: {
+        approvalId: null,
+        status: overrides?.planApprovalStatus ?? null,
+        currentPlanRevisionId: null,
+        requestedPlanRevisionId: null,
+        approvedPlanRevisionId: null,
+        specRevisionId: null,
+        testPlanRevisionId: null,
+        decisionNote: null,
+        lastRequestedAt: null,
+        lastDecidedAt: null,
+        currentRevisionApproved: false,
+        requiresApproval: overrides?.planApprovalRequiresApproval ?? false,
+        requiresResubmission: false,
+      },
+    },
+    continuityBundle: {
+      executionState: overrides?.executionState ?? null,
+      planApproval: {
+        approvalId: null,
+        status: overrides?.planApprovalStatus ?? null,
+        currentPlanRevisionId: null,
+        requestedPlanRevisionId: null,
+        approvedPlanRevisionId: null,
+        specRevisionId: null,
+        testPlanRevisionId: null,
+        decisionNote: null,
+        lastRequestedAt: null,
+        lastDecidedAt: null,
+        currentRevisionApproved: false,
+        requiresApproval: overrides?.planApprovalRequiresApproval ?? false,
+        requiresResubmission: false,
+      },
+    },
+    continuityOwner: {
+      assigneeAgentId: legacyProjectLinkedIssue.assigneeAgentId,
+      assigneeUserId: null,
+    },
+    activeGateParticipant: null,
+    remediation: { suggestedActions: [], blockedActions: [] },
+  };
+}
+
+async function createHarness(options?: {
+  issue?: typeof legacyProjectLinkedIssue;
+  continuity?: Parameters<typeof buildContinuityResponse>[0];
+}) {
   vi.resetModules();
   const { issueRoutes } = await import("../routes/issues.js");
   const issueService = {
-    getById: vi.fn().mockResolvedValue(legacyProjectLinkedIssue),
+    getById: vi.fn().mockResolvedValue(options?.issue ?? legacyProjectLinkedIssue),
     getAncestors: vi.fn().mockResolvedValue([]),
     getRelationSummaries: vi.fn().mockResolvedValue({ blockedBy: [], blocks: [] }),
     findMentionedProjectIds: vi.fn().mockResolvedValue([]),
@@ -146,6 +217,7 @@ async function createHarness() {
         listCompanyIds: vi.fn(async () => ["company-1"]),
       } as any,
       issueContinuityService: {
+        getIssueContinuity: vi.fn(async () => buildContinuityResponse(options?.continuity)),
         recomputeIssueContinuityState: vi.fn(async () => ({
           tier: "normal",
           status: "draft",
@@ -228,6 +300,8 @@ describe("issue goal context routes", () => {
     );
     expect(goalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
     expect(res.body.attachments).toEqual([]);
+    expect(res.body.mode).toBe("planning");
+    expect(res.body.planningMode).toBe(true);
   });
 
   it("surfaces blocker summaries on GET /issues/:id/heartbeat-context", async () => {
@@ -260,5 +334,77 @@ describe("issue goal context routes", () => {
         status: "done",
       }),
     ]);
+  });
+
+  it("keeps pre-execution issues in planning mode even after checkout flipped the issue to in_progress", async () => {
+    const { app, issueService } = await createHarness();
+    issueService.getById.mockResolvedValue({
+      ...legacyProjectLinkedIssue,
+      status: "in_progress",
+    });
+
+    const res = await request(app).get(
+      "/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe("planning");
+    expect(res.body.planningMode).toBe(true);
+    expect(res.body.continuityStatus).toBe("ready");
+  });
+
+  it("surfaces approval mode for plan approval waits", async () => {
+    const { app } = await createHarness({
+      continuity: {
+        continuityStatus: "awaiting_decision",
+        planApprovalStatus: "pending",
+        planApprovalRequiresApproval: true,
+      },
+    });
+    const res = await request(app).get(
+      "/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe("approval");
+    expect(res.body.planningMode).toBe(false);
+    expect(res.body.planApproval).toEqual(
+      expect.objectContaining({
+        status: "pending",
+        requiresApproval: true,
+      }),
+    );
+  });
+
+  it("surfaces review mode from execution review stages", async () => {
+    const { app } = await createHarness({
+      issue: { ...legacyProjectLinkedIssue, status: "in_review" },
+      continuity: {
+        continuityStatus: "active",
+        executionState: {
+          status: "pending",
+          currentStageId: "stage-1",
+          currentStageIndex: 0,
+          currentStageType: "review",
+          currentParticipant: { type: "agent", agentId: "reviewer-1" },
+          returnAssignee: { type: "agent", agentId: "author-1" },
+          completedStageIds: [],
+          lastDecisionId: null,
+          lastDecisionOutcome: null,
+        },
+      },
+    });
+    const res = await request(app).get(
+      "/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe("review");
+    expect(res.body.executionStage).toEqual(
+      expect.objectContaining({
+        stageId: "stage-1",
+        stageType: "review",
+      }),
+    );
   });
 });

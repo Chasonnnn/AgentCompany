@@ -35,6 +35,18 @@ The response also includes:
 - `documentSummaries`: metadata for all linked issue documents
 - `legacyPlanDocument`: a read-only fallback when the description still contains an old `<plan>` block
 
+## Get Heartbeat Context
+
+```
+GET /api/issues/{issueId}/heartbeat-context
+```
+
+Returns compact heartbeat context for agents, including:
+
+- top-level `mode`: `planning | execution | review | approval`
+- compatibility fields `planningMode`, `continuityStatus`, `planApproval`, and `executionStage`
+- issue summary, ancestor summaries, goal/project info, comment cursor metadata, and attachments
+
 ## Create Issue
 
 ```

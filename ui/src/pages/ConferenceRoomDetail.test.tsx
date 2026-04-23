@@ -202,6 +202,44 @@ function createComments(): ConferenceRoomComment[] {
   ];
 }
 
+function createWireRoom(): ConferenceRoomType {
+  const room = createRoom();
+  return {
+    ...room,
+    createdAt: room.createdAt.toISOString(),
+    updatedAt: room.updatedAt.toISOString(),
+    latestCommentAt: room.latestCommentAt?.toISOString() ?? null,
+    linkedIssues: room.linkedIssues.map((issue) => ({
+      ...issue,
+      createdAt: issue.createdAt.toISOString(),
+    })),
+    participants: room.participants.map((participant) => ({
+      ...participant,
+      createdAt: participant.createdAt.toISOString(),
+      updatedAt: participant.updatedAt.toISOString(),
+    })),
+    decisions: room.decisions.map((decision) => ({
+      ...decision,
+      createdAt: decision.createdAt.toISOString(),
+      updatedAt: decision.updatedAt.toISOString(),
+    })),
+  } as unknown as ConferenceRoomType;
+}
+
+function createWireComments(): ConferenceRoomComment[] {
+  return createComments().map((comment) => ({
+    ...comment,
+    createdAt: comment.createdAt.toISOString(),
+    updatedAt: comment.updatedAt.toISOString(),
+    responses: comment.responses.map((response) => ({
+      ...response,
+      latestWakeRequestedAt: response.latestWakeRequestedAt?.toISOString() ?? null,
+      createdAt: response.createdAt.toISOString(),
+      updatedAt: response.updatedAt.toISOString(),
+    })),
+  })) as unknown as ConferenceRoomComment[];
+}
+
 function createNoteThreadComments(): ConferenceRoomComment[] {
   const baseTime = new Date("2026-04-17T12:06:17.000Z");
   return [
@@ -374,6 +412,31 @@ describe("ConferenceRoomDetail", () => {
 
     await waitForAssertion(() => {
       expect(container.textContent).toContain("The audit looks good from engineering.");
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("renders conference-room threads when API timestamps arrive as ISO strings", async () => {
+    mockConferenceRoomsApi.get.mockResolvedValue(createWireRoom());
+    mockConferenceRoomsApi.listComments.mockResolvedValue(createWireComments());
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ConferenceRoomDetail />
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitForAssertion(() => {
+      expect(container.textContent).toContain("Onboarding Meeting");
+      expect(container.textContent).toContain("How do you feel about the audit?");
+      expect(container.textContent).toContain("The audit looks good from engineering.");
+      expect(container.textContent).toContain("1 wake failure");
     });
 
     await act(async () => {

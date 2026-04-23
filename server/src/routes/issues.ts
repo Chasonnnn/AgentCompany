@@ -75,6 +75,7 @@ import {
   workProductService,
 } from "../services/index.js";
 import { buildIssueOperatorState } from "../services/issue-operator-state.js";
+import { resolveIssueHeartbeatMode } from "../services/issue-heartbeat-mode.js";
 import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination-wakeup.js";
 import { issueDecisionQuestionService } from "../services/issue-decision-questions.js";
 import { logger } from "../middleware/logger.js";
@@ -1828,7 +1829,7 @@ export function issueRoutes(
         ? req.query.wakeCommentId.trim()
         : null;
 
-    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments] =
+    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments, continuity] =
       await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
@@ -1836,9 +1837,47 @@ export function issueRoutes(
       wakeCommentId ? svc.getComment(wakeCommentId) : null,
       svc.getRelationSummaries(issue.id),
       svc.listAttachments(issue.id),
+      continuitySvc.getIssueContinuity(issue.id, {
+        agentId: req.actor.type === "agent" ? req.actor.agentId ?? null : null,
+        userId: req.actor.type === "board" ? req.actor.userId ?? null : null,
+        isBoard: req.actor.type === "board",
+      }),
     ]);
+    const continuityState = continuity?.continuityState ?? null;
+    const executionState = continuity?.continuityBundle?.executionState ?? null;
+    const planApproval = continuityState?.planApproval ?? continuity?.continuityBundle?.planApproval ?? null;
+    const mode = resolveIssueHeartbeatMode({
+      issueStatus: issue.status,
+      continuityStatus: continuityState?.status ?? null,
+      planApprovalStatus: planApproval?.status ?? null,
+      planApprovalRequired: planApproval?.requiresApproval ?? false,
+      executionStateStatus: executionState?.status ?? null,
+      executionStageType: executionState?.currentStageType ?? null,
+    });
+    const executionStage =
+      executionState &&
+        (
+          executionState.currentStageId ||
+          executionState.currentStageType ||
+          executionState.currentParticipant ||
+          executionState.returnAssignee ||
+          executionState.lastDecisionOutcome
+        )
+        ? {
+            stageId: executionState.currentStageId,
+            stageType: executionState.currentStageType,
+            currentParticipant: executionState.currentParticipant,
+            returnAssignee: executionState.returnAssignee,
+            lastDecisionOutcome: executionState.lastDecisionOutcome,
+          }
+        : null;
 
     res.json({
+      mode,
+      planningMode: mode === "planning",
+      continuityStatus: continuityState?.status ?? null,
+      planApproval,
+      executionStage,
       issue: {
         id: issue.id,
         identifier: issue.identifier,

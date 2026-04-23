@@ -69,6 +69,7 @@ import {
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
 import { refreshIssueContinuationSummary } from "./issue-continuation-summary.js";
+import { resolveIssueHeartbeatMode } from "./issue-heartbeat-mode.js";
 import { issueContinuityService } from "./issue-continuity.js";
 import { issueDecisionQuestionService } from "./issue-decision-questions.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
@@ -1140,8 +1141,18 @@ async function buildPaperclipWakePayload(input: {
     | null;
 }) {
   const executionStage = parseObject(input.contextSnapshot.executionStage);
-  const planningMode = input.contextSnapshot.paperclipPlanningMode === true;
   const continuityStatus = readNonEmptyString(input.contextSnapshot.continuityStatus);
+  const planApproval = parseObject(input.contextSnapshot.paperclipPlanApproval);
+  const mode =
+    readNonEmptyString(input.contextSnapshot.paperclipContinuityMode)
+    ?? resolveIssueHeartbeatMode({
+      issueStatus: input.issueSummary?.status ?? null,
+      continuityStatus,
+      planApprovalStatus: readNonEmptyString(planApproval.status),
+      planApprovalRequired: planApproval.requiresApproval === true,
+      executionStageType: readNonEmptyString(executionStage.stageType),
+    });
+  const planningMode = mode === "planning";
   const openDecisionQuestionCount = Math.max(0, Number(input.contextSnapshot.openDecisionQuestionCount ?? 0) || 0);
   const blockingDecisionQuestionCount = Math.max(0, Number(input.contextSnapshot.blockingDecisionQuestionCount ?? 0) || 0);
   const decisionQuestionId = readNonEmptyString(input.contextSnapshot.decisionQuestionId);
@@ -1211,7 +1222,6 @@ async function buildPaperclipWakePayload(input: {
       : null;
   const commentIds = extractWakeCommentIds(input.contextSnapshot);
   const issueId = readNonEmptyString(input.contextSnapshot.issueId);
-  const planApproval = parseObject(input.contextSnapshot.paperclipPlanApproval);
   const sharedSkills = Array.isArray(input.contextSnapshot.paperclipSharedSkills)
     ? input.contextSnapshot.paperclipSharedSkills
         .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
@@ -1596,6 +1606,7 @@ async function buildPaperclipWakePayload(input: {
           priority: issueSummary.priority,
         }
       : null,
+    mode,
     planningMode,
     continuityStatus,
     openDecisionQuestionCount,
@@ -4062,6 +4073,14 @@ export function heartbeatService(db: Db) {
       issueContext = await getIssueExecutionContext(agent.companyId, issueId);
     }
     if (issueContext?.continuityState) {
+      const mode = resolveIssueHeartbeatMode({
+        issueStatus: issueContext.status,
+        continuityStatus: issueContext.continuityState.status,
+        planApprovalStatus: issueContext.continuityState.planApproval.status,
+        planApprovalRequired: issueContext.continuityState.planApproval.requiresApproval,
+        executionStateStatus: issueContext.continuityBundle.executionState?.status ?? null,
+        executionStageType: issueContext.continuityBundle.executionState?.currentStageType ?? null,
+      });
       const invalidContinuity =
         issueContext.continuityState.health === "invalid_handoff" ||
         issueContext.continuityState.status === "awaiting_decision" ||
@@ -4095,11 +4114,12 @@ export function heartbeatService(db: Db) {
       context.continuityRevisionIds = continuityRevisionIds;
       context.continuityTier = issueContext.continuityState.tier;
       context.continuityStatus = issueContext.continuityState.status;
+      context.paperclipContinuityMode = mode;
       context.specState = issueContext.continuityState.specState;
       context.unresolvedBranchIssueIds = issueContext.continuityState.unresolvedBranchIssueIds;
       context.openDecisionQuestionCount = issueContext.continuityState.openDecisionQuestionCount ?? 0;
       context.blockingDecisionQuestionCount = issueContext.continuityState.blockingDecisionQuestionCount ?? 0;
-      context.paperclipPlanningMode = issueContext.continuityState.status === "planning";
+      context.paperclipPlanningMode = mode === "planning";
       context.paperclipDecisionQuestions = issueContext.continuityBundle.decisionQuestions.map((question) => ({
         id: question.id,
         status: question.status,

@@ -620,6 +620,7 @@ type PaperclipWakeOfficeCoordination = {
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
+  mode: string | null;
   planningMode: boolean;
   continuityStatus: string | null;
   openDecisionQuestionCount: number;
@@ -1145,6 +1146,7 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
   return {
     reason: asString(payload.reason, "").trim() || null,
     issue: normalizePaperclipWakeIssue(payload.issue),
+    mode: asString(payload.mode, "").trim() || null,
     planningMode: asBoolean(payload.planningMode, false),
     continuityStatus: asString(payload.continuityStatus, "").trim() || null,
     openDecisionQuestionCount: asNumber(payload.openDecisionQuestionCount, 0),
@@ -1449,7 +1451,9 @@ export function renderPaperclipWakePrompt(
   if (normalized.continuityStatus) {
     lines.push(`- continuity status: ${normalized.continuityStatus}`);
   }
-  if (normalized.planningMode) {
+  if (normalized.mode) {
+    lines.push(`- mode: ${normalized.mode}`);
+  } else if (normalized.planningMode) {
     lines.push("- planning mode: yes");
   }
   if (normalized.openDecisionQuestionCount > 0 || normalized.blockingDecisionQuestionCount > 0) {

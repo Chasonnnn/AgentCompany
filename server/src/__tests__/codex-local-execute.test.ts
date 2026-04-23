@@ -15,6 +15,7 @@ const payload = {
   prompt: "",
   prompts: [],
   codexHome: process.env.CODEX_HOME || null,
+  paperclipContinuityMode: process.env.PAPERCLIP_CONTINUITY_MODE || null,
   paperclipWakePayloadJson: process.env.PAPERCLIP_WAKE_PAYLOAD_JSON || null,
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
@@ -278,6 +279,7 @@ type CapturePayload = {
   prompt: string;
   prompts: string[];
   codexHome: string | null;
+  paperclipContinuityMode: string | null;
   paperclipWakePayloadJson: string | null;
   paperclipEnvKeys: string[];
   initializeParams: Record<string, unknown> | null;
@@ -592,6 +594,7 @@ describe("codex execute", () => {
               status: "in_progress",
               priority: "medium",
             },
+            mode: "review",
             commentIds: ["comment-1", "comment-2"],
             latestCommentId: "comment-2",
             comments: [
@@ -630,13 +633,17 @@ describe("codex execute", () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.paperclipEnvKeys).toContain("PAPERCLIP_WAKE_PAYLOAD_JSON");
+      expect(capture.paperclipEnvKeys).toContain("PAPERCLIP_CONTINUITY_MODE");
+      expect(capture.paperclipContinuityMode).toBe("review");
       expect(capture.paperclipWakePayloadJson).not.toBeNull();
       expect(JSON.parse(capture.paperclipWakePayloadJson ?? "{}")).toMatchObject({
         reason: "issue_commented",
+        mode: "review",
         latestCommentId: "comment-2",
         commentIds: ["comment-1", "comment-2"],
       });
       expect(capture.prompt).toContain("## Paperclip Wake Payload");
+      expect(capture.prompt).toContain("mode: review");
       expect(capture.prompt).toContain("Treat this wake payload as the highest-priority change for the current heartbeat.");
       expect(capture.prompt).toContain("Do not switch to another issue until you have handled this wake.");
       expect(capture.prompt).toContain(
