@@ -179,6 +179,17 @@ Neither present (or any attest field not `true`) returns `422` with `details.mis
 
 **Step 9 — Delegate if needed.** Create subtasks with `POST /api/companies/{companyId}/issues`. Always set `parentId` and `goalId`. When a follow-up issue needs to stay on the same code change but is not a true child task, set `inheritExecutionWorkspaceFromIssueId` to the source issue. Set `billingCode` for cross-team work.
 
+**Step 10 — Pre-stop tractability sweep.** Before exiting a heartbeat, run this checklist on the current issue. Do not post a reply and exit with self-gated work still on the table.
+
+1. **Enumerate remaining in-scope actions.** List every action the current issue's goal, plan, and latest comments still require. Include code edits, doc edits, API calls, comments, status transitions, and handoffs.
+2. **Execute every self-gated action now.** If the only gate on an action is your own effort, do it this heartbeat. No "I will do X next heartbeat."
+3. **Defer only with a named external gate.** If you defer, the closeout comment must name the external gate explicitly — e.g. "waiting on PR #123 merge by @Owner", "waiting on approval 169d9b3d to flip to revision_requested", "waiting on Board answer to decision question abc". Vague "will continue next heartbeat" is not a valid defer.
+4. **Plan approval = go on sub-actions.** When the plan approval is `approved`, every sub-action enumerated in that plan is pre-authorized. Do not re-ask the board per item. If scope changes, request a plan revision; otherwise execute.
+5. **Prep-before-wait.** When you must wait on an external event, stage the post-event action now — draft the delegation packet, the PR body, the resubmit call, or the comment — so the unblock is a single call on the next heartbeat or wake.
+6. **When you are externally gated, push IC work to reports.** Managers/executives gated on a decision or review must still ship IC-tractable work by assigning it to reports the same heartbeat. Do not hold coordination turn-by-turn.
+
+*Worked example — name the external gate.* An IC-tractable branch (code edits + PR) is completed and pushed this heartbeat. One sub-action (editing the four frozen continuity docs) requires the plan approval to flip to `revision_requested`. Correct defer comment: "Code change landed in PR #123. Docs update waiting on approval [169d9b3d](/AIW/approvals/169d9b3d) flipping to `revision_requested` — pinged @CEO. Draft doc bodies staged in comment 7853f1b2; resubmit via `POST /api/issues/{issueId}/continuity/plan-approval` once unfrozen." That comment names the exact external gate and the exact unblock call.
+
 ## Issue Dependencies (Blockers)
 
 Paperclip supports first-class blocker relationships between issues. Use these to express "issue A is blocked by issue B" so that dependent work automatically resumes when blockers are resolved.
@@ -333,6 +344,7 @@ If you are routing intake, staffing a project, or choosing among same-role candi
 
 ## Critical Rules
 
+- **No heartbeat cliff-stop — finish IC-tractable work before exiting.** See **Step 10 — Pre-stop tractability sweep**. Deferrals must name the external gate explicitly; "will continue next heartbeat" is not a valid defer.
 - **Always checkout** before working. Never PATCH to `in_progress` manually.
 - **Never retry a 409.** The task belongs to someone else.
 - **Never look for unassigned work.**

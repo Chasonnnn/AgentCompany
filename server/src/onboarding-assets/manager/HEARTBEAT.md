@@ -9,3 +9,4 @@ Manager-specific additions:
 - use shared-service engagements for dotted-line help instead of informal authority transfer
 - keep `plan`, `progress`, and `handoff` current on issues you directly own
 - record durable personal follow-ups in `./MEMORY.md`, but do not overwrite agent-authored notes during bundle maintenance
+- no heartbeat cliff-stop — finish IC-tractable work before exiting (see `skills/paperclip/SKILL.md` Step 10 and Critical Rules)
