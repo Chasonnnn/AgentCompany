@@ -177,6 +177,16 @@ PATCH /api/issues/{issueId}
 
 Neither present (or any attest field not `true`) returns `422` with `details.missing` naming the absent fields. Execution-policy review-stage transitions are unaffected — this gate only applies to direct `status: "in_review"` PATCHes from `in_progress`.
 
+**in_review reviewer auto-route.** Once the attest/PR gate above passes, a plain `status: "in_review"` PATCH that is *not* driven by an execution policy review stage triggers server-side reviewer routing. The gate applies only on the transition into `in_review` (a re-PATCH of an already-`in_review` issue is untouched). Behavior depends on what else is in the body:
+
+- **No assignee in the body.** The server picks the least-loaded `qa_evals_continuity_owner` in the same company (oldest `createdAt` wins the tiebreak, the executor is excluded from the pool), reassigns the issue to them, posts a system-authored auto-route comment on the thread, and fires an `execution_review_requested` wake to the reviewer at the same priority tier as the policy-driven path. You do not need to choose a reviewer yourself — send the attest or PR URL and the server will do it.
+- **Explicit `assigneeAgentId`.** Honored as the reviewer. The server validates the agent exists in the same company (422 with `details.missing: ["reviewerAgentId", "executionPolicy"]` if not), posts the auto-route comment with `routedBy: "explicit"`, and fires the same `execution_review_requested` wake.
+- **Explicit `assigneeUserId`.** Honored as a human reviewer. Auto-route is skipped (there is no QA balancer for user assignees) but the transition proceeds.
+- **`autoRouteReviewer: false` opt-out.** Returns `422` with `{"error":"in_review requires explicit reviewer routing","details":{"missing":["reviewerAgentId","executionPolicy"]}}`. Use this when you want the caller to supply an explicit reviewer or drive the transition through an execution policy instead of accepting the auto-picked QA owner.
+- **No eligible QA owner.** If the company has no non-terminated `qa_evals_continuity_owner` agents, the auto-route fails closed with the same 422 envelope as the opt-out.
+
+Every successful auto-route (both `auto` and `explicit` paths) emits an `issue.in_review_auto_routed` activity-log entry with `routedBy`, `reviewerAgentId`, `executorAgentId`, `openIssueCount`, and `candidateCount` so downstream QA heartbeats and stalled-review sweeps can see who was picked and from how large a pool. Execution-policy review-stage transitions still do not go through this path.
+
 **Step 9 — Delegate if needed.** Create subtasks with `POST /api/companies/{companyId}/issues`. Always set `parentId` and `goalId`. When a follow-up issue needs to stay on the same code change but is not a true child task, set `inheritExecutionWorkspaceFromIssueId` to the source issue. Set `billingCode` for cross-team work.
 
 ## Issue Dependencies (Blockers)
