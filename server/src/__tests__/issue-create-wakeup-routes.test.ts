@@ -175,6 +175,8 @@ describe("issue creation wakeups", () => {
       continuityBundle: {
         issueId: "issue-1",
       },
+      scaffoldedKeys: ["spec", "plan", "progress", "test-plan"],
+      overriddenKeys: [],
     });
   });
 
@@ -261,6 +263,140 @@ describe("issue creation wakeups", () => {
         reason: "issue_assigned",
       }),
     );
+  });
+
+  it("auto-scaffolds continuity docs when a subtask is created with parentId (no explicit prepareContinuity)", async () => {
+    const PARENT_ID = "33333333-3333-4333-8333-333333333333";
+    mockIssueService.create.mockResolvedValue({
+      id: "issue-child",
+      companyId: "company-1",
+      title: "Child audit",
+      identifier: "PAP-2",
+      status: "todo",
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      assigneeUserId: null,
+      priority: "medium",
+      projectId: null,
+      goalId: null,
+      parentId: PARENT_ID,
+    });
+
+    const res = await request(await createApp()).post("/api/companies/company-1/issues").send({
+      title: "Child audit",
+      parentId: PARENT_ID,
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      status: "todo",
+      continuityTier: "normal",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(res.status).toBe(201);
+    expect(mockContinuityService.prepare).toHaveBeenCalledWith(
+      "issue-child",
+      { tier: "normal", docs: undefined },
+      expect.objectContaining({ userId: "local-board" }),
+    );
+  });
+
+  it("does not auto-scaffold when creating a top-level issue with no parentId", async () => {
+    const res = await request(await createApp()).post("/api/companies/company-1/issues").send({
+      title: "Top-level triage candidate",
+      status: "todo",
+      continuityTier: "normal",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(res.status).toBe(201);
+    expect(mockContinuityService.prepare).not.toHaveBeenCalled();
+  });
+
+  it("honors explicit prepareContinuity: false even when parentId is set", async () => {
+    const PARENT_ID = "33333333-3333-4333-8333-333333333333";
+    const res = await request(await createApp()).post("/api/companies/company-1/issues").send({
+      title: "Child audit opt-out",
+      parentId: PARENT_ID,
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      status: "todo",
+      continuityTier: "normal",
+      prepareContinuity: false,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(res.status).toBe(201);
+    expect(mockContinuityService.prepare).not.toHaveBeenCalled();
+  });
+
+  it("forwards docs override to continuityService.prepare on subtask creation", async () => {
+    const PARENT_ID = "33333333-3333-4333-8333-333333333333";
+    const progressBody = [
+      "---",
+      "kind: paperclip/issue-progress.v1",
+      'currentState: "Scaffolded by caller"',
+      'nextAction: "Author the first real checkpoint"',
+      "knownPitfalls: []",
+      "openQuestions: []",
+      "evidence: []",
+      "---",
+      "",
+      "Caller-authored progress body.",
+    ].join("\n");
+
+    const res = await request(await createApp()).post("/api/companies/company-1/issues").send({
+      title: "Child with caller docs",
+      parentId: PARENT_ID,
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      status: "todo",
+      continuityTier: "normal",
+      docs: {
+        spec: { body: "## Goal\n\nCaller-supplied spec body.\n" },
+        progress: { body: progressBody },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(res.status).toBe(201);
+    expect(mockContinuityService.prepare).toHaveBeenCalledWith(
+      "issue-1",
+      expect.objectContaining({
+        tier: "normal",
+        docs: expect.objectContaining({
+          spec: expect.objectContaining({ body: expect.stringContaining("Caller-supplied spec body") }),
+          progress: expect.objectContaining({ body: expect.stringContaining("paperclip/issue-progress.v1") }),
+        }),
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("rejects docs.progress body that fails paperclip/issue-progress.v1 frontmatter validation", async () => {
+    const PARENT_ID = "33333333-3333-4333-8333-333333333333";
+    const badProgress = [
+      "---",
+      "kind: paperclip/issue-progress.v1",
+      'currentState: "Missing nextAction field"',
+      "knownPitfalls: []",
+      "openQuestions: []",
+      "evidence: []",
+      "---",
+      "",
+      "No nextAction → schema fails.",
+    ].join("\n");
+
+    const res = await request(await createApp()).post("/api/companies/company-1/issues").send({
+      title: "Child with bad progress doc",
+      parentId: PARENT_ID,
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      status: "todo",
+      continuityTier: "normal",
+      docs: {
+        progress: { body: badProgress },
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ field: "docs.progress.body" });
+    expect(mockIssueService.create).not.toHaveBeenCalled();
+    expect(mockContinuityService.prepare).not.toHaveBeenCalled();
   });
 
   it("leaves project-scoped intake unassigned and wakes the office operator when one exists", async () => {
