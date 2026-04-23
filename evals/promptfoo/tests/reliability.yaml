@@ -93,6 +93,26 @@
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const disambiguatesAway = /\\b(?:not|instead of|rather than)\\s+`?design-review`?\\b|\\bnot\\s+(?:just\\s+)?visual polish\\b/i.test(text); const recommendsDesignReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?design-review`?\\b/i.test(text); const recommendsPolish = /\\b(?:use|invoke|choose|select|route to)\\b.{0,40}\\bvisual polish\\b/i.test(text); return disambiguatesAway || (!recommendsDesignReview && !recommendsPolish && !/just tweak the css/i.test(text)); })()"
       metric: avoids_design_review_drift
 
+- description: "reliability.vercel_react_native_activation - routes React Native / Expo work to the vercel-react-native-skills skill"
+  vars:
+    caseId: reliability.vercel_react_native_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-vrn-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user asks to build a paginated product feed in a React Native / Expo app with smooth 60fps scrolling, animated rows, and native-feeling navigation. Two skills are loaded: `vercel-react-native-skills` (React Native and Expo mobile best practices, including FlashList, Reanimated, and native navigators) and `vercel-react-best-practices` (web React patterns). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /vercel-react-native-skills|react native|expo|flashlist/i.test(result.finalText); })()"
+      metric: routes_to_react_native
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /\\bnative\\b|mobile|flashlist|virtualize|reanimated|expo/i.test(result.finalText); })()"
+      metric: mentions_native_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsWebReact = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel-react-best-practices`?\\b/i.test(text); return !recommendsWebReact; })()"
+      metric: avoids_web_react_drift
+
 - description: "reliability.shared_mirror_proposal_gate - requires verification evidence before proposal approval"
   vars:
     caseId: reliability.shared_mirror_proposal_gate
