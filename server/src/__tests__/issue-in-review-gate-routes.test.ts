@@ -13,6 +13,27 @@ const mockIssueService = vi.hoisted(() => ({
   getWakeableParentAfterChildCompletion: vi.fn(),
 }));
 
+// AIW-137: stub the auto-route helper so the in_review entry gate tests
+// (which only care about pullRequestUrl / selfAttest) keep passing once the
+// auto-route gate is wired in. Dedicated auto-route coverage lives in
+// issue-in-review-auto-route.test.ts.
+vi.mock("../services/in-review-routing.js", () => ({
+  selectLeastLoadedQaReviewer: vi.fn(async () => ({
+    reviewer: {
+      id: "99999999-9999-4999-8999-999999999999",
+      name: "Stub QA",
+      openIssueCount: 0,
+      createdAt: new Date(),
+    },
+    candidateCount: 1,
+  })),
+  buildAutoRouteComment: vi.fn(() => "auto-route"),
+  inReviewRoutingMissingReviewerError: vi.fn(() => ({
+    error: "in_review requires explicit reviewer routing",
+    details: { missing: ["reviewerAgentId", "executionPolicy"] },
+  })),
+}));
+
 const mockHeartbeatService = vi.hoisted(() => ({
   wakeup: vi.fn(async () => undefined),
   reportRunActivity: vi.fn(async () => undefined),
@@ -156,6 +177,16 @@ describe("in_review entry gate on PATCH /issues/:id", () => {
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
+    mockIssueService.addComment.mockImplementation(async (issueId: string, body: string) => ({
+      id: "auto-route-comment",
+      issueId,
+      companyId: "company-1",
+      body,
+      authorAgentId: null,
+      authorUserId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
   });
 
   it("returns 422 when status=in_review without pullRequestUrl or selfAttest", async () => {
