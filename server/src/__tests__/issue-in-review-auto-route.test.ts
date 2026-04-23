@@ -286,11 +286,12 @@ describe("PATCH /issues/:id — in_review auto-route gate", () => {
 
     // Allow queued wake microtasks to flush before asserting on them.
     await new Promise((resolve) => setImmediate(resolve));
-    const wakeCall = mockHeartbeatService.wakeup.mock.calls.find(
+    const reviewerWakeCalls = mockHeartbeatService.wakeup.mock.calls.filter(
       ([agentId]: [string]) => agentId === QA_REVIEWER_ID,
     );
-    expect(wakeCall).toBeTruthy();
-    expect(wakeCall![1]).toMatchObject({
+    expect(reviewerWakeCalls).toHaveLength(1);
+    const wakeCall = reviewerWakeCalls[0];
+    expect(wakeCall[1]).toMatchObject({
       reason: "execution_review_requested",
       payload: expect.objectContaining({
         issueId: ISSUE_ID,
@@ -344,6 +345,8 @@ describe("PATCH /issues/:id — in_review auto-route gate", () => {
         details: expect.objectContaining({
           routedBy: "explicit",
           reviewerAgentId: QA_REVIEWER_B_ID,
+          openIssueCount: null,
+          candidateCount: null,
         }),
       }),
     );
@@ -460,6 +463,31 @@ describe("PATCH /issues/:id — in_review auto-route gate", () => {
       .send({ status: "blocked" });
 
     expect(mockInReviewRouting.selectLeastLoadedQaReviewer).not.toHaveBeenCalled();
+  });
+
+  it("422s at the in_review entry gate before the routing helper is consulted when neither pullRequestUrl nor selfAttest is supplied", async () => {
+    const existing = makeIssue();
+    mockIssueService.getById.mockResolvedValue(existing);
+
+    const res = await request(await createApp())
+      .patch(`/api/issues/${ISSUE_ID}`)
+      .send({ status: "in_review" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.details.missing).toEqual(
+      expect.arrayContaining([
+        "pullRequestUrl",
+        "selfAttest.testsRun",
+        "selfAttest.docsUpdated",
+        "selfAttest.worktreeClean",
+      ]),
+    );
+    expect(mockInReviewRouting.selectLeastLoadedQaReviewer).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.in_review_auto_routed" }),
+    );
   });
 
   it("does not gate when status is already in_review (re-patching)", async () => {
