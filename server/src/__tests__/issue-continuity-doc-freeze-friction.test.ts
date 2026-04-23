@@ -410,4 +410,52 @@ describe("issue continuity doc-freeze friction", () => {
       .send({ documentKeys: ["spec"] });
     expect(missingNoteRes.status).toBe(400);
   });
+
+  it("allows any company executive to grant doc-unfreeze when no portfolio sponsor is set", async () => {
+    const harness = createRouteHarness();
+    harness.portfolioClusterService.getById.mockResolvedValue({
+      id: portfolioClusterId,
+      companyId,
+      executiveSponsorAgentId: null,
+    });
+
+    const execApp = await createApp(harness, { type: "agent", agentId: executiveAgentId });
+    const firstRes = await request(execApp)
+      .post(`/api/issues/${issueId}/continuity/doc-unfreeze`)
+      .send({ decisionNote: "No sponsor set — exec may thaw", documentKeys: ["spec"] });
+    expect(firstRes.status).toBe(201);
+    expect(harness.issueContinuityService.grantDocFreezeExceptions).toHaveBeenCalledTimes(1);
+
+    const otherExecApp = await createApp(harness, { type: "agent", agentId: aaaaAgentId });
+    const secondRes = await request(otherExecApp)
+      .post(`/api/issues/${issueId}/continuity/doc-unfreeze`)
+      .send({ decisionNote: "Another exec may also thaw when no sponsor", documentKeys: ["plan"] });
+    expect(secondRes.status).toBe(201);
+  });
+
+  it("keeps the board scope-change thaw path intact: an approved linked approval routes through thawPath=approved_linked_approval", async () => {
+    const harness = createRouteHarness();
+    const nonScaffoldBody = `${scaffoldSpec}\n\n## First real content`;
+    harness.setStoredSpecBody(nonScaffoldBody);
+    harness.issueApprovalsService.listApprovalsForIssue.mockResolvedValue([
+      { status: "approved" },
+    ]);
+
+    const ownerApp = await createApp(harness, { type: "agent", agentId: ownerAgentId });
+    const editedBody = `${nonScaffoldBody}\n\n## Board-gated revision`;
+    const res = await request(ownerApp)
+      .put(`/api/issues/${issueId}/documents/spec`)
+      .send({ format: "markdown", body: editedBody });
+
+    expect(res.status).toBe(200);
+    expect(harness.documentsService.upsertIssueDocument).toHaveBeenCalledTimes(1);
+    expect(harness.issueContinuityService.consumeDocFreezeException).not.toHaveBeenCalled();
+    expect(harness.logActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.document_updated",
+        details: expect.objectContaining({ thawPath: "approved_linked_approval" }),
+      }),
+    );
+  });
 });
