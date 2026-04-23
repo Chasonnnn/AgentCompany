@@ -593,6 +593,11 @@ describe("issue comment reopen routes", () => {
         status: "in_review",
         assigneeAgentId: null,
         assigneeUserId: "local-board",
+        selfAttest: {
+          testsRun: true,
+          docsUpdated: true,
+          worktreeClean: true,
+        },
       });
 
     expect(res.status).toBe(200);
