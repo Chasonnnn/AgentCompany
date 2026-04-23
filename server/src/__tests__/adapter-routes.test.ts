@@ -60,6 +60,7 @@ const overridingConfigSchemaAdapter: ServerAdapterModule = {
 let registerServerAdapter: typeof import("../adapters/registry.js").registerServerAdapter;
 let resetServerAdaptersForTests: typeof import("../adapters/registry.js").resetServerAdaptersForTests;
 let unregisterServerAdapter: typeof import("../adapters/registry.js").unregisterServerAdapter;
+let findServerAdapter: typeof import("../adapters/registry.js").findServerAdapter;
 let setOverridePaused: typeof import("../adapters/registry.js").setOverridePaused;
 let waitForExternalAdapters: typeof import("../adapters/registry.js").waitForExternalAdapters;
 let adapterRoutes: typeof import("../routes/adapters.js").adapterRoutes;
@@ -73,7 +74,7 @@ function readAdapterList(res: { body: unknown; text: string }) {
   throw new Error(`Expected adapter list response array, got: ${JSON.stringify(res.body)}`);
 }
 
-function createApp() {
+function createApp(options: { isInstanceAdmin?: boolean } = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -82,7 +83,7 @@ function createApp() {
       userId: "local-board",
       companyIds: [],
       source: "local_implicit",
-      isInstanceAdmin: false,
+      isInstanceAdmin: options.isInstanceAdmin ?? false,
     };
     next();
   });
@@ -99,13 +100,23 @@ describe("adapter routes", () => {
     vi.doUnmock("../routes/adapters.js");
     vi.doUnmock("../middleware/index.js");
     mocks.listAdapterPlugins.mockReturnValue([]);
+    mocks.addAdapterPlugin.mockResolvedValue(undefined);
+    mocks.removeAdapterPlugin.mockReturnValue(false);
+    mocks.getAdapterPluginByType.mockReturnValue(undefined);
+    mocks.getAdapterPluginsDir.mockReturnValue("/tmp/paperclip-adapter-route-test");
     mocks.getDisabledAdapterTypes.mockReturnValue([]);
+    mocks.setAdapterDisabled.mockReturnValue(false);
     mocks.buildExternalAdapters.mockResolvedValue([]);
+    mocks.loadExternalAdapterPackage.mockResolvedValue(null);
+    mocks.reloadExternalAdapter.mockResolvedValue(null);
+    mocks.getUiParserSource.mockResolvedValue(null);
+    mocks.getOrExtractUiParserSource.mockResolvedValue(null);
 
     ({
       registerServerAdapter,
       resetServerAdaptersForTests,
       unregisterServerAdapter,
+      findServerAdapter,
       setOverridePaused,
       waitForExternalAdapters,
     } = await vi.importActual<typeof import("../adapters/registry.js")>("../adapters/registry.js"));
@@ -224,5 +235,45 @@ describe("adapter routes", () => {
     const builtin = await request(app).get("/api/adapters/claude_local/config-schema");
     expect(builtin.status, JSON.stringify(builtin.body)).toBe(404);
     expect(String(builtin.body.error ?? "")).toContain("does not provide a config schema");
+  });
+
+  it("POST /api/adapters/install preserves module-provided sessionManagement (hot-install parity with init-time IIFE)", async () => {
+    const HOT_INSTALL_TYPE = "hot_install_session_test";
+    const declaredSessionManagement = {
+      supportsSessionResume: true,
+      nativeContextManagement: "confirmed" as const,
+      defaultSessionCompaction: {
+        enabled: true,
+        maxSessionRuns: 10,
+        maxRawInputTokens: 100_000,
+        maxSessionAgeHours: 24,
+      },
+    };
+    const externalModule: ServerAdapterModule = {
+      type: HOT_INSTALL_TYPE,
+      execute: async () => ({ exitCode: 0, signal: null, timedOut: false }),
+      testEnvironment: async () => ({
+        adapterType: HOT_INSTALL_TYPE,
+        status: "pass",
+        checks: [],
+        testedAt: new Date(0).toISOString(),
+      }),
+      sessionManagement: declaredSessionManagement,
+    };
+    mocks.loadExternalAdapterPackage.mockResolvedValue(externalModule);
+
+    const app = createApp({ isInstanceAdmin: true });
+    const res = await request(app)
+      .post("/api/adapters/install")
+      .send({ packageName: "/tmp/fake-hot-install-adapter", isLocalPath: true });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.type).toBe(HOT_INSTALL_TYPE);
+
+    const registered = findServerAdapter(HOT_INSTALL_TYPE);
+    expect(registered).not.toBeNull();
+    expect(registered?.sessionManagement).toEqual(declaredSessionManagement);
+
+    unregisterServerAdapter(HOT_INSTALL_TYPE);
   });
 });
