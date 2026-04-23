@@ -20,6 +20,8 @@ export {
   clampIssueListLimit,
   type IssueFilters,
 } from "./issues.js";
+export { issueThreadInteractionService } from "./issue-thread-interactions.js";
+export { issueTreeControlService } from "./issue-tree-control.js";
 export { issueReferenceService } from "./issue-references.js";
 export { issueContinuityService } from "./issue-continuity.js";
 export { issueDecisionQuestionService } from "./issue-decision-questions.js";

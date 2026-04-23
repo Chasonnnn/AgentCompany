@@ -617,6 +617,21 @@ type PaperclipWakeOfficeCoordination = {
   recentActions: PaperclipWakeOfficeRecentAction[];
 };
 
+type PaperclipWakeTreeHoldSummary = {
+  holdId: string | null;
+  rootIssueId: string | null;
+  mode: string | null;
+  reason: string | null;
+};
+
+type PaperclipWakeBlockerSummary = {
+  id: string | null;
+  identifier: string | null;
+  title: string | null;
+  status: string | null;
+  priority: string | null;
+};
+
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
@@ -628,6 +643,11 @@ type PaperclipWakePayload = {
   decisionQuestion: PaperclipWakeDecisionQuestion | null;
   planApproval: PaperclipWakePlanApproval | null;
   checkedOutByHarness: boolean;
+  dependencyBlockedInteraction: boolean;
+  treeHoldInteraction: boolean;
+  activeTreeHold: PaperclipWakeTreeHoldSummary | null;
+  unresolvedBlockerIssueIds: string[];
+  unresolvedBlockerSummaries: PaperclipWakeBlockerSummary[];
   executionStage: PaperclipWakeExecutionStage | null;
   commentIds: string[];
   latestCommentId: string | null;
@@ -1051,6 +1071,27 @@ function normalizePaperclipWakePlanApproval(value: unknown): PaperclipWakePlanAp
   };
 }
 
+function normalizePaperclipWakeTreeHoldSummary(value: unknown): PaperclipWakeTreeHoldSummary | null {
+  const hold = parseObject(value);
+  const holdId = asString(hold.holdId, "").trim() || null;
+  const rootIssueId = asString(hold.rootIssueId, "").trim() || null;
+  const mode = asString(hold.mode, "").trim() || null;
+  const reason = asString(hold.reason, "").trim() || null;
+  if (!holdId && !rootIssueId && !mode && !reason) return null;
+  return { holdId, rootIssueId, mode, reason };
+}
+
+function normalizePaperclipWakeBlockerSummary(value: unknown): PaperclipWakeBlockerSummary | null {
+  const blocker = parseObject(value);
+  const id = asString(blocker.id, "").trim() || null;
+  const identifier = asString(blocker.identifier, "").trim() || null;
+  const title = asString(blocker.title, "").trim() || null;
+  const status = asString(blocker.status, "").trim() || null;
+  const priority = asString(blocker.priority, "").trim() || null;
+  if (!id && !identifier && !title && !status) return null;
+  return { id, identifier, title, status, priority };
+}
+
 function normalizePaperclipWakeExecutionPrincipal(value: unknown): PaperclipWakeExecutionPrincipal | null {
   const principal = parseObject(value);
   const typeRaw = asString(principal.type, "").trim().toLowerCase();
@@ -1129,10 +1170,24 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
   const sharedSkillReview = normalizePaperclipWakeSharedSkillReview(payload.sharedSkillReview);
   const officeCoordination = normalizePaperclipWakeOfficeCoordination(payload.officeCoordination);
 
+  const activeTreeHold = normalizePaperclipWakeTreeHoldSummary(payload.activeTreeHold);
+  const unresolvedBlockerIssueIds = Array.isArray(payload.unresolvedBlockerIssueIds)
+    ? payload.unresolvedBlockerIssueIds
+        .map((entry) => asString(entry, "").trim())
+        .filter(Boolean)
+    : [];
+  const unresolvedBlockerSummaries = Array.isArray(payload.unresolvedBlockerSummaries)
+    ? payload.unresolvedBlockerSummaries
+        .map((entry) => normalizePaperclipWakeBlockerSummary(entry))
+        .filter((entry): entry is PaperclipWakeBlockerSummary => Boolean(entry))
+    : [];
   if (
     comments.length === 0 &&
     commentIds.length === 0 &&
     !executionStage &&
+    !activeTreeHold &&
+    unresolvedBlockerIssueIds.length === 0 &&
+    unresolvedBlockerSummaries.length === 0 &&
     !normalizePaperclipWakeIssue(payload.issue) &&
     sharedSkills.length === 0 &&
     !officeCoordination &&
@@ -1154,6 +1209,11 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     decisionQuestion: normalizePaperclipWakeDecisionQuestion(payload.decisionQuestion),
     planApproval: normalizePaperclipWakePlanApproval(payload.planApproval),
     checkedOutByHarness: asBoolean(payload.checkedOutByHarness, false),
+    dependencyBlockedInteraction: asBoolean(payload.dependencyBlockedInteraction, false),
+    treeHoldInteraction: asBoolean(payload.treeHoldInteraction, false),
+    activeTreeHold,
+    unresolvedBlockerIssueIds,
+    unresolvedBlockerSummaries,
     executionStage,
     commentIds,
     latestCommentId: asString(payload.latestCommentId, "").trim() || null,
@@ -1464,6 +1524,26 @@ export function renderPaperclipWakePrompt(
   }
   if (normalized.checkedOutByHarness) {
     lines.push("- checkout: already claimed by the harness for this run");
+  }
+  if (normalized.dependencyBlockedInteraction) {
+    lines.push("- dependency-blocked interaction: yes");
+    lines.push("- execution scope: respond or triage the human comment; do not treat blocker-dependent deliverable work as unblocked");
+    if (normalized.unresolvedBlockerSummaries.length > 0) {
+      const blockers = normalized.unresolvedBlockerSummaries
+        .map((blocker) => `${blocker.identifier ?? blocker.id ?? "unknown"}${blocker.title ? ` ${blocker.title}` : ""}${blocker.status ? ` (${blocker.status})` : ""}`)
+        .join("; ");
+      lines.push(`- unresolved blockers: ${blockers}`);
+    } else if (normalized.unresolvedBlockerIssueIds.length > 0) {
+      lines.push(`- unresolved blocker issue ids: ${normalized.unresolvedBlockerIssueIds.join(", ")}`);
+    }
+  }
+  if (normalized.treeHoldInteraction) {
+    lines.push("- tree-hold interaction: yes");
+    lines.push("- execution scope: respond or triage the human comment; the subtree remains paused until an explicit resume action");
+    if (normalized.activeTreeHold) {
+      const hold = normalized.activeTreeHold;
+      lines.push(`- active tree hold: ${hold.holdId ?? "unknown"}${hold.rootIssueId ? ` rooted at ${hold.rootIssueId}` : ""}${hold.mode ? ` (${hold.mode})` : ""}`);
+    }
   }
   if (normalized.missingCount > 0) {
     lines.push(`- omitted comments: ${normalized.missingCount}`);

@@ -50,9 +50,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { CircleDot, Plus, ArrowUpDown, Layers, Check, ChevronRight, List, Columns3, User, Search } from "lucide-react";
+import { CircleDot, Plus, ArrowUpDown, Layers, Check, ChevronRight, List, ListTree, Columns3, User, Search, CircleSlash2 } from "lucide-react";
 import { KanbanBoard } from "./KanbanBoard";
 import { buildIssueTree, countDescendants } from "../lib/issue-tree";
+import { buildSubIssueDefaultsForViewer } from "../lib/subIssueDefaults";
+import { statusBadge } from "../lib/status-colors";
 import type { Issue, Project } from "@paperclipai/shared";
 const ISSUE_SEARCH_DEBOUNCE_MS = 150;
 
@@ -135,6 +137,8 @@ interface IssuesListProps {
     participantAgentId?: string;
   };
   enableRoutineVisibilityFilter?: boolean;
+  mutedIssueIds?: Set<string>;
+  issueBadgeById?: Map<string, string>;
   onSearchChange?: (search: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
 }
@@ -215,6 +219,8 @@ export function IssuesList({
   initialSearch,
   searchFilters,
   enableRoutineVisibilityFilter = false,
+  mutedIssueIds,
+  issueBadgeById,
   onSearchChange,
   onUpdateIssue,
 }: IssuesListProps) {
@@ -724,6 +730,16 @@ export function IssuesList({
                   const isExpanded = !viewState.collapsedParents.includes(issue.id);
                   const issueProject = issue.projectId ? projectById.get(issue.projectId) ?? null : null;
                   const parentIssue = issue.parentId ? issueById.get(issue.parentId) ?? null : null;
+                  const issueBadge = issueBadgeById?.get(issue.id);
+                  const isMutedIssue = mutedIssueIds?.has(issue.id) === true;
+                  const assigneeUserProfile = issue.assigneeUserId
+                    ? companyUserProfileMap.get(issue.assigneeUserId) ?? null
+                    : null;
+                  const assigneeUserLabel = formatAssigneeUserLabel(
+                    issue.assigneeUserId,
+                    currentUserId,
+                    companyUserLabelMap,
+                  ) ?? assigneeUserProfile?.label ?? null;
                   const toggleCollapse = (e: { preventDefault: () => void; stopPropagation: () => void }) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -739,11 +755,32 @@ export function IssuesList({
                       <IssueRow
                         issue={issue}
                         issueLinkState={issueLinkState}
-                        titleSuffix={hasChildren && !isExpanded ? (
-                          <span className="ml-1.5 text-xs text-muted-foreground">
-                            ({totalDescendants} sub-task{totalDescendants !== 1 ? "s" : ""})
-                          </span>
-                        ) : undefined}
+                        titleSuffix={(
+                          <>
+                            {hasChildren && !isExpanded ? (
+                              <span className="ml-1.5 text-xs text-muted-foreground">
+                                ({totalDescendants} sub-task{totalDescendants !== 1 ? "s" : ""})
+                              </span>
+                            ) : null}
+                            {issueBadge ? (
+                              issueBadge === "Paused" ? (
+                                <span
+                                  className={cn("ml-1.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium", statusBadge.paused)}
+                                  aria-label="Paused"
+                                  title="Paused"
+                                >
+                                  <CircleSlash2 className="h-3 w-3" />
+                                  Paused
+                                </span>
+                              ) : (
+                                <span className="ml-1.5 inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                                  {issueBadge}
+                                </span>
+                              )
+                            ) : null}
+                          </>
+                        )}
+                        className={isMutedIssue ? "opacity-70" : undefined}
                         mobileLeading={
                           hasChildren ? (
                             <button type="button" onClick={toggleCollapse}>

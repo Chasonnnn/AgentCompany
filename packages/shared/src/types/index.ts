@@ -330,6 +330,17 @@ export type {
   IssueLabel,
 } from "./issue.js";
 export type { IssueOperatorState } from "../constants.js";
+export type {
+  IssueTreeControlPreview,
+  IssueTreeHold,
+  IssueTreeHoldMember,
+  IssueTreeHoldReleasePolicy,
+  IssueTreePreviewAgent,
+  IssueTreePreviewIssue,
+  IssueTreePreviewRun,
+  IssueTreePreviewTotals,
+  IssueTreePreviewWarning,
+} from "./issue-tree-control.js";
 export type { Goal } from "./goal.js";
 export type {
   Approval,

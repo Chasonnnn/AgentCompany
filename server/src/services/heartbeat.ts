@@ -70,10 +70,17 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
-import { refreshIssueContinuationSummary } from "./issue-continuation-summary.js";
+import {
+  getIssueContinuationSummaryDocument,
+  refreshIssueContinuationSummary,
+} from "./issue-continuation-summary.js";
 import { resolveIssueHeartbeatMode } from "./issue-heartbeat-mode.js";
 import { issueContinuityService } from "./issue-continuity.js";
 import { issueDecisionQuestionService } from "./issue-decision-questions.js";
+import {
+  ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS,
+  issueTreeControlService,
+} from "./issue-tree-control.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { environmentService } from "./environments.js";
 import { workspaceOperationService } from "./workspace-operations.js";
@@ -1028,6 +1035,45 @@ function latestSatisfiedWakeCommentId(
   return extractWakeCommentIds(contextSnapshot).at(-1) ?? null;
 }
 
+function allowsIssueInteractionWake(
+  contextSnapshot: Record<string, unknown> | null | undefined,
+) {
+  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
+  if (!wakeReason || !ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS.has(wakeReason)) return false;
+  return Boolean(deriveCommentId(contextSnapshot, null));
+}
+
+async function listUnresolvedBlockerSummaries(
+  dbOrTx: Pick<Db, "select">,
+  companyId: string,
+  issueId: string,
+  unresolvedBlockerIssueIds: string[],
+) {
+  const ids = [...new Set(unresolvedBlockerIssueIds.filter(Boolean))];
+  if (ids.length === 0) return [];
+  return dbOrTx
+    .select({
+      id: issues.id,
+      identifier: issues.identifier,
+      title: issues.title,
+      status: issues.status,
+      priority: issues.priority,
+      assigneeAgentId: issues.assigneeAgentId,
+      assigneeUserId: issues.assigneeUserId,
+    })
+    .from(issueRelations)
+    .innerJoin(issues, eq(issueRelations.issueId, issues.id))
+    .where(
+      and(
+        eq(issueRelations.companyId, companyId),
+        eq(issueRelations.type, "blocks"),
+        eq(issueRelations.relatedIssueId, issueId),
+        inArray(issues.id, ids),
+      ),
+    )
+    .orderBy(asc(issues.title));
+}
+
 export function formatRuntimeWorkspaceWarningLog(warning: string) {
   return {
     stream: "stdout" as const,
@@ -1732,6 +1778,15 @@ async function buildPaperclipWakePayload(input: {
         }
       : null,
     checkedOutByHarness: input.contextSnapshot[PAPERCLIP_HARNESS_CHECKOUT_KEY] === true,
+    dependencyBlockedInteraction: input.contextSnapshot.dependencyBlockedInteraction === true,
+    treeHoldInteraction: input.contextSnapshot.treeHoldInteraction === true,
+    activeTreeHold: parseObject(input.contextSnapshot.activeTreeHold),
+    unresolvedBlockerIssueIds: Array.isArray(input.contextSnapshot.unresolvedBlockerIssueIds)
+      ? input.contextSnapshot.unresolvedBlockerIssueIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [],
+    unresolvedBlockerSummaries: Array.isArray(input.contextSnapshot.unresolvedBlockerSummaries)
+      ? input.contextSnapshot.unresolvedBlockerSummaries
+      : [],
     executionStage: Object.keys(executionStage).length > 0 ? executionStage : null,
     commentIds,
     latestCommentId: commentIds[commentIds.length - 1] ?? null,
@@ -1982,6 +2037,7 @@ export function heartbeatService(db: Db) {
   const issuesSvc = issueService(db);
   const issueContinuitySvc = issueContinuityService(db);
   const decisionQuestionsSvc = issueDecisionQuestionService(db);
+  const treeControlSvc = issueTreeControlService(db);
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const environmentsSvc = environmentService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
@@ -3774,9 +3830,33 @@ export function heartbeatService(db: Db) {
 
     const issueId = readNonEmptyString(context.issueId);
     if (issueId) {
+      const activePauseHold = await treeControlSvc.getActivePauseHoldGate(run.companyId, issueId);
+      const treeHoldInteractionWake = activePauseHold && allowsIssueInteractionWake(context);
+      if (activePauseHold && !treeHoldInteractionWake) {
+        await cancelRunInternal(run.id, "Cancelled because issue is held by an active subtree pause hold");
+        await logActivity(db, {
+          companyId: run.companyId,
+          actorType: "system",
+          actorId: "system",
+          agentId: run.agentId,
+          runId: run.id,
+          action: "issue.tree_hold_run_interrupted",
+          entityType: "heartbeat_run",
+          entityId: run.id,
+          details: {
+            issueId,
+            holdId: activePauseHold.holdId,
+            rootIssueId: activePauseHold.rootIssueId,
+            source: "heartbeat.claim_queued_run",
+            securityPrinciples: ["Complete Mediation", "Fail Securely", "Secure Defaults"],
+          },
+        });
+        return null;
+      }
+
       const dependencyReadiness = await issuesSvc.listDependencyReadiness(run.companyId, [issueId]);
       const unresolvedBlockerCount = dependencyReadiness.get(issueId)?.unresolvedBlockerCount ?? 0;
-      if (unresolvedBlockerCount > 0) {
+      if (unresolvedBlockerCount > 0 && !allowsIssueInteractionWake(context)) {
         logger.debug({ runId: run.id, issueId, unresolvedBlockerCount }, "claimQueuedRun: skipping blocked run");
         return null;
       }
@@ -5467,7 +5547,78 @@ export function heartbeatService(db: Db) {
 
         const deferredPayload = parseObject(deferred.payload);
         const deferredContextSeed = parseObject(deferredPayload[DEFERRED_WAKE_CONTEXT_KEY]);
+        const activePauseHold = await treeControlSvc.getActivePauseHoldGate(issue.companyId, issue.id);
+        const treeHoldInteractionWake = activePauseHold && allowsIssueInteractionWake(deferredContextSeed);
+        if (activePauseHold && !treeHoldInteractionWake) {
+          await tx
+            .update(agentWakeupRequests)
+            .set({
+              status: "cancelled",
+              finishedAt: new Date(),
+              error: "Deferred wake suppressed by active subtree pause hold",
+              updatedAt: new Date(),
+            })
+            .where(eq(agentWakeupRequests.id, deferred.id));
+          continue;
+        }
+
         const promotedContextSeed: Record<string, unknown> = { ...deferredContextSeed };
+        if (activePauseHold) {
+          promotedContextSeed.treeHoldInteraction = true;
+          promotedContextSeed.activeTreeHold = {
+            holdId: activePauseHold.holdId,
+            rootIssueId: activePauseHold.rootIssueId,
+            mode: activePauseHold.mode,
+            reason: activePauseHold.reason,
+            releasePolicy: activePauseHold.releasePolicy,
+            interaction: true,
+          };
+        }
+        const deferredCommentIds = extractWakeCommentIds(deferredContextSeed);
+        const shouldReopenDeferredCommentWake =
+          deferredCommentIds.length > 0 && (issue.status === "done" || issue.status === "cancelled");
+        let reopenedActivity: LogActivityInput | null = null;
+
+        if (shouldReopenDeferredCommentWake) {
+          const reopenedFromStatus = issue.status;
+          const reopenedIssue = await issuesSvc.update(
+            issue.id,
+            {
+              status: "todo",
+              executionState: null,
+            },
+            tx,
+          );
+          if (reopenedIssue) {
+            issue = {
+              ...issue,
+              identifier: reopenedIssue.identifier,
+              status: reopenedIssue.status,
+              executionRunId: reopenedIssue.executionRunId,
+            };
+            if (!readNonEmptyString(promotedContextSeed.reopenedFrom)) {
+              promotedContextSeed.reopenedFrom = reopenedFromStatus;
+            }
+            reopenedActivity = {
+              companyId: issue.companyId,
+              actorType: "system",
+              actorId: "heartbeat",
+              agentId: deferred.agentId,
+              runId: run.id,
+              action: "issue.updated",
+              entityType: "issue",
+              entityId: issue.id,
+              details: {
+                status: "todo",
+                reopened: true,
+                reopenedFrom: reopenedFromStatus,
+                source: "deferred_comment_wake",
+                identifier: issue.identifier,
+              },
+            };
+          }
+        }
+
         const promotedReason = readNonEmptyString(deferred.reason) ?? "issue_execution_promoted";
         const promotedSource =
           (readNonEmptyString(deferred.source) as WakeupOptions["source"]) ?? "automation";
@@ -5649,11 +5800,50 @@ export function heartbeatService(db: Db) {
       return null;
     }
 
-    const bypassIssueExecutionLock =
-      reason === "issue_comment_mentioned" ||
-      readNonEmptyString(enrichedContextSnapshot.wakeReason) === "issue_comment_mentioned";
+    if (issueId) {
+      const activePauseHold = await treeControlSvc.getActivePauseHoldGate(agent.companyId, issueId);
+      if (activePauseHold) {
+        const treeHoldInteractionWake = allowsIssueInteractionWake(enrichedContextSnapshot);
 
-    if (issueId && !bypassIssueExecutionLock) {
+        if (!treeHoldInteractionWake) {
+          await writeSkippedRequest("issue_tree_hold_active");
+          await logActivity(db, {
+            companyId: agent.companyId,
+            actorType: "system",
+            actorId: "system",
+            agentId,
+            runId: null,
+            action: "issue.tree_hold_wakeup_deferred",
+            entityType: "issue",
+            entityId: issueId,
+            details: {
+              holdId: activePauseHold.holdId,
+              rootIssueId: activePauseHold.rootIssueId,
+              requestedReason: reason,
+              source,
+              triggerDetail,
+              securityPrinciples: ["Complete Mediation", "Fail Securely", "Secure Defaults"],
+            },
+          });
+          return null;
+        }
+
+        enrichedContextSnapshot.treeHoldInteraction = true;
+        enrichedContextSnapshot.activeTreeHold = {
+          holdId: activePauseHold.holdId,
+          rootIssueId: activePauseHold.rootIssueId,
+          mode: activePauseHold.mode,
+          reason: activePauseHold.reason,
+          releasePolicy: activePauseHold.releasePolicy,
+          interaction: true,
+        };
+      }
+    }
+
+    if (issueId) {
+      // Mention-triggered wakes can request input from another agent, but they must
+      // still respect the issue execution lock so a second agent cannot start on the
+      // same issue workspace while the assignee already has a live run.
       const agentNameKey = normalizeAgentNameKey(agent.name);
 
       const outcome = await db.transaction(async (tx) => {
@@ -5748,6 +5938,53 @@ export function heartbeatService(db: Db) {
               })
               .where(eq(issues.id, issue.id));
           }
+        }
+
+        const dependencyReadiness = await issuesSvc.listDependencyReadiness(
+          issue.companyId,
+          [issue.id],
+          tx,
+        ).then((rows) => rows.get(issue.id) ?? null);
+
+        // Blocked descendants should stay idle until the final blocker resolves.
+        // Human comment/mention wakes are the exception: they may run in a
+        // bounded interaction mode so the assignee can answer or triage.
+        const blockedInteractionWake =
+          dependencyReadiness &&
+          !dependencyReadiness.isDependencyReady &&
+          allowsIssueInteractionWake(enrichedContextSnapshot);
+
+        if (blockedInteractionWake) {
+          enrichedContextSnapshot.dependencyBlockedInteraction = true;
+          enrichedContextSnapshot.unresolvedBlockerIssueIds = dependencyReadiness.unresolvedBlockerIssueIds;
+          enrichedContextSnapshot.unresolvedBlockerCount = dependencyReadiness.unresolvedBlockerCount;
+          enrichedContextSnapshot.unresolvedBlockerSummaries = await listUnresolvedBlockerSummaries(
+            tx,
+            issue.companyId,
+            issue.id,
+            dependencyReadiness.unresolvedBlockerIssueIds,
+          );
+        }
+
+        if (!activeExecutionRun && dependencyReadiness && !dependencyReadiness.isDependencyReady && !blockedInteractionWake) {
+          await tx.insert(agentWakeupRequests).values({
+            companyId: agent.companyId,
+            agentId,
+            source,
+            triggerDetail,
+            reason: "issue_dependencies_blocked",
+            payload: {
+              ...(payload ?? {}),
+              issueId,
+              unresolvedBlockerIssueIds: dependencyReadiness.unresolvedBlockerIssueIds,
+            },
+            status: "skipped",
+            requestedByActorType: opts.requestedByActorType ?? null,
+            requestedByActorId: opts.requestedByActorId ?? null,
+            idempotencyKey: opts.idempotencyKey ?? null,
+            finishedAt: new Date(),
+          });
+          return { kind: "skipped" as const };
         }
 
         if (activeExecutionRun) {

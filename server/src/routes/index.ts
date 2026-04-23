@@ -6,6 +6,7 @@ export { agentTemplateRoutes } from "./agent-templates.js";
 export { portfolioClusterRoutes } from "./portfolio-clusters.js";
 export { projectRoutes } from "./projects.js";
 export { issueRoutes } from "./issues.js";
+export { issueTreeControlRoutes } from "./issue-tree-control.js";
 export { routineRoutes } from "./routines.js";
 export { goalRoutes } from "./goals.js";
 export { approvalRoutes } from "./approvals.js";
