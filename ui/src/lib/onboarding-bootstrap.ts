@@ -18,6 +18,21 @@ export const STARTER_AGENT_NAMES = {
   qaEvalsContinuityOwner: "QA/Evals Continuity Owner",
 } as const;
 
+function buildStarterRoleNames(baseName: string, count: number) {
+  return Array.from({ length: count }, (_, index) =>
+    index === 0 ? baseName : `${baseName} ${index + 1}`,
+  );
+}
+
+export const STARTER_BACKEND_CONTINUITY_OWNER_NAMES = buildStarterRoleNames(
+  STARTER_AGENT_NAMES.backendContinuityOwner,
+  2,
+);
+export const STARTER_QA_EVALS_CONTINUITY_OWNER_NAMES = buildStarterRoleNames(
+  STARTER_AGENT_NAMES.qaEvalsContinuityOwner,
+  3,
+);
+
 export const ONBOARDING_ROUTINE_TITLES = {
   dailyReadiness: "Daily readiness review",
   weeklyBudgetAudit: "Weekly budget and heartbeat audit",

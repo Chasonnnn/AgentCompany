@@ -67,7 +67,9 @@ import {
   ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS,
   ONBOARDING_ROUTINE_TITLES,
   ONBOARDING_STARTER_SKILL_ASSIGNMENTS,
+  STARTER_BACKEND_CONTINUITY_OWNER_NAMES,
   STARTER_AGENT_NAMES,
+  STARTER_QA_EVALS_CONTINUITY_OWNER_NAMES,
 } from "../lib/onboarding-bootstrap";
 import { buildNewAgentRuntimeConfig } from "../lib/new-agent-runtime-config";
 import {
@@ -768,10 +770,13 @@ export function OnboardingWizard() {
         runtimeConfig?: Record<string, unknown>;
         budgetMonthlyCents?: number;
         projectPlacement?: Record<string, unknown>;
+        matchByArchetype?: boolean;
       }) {
-        const existing = existingAgents.find((agent) =>
-          agent.archetypeKey === input.archetypeKey || agent.name === input.name,
-        );
+        const existingByName = existingAgents.find((agent) => agent.name === input.name);
+        const existingByArchetype = input.matchByArchetype === false
+          ? null
+          : existingAgents.find((agent) => agent.archetypeKey === input.archetypeKey);
+        const existing = existingByName ?? existingByArchetype ?? null;
         const desiredBudgetMonthlyCents = input.budgetMonthlyCents ?? DEFAULT_STARTER_AGENT_BUDGET_CENTS;
         if (existing) {
           const desiredRuntimeConfig = input.runtimeConfig ?? {};
@@ -836,47 +841,61 @@ export function OnboardingWizard() {
         },
       });
 
-      const backendContinuityOwner = await ensureStarterAgent({
-        templateId: backendContinuityOwnerTemplateId,
-        name: STARTER_AGENT_NAMES.backendContinuityOwner,
-        title: STARTER_AGENT_NAMES.backendContinuityOwner,
-        departmentKey: "engineering",
-        reportsTo: technicalProjectLead.id,
-        archetypeKey: "backend_api_continuity_owner",
-        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.backendContinuityOwner,
-        runtimeConfig: workerRuntimeConfig,
-        projectPlacement: {
-          projectId: project.id,
-          projectRole: "worker",
-          scopeMode: "execution",
-          teamFunctionKey: "engineering",
-          teamFunctionLabel: "Engineering",
-          workstreamKey: "onboarding",
-          workstreamLabel: "Onboarding bootstrap",
-          requestedReason: "Onboarding starter team",
-        },
-      });
+      const backendContinuityOwners: typeof existingAgents = [];
+      for (const [index, name] of STARTER_BACKEND_CONTINUITY_OWNER_NAMES.entries()) {
+        backendContinuityOwners.push(await ensureStarterAgent({
+          templateId: backendContinuityOwnerTemplateId,
+          name,
+          title: name,
+          departmentKey: "engineering",
+          reportsTo: technicalProjectLead.id,
+          archetypeKey: "backend_api_continuity_owner",
+          desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.backendContinuityOwner,
+          runtimeConfig: workerRuntimeConfig,
+          projectPlacement: {
+            projectId: project.id,
+            projectRole: "worker",
+            scopeMode: "execution",
+            teamFunctionKey: "engineering",
+            teamFunctionLabel: "Engineering",
+            workstreamKey: "onboarding",
+            workstreamLabel: "Onboarding bootstrap",
+            requestedReason: "Onboarding starter team",
+          },
+          matchByArchetype: index === 0,
+        }));
+      }
 
-      const qaEvalsContinuityOwner = await ensureStarterAgent({
-        templateId: qaEvalsContinuityOwnerTemplateId,
-        name: STARTER_AGENT_NAMES.qaEvalsContinuityOwner,
-        title: STARTER_AGENT_NAMES.qaEvalsContinuityOwner,
-        departmentKey: "operations",
-        reportsTo: technicalProjectLead.id,
-        archetypeKey: "qa_evals_continuity_owner",
-        desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.qaEvalsContinuityOwner,
-        runtimeConfig: workerRuntimeConfig,
-        projectPlacement: {
-          projectId: project.id,
-          projectRole: "worker",
-          scopeMode: "execution",
-          teamFunctionKey: "operations",
-          teamFunctionLabel: "Operations",
-          workstreamKey: "onboarding",
-          workstreamLabel: "Onboarding bootstrap",
-          requestedReason: "Onboarding starter team",
-        },
-      });
+      const qaEvalsContinuityOwners: typeof existingAgents = [];
+      for (const [index, name] of STARTER_QA_EVALS_CONTINUITY_OWNER_NAMES.entries()) {
+        qaEvalsContinuityOwners.push(await ensureStarterAgent({
+          templateId: qaEvalsContinuityOwnerTemplateId,
+          name,
+          title: name,
+          departmentKey: "operations",
+          reportsTo: technicalProjectLead.id,
+          archetypeKey: "qa_evals_continuity_owner",
+          desiredSkills: ONBOARDING_STARTER_SKILL_ASSIGNMENTS.qaEvalsContinuityOwner,
+          runtimeConfig: workerRuntimeConfig,
+          projectPlacement: {
+            projectId: project.id,
+            projectRole: "worker",
+            scopeMode: "execution",
+            teamFunctionKey: "operations",
+            teamFunctionLabel: "Operations",
+            workstreamKey: "onboarding",
+            workstreamLabel: "Onboarding bootstrap",
+            requestedReason: "Onboarding starter team",
+          },
+          matchByArchetype: index === 0,
+        }));
+      }
+
+      const primaryBackendContinuityOwner = backendContinuityOwners[0];
+      const primaryQaEvalsContinuityOwner = qaEvalsContinuityOwners[0];
+      if (!primaryBackendContinuityOwner || !primaryQaEvalsContinuityOwner) {
+        throw new Error("Starter continuity owners could not be created.");
+      }
 
       await ensureAgentDesiredSkills(
         companyId,
@@ -896,18 +915,22 @@ export function OnboardingWizard() {
         ONBOARDING_STARTER_SKILL_ASSIGNMENTS.technicalProjectLead,
         skillKeyBySlug,
       );
-      await ensureAgentDesiredSkills(
-        companyId,
-        backendContinuityOwner.id,
-        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.backendContinuityOwner,
-        skillKeyBySlug,
-      );
-      await ensureAgentDesiredSkills(
-        companyId,
-        qaEvalsContinuityOwner.id,
-        ONBOARDING_STARTER_SKILL_ASSIGNMENTS.qaEvalsContinuityOwner,
-        skillKeyBySlug,
-      );
+      for (const backendContinuityOwner of backendContinuityOwners) {
+        await ensureAgentDesiredSkills(
+          companyId,
+          backendContinuityOwner.id,
+          ONBOARDING_STARTER_SKILL_ASSIGNMENTS.backendContinuityOwner,
+          skillKeyBySlug,
+        );
+      }
+      for (const qaEvalsContinuityOwner of qaEvalsContinuityOwners) {
+        await ensureAgentDesiredSkills(
+          companyId,
+          qaEvalsContinuityOwner.id,
+          ONBOARDING_STARTER_SKILL_ASSIGNMENTS.qaEvalsContinuityOwner,
+          skillKeyBySlug,
+        );
+      }
 
       const projectNeedsLeadUpdate =
         project.leadAgentId !== technicalProjectLead.id
@@ -1027,7 +1050,7 @@ export function OnboardingWizard() {
       await ensureRoutine({
         title: ONBOARDING_ROUTINE_TITLES.weeklyBudgetAudit,
         description: "Audit budget posture, heartbeat defaults, and runtime health for the onboarding starter team.",
-        assigneeAgentId: qaEvalsContinuityOwner.id,
+        assigneeAgentId: primaryQaEvalsContinuityOwner.id,
         cronExpression: "0 10 * * 1",
         label: "Mondays at 10:00",
       });
@@ -1075,8 +1098,8 @@ export function OnboardingWizard() {
         ceo.id,
         officeOperator.id,
         technicalProjectLead.id,
-        backendContinuityOwner.id,
-        qaEvalsContinuityOwner.id,
+        ...backendContinuityOwners.map((agent) => agent.id),
+        ...qaEvalsContinuityOwners.map((agent) => agent.id),
       ];
       let kickoffRoom = (await conferenceRoomsApi.list(companyId)).find((room) => room.title === ONBOARDING_KICKOFF_ROOM_TITLE) ?? null;
       if (!kickoffRoom) {
@@ -1122,7 +1145,7 @@ export function OnboardingWizard() {
             "Record branch-return updates explicitly",
             "Keep parent continuity docs current",
           ],
-          assigneeAgentId: backendContinuityOwner.id,
+          assigneeAgentId: primaryBackendContinuityOwner.id,
           priority: "medium",
         });
         branchIssue = "branchIssue" in createdBranch ? createdBranch.branchIssue : null;
@@ -1167,7 +1190,7 @@ export function OnboardingWizard() {
         reviewIssue = await issuesApi.create(companyId, {
           title: ONBOARDING_DEMO_TITLES.review,
           description: "Demonstrate review-return findings on onboarding readiness.",
-          assigneeAgentId: qaEvalsContinuityOwner.id,
+          assigneeAgentId: primaryQaEvalsContinuityOwner.id,
           projectId: project.id,
           goalId: onboardingProjectGoal.id,
           status: "todo",
@@ -1210,7 +1233,7 @@ export function OnboardingWizard() {
       const handoffDocuments = await issuesApi.listDocuments(handoffIssue.id);
       if (!handoffDocuments.some((document) => document.key === "handoff")) {
         await issuesApi.handoffContinuity(handoffIssue.id, {
-          assigneeAgentId: backendContinuityOwner.id,
+          assigneeAgentId: primaryBackendContinuityOwner.id,
           reasonCode: "reassignment",
           exactNextAction: "Review the kickoff room, project docs, and demo findings, then continue the next onboarding improvement slice.",
           unresolvedBranches: [],

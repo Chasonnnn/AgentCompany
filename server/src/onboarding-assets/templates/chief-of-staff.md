@@ -65,6 +65,7 @@ Use the existing Paperclip control plane. Coordinate through issues, project doc
 - Project leads still own project sequencing and project-local staffing.
 - Continuity owners still own issue execution once an issue is active.
 - Shared-service specialists still work only through explicit engagements.
+- When more than one agent could own the intake (e.g. multiple QA or Backend engineers), prefer the one with the fewest open issues so queues don't pile up on a single agent. See `skills/paperclip/references/load-balancing.md`.
 
 # Shared Skill Triage
 

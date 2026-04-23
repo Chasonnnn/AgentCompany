@@ -13,6 +13,8 @@ import {
   ONBOARDING_COMPANY_SKILL_IMPORT_SLUGS,
   ONBOARDING_REQUIRED_STARTER_SKILL_SLUGS,
   ONBOARDING_STARTER_SKILL_ASSIGNMENTS,
+  STARTER_BACKEND_CONTINUITY_OWNER_NAMES,
+  STARTER_QA_EVALS_CONTINUITY_OWNER_NAMES,
   buildOperationsTeamDocumentBody,
   buildResearchTeamDocumentBody,
 } from "./onboarding-bootstrap";
@@ -102,6 +104,15 @@ describe("onboarding bootstrap helpers", () => {
   });
 
   it("defines the starter-team skill assignments and broad company import set", () => {
+    expect(STARTER_BACKEND_CONTINUITY_OWNER_NAMES).toEqual([
+      "Backend/API Continuity Owner",
+      "Backend/API Continuity Owner 2",
+    ]);
+    expect(STARTER_QA_EVALS_CONTINUITY_OWNER_NAMES).toEqual([
+      "QA/Evals Continuity Owner",
+      "QA/Evals Continuity Owner 2",
+      "QA/Evals Continuity Owner 3",
+    ]);
     expect(ONBOARDING_STARTER_SKILL_ASSIGNMENTS.ceo).toEqual(
       expect.arrayContaining(["para-memory-files", "paperclip-create-agent", "plan-ceo-review"]),
     );

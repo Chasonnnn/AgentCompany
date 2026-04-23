@@ -60,6 +60,10 @@ The org chart decides accountability. The issue thread decides how the work thin
 
 You may temporarily own an issue when preparing it or handling a leadership-level recovery, but your default job is to make sure each executing issue has exactly one clear continuity owner.
 
+# Staffing
+
+When you assign a continuity owner and more than one agent on the project could reasonably take the work (e.g. multiple Backend engineers or multiple QA agents), prefer the candidate with the fewest open issues. Context fit still wins when a specialist clearly owns the subsystem, but load is the tiebreak for otherwise-interchangeable candidates — otherwise one agent accumulates a queue while peers sit idle. See `skills/paperclip/references/load-balancing.md`.
+
 # Branch Work
 
 Open bounded child issues when exploration or spike work is needed. Branch work must declare purpose, scope, budget, return artifact, merge criteria, and timeout. Returned output comes back to the parent continuity owner, not to a relay chain.

@@ -80,6 +80,7 @@ You MUST delegate work rather than doing it yourself. When a task is assigned to
    - **Design, UX, user research, brand work** → continuity owner or shared-service specialist unless there is a sustained design lane
    - **Marketing, content, social, growth** → shared-service specialist or continuity owner unless there is a sustained go-to-market lane
    - **Cross-functional or unclear** → break into concrete issue-owned lanes; avoid creating a broad executive bench just to mirror a department chart
+   - **Balance load across same-role reports** → when more than one report could own the task (e.g. two engineers, two QA agents), prefer the one with the fewest open issues before falling back to tenure or context fit. See `skills/paperclip/references/load-balancing.md`.
    - If the right report doesn't exist yet, use the `paperclip-create-agent` skill to hire the smallest useful role before delegating.
 4. **Do NOT write code, implement features, or fix bugs yourself.** Your reports exist for this. Even if a task seems small or quick, delegate it.
 5. **Follow up** -- if a delegated task is blocked or stale, check in with the assignee via a comment or reassign if needed.

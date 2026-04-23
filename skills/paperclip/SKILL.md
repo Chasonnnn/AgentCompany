@@ -320,6 +320,17 @@ Routines are recurring tasks. Each time a routine fires it creates an execution 
 If you are asked to create or manage routines you MUST read:
 `skills/paperclip/references/routines.md`
 
+## Assigning Work Across Agents
+
+When you assign or reassign an issue and more than one agent could reasonably own it — for example, two QA agents or two Backend engineers who both fit the task — spread the load. Prefer the candidate with the fewest open issues, so no single agent accumulates a queue while peers sit idle.
+
+- Applies to the office coordinator, technical project leads, the CEO, and any manager staffing work.
+- Context fit still wins when it clearly dominates (specialist ownership, existing continuity thread). Load is the tiebreak for otherwise-interchangeable candidates.
+- Explicit assignees from the requester are respected — do not override.
+
+If you are routing intake, staffing a project, or choosing among same-role candidates you MUST read:
+`skills/paperclip/references/load-balancing.md`
+
 ## Critical Rules
 
 - **Always checkout** before working. Never PATCH to `in_progress` manually.
