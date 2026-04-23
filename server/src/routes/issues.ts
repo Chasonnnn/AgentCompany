@@ -106,10 +106,16 @@ import {
   serializeApprovalForActor,
 } from "../services/conference-context.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
+import {
+  buildAutoRouteComment,
+  inReviewRoutingMissingReviewerError,
+  selectLeastLoadedQaReviewer,
+} from "../services/in-review-routing.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
   interrupt: z.boolean().optional(),
+  autoRouteReviewer: z.boolean().optional(),
 });
 
 type IssueRouteDeps = {
@@ -2894,6 +2900,84 @@ export function issueRoutes(
       }
     }
 
+    // AIW-137: auto-route a QA reviewer (or honor an explicit reviewer in the
+    // body) when a plain `status: "in_review"` transition has no execution
+    // policy review stage driving it. The policy-driven path sets
+    // `updateFields.executionState.status = "pending"`; when that did not
+    // happen we fall into this gate so the issue does not stall on the
+    // executor with no reviewer picked.
+    const advancedByExecutionPolicy =
+      updateFields.executionState !== undefined &&
+      updateFields.executionState !== null &&
+      typeof updateFields.executionState === "object" &&
+      !Array.isArray(updateFields.executionState) &&
+      (updateFields.executionState as Record<string, unknown>).status === "pending";
+    const inReviewRoutingApplies =
+      req.body.status === "in_review" &&
+      existing.status !== "in_review" &&
+      !advancedByExecutionPolicy;
+    let autoRouteOutcome: {
+      reviewer: { id: string; name: string };
+      executor: { id: string; name: string } | null;
+      routedBy: "auto" | "explicit";
+      openIssueCount: number;
+      candidateCount: number;
+    } | null = null;
+    if (inReviewRoutingApplies) {
+      const explicitReviewerAgentId =
+        typeof req.body.assigneeAgentId === "string" ? req.body.assigneeAgentId : null;
+      const explicitAssigneeUserId =
+        typeof req.body.assigneeUserId === "string" ? req.body.assigneeUserId : null;
+      const bodyProvidedAssignee =
+        req.body.assigneeAgentId !== undefined || req.body.assigneeUserId !== undefined;
+      const autoRouteFlag =
+        typeof (req.body as { autoRouteReviewer?: unknown }).autoRouteReviewer === "boolean"
+          ? ((req.body as { autoRouteReviewer: boolean }).autoRouteReviewer)
+          : undefined;
+      const executor = existing.assigneeAgentId
+        ? await agentsSvc.getById(existing.assigneeAgentId)
+        : null;
+
+      if (explicitReviewerAgentId) {
+        const reviewer = await agentsSvc.getById(explicitReviewerAgentId);
+        if (!reviewer || reviewer.companyId !== existing.companyId) {
+          res.status(422).json(inReviewRoutingMissingReviewerError());
+          return;
+        }
+        autoRouteOutcome = {
+          reviewer: { id: reviewer.id, name: reviewer.name },
+          executor: executor ? { id: executor.id, name: executor.name } : null,
+          routedBy: "explicit",
+          openIssueCount: 0,
+          candidateCount: 1,
+        };
+      } else if (bodyProvidedAssignee && explicitAssigneeUserId) {
+        // User-assignee path: caller chose a human reviewer. Skip auto-route
+        // (no QA balancer for user assignees) but honor the transition.
+      } else if (autoRouteFlag === false) {
+        res.status(422).json(inReviewRoutingMissingReviewerError());
+        return;
+      } else {
+        const selection = await selectLeastLoadedQaReviewer(db, {
+          companyId: existing.companyId,
+          excludeAgentId: existing.assigneeAgentId ?? null,
+        });
+        if (!selection.reviewer) {
+          res.status(422).json(inReviewRoutingMissingReviewerError());
+          return;
+        }
+        updateFields.assigneeAgentId = selection.reviewer.id;
+        updateFields.assigneeUserId = null;
+        autoRouteOutcome = {
+          reviewer: { id: selection.reviewer.id, name: selection.reviewer.name },
+          executor: executor ? { id: executor.id, name: executor.name } : null,
+          routedBy: "auto",
+          openIssueCount: selection.reviewer.openIssueCount,
+          candidateCount: selection.candidateCount,
+        };
+      }
+    }
+
     const nextAssigneeAgentId =
       updateFields.assigneeAgentId === undefined ? existing.assigneeAgentId : (updateFields.assigneeAgentId as string | null);
     const nextAssigneeUserId =
@@ -2947,7 +3031,7 @@ export function issueRoutes(
       }
     }
 
-    if (assigneeWillChange && !transition.workflowControlledAssignment) {
+    if (assigneeWillChange && !transition.workflowControlledAssignment && !autoRouteOutcome) {
       if (continuityActive) {
         const handoffDocument = await documentsSvc.getIssueDocumentByKey(existing.id, "handoff");
         const parsedHandoff = handoffDocument ? parseIssueHandoffMarkdown(handoffDocument.body ?? "") : null;
@@ -3261,6 +3345,44 @@ export function issueRoutes(
         ),
       };
     }
+
+    // AIW-137: post the system-authored auto-route comment + activity log once
+    // the issue update (and any caller comment) has landed. The comment is
+    // intentionally authored with no agent/user so the activity attributes to
+    // `system` rather than the executor who requested the transition.
+    if (autoRouteOutcome) {
+      const autoRouteBody = buildAutoRouteComment({
+        executor: autoRouteOutcome.executor,
+        reviewer: autoRouteOutcome.reviewer,
+        routedBy: autoRouteOutcome.routedBy,
+      });
+      const autoRouteComment = await svc.addComment(id, autoRouteBody, {
+        runId: actor.runId,
+      });
+      await issueReferencesSvc.syncComment(autoRouteComment.id).catch((err) =>
+        logger.warn({ err, issueId: id }, "failed to sync auto-route comment references"),
+      );
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.in_review_auto_routed",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          identifier: issue.identifier,
+          routedBy: autoRouteOutcome.routedBy,
+          reviewerAgentId: autoRouteOutcome.reviewer.id,
+          executorAgentId: autoRouteOutcome.executor?.id ?? null,
+          openIssueCount: autoRouteOutcome.openIssueCount,
+          candidateCount: autoRouteOutcome.candidateCount,
+          commentId: autoRouteComment.id,
+        },
+      });
+    }
+
     const assigneeChanged =
       issue.assigneeAgentId !== existing.assigneeAgentId || issue.assigneeUserId !== existing.assigneeUserId;
     const currentContinuityStateRecord =
@@ -3333,7 +3455,46 @@ export function issueRoutes(
 
       if (executionStageWakeup) {
         addWakeup(executionStageWakeup.agentId, executionStageWakeup.wakeup);
+      }
+
+      if (autoRouteOutcome && issue.assigneeAgentId) {
+        // AIW-137: treat the auto-route (and explicit) in_review transition
+        // as an `execution_review_requested` wake so the reviewer heartbeat
+        // picks it up on the same priority tier as the policy-driven path.
+        const executionStage = {
+          wakeRole: "reviewer" as const,
+          stageId: null,
+          stageType: null,
+          currentParticipant: null,
+          returnAssignee: null,
+          lastDecisionOutcome: null,
+          allowedActions: ["approve", "request_changes"],
+          routedBy: autoRouteOutcome.routedBy,
+          executorAgentId: autoRouteOutcome.executor?.id ?? null,
+        };
+        addWakeup(autoRouteOutcome.reviewer.id, {
+          source: "assignment",
+          triggerDetail: "system",
+          reason: "execution_review_requested",
+          payload: {
+            issueId: issue.id,
+            mutation: "update",
+            executionStage,
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+          },
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+          contextSnapshot: {
+            issueId: issue.id,
+            taskId: issue.id,
+            wakeReason: "execution_review_requested",
+            source: "issue.auto_route",
+            executionStage,
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+          },
+        });
       } else if (
+        !executionStageWakeup &&
         assigneeChanged &&
         issue.assigneeAgentId &&
         shouldWakeAssignedAgentForIssue({ issue, continuityState })
