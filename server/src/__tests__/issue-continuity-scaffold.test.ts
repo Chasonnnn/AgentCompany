@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agents,
+  approvals,
   companies,
   companyDocuments,
   createDb,
@@ -10,6 +11,7 @@ import {
   documents,
   executionWorkspaces,
   heartbeatRuns,
+  issueApprovals,
   issueDocuments,
   issueInboxArchives,
   issueRelations,
@@ -54,6 +56,8 @@ describeEmbeddedPostgres("issueContinuityService.prepare scaffolds continuity do
 
   afterEach(async () => {
     await db.delete(activityLog);
+    await db.delete(issueApprovals);
+    await db.delete(approvals);
     await db.delete(issueDocuments);
     await db.delete(projectDocuments);
     await db.delete(companyDocuments);
@@ -131,6 +135,14 @@ describeEmbeddedPostgres("issueContinuityService.prepare scaffolds continuity do
 
     expect(prepared.continuityState.missingDocumentKeys).toEqual([]);
     expect(prepared.continuityState.health).toBe("healthy");
+    expect(prepared.continuityState.status).toBe("awaiting_decision");
+    expect(prepared.continuityState.planApproval.status).toBe("pending");
+    expect(prepared.continuityState.planApproval.requiresApproval).toBe(true);
+    expect(prepared.continuityState.planApproval.approvalId).toEqual(expect.any(String));
+    expect(prepared.planApprovalRequest).toEqual({
+      approvalId: prepared.continuityState.planApproval.approvalId,
+      approvalStatus: "pending",
+    });
     expect(prepared.scaffoldedKeys.sort()).toEqual(["plan", "progress", "spec", "test-plan"]);
     expect(prepared.overriddenKeys).toEqual([]);
 
@@ -224,11 +236,18 @@ describeEmbeddedPostgres("issueContinuityService.prepare scaffolds continuity do
 
     const first = await continuity$.prepare(child.id, { tier: "normal" }, { agentId });
     expect(first.scaffoldedKeys.length).toBe(4);
+    expect(first.planApprovalRequest?.approvalStatus).toBe("pending");
+    const approvalsAfterFirstPrepare = await db.select().from(approvals);
+    expect(approvalsAfterFirstPrepare).toHaveLength(1);
 
     const second = await continuity$.prepare(child.id, { tier: "normal" }, { agentId });
     expect(second.scaffoldedKeys).toEqual([]);
     expect(second.overriddenKeys).toEqual([]);
     expect(second.continuityState.missingDocumentKeys).toEqual([]);
+    expect(second.planApprovalRequest).toBeNull();
+    expect(second.continuityState.planApproval.approvalId).toBe(first.continuityState.planApproval.approvalId);
+    const approvalsAfterSecondPrepare = await db.select().from(approvals);
+    expect(approvalsAfterSecondPrepare).toHaveLength(1);
   });
 
   it("rejects docs.progress override with invalid frontmatter at the service layer", async () => {

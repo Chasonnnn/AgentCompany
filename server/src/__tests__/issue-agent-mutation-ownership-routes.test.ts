@@ -462,4 +462,90 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
+
+  it("allows a manager-of-record to reassign a peer's todo issue with an assignment-only patch", async () => {
+    const newOwnerAgentId = "77777777-7777-4777-8777-7777aaaaaaaa";
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({ status: "todo", assigneeAgentId: ownerAgentId, startedAt: null }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...makeIssue({ status: "todo", assigneeAgentId: ownerAgentId, startedAt: null }),
+      ...patch,
+    }));
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === ownerAgentId) return makeAgent(ownerAgentId, { reportsTo: peerAgentId });
+      if (id === peerAgentId) return makeAgent(peerAgentId, { permissions: { canCreateAgents: true } });
+      if (id === newOwnerAgentId) return makeAgent(newOwnerAgentId, { reportsTo: peerAgentId });
+      return null;
+    });
+    mockAgentService.list.mockResolvedValue([
+      makeAgent(ownerAgentId, { reportsTo: peerAgentId }),
+      makeAgent(peerAgentId, { permissions: { canCreateAgents: true } }),
+      makeAgent(newOwnerAgentId, { reportsTo: peerAgentId }),
+    ]);
+
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({
+      assigneeAgentId: newOwnerAgentId,
+    });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      issueId,
+      expect.objectContaining({ assigneeAgentId: newOwnerAgentId }),
+    );
+  });
+
+  it("allows a manager-of-record to claim an unassigned backlog issue with an assignment-only patch", async () => {
+    const newOwnerAgentId = "77777777-7777-4777-8777-7777bbbbbbbb";
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({ status: "backlog", assigneeAgentId: null, startedAt: null }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...makeIssue({ status: "backlog", assigneeAgentId: null, startedAt: null }),
+      ...patch,
+    }));
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === peerAgentId) return makeAgent(peerAgentId, { permissions: { canCreateAgents: true } });
+      if (id === newOwnerAgentId) return makeAgent(newOwnerAgentId, { reportsTo: peerAgentId });
+      return null;
+    });
+    mockAgentService.list.mockResolvedValue([
+      makeAgent(peerAgentId, { permissions: { canCreateAgents: true } }),
+      makeAgent(newOwnerAgentId, { reportsTo: peerAgentId }),
+    ]);
+
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({
+      assigneeAgentId: newOwnerAgentId,
+    });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      issueId,
+      expect.objectContaining({ assigneeAgentId: newOwnerAgentId }),
+    );
+  });
+
+  it("still blocks mixed mutations (title + assignee) from non-owners even with manager authority", async () => {
+    const newOwnerAgentId = "77777777-7777-4777-8777-7777cccccccc";
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({ status: "todo", assigneeAgentId: ownerAgentId, startedAt: null }),
+    );
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === ownerAgentId) return makeAgent(ownerAgentId, { reportsTo: peerAgentId });
+      if (id === peerAgentId) return makeAgent(peerAgentId, { permissions: { canCreateAgents: true } });
+      return null;
+    });
+    mockAgentService.list.mockResolvedValue([
+      makeAgent(ownerAgentId, { reportsTo: peerAgentId }),
+      makeAgent(peerAgentId, { permissions: { canCreateAgents: true } }),
+    ]);
+
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({
+      assigneeAgentId: newOwnerAgentId,
+      title: "Sneaky edit",
+    });
+
+    expect(res.status).toBe(403);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
 });

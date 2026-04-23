@@ -298,6 +298,13 @@ type LinkedPlanApprovalSummary = {
   payload: IssuePlanApprovalPayload;
 };
 
+type PlanApprovalRequestResult = {
+  approvalId: string | null;
+  approvalStatus: string | null;
+  continuityState: IssueContinuityState;
+  continuityBundle: IssueContinuityBundle;
+};
+
 function parseIssuePlanApprovalPayload(payload: Record<string, unknown> | null | undefined): IssuePlanApprovalPayload | null {
   if (!payload || payload.kind !== "issue_plan_approval") return null;
   if (
@@ -1281,6 +1288,96 @@ export function issueContinuityService(db: Db) {
     };
   }
 
+  async function requestPlanApprovalForIssue(
+    issueId: string,
+    actor: { agentId?: string | null; userId?: string | null } = {},
+  ): Promise<PlanApprovalRequestResult> {
+    const material = await getContinuityMaterial(issueId);
+    const currentState = await recomputeIssueContinuityState(issueId);
+    if (hasPlanningStageEnded(material.issue)) {
+      throw unprocessable("Plan approval is only available before execution begins");
+    }
+    if (currentState.branchRole === "branch") {
+      throw unprocessable("Branch issues do not request a fresh plan approval");
+    }
+    if (currentState.tier !== "normal") {
+      throw unprocessable("Plan approval only applies to normal planning issues");
+    }
+    if (currentState.missingDocumentKeys.length > 0) {
+      throw unprocessable("Plan approval requires all required planning docs");
+    }
+
+    const currentPlanRevisionId = material.issueDocsByKey.get("plan")?.latestRevisionId ?? null;
+    if (!currentPlanRevisionId) {
+      throw unprocessable("Plan approval requires a current plan document revision");
+    }
+    const currentSpecRevisionId = material.issueDocsByKey.get("spec")?.latestRevisionId ?? null;
+    const currentTestPlanRevisionId = material.issueDocsByKey.get("test-plan")?.latestRevisionId ?? null;
+    const planApprovalState = buildIssuePlanApprovalState({
+      linkedApprovals: material.linkedApprovals,
+      currentPlanRevisionId,
+      specRevisionId: currentSpecRevisionId,
+      testPlanRevisionId: currentTestPlanRevisionId,
+      requirePlanApproval: true,
+    });
+    const payload = buildIssuePlanApprovalPayload({
+      issue: material.issue,
+      currentPlanRevisionId,
+      currentSpecRevisionId,
+      currentTestPlanRevisionId,
+    });
+
+    let approvalId = planApprovalState.latestPlanApproval?.approval.id ?? null;
+    let approvalStatus = planApprovalState.latestPlanApproval?.approval.status ?? null;
+
+    if (planApprovalState.summary.currentRevisionApproved && approvalId) {
+      const continuityState = await recomputeIssueContinuityState(issueId);
+      const continuityBundle = await buildContinuityBundle(issueId);
+      return { approvalId, approvalStatus, continuityState, continuityBundle };
+    }
+
+    if (
+      planApprovalState.latestPlanApproval &&
+      planApprovalState.latestPlanApproval.approval.status === "revision_requested"
+    ) {
+      const resubmitted = await approvalsSvc.resubmit(
+        planApprovalState.latestPlanApproval.approval.id,
+        payload as unknown as Record<string, unknown>,
+      );
+      approvalId = resubmitted.id;
+      approvalStatus = resubmitted.status;
+    } else if (
+      planApprovalState.latestPlanApproval &&
+      planApprovalState.latestPlanApproval.payload.planRevisionId === currentPlanRevisionId &&
+      planApprovalState.latestPlanApproval.approval.status === "pending"
+    ) {
+      approvalId = planApprovalState.latestPlanApproval.approval.id;
+      approvalStatus = planApprovalState.latestPlanApproval.approval.status;
+    } else {
+      const approval = await approvalsSvc.create(material.issue.companyId, {
+        type: "request_board_approval",
+        requestedByAgentId: actor.agentId ?? null,
+        requestedByUserId: actor.userId ?? null,
+        status: "pending",
+        payload: payload as unknown as Record<string, unknown>,
+        decisionNote: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        updatedAt: new Date(),
+      });
+      approvalId = approval.id;
+      approvalStatus = approval.status;
+      await issueApprovalsSvc.link(issueId, approval.id, {
+        agentId: actor.agentId ?? null,
+        userId: actor.userId ?? null,
+      });
+    }
+
+    const continuityState = await recomputeIssueContinuityState(issueId);
+    const continuityBundle = await buildContinuityBundle(issueId);
+    return { approvalId, approvalStatus, continuityState, continuityBundle };
+  }
+
   return {
     recomputeIssueContinuityState,
 
@@ -1359,106 +1456,39 @@ export function issueContinuityService(db: Db) {
           scaffoldedKeys.push(key);
         }
       }
-      const continuityState = await recomputeIssueContinuityState(issueId, {
+      let continuityState = await recomputeIssueContinuityState(issueId, {
         tier: parsed.tier ?? initialState.tier,
         lastPreparedAt: new Date().toISOString(),
         forceSpecState: isContinuityExecuting(issue) ? "frozen" : null,
       });
-      const continuityBundle = await buildContinuityBundle(issueId);
+      let continuityBundle: IssueContinuityBundle = await buildContinuityBundle(issueId);
+      let planApprovalRequest: { approvalId: string | null; approvalStatus: string | null } | null = null;
+      if (
+        continuityState.health === "healthy" &&
+        continuityState.planApproval.requiresApproval &&
+        continuityState.planApproval.status !== "pending"
+      ) {
+        const approvalResult = await requestPlanApprovalForIssue(issueId, {
+          agentId: actor.agentId ?? null,
+          userId: actor.userId ?? null,
+        });
+        continuityState = approvalResult.continuityState;
+        continuityBundle = approvalResult.continuityBundle;
+        planApprovalRequest = {
+          approvalId: approvalResult.approvalId,
+          approvalStatus: approvalResult.approvalStatus,
+        };
+      }
       return {
         continuityState,
         continuityBundle,
         scaffoldedKeys,
         overriddenKeys,
+        planApprovalRequest,
       };
     },
 
-    requestPlanApproval: async (
-      issueId: string,
-      actor: { agentId?: string | null; userId?: string | null } = {},
-    ) => {
-      const material = await getContinuityMaterial(issueId);
-      const currentState = await recomputeIssueContinuityState(issueId);
-      if (hasPlanningStageEnded(material.issue)) {
-        throw unprocessable("Plan approval is only available before execution begins");
-      }
-      if (currentState.branchRole === "branch") {
-        throw unprocessable("Branch issues do not request a fresh plan approval");
-      }
-      if (currentState.tier !== "normal") {
-        throw unprocessable("Plan approval only applies to normal planning issues");
-      }
-      if (currentState.missingDocumentKeys.length > 0) {
-        throw unprocessable("Plan approval requires all required planning docs");
-      }
-
-      const currentPlanRevisionId = material.issueDocsByKey.get("plan")?.latestRevisionId ?? null;
-      if (!currentPlanRevisionId) {
-        throw unprocessable("Plan approval requires a current plan document revision");
-      }
-      const currentSpecRevisionId = material.issueDocsByKey.get("spec")?.latestRevisionId ?? null;
-      const currentTestPlanRevisionId = material.issueDocsByKey.get("test-plan")?.latestRevisionId ?? null;
-      const planApprovalState = buildIssuePlanApprovalState({
-        linkedApprovals: material.linkedApprovals,
-        currentPlanRevisionId,
-        specRevisionId: currentSpecRevisionId,
-        testPlanRevisionId: currentTestPlanRevisionId,
-        requirePlanApproval: true,
-      });
-      const payload = buildIssuePlanApprovalPayload({
-        issue: material.issue,
-        currentPlanRevisionId,
-        currentSpecRevisionId,
-        currentTestPlanRevisionId,
-      });
-
-      let approvalId = planApprovalState.latestPlanApproval?.approval.id ?? null;
-      let approvalStatus = planApprovalState.latestPlanApproval?.approval.status ?? null;
-
-      if (planApprovalState.summary.currentRevisionApproved && approvalId) {
-        const continuityState = await recomputeIssueContinuityState(issueId);
-        const continuityBundle = await buildContinuityBundle(issueId);
-        return { approvalId, approvalStatus, continuityState, continuityBundle };
-      }
-
-      if (
-        planApprovalState.latestPlanApproval &&
-        planApprovalState.latestPlanApproval.approval.status === "revision_requested"
-      ) {
-        const resubmitted = await approvalsSvc.resubmit(planApprovalState.latestPlanApproval.approval.id, payload as unknown as Record<string, unknown>);
-        approvalId = resubmitted.id;
-        approvalStatus = resubmitted.status;
-      } else if (
-        planApprovalState.latestPlanApproval &&
-        planApprovalState.latestPlanApproval.payload.planRevisionId === currentPlanRevisionId &&
-        planApprovalState.latestPlanApproval.approval.status === "pending"
-      ) {
-        approvalId = planApprovalState.latestPlanApproval.approval.id;
-        approvalStatus = planApprovalState.latestPlanApproval.approval.status;
-      } else {
-        const approval = await approvalsSvc.create(material.issue.companyId, {
-          type: "request_board_approval",
-          requestedByAgentId: actor.agentId ?? null,
-          requestedByUserId: actor.userId ?? null,
-          status: "pending",
-          payload: payload as unknown as Record<string, unknown>,
-          decisionNote: null,
-          decidedByUserId: null,
-          decidedAt: null,
-          updatedAt: new Date(),
-        });
-        approvalId = approval.id;
-        approvalStatus = approval.status;
-        await issueApprovalsSvc.link(issueId, approval.id, {
-          agentId: actor.agentId ?? null,
-          userId: actor.userId ?? null,
-        });
-      }
-
-      const continuityState = await recomputeIssueContinuityState(issueId);
-      const continuityBundle = await buildContinuityBundle(issueId);
-      return { approvalId, approvalStatus, continuityState, continuityBundle };
-    },
+    requestPlanApproval: requestPlanApprovalForIssue,
 
     handoff: async (
       issueId: string,

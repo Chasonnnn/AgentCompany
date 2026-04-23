@@ -227,7 +227,14 @@ export const issuesApi = {
   deleteDocument: (id: string, key: string) =>
     api.delete<{ ok: true }>(`/issues/${id}/documents/${encodeURIComponent(key)}`),
   prepareContinuity: (id: string, data: { tier?: IssueContinuityState["tier"] }) =>
-    api.post<{ continuityState: IssueContinuityState; continuityBundle: IssueContinuityBundle }>(
+    api.post<{
+      continuityState: IssueContinuityState;
+      continuityBundle: IssueContinuityBundle;
+      planApprovalRequest?: {
+        approvalId: string | null;
+        approvalStatus: string | null;
+      } | null;
+    }>(
       `/issues/${id}/continuity/prepare`,
       data,
     ),

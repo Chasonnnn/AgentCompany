@@ -162,6 +162,7 @@ function createFallbackIssueContinuityService() {
       continuityBundle: null,
       scaffoldedKeys: [],
       overriddenKeys: [],
+      planApprovalRequest: null,
     }),
     handoff: async (_issueId: string) => ({
       issue: null,
@@ -1277,13 +1278,30 @@ export function issueRoutes(
       return;
     }
     const actor = getActorInfo(req);
-    res.json(
-      await continuitySvc.prepare(issue.id, req.body, {
-        agentId: actor.agentId ?? null,
-        userId: actor.actorType === "user" ? actor.actorId : null,
-        runId: actor.runId ?? null,
-      }),
-    );
+    const result = await continuitySvc.prepare(issue.id, req.body, {
+      agentId: actor.agentId ?? null,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      runId: actor.runId ?? null,
+    });
+    if (result.planApprovalRequest?.approvalId) {
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.plan_approval_requested",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          approvalId: result.planApprovalRequest.approvalId,
+          approvalStatus: result.planApprovalRequest.approvalStatus,
+          planRevisionId: result.continuityState?.planApproval.currentPlanRevisionId ?? null,
+          source: "continuity_prepare",
+        },
+      });
+    }
+    res.json(result);
   });
 
   router.post("/issues/:id/continuity/plan-approval", async (req, res) => {
@@ -2624,6 +2642,7 @@ export function issueRoutes(
     });
     let scaffoldedKeys: string[] = [];
     let overriddenKeys: string[] = [];
+    let planApprovalRequest: { approvalId: string | null; approvalStatus: string | null } | null = null;
     if (shouldAutoPrepareContinuity) {
       const prepared = await continuitySvc.prepare(
         issue.id,
@@ -2637,6 +2656,7 @@ export function issueRoutes(
       continuityState = prepared.continuityState;
       scaffoldedKeys = prepared.scaffoldedKeys ?? [];
       overriddenKeys = prepared.overriddenKeys ?? [];
+      planApprovalRequest = prepared.planApprovalRequest ?? null;
     }
     await issueReferencesSvc.syncIssue(issue.id);
     const referenceSummary = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
@@ -2659,7 +2679,14 @@ export function issueRoutes(
         identifier: issue.identifier,
         ...(Array.isArray(req.body.blockedByIssueIds) ? { blockedByIssueIds: req.body.blockedByIssueIds } : {}),
         ...(scaffoldedKeys.length > 0 || overriddenKeys.length > 0
-          ? { continuityScaffold: { scaffoldedKeys, overriddenKeys, tier: continuityTier ?? "normal" } }
+          ? {
+              continuityScaffold: {
+                scaffoldedKeys,
+                overriddenKeys,
+                tier: continuityTier ?? "normal",
+                planApprovalRequest,
+              },
+            }
           : {}),
         ...summarizeIssueReferenceActivityDetails({
           addedReferencedIssues: referenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
@@ -2668,6 +2695,25 @@ export function issueRoutes(
         }),
       },
     });
+
+    if (planApprovalRequest?.approvalId) {
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.plan_approval_requested",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          approvalId: planApprovalRequest.approvalId,
+          approvalStatus: planApprovalRequest.approvalStatus,
+          planRevisionId: continuityState?.planApproval.currentPlanRevisionId ?? null,
+          source: "issue_create_prepare",
+        },
+      });
+    }
 
     void queueIssueAssignmentWakeup({
       heartbeat,
@@ -2876,7 +2922,26 @@ export function issueRoutes(
         !!req.actor.agentId &&
         existing.assigneeAgentId !== req.actor.agentId &&
         (await hasActiveCheckoutManagementOverride(req.actor.agentId, existing.companyId, existing.assigneeAgentId));
-      if (!stageDecisionOnly && !activeCheckoutOverride) {
+      // Staff reassignment bypass: when the mutation is strictly an assignee change,
+      // let managers-of-record through the continuity gate. assertCanAssignTasks below
+      // enforces the actual permission (tasks:assign or capability-profile grant).
+      const isAssignmentOnlyMutation =
+        assigneeWillChange &&
+        requestedUpdateKeys.length > 0 &&
+        requestedUpdateKeys.every(
+          (key) => key === "assigneeAgentId" || key === "assigneeUserId",
+        );
+      const staffReassignmentOverride =
+        isAssignmentOnlyMutation &&
+        !!req.actor.agentId &&
+        (existing.assigneeAgentId === null
+          ? true
+          : await hasActiveCheckoutManagementOverride(
+              req.actor.agentId,
+              existing.companyId,
+              existing.assigneeAgentId,
+            ));
+      if (!stageDecisionOnly && !activeCheckoutOverride && !staffReassignmentOverride) {
         res.status(403).json({ error: "Only the continuity owner can mutate this issue directly" });
         return;
       }
