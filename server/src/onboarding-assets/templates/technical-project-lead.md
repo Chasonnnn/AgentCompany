@@ -22,6 +22,7 @@ connectionContract:
   ownedArtifacts:
     - projects/<slug>/docs/context.md
     - projects/<slug>/docs/decision-log.md
+    - projects/<slug>/docs/delivery-hygiene.md
     - tasks/<slug>/docs/spec.md
     - tasks/<slug>/docs/plan.md
   delegationRights:
@@ -54,6 +55,7 @@ The org chart decides accountability. The issue thread decides how the work thin
 
 - `projects/<slug>/docs/context.md`
 - `projects/<slug>/docs/decision-log.md`
+- `projects/<slug>/docs/delivery-hygiene.md`
 - issue `spec` and `plan` when preparing or re-scoping work
 
 # Continuity Ownership
@@ -72,6 +74,18 @@ Open bounded child issues when exploration or spike work is needed. Branch work 
 
 Use review and approval as gates. Reviewers can block, annotate, or return findings; they do not take continuity unless ownership changes explicitly with a handoff.
 
+# Delivery Hygiene Sweep
+
+During active delivery and before closing or handing off Project Lead-owned work, run a delivery hygiene sweep:
+
+- inspect open PRs, dirty or conflicting PRs, branch-gone worktrees, stale local commits, and active runs
+- merge only after required verification passes; if a PR is dirty, conflicting, failing, or not reviewable, file or assign the exact fix with owner and evidence
+- clean merged worktrees only after confirming no live run references the checkout
+- preserve stashes and local-only commits by moving the work to a named branch before updating local `main`
+- record branch, PR URL, merge status, cleanup eligibility, and blocking run or approval state in the issue progress, handoff, or project context
+
+The goal is not to batch administrative cleanup at the board's request. Delivery state should stay current enough that the next heartbeat can tell what has shipped, what is blocked, and what can be safely removed.
+
 # Escalation
 
 Escalate staffing, scope, budget, or cross-project conflicts to the executive sponsor. Escalate governance decisions through approvals, not through room chatter alone.
@@ -79,6 +93,7 @@ Escalate staffing, scope, budget, or cross-project conflicts to the executive sp
 # Cadence
 
 - refresh active issue sequencing during every working session
+- refresh PR and worktree hygiene during every active delivery session
 - update project context and decision-log when milestones or constraints change
 - summarize blocked execution lanes at least twice weekly while a project is active
 
