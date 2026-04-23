@@ -76,6 +76,7 @@ import {
 } from "../services/index.js";
 import { buildIssueOperatorState } from "../services/issue-operator-state.js";
 import { resolveIssueHeartbeatMode } from "../services/issue-heartbeat-mode.js";
+import { assertInReviewEntryGate } from "../services/issue-review-gate.js";
 import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination-wakeup.js";
 import { issueDecisionQuestionService } from "../services/issue-decision-questions.js";
 import { logger } from "../middleware/logger.js";
@@ -2713,6 +2714,12 @@ export function issueRoutes(
     assertCompanyAccess(req, existing.companyId);
     if (!(await assertAgentIssueMutationAllowed(req, res, existing))) return;
 
+    const reviewGateError = assertInReviewEntryGate(existing, req.body);
+    if (reviewGateError) {
+      res.status(422).json(reviewGateError);
+      return;
+    }
+
     const actor = getActorInfo(req);
     const isClosed = isClosedIssueStatus(existing.status);
     const titleOrDescriptionChanged = req.body.title !== undefined || req.body.description !== undefined;
@@ -2725,6 +2732,8 @@ export function issueRoutes(
       reopen: reopenRequested,
       interrupt: interruptRequested,
       hiddenAt: hiddenAtRaw,
+      pullRequestUrl: _pullRequestUrl,
+      selfAttest: _selfAttest,
       ...updateFields
     } = req.body;
     const effectiveReopenRequested =
