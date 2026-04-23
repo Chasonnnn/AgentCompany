@@ -109,6 +109,20 @@ function isContinuityExecuting(issue: {
   );
 }
 
+// Checkout flips a todo task to in_progress and sets startedAt before any plan
+// approval has been requested, so isContinuityExecuting cannot tell "just
+// checked out, still planning" apart from "really executing." This predicate
+// ignores status/startedAt and reports true only when execution-policy signals
+// confirm the planning stage has ended.
+export function hasPlanningStageEnded(issue: { executionState?: unknown }): boolean {
+  const executionState = parseIssueExecutionState(issue.executionState ?? null);
+  if (!executionState) return false;
+  if (executionState.status === "pending" || executionState.status === "changes_requested") {
+    return true;
+  }
+  return executionState.lastDecisionOutcome != null;
+}
+
 function continuityDocumentSnapshot(
   doc:
     | {
@@ -1365,7 +1379,7 @@ export function issueContinuityService(db: Db) {
     ) => {
       const material = await getContinuityMaterial(issueId);
       const currentState = await recomputeIssueContinuityState(issueId);
-      if (isContinuityExecuting(material.issue)) {
+      if (hasPlanningStageEnded(material.issue)) {
         throw unprocessable("Plan approval is only available before execution begins");
       }
       if (currentState.branchRole === "branch") {
