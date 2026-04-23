@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   buildIssueDocumentTemplate,
+  parseIssueProgressMarkdown,
   skillReliabilityMetadataSchema,
   type CompanySkillHardeningState,
   type CompanySkillFileInventoryEntry,
@@ -21,7 +22,7 @@ export const MANAGED_LOCAL_ADAPTER_TYPES = new Set([
 
 export const SKILL_HARDENING_FINDING_ORIGIN_KIND = "skill_hardening_finding";
 export const SKILL_RELIABILITY_AUDIT_ORIGIN_KIND = "skill_reliability_audit";
-const HARDENING_DOC_KEYS = ["spec", "plan", "test-plan"] as const;
+const HARDENING_DOC_KEYS = ["spec", "plan", "progress", "test-plan"] as const;
 
 function normalizePortablePath(value: string) {
   return value.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "");
@@ -82,6 +83,11 @@ export function buildSkillHardeningScaffolds(input: {
     description: input.reproductionSummary ?? `Failure-promoted skill hardening for ${input.skillName}.`,
     tier: "normal",
   }) ?? "# Plan";
+  const progressTemplate = buildIssueDocumentTemplate("progress", {
+    title: input.title,
+    description: input.reproductionSummary ?? `Failure-promoted skill hardening for ${input.skillName}.`,
+    tier: "normal",
+  }) ?? "";
   const testPlanTemplate = buildIssueDocumentTemplate("test-plan", {
     title: input.title,
     description: input.reproductionSummary ?? `Failure-promoted skill hardening for ${input.skillName}.`,
@@ -112,7 +118,8 @@ export function buildSkillHardeningScaffolds(input: {
     "",
     "## Structural Fix",
     "",
-    "- Describe the durable change the skill, deterministic helper, or routing contract needs.",
+    "- Describe the durable change the Paperclip-managed skill mirror, deterministic helper, or routing contract needs.",
+    "- Treat upstream/global skill source directories as read-only unless the board explicitly overrides this issue.",
     "- Keep this focused on preventing recurrence, not just patching one answer.",
   ].join("\n");
 
@@ -121,15 +128,24 @@ export function buildSkillHardeningScaffolds(input: {
     "",
     "## Skill Hardening Steps",
     "",
-    "1. Update or add the skill reliability metadata in `SKILL.md`.",
-    "2. Add or repair deterministic entrypoints before relying on latent reasoning.",
-    "3. Add or update the required verification coverage.",
-    "4. Draft any shared-skill proposal only after the local hardening docs are real.",
+    "1. Work in Paperclip-managed skill mirrors and shared-skill proposals; do not edit global source catalog files directly.",
+    "2. Update or add the skill reliability metadata in the mirrored/proposed `SKILL.md`.",
+    "3. Add or repair deterministic entrypoints before relying on latent reasoning.",
+    "4. Add or update the required verification coverage.",
+    "5. Trigger a company catalog refresh or shared-skill proposal review, then re-audit.",
+    "",
+    "## Source Edit Policy",
+    "",
+    "- Do not edit `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, or other global source catalogs for this work.",
+    "- If a global skill needs a durable fix, mirror it into Paperclip first and drive the change through the shared-skill proposal path.",
+    "- Only use an upstream/global source edit when the board explicitly asks for a machine-wide source change.",
     "",
     "## Reliability Findings",
     "",
     reliabilityLines.length > 0 ? stringifyList(reliabilityLines) : "- Add the audit or review findings that this hardening issue must clear.",
   ].join("\n");
+
+  const progress = progressTemplate;
 
   const testPlan = [
     testPlanTemplate,
@@ -155,7 +171,7 @@ export function buildSkillHardeningScaffolds(input: {
     "- List the final smoke checklist items.",
   ].join("\n");
 
-  return { spec, plan, testPlan };
+  return { spec, plan, progress, testPlan };
 }
 
 export function summarizeHardeningDocumentProgress(input: {
@@ -171,6 +187,10 @@ export function summarizeHardeningDocumentProgress(input: {
       description: input.issueDescription ?? null,
       tier: "normal",
     });
+    if (key === "progress") {
+      if (template && template.trim() === body.trim()) return "scaffolded" as const;
+      return parseIssueProgressMarkdown(body) ? "started" as const : "scaffolded" as const;
+    }
     return template && template.trim() === body.trim() ? "scaffolded" as const : "started" as const;
   });
   return {
@@ -223,4 +243,3 @@ export function commandMentionsInventoryPath(
   const normalizedCommand = normalizePortablePath(command);
   return inventory.some((entry) => normalizedCommand.includes(normalizePortablePath(entry.path)));
 }
-

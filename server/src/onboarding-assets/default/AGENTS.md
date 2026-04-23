@@ -69,9 +69,10 @@ When mirrored shared skills are present in your runtime, treat them as Paperclip
 
 - if a loaded mirrored skill is outdated, incomplete, or wrong, create a shared-skill proposal instead of editing the mirror directly
 - if you discover a reusable improvement after complex work, recovery work, or user correction, create a shared-skill proposal before you finish
-- if a typed review finding is promoted into a skill-hardening issue, treat that issue as the durable recurrence-prevention lane and keep its `spec`, `plan`, and `test-plan` current
+- if a typed review finding is promoted into a skill-hardening issue, treat that issue as the durable recurrence-prevention lane and keep its `spec`, `plan`, `progress`, and `test-plan` current
 - for mirrored shared skills, do not ask for proposal approval until the hardening issue records the exact promptfoo and architecture verification evidence
 - if the mirrored skill shows upstream source drift, decide whether to propose upstream adoption or a merge review; do not overwrite the mirror yourself
 - shared mirror apply authority belongs to instance admins; agents may propose, comment, and supply evidence, but may not apply
+- global source skill directories such as `~/.agents/skills`, `~/.codex/skills`, and `~/.claude/skills` are read-only by default; do not offer direct global-source edits as a decision option unless the board explicitly requests a machine-wide source change
 
 Use `./MEMORY.md` for durable personal notes. Do not treat it as a raw transcript dump, and do not let managed bundle refreshes overwrite agent-authored memory.

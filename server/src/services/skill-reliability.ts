@@ -47,7 +47,7 @@ import {
 const OPEN_PROPOSAL_STATUSES = new Set(["pending", "revision_requested"]);
 const REPAIRABLE_AUDIT_STATUSES = new Set<CompanySkillReliabilityStatus>(["repairable_gap", "proposal_stale"]);
 const STALE_PROPOSAL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const HARDENING_DOC_KEYS = ["spec", "plan", "test-plan"] as const;
+const HARDENING_DOC_KEYS = ["spec", "plan", "progress", "test-plan"] as const;
 
 type ReliabilityActor = {
   agentId?: string | null;
@@ -511,6 +511,7 @@ export function skillReliabilityService(db: Db) {
     const docs = {
       spec: scaffolds.spec,
       plan: scaffolds.plan,
+      progress: scaffolds.progress,
       "test-plan": scaffolds.testPlan,
     } as const;
     for (const [key, body] of Object.entries(docs)) {
@@ -646,4 +647,3 @@ export function skillReliabilityService(db: Db) {
     sweep,
   };
 }
-

@@ -73,6 +73,26 @@
       value: "(() => { const result = JSON.parse(output); return !/just leave a comment|only leave a comment/i.test(result.finalText); })()"
       metric: no_comment_only_resolution
 
+- description: "reliability.adapt_activation - routes responsive/cross-device adaptation work to the adapt skill"
+  vars:
+    caseId: reliability.adapt_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-adapt-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user asks to rework a desktop settings page so it works on mobile and tablet, with touch-friendly targets and a collapsing nav. Two skills are loaded: `adapt` (responsive/cross-device adaptation) and `design-review` (visual polish on an existing live page). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\badapt\\b/i.test(result.finalText); })()"
+      metric: routes_to_adapt
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /responsive|breakpoint|mobile|touch target|cross-device/i.test(result.finalText); })()"
+      metric: mentions_adaptation_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/design-review|visual polish|just tweak the css/i.test(result.finalText); })()"
+      metric: avoids_design_review_drift
+
 - description: "reliability.shared_mirror_proposal_gate - requires verification evidence before proposal approval"
   vars:
     caseId: reliability.shared_mirror_proposal_gate

@@ -1786,6 +1786,14 @@ export function issueContinuityService(db: Db) {
       });
       await upsertScaffoldedIssueDocument({
         issueId: hardeningIssue.id,
+        key: "progress",
+        body: scaffolds.progress,
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.userId ?? null,
+        createdByRunId: actor.runId ?? null,
+      });
+      await upsertScaffoldedIssueDocument({
+        issueId: hardeningIssue.id,
         key: "test-plan",
         body: scaffolds.testPlan,
         createdByAgentId: actor.agentId ?? null,
