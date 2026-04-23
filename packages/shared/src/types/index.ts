@@ -299,6 +299,8 @@ export type {
   IssueDecisionQuestionListItem,
   IssueContinuitySummary,
   IssueContinuityState,
+  IssueDocThawReason,
+  IssueDocFreezeException,
   IssueBranchMergePreview,
   IssueBranchMergePreviewUpdate,
   IssueRelation,

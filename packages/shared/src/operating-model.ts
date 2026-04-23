@@ -405,6 +405,24 @@ export function buildIssueDocumentTemplate(
   }
 }
 
+function normalizeScaffoldComparison(body: string): string {
+  return body.replace(/\r\n/g, "\n").replace(/\s+$/g, "");
+}
+
+export function isIssueDocumentScaffoldBaseline(
+  key: string,
+  body: string,
+  context?: {
+    title?: string | null;
+    description?: string | null;
+    tier?: IssueContinuityTier | null;
+  },
+): boolean {
+  const template = buildIssueDocumentTemplate(key, context);
+  if (template == null) return false;
+  return normalizeScaffoldComparison(body) === normalizeScaffoldComparison(template);
+}
+
 export function describePacketEnvelope(envelope: PacketEnvelope): { label: string; summary: string } {
   switch (envelope.kind) {
     case "paperclip/assignment.v1":

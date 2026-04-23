@@ -39,6 +39,7 @@ import {
   promoteIssueReviewFindingSkillSchema,
   prepareIssueContinuitySchema,
   requestIssueSpecThawSchema,
+  requestIssueContinuityDocUnfreezeSchema,
   reviewResubmitIssueContinuitySchema,
   reviewReturnIssueContinuitySchema,
   returnIssueContinuityBranchSchema,
@@ -62,6 +63,8 @@ import {
   type PromoteIssueReviewFindingSkill,
   type PrepareIssueContinuity,
   type RequestIssueSpecThaw,
+  type RequestIssueContinuityDocUnfreeze,
+  type IssueDocFreezeException,
   type ReviewResubmitIssueContinuity,
   type ReviewReturnIssueContinuity,
   type ReturnIssueContinuityBranch,
@@ -705,6 +708,7 @@ export function issueContinuityService(db: Db) {
       lastPreparedAt: input.lastPreparedAt ?? existingState?.lastPreparedAt ?? null,
       lastBundleHash: existingState?.lastBundleHash ?? null,
       planApproval,
+      docFreezeExceptions: existingState?.docFreezeExceptions ?? [],
     });
   }
 
@@ -1378,6 +1382,72 @@ export function issueContinuityService(db: Db) {
     return { approvalId, approvalStatus, continuityState, continuityBundle };
   }
 
+  async function grantDocFreezeExceptions(
+    issueId: string,
+    input: { documentKeys: string[]; decisionNote: string; reason: "executive_thaw" },
+    actor: { agentId?: string | null; userId?: string | null } = {},
+  ) {
+    const now = new Date().toISOString();
+    return withLockedIssueRow(issueId, async (lockedDb) => {
+      const material = await getContinuityMaterial(issueId, lockedDb);
+      const existing = issueContinuityStateSchema.safeParse(material.issue.continuityState ?? null).success
+        ? issueContinuityStateSchema.parse(material.issue.continuityState)
+        : null;
+      const currentExceptions: IssueDocFreezeException[] = existing?.docFreezeExceptions ?? [];
+      const currentKeys = new Set(currentExceptions.map((exception) => exception.key));
+      const newExceptions: IssueDocFreezeException[] = input.documentKeys
+        .filter((key) => !currentKeys.has(key))
+        .map((key) => ({
+          key,
+          reason: input.reason,
+          decisionNote: input.decisionNote,
+          grantedAt: now,
+          grantedByAgentId: actor.agentId ?? null,
+          grantedByUserId: actor.userId ?? null,
+        }));
+      const nextExceptions = [...currentExceptions, ...newExceptions];
+      const baseState = computeContinuityState({
+        issue: material.issue,
+        issueDocsByKey: material.issueDocsByKey,
+        linkedApprovals: material.linkedApprovals,
+        childRows: material.childRows,
+        decisionQuestions: material.decisionQuestions,
+      });
+      const nextState = issueContinuityStateSchema.parse({
+        ...baseState,
+        docFreezeExceptions: nextExceptions,
+      });
+      await persistContinuityState(issueId, nextState, lockedDb);
+      return { continuityState: nextState, grantedKeys: newExceptions.map((exception) => exception.key) };
+    });
+  }
+
+  async function consumeDocFreezeException(issueId: string, key: string) {
+    return withLockedIssueRow(issueId, async (lockedDb) => {
+      const material = await getContinuityMaterial(issueId, lockedDb);
+      const existing = issueContinuityStateSchema.safeParse(material.issue.continuityState ?? null).success
+        ? issueContinuityStateSchema.parse(material.issue.continuityState)
+        : null;
+      const currentExceptions = existing?.docFreezeExceptions ?? [];
+      const matched = currentExceptions.find((exception) => exception.key === key) ?? null;
+      if (!matched) return null;
+      const remaining = currentExceptions.filter((exception) => exception.key !== key);
+      const baseState = computeContinuityState({
+        issue: material.issue,
+        issueDocsByKey: material.issueDocsByKey,
+        linkedApprovals: material.linkedApprovals,
+        childRows: material.childRows,
+        decisionQuestions: material.decisionQuestions,
+      });
+      const nextState = issueContinuityStateSchema.parse({
+        ...baseState,
+        docFreezeExceptions: remaining,
+      });
+      await persistContinuityState(issueId, nextState, lockedDb);
+      return matched;
+    });
+  }
+
   return {
     recomputeIssueContinuityState,
 
@@ -1943,6 +2013,26 @@ export function issueContinuityService(db: Db) {
       const continuityBundle = await buildContinuityBundle(issueId);
       return { continuityState, continuityBundle };
     },
+
+    grantDocFreezeExceptions: async (
+      issueId: string,
+      input: RequestIssueContinuityDocUnfreeze & { reason?: "executive_thaw" },
+      actor: { agentId?: string | null; userId?: string | null } = {},
+    ) => {
+      const parsed = requestIssueContinuityDocUnfreezeSchema.parse(input);
+      const documentKeys = parsed.documentKeys ?? [...["spec", "plan", "test-plan", "handoff"]];
+      return grantDocFreezeExceptions(
+        issueId,
+        {
+          documentKeys,
+          decisionNote: parsed.decisionNote,
+          reason: input.reason ?? "executive_thaw",
+        },
+        actor,
+      );
+    },
+
+    consumeDocFreezeException,
 
     requestSpecThaw: async (
       issueId: string,

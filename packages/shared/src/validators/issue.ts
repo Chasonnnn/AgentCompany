@@ -178,6 +178,19 @@ export const issueDecisionQuestionListItemSchema = z.object({
   }),
 });
 
+export const ISSUE_DOC_THAW_REASONS = ["executive_thaw"] as const;
+export const issueDocThawReasonSchema = z.enum(ISSUE_DOC_THAW_REASONS);
+
+export const issueDocFreezeExceptionSchema = z.object({
+  key: z.string().trim().min(1),
+  reason: issueDocThawReasonSchema,
+  decisionNote: z.string().trim().min(1),
+  grantedAt: z.string().datetime(),
+  grantedByAgentId: z.string().uuid().nullable(),
+  grantedByUserId: z.string().nullable(),
+});
+export type IssueDocFreezeException = z.infer<typeof issueDocFreezeExceptionSchema>;
+
 export const issuePlanApprovalSummarySchema = z.object({
   approvalId: z.string().uuid().nullable().optional().default(null),
   status: z.enum(APPROVAL_STATUSES).nullable().optional().default(null),
@@ -220,6 +233,7 @@ export const issueContinuityStateSchema = z.object({
   lastPreparedAt: z.string().datetime().nullable(),
   lastBundleHash: z.string().nullable(),
   planApproval: issuePlanApprovalSummarySchema.optional().default({}),
+  docFreezeExceptions: z.array(issueDocFreezeExceptionSchema).optional().default([]),
 });
 
 const issueContinuityDocumentSnapshotSchema = z.object({
@@ -499,6 +513,21 @@ export const requestIssueSpecThawSchema = z.object({
   reason: z.string().trim().min(1).optional().nullable(),
 });
 
+export const DOC_UNFREEZE_CONTINUITY_DOCUMENT_KEYS = [
+  "spec",
+  "plan",
+  "test-plan",
+  "handoff",
+] as const;
+
+export const requestIssueContinuityDocUnfreezeSchema = z.object({
+  decisionNote: z.string().trim().min(1).max(1000),
+  documentKeys: z
+    .array(z.enum(DOC_UNFREEZE_CONTINUITY_DOCUMENT_KEYS))
+    .min(1)
+    .optional(),
+});
+
 export const createIssueContinuityBranchSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("create"),
@@ -648,6 +677,7 @@ export type ProgressCheckpointIssueContinuity = z.infer<typeof progressCheckpoin
 export type HandoffRepairIssueContinuity = z.infer<typeof handoffRepairIssueContinuitySchema>;
 export type HandoffCancelIssueContinuity = z.infer<typeof handoffCancelIssueContinuitySchema>;
 export type RequestIssueSpecThaw = z.infer<typeof requestIssueSpecThawSchema>;
+export type RequestIssueContinuityDocUnfreeze = z.infer<typeof requestIssueContinuityDocUnfreezeSchema>;
 export type CreateIssueDecisionQuestion = z.infer<typeof createIssueDecisionQuestionSchema>;
 export type AnswerIssueDecisionQuestion = z.infer<typeof answerIssueDecisionQuestionSchema>;
 export type DismissIssueDecisionQuestion = z.infer<typeof dismissIssueDecisionQuestionSchema>;

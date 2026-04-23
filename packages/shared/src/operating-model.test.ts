@@ -5,6 +5,7 @@ import {
   connectionContractSchema,
   getReservedIssueDocumentDescriptor,
   getReservedProjectDocumentDescriptor,
+  isIssueDocumentScaffoldBaseline,
   issueReservedDocumentKeySchema,
   parseIssueBranchReturnMarkdown,
   parseConnectionContractMarkdown,
@@ -385,5 +386,43 @@ describe("operating model schemas", () => {
         milestoneReset: null,
       },
     });
+  });
+});
+
+describe("isIssueDocumentScaffoldBaseline", () => {
+  const context = { title: "Reduce scaffold freeze", description: "Make first-write painless", tier: "normal" as const };
+
+  it("returns true when the body equals the generated template exactly", () => {
+    const template = buildIssueDocumentTemplate("spec", context);
+    expect(template).not.toBeNull();
+    expect(isIssueDocumentScaffoldBaseline("spec", template!, context)).toBe(true);
+  });
+
+  it("returns true when the body only differs by trailing whitespace or line endings", () => {
+    const template = buildIssueDocumentTemplate("plan", context);
+    expect(template).not.toBeNull();
+    const noisy = template!.replace(/\n/g, "\r\n") + "  \n\n";
+    expect(isIssueDocumentScaffoldBaseline("plan", noisy, context)).toBe(true);
+  });
+
+  it("returns false when the body has user edits beyond the scaffold", () => {
+    const template = buildIssueDocumentTemplate("test-plan", context);
+    expect(template).not.toBeNull();
+    const edited = `${template}\n\n- New coverage added by the continuity owner`;
+    expect(isIssueDocumentScaffoldBaseline("test-plan", edited, context)).toBe(false);
+  });
+
+  it("returns false when the body was generated for a different issue context", () => {
+    const otherTemplate = buildIssueDocumentTemplate("spec", {
+      title: "Different work",
+      description: "Unrelated description",
+      tier: "normal",
+    });
+    expect(otherTemplate).not.toBeNull();
+    expect(isIssueDocumentScaffoldBaseline("spec", otherTemplate!, context)).toBe(false);
+  });
+
+  it("returns false for unsupported document keys", () => {
+    expect(isIssueDocumentScaffoldBaseline("unknown-key", "any body", context)).toBe(false);
   });
 });

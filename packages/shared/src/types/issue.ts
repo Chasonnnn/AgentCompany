@@ -257,6 +257,17 @@ export interface IssuePlanApprovalSummary {
   requiresResubmission: boolean;
 }
 
+export type IssueDocThawReason = "executive_thaw";
+
+export interface IssueDocFreezeException {
+  key: string;
+  reason: IssueDocThawReason;
+  decisionNote: string;
+  grantedAt: string;
+  grantedByAgentId: string | null;
+  grantedByUserId: string | null;
+}
+
 export interface IssueContinuityState {
   tier: IssueContinuityTier;
   status: IssueContinuityStatus;
@@ -283,6 +294,7 @@ export interface IssueContinuityState {
   lastPreparedAt: string | null;
   lastBundleHash: string | null;
   planApproval: IssuePlanApprovalSummary;
+  docFreezeExceptions?: IssueDocFreezeException[];
 }
 
 export interface IssueContinuityDocumentSnapshot {
