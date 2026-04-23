@@ -270,7 +270,8 @@ async function listIssueDependencyReadinessMap(
         eq(issueRelations.type, "blocks"),
         inArray(issueRelations.relatedIssueId, uniqueIssueIds),
       ),
-    );
+    )
+    .orderBy(asc(issues.identifier), asc(issues.id));
 
   for (const row of blockerRows) {
     const current = readinessMap.get(row.issueId) ?? createIssueDependencyReadiness(row.issueId);
