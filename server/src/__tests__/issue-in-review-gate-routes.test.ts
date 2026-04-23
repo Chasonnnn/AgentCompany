@@ -210,9 +210,10 @@ describe("in_review entry gate on PATCH /issues/:id", () => {
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
-  it("accepts status=in_review with a valid pullRequestUrl", async () => {
+  it("accepts status=in_review with a valid pullRequestUrl and persists it (AIW-29)", async () => {
     const existing = makeIssue();
-    const updated = makeIssue({ status: "in_review" });
+    const prUrl = "https://github.com/example/repo/pull/7";
+    const updated = makeIssue({ status: "in_review", pullRequestUrl: prUrl });
     mockIssueService.getById.mockResolvedValue(existing);
     mockIssueService.update.mockResolvedValue(updated);
 
@@ -221,18 +222,40 @@ describe("in_review entry gate on PATCH /issues/:id", () => {
       .patch(`/api/issues/${existing.id}`)
       .send({
         status: "in_review",
-        pullRequestUrl: "https://github.com/example/repo/pull/7",
+        pullRequestUrl: prUrl,
       });
 
     expect(res.status).toBe(200);
     expect(mockIssueService.update).toHaveBeenCalledTimes(1);
     const [, payload] = mockIssueService.update.mock.calls[0];
-    expect(payload).not.toHaveProperty("pullRequestUrl");
     expect(payload).not.toHaveProperty("selfAttest");
     expect(payload.status).toBe("in_review");
+    expect(payload.pullRequestUrl).toBe(prUrl);
+    expect(res.body.pullRequestUrl).toBe(prUrl);
   });
 
-  it("accepts status=in_review with a complete selfAttest checklist", async () => {
+  it("updates pullRequestUrl on a subsequent in_review→in_review PATCH (AIW-29)", async () => {
+    const existing = makeIssue({ status: "in_review", pullRequestUrl: "https://github.com/example/repo/pull/7" });
+    const nextUrl = "https://github.com/example/repo/pull/9";
+    const updated = makeIssue({ status: "in_review", pullRequestUrl: nextUrl });
+    mockIssueService.getById.mockResolvedValue(existing);
+    mockIssueService.update.mockResolvedValue(updated);
+
+    const app = await createApp();
+    const res = await request(app)
+      .patch(`/api/issues/${existing.id}`)
+      .send({
+        status: "in_review",
+        pullRequestUrl: nextUrl,
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledTimes(1);
+    const [, payload] = mockIssueService.update.mock.calls[0];
+    expect(payload.pullRequestUrl).toBe(nextUrl);
+  });
+
+  it("accepts status=in_review with a complete selfAttest checklist and does not write pullRequestUrl (AIW-29)", async () => {
     const existing = makeIssue();
     const updated = makeIssue({ status: "in_review" });
     mockIssueService.getById.mockResolvedValue(existing);
@@ -250,6 +273,7 @@ describe("in_review entry gate on PATCH /issues/:id", () => {
     expect(mockIssueService.update).toHaveBeenCalledTimes(1);
     const [, payload] = mockIssueService.update.mock.calls[0];
     expect(payload).not.toHaveProperty("selfAttest");
+    expect(payload).not.toHaveProperty("pullRequestUrl");
     expect(payload.status).toBe("in_review");
   });
 

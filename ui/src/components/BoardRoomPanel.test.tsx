@@ -87,6 +87,7 @@ function createIssue(): Issue {
     originRunId: null,
     requestDepth: 0,
     billingCode: null,
+    pullRequestUrl: null,
     assigneeAdapterOverrides: null,
     executionPolicy: null,
     executionState: null,

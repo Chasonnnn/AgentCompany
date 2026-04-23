@@ -59,7 +59,7 @@ describe("issueDetailBreadcrumb", () => {
       originRunId: null,
       requestDepth: 0,
       billingCode: null,
-      assigneeAdapterOverrides: null,
+      pullRequestUrl: null,      assigneeAdapterOverrides: null,
       executionPolicy: null,
       executionState: null,
       executionWorkspaceId: null,

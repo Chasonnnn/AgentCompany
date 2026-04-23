@@ -414,6 +414,7 @@ export interface Issue {
   originRunId?: string | null;
   requestDepth: number;
   billingCode: string | null;
+  pullRequestUrl: string | null;
   assigneeAdapterOverrides: IssueAssigneeAdapterOverrides | null;
   executionPolicy?: IssueExecutionPolicy | null;
   executionState?: IssueExecutionState | null;

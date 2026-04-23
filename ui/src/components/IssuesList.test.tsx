@@ -103,6 +103,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     issueNumber: 1,
     requestDepth: 0,
     billingCode: null,
+    pullRequestUrl: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,

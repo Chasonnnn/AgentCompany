@@ -227,6 +227,7 @@ function createIssue(): Issue {
     issueNumber: 807,
     requestDepth: 0,
     billingCode: null,
+    pullRequestUrl: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,

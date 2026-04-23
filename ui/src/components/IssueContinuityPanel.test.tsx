@@ -159,6 +159,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     issueNumber: 101,
     requestDepth: 0,
     billingCode: null,
+    pullRequestUrl: null,
     assigneeAdapterOverrides: null,
     executionPolicy: null,
     executionState: null,
