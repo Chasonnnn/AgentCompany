@@ -490,6 +490,39 @@ describe("PATCH /issues/:id — in_review auto-route gate", () => {
     );
   });
 
+  // AIW-137 review finding F-PM1: the route schema accepts `autoRouteReviewer`
+  // as a control flag, but it must never flow into `issueService.update`'s
+  // patch — the `issues` table has no such column.
+  it("does not forward the autoRouteReviewer control flag into issueService.update", async () => {
+    const existing = makeIssue();
+    mockIssueService.getById.mockResolvedValue(existing);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...existing,
+      ...patch,
+      assigneeAgentId: (patch.assigneeAgentId as string | null) ?? existing.assigneeAgentId,
+      status: (patch.status as string) ?? existing.status,
+    }));
+    mockInReviewRouting.selectLeastLoadedQaReviewer.mockResolvedValue({
+      reviewer: { id: QA_REVIEWER_ID, name: "QA-A", openIssueCount: 3, createdAt: new Date() },
+      candidateCount: 2,
+    });
+
+    const res = await request(await createApp())
+      .patch(`/api/issues/${ISSUE_ID}`)
+      .send({
+        status: "in_review",
+        autoRouteReviewer: true,
+        pullRequestUrl: "https://github.com/example/repo/pull/7",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalled();
+    for (const [, patch] of mockIssueService.update.mock.calls as [string, Record<string, unknown>][]) {
+      expect(patch).not.toHaveProperty("autoRouteReviewer");
+      expect(patch).not.toHaveProperty("pullRequestUrl");
+    }
+  });
+
   it("does not gate when status is already in_review (re-patching)", async () => {
     const existing = makeIssue({ status: "in_review" });
     mockIssueService.getById.mockResolvedValue(existing);
