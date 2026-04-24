@@ -10,6 +10,7 @@ export { agentService, deduplicateAgentName } from "./agents.js";
 export { agentProjectPlacementService, type ResolvedPrimaryProjectPlacement } from "./agent-project-placements.js";
 export { agentTemplateService } from "./agent-templates.js";
 export { agentInstructionsService, syncInstructionsBundleConfigFromFilePath } from "./agent-instructions.js";
+export { memoryService } from "./memory.js";
 export { assetService } from "./assets.js";
 export { documentService, extractLegacyPlanBody } from "./documents.js";
 export { projectService } from "./projects.js";
@@ -75,5 +76,9 @@ export { workProductService } from "./work-products.js";
 export { logActivity, type LogActivityInput } from "./activity-log.js";
 export { notifyHireApproved, type NotifyHireApprovedInput } from "./hire-hook.js";
 export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";
-export { reconcilePersistedRuntimeServicesOnStartup, restartDesiredRuntimeServicesOnStartup } from "./workspace-runtime.js";
+export {
+  reconcileDanglingWorktreesOnStartup,
+  reconcilePersistedRuntimeServicesOnStartup,
+  restartDesiredRuntimeServicesOnStartup,
+} from "./workspace-runtime.js";
 export { createStorageServiceFromConfig, getStorageService } from "../storage/index.js";

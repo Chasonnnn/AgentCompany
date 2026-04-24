@@ -20,6 +20,8 @@ const mockIssueService = vi.hoisted(() => ({
   getByIdentifier: vi.fn(),
 }));
 
+let server: Server | null = null;
+
 async function createApp() {
   vi.doUnmock("../routes/activity.js");
   vi.doUnmock("../middleware/index.js");

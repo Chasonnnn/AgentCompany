@@ -9,6 +9,9 @@ import type {
   CompanyOperatingHierarchy,
   AgentInstructionsBundle,
   AgentInstructionsFileDetail,
+  AgentMemoryOverview,
+  MemoryFileDetail,
+  MemoryMigrationResult,
   AgentSkillSnapshot,
   AdapterEnvironmentTestResult,
   AgentKeyCreated,
@@ -168,6 +171,19 @@ export const agentsApi = {
     api.patch<AgentDetail>(agentPath(id, companyId, "/permissions"), data),
   instructionsBundle: (id: string, companyId?: string) =>
     api.get<AgentInstructionsBundle>(agentPath(id, companyId, "/instructions-bundle")),
+  memory: (id: string, companyId?: string) =>
+    api.get<AgentMemoryOverview>(agentPath(id, companyId, "/memory")),
+  memoryFile: (id: string, relativePath: string, companyId?: string) =>
+    api.get<MemoryFileDetail>(
+      agentPath(id, companyId, `/memory/file?path=${encodeURIComponent(relativePath)}`),
+    ),
+  saveMemoryFile: (
+    id: string,
+    data: { path: string; content: string },
+    companyId?: string,
+  ) => api.put<MemoryFileDetail>(agentPath(id, companyId, "/memory/file"), data),
+  migrateHotMemory: (id: string, companyId?: string) =>
+    api.post<MemoryMigrationResult>(agentPath(id, companyId, "/memory/migrate-hot"), {}),
   updateInstructionsBundle: (
     id: string,
     data: {

@@ -266,6 +266,12 @@ export {
   type UpdateAgentPermissions,
 } from "./agent.js";
 export {
+  memoryScopeSchema,
+  memoryHealthStatusSchema,
+  upsertMemoryFileSchema,
+  type UpsertMemoryFile,
+} from "./memory.js";
+export {
   sharedServiceEngagementStatusSchema,
   sharedServiceEngagementAssignmentSchema,
   sharedServiceEngagementSchema,

@@ -195,6 +195,15 @@ export type {
   OperatingHierarchyProjectSummary,
 } from "./agent.js";
 export type {
+  MemoryScope,
+  MemoryHealthStatus,
+  MemoryFileSummary,
+  MemoryFileDetail,
+  AgentMemoryOverview,
+  CompanyMemoryOverview,
+  MemoryMigrationResult,
+} from "./memory.js";
+export type {
   SharedServiceEngagement,
   SharedServiceEngagementAssignment,
   SharedServiceEngagementCreateRequest,

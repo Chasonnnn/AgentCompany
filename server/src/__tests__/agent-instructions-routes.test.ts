@@ -20,6 +20,12 @@ const mockAgentInstructionsService = vi.hoisted(() => ({
   ensureManagedBundle: vi.fn(),
   materializeManagedBundle: vi.fn(),
 }));
+const mockMemoryService = vi.hoisted(() => ({
+  getAgentMemory: vi.fn(),
+  readAgentMemoryFile: vi.fn(),
+  writeAgentMemoryFile: vi.fn(),
+  migrateAgentHotMemory: vi.fn(),
+}));
 
 const mockAccessService = vi.hoisted(() => ({
   canUser: vi.fn(),
@@ -67,6 +73,10 @@ vi.mock("../services/index.js", () => ({
   secretService: () => mockSecretService,
   syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
   workspaceOperationService: () => ({}),
+}));
+
+vi.mock("../services/memory.js", () => ({
+  memoryService: () => mockMemoryService,
 }));
 
 vi.mock("../adapters/index.js", () => ({
@@ -191,6 +201,69 @@ describe("agent instructions bundle routes", () => {
         instructionsFilePath: "/tmp/agent-1/AGENTS.md",
       },
     });
+    mockMemoryService.getAgentMemory.mockResolvedValue({
+      agentId: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      rootPath: "/tmp/memory",
+      hotPath: "/tmp/memory/hot/MEMORY.md",
+      legacyBundleMemoryPath: "/tmp/agent-1/MEMORY.md",
+      hotBytes: 120,
+      warningBytes: 6144,
+      targetBytes: 8192,
+      hardLimitBytes: 16384,
+      status: "ok",
+      files: [],
+      warnings: [],
+    });
+    mockMemoryService.readAgentMemoryFile.mockResolvedValue({
+      path: "hot/MEMORY.md",
+      layer: "hot",
+      size: 9,
+      language: "markdown",
+      markdown: true,
+      editable: true,
+      archived: false,
+      content: "# Memory\n",
+      truncated: false,
+      fullSize: 9,
+    });
+    mockMemoryService.writeAgentMemoryFile.mockResolvedValue({
+      adapterConfig: {
+        instructionsBundleMode: "managed",
+        instructionsRootPath: "/tmp/agent-1",
+        instructionsEntryFile: "AGENTS.md",
+        instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+      },
+      overview: {},
+      file: {
+        path: "hot/MEMORY.md",
+        layer: "hot",
+        size: 9,
+        language: "markdown",
+        markdown: true,
+        editable: true,
+        archived: false,
+        content: "# Memory\n",
+        truncated: false,
+        fullSize: 9,
+      },
+    });
+    mockMemoryService.migrateAgentHotMemory.mockResolvedValue({
+      adapterConfig: {
+        instructionsBundleMode: "managed",
+        instructionsRootPath: "/tmp/agent-1",
+        instructionsEntryFile: "AGENTS.md",
+        instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+      },
+      result: {
+        archivePath: "archive/20260424-120000-MEMORY.md",
+        oldBytes: 20000,
+        newHotBytes: 220,
+        createdFiles: ["archive/20260424-120000-MEMORY.md"],
+        updatedFiles: ["hot/MEMORY.md", "MEMORY.md"],
+        overview: {},
+      },
+    });
   });
 
   it("returns bundle metadata", async () => {
@@ -237,6 +310,70 @@ describe("agent instructions bundle routes", () => {
         }),
       }),
       expect.any(Object),
+    );
+  });
+
+  it("returns agent memory metadata", async () => {
+    const res = await request(createApp())
+      .get("/api/agents/11111111-1111-4111-8111-111111111111/memory?companyId=company-1");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({
+      agentId: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      status: "ok",
+    });
+    expect(mockMemoryService.getAgentMemory).toHaveBeenCalledWith(expect.objectContaining({ id: "11111111-1111-4111-8111-111111111111" }));
+  });
+
+  it("writes an agent memory file and logs the mutation", async () => {
+    const res = await request(createApp())
+      .put("/api/agents/11111111-1111-4111-8111-111111111111/memory/file?companyId=company-1")
+      .send({
+        path: "hot/MEMORY.md",
+        content: "# Memory\n",
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockMemoryService.writeAgentMemoryFile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "11111111-1111-4111-8111-111111111111" }),
+      "hot/MEMORY.md",
+      "# Memory\n",
+    );
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        adapterConfig: expect.objectContaining({ instructionsFilePath: "/tmp/agent-1/AGENTS.md" }),
+      }),
+      expect.any(Object),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "agent.memory_hot_updated",
+        entityType: "agent",
+      }),
+    );
+  });
+
+  it("migrates hot memory and logs archive details", async () => {
+    const res = await request(createApp())
+      .post("/api/agents/11111111-1111-4111-8111-111111111111/memory/migrate-hot?companyId=company-1")
+      .send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.archivePath).toBe("archive/20260424-120000-MEMORY.md");
+    expect(mockMemoryService.migrateAgentHotMemory).toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "agent.memory_hot_migrated",
+        details: expect.objectContaining({
+          archivePath: "archive/20260424-120000-MEMORY.md",
+          oldBytes: 20000,
+          newHotBytes: 220,
+        }),
+      }),
     );
   });
 

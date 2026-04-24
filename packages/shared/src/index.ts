@@ -449,6 +449,13 @@ export type {
   AgentInstructionsFileSummary,
   AgentInstructionsFileDetail,
   AgentInstructionsBundle,
+  MemoryScope,
+  MemoryHealthStatus,
+  MemoryFileSummary,
+  MemoryFileDetail,
+  AgentMemoryOverview,
+  CompanyMemoryOverview,
+  MemoryMigrationResult,
   AgentKeyCreated,
   AgentConfigRevision,
   AdapterEnvironmentCheckLevel,
@@ -728,6 +735,12 @@ export type {
   QuotaWindow,
   ProviderQuotaResult,
 } from "./types/index.js";
+export {
+  memoryScopeSchema,
+  memoryHealthStatusSchema,
+  upsertMemoryFileSchema,
+  type UpsertMemoryFile,
+} from "./validators/memory.js";
 export {
   ISSUE_REFERENCE_IDENTIFIER_RE,
   buildIssueReferenceHref,

@@ -29,6 +29,7 @@ import {
   type ComputedAgentWaitingOn,
   type InstanceSchedulerHeartbeatAgent,
   upsertAgentInstructionsFileSchema,
+  upsertMemoryFileSchema,
   updateAgentInstructionsBundleSchema,
   updateAgentPermissionsSchema,
   updateAgentInstructionsPathSchema,
@@ -59,6 +60,7 @@ import {
   syncInstructionsBundleConfigFromFilePath,
   workspaceOperationService,
 } from "../services/index.js";
+import { memoryService } from "../services/memory.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
@@ -112,6 +114,7 @@ type AgentRouteDeps = {
   logActivity: typeof baseLogActivity;
   secretService: ReturnType<typeof secretService>;
   agentInstructionsService: ReturnType<typeof agentInstructionsService>;
+  memoryService: ReturnType<typeof memoryService>;
   workspaceOperationService: ReturnType<typeof workspaceOperationService>;
   instanceSettingsService: ReturnType<typeof instanceSettingsService>;
 };
@@ -192,6 +195,7 @@ export function agentRoutes(
   const secretsSvc = opts?.services?.secretService ?? secretService(db);
   const instructions =
     opts?.services?.agentInstructionsService ?? agentInstructionsService();
+  const memory = opts?.services?.memoryService ?? memoryService();
   const skillSync = opts?.services?.agentSkillService ?? agentSkillService(db);
   const workspaceOperations =
     opts?.services?.workspaceOperationService ?? workspaceOperationService(db);
@@ -2414,6 +2418,129 @@ export function agentRoutes(
       bundle.externalRootAllowed = true;
     }
     res.json(bundle);
+  });
+
+  router.get("/agents/:id/memory", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanReadAgent(req, existing);
+    res.json(await memory.getAgentMemory(existing));
+  });
+
+  router.get("/agents/:id/memory/file", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanReadAgent(req, existing);
+    const relativePath = typeof req.query.path === "string" ? req.query.path : "";
+    if (!relativePath.trim()) {
+      res.status(422).json({ error: "Query parameter 'path' is required" });
+      return;
+    }
+    res.json(await memory.readAgentMemoryFile(existing, relativePath));
+  });
+
+  router.put("/agents/:id/memory/file", validate(upsertMemoryFileSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertBoard(req);
+    assertCompanyAccess(req, existing.companyId);
+    const actor = getActorInfo(req);
+    const result = await memory.writeAgentMemoryFile(existing, req.body.path, req.body.content);
+    if (result.adapterConfig) {
+      const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+        existing.companyId,
+        result.adapterConfig,
+        { strictMode: strictSecretsMode },
+      );
+      await svc.update(
+        id,
+        { adapterConfig: normalizedAdapterConfig },
+        {
+          recordRevision: {
+            createdByAgentId: actor.agentId,
+            createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+            source: "agent_memory_write",
+          },
+        },
+      );
+    }
+    await logActivity(db, {
+      companyId: existing.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: result.file.path === "hot/MEMORY.md" ? "agent.memory_hot_updated" : "agent.memory_file_updated",
+      entityType: "agent",
+      entityId: existing.id,
+      details: {
+        path: result.file.path,
+        size: result.file.size,
+        layer: result.file.layer,
+      },
+    });
+    res.json(result.file);
+  });
+
+  router.post("/agents/:id/memory/migrate-hot", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertBoard(req);
+    assertCompanyAccess(req, existing.companyId);
+    const actor = getActorInfo(req);
+    const { result, adapterConfig } = await memory.migrateAgentHotMemory(existing);
+    if (adapterConfig) {
+      const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+        existing.companyId,
+        adapterConfig,
+        { strictMode: strictSecretsMode },
+      );
+      await svc.update(
+        id,
+        { adapterConfig: normalizedAdapterConfig },
+        {
+          recordRevision: {
+            createdByAgentId: actor.agentId,
+            createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+            source: "agent_memory_migrate_hot",
+          },
+        },
+      );
+    }
+    await logActivity(db, {
+      companyId: existing.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "agent.memory_hot_migrated",
+      entityType: "agent",
+      entityId: existing.id,
+      details: {
+        archivePath: result.archivePath,
+        oldBytes: result.oldBytes,
+        newHotBytes: result.newHotBytes,
+        createdFiles: result.createdFiles,
+        updatedFiles: result.updatedFiles,
+      },
+    });
+    res.json(result);
   });
 
   router.patch("/agents/:id/instructions-bundle", validate(updateAgentInstructionsBundleSchema), async (req, res) => {

@@ -9,7 +9,7 @@ Manager rules:
 - prefer delegation, review, and unblock loops over taking leaf implementation work yourself
 - when you do own active execution, you are still the continuity owner until handoff completes
 - when staffing work and more than one report could own it, balance load — prefer the report with the fewest open issues before falling back to tenure or context fit (see `skills/paperclip/references/load-balancing.md`)
-- use `./MEMORY.md` for durable personal notes; do not let bundle updates overwrite it
+- use `./MEMORY.md` only for compact hot memory; put detailed continuity in `./memory/daily/`, recurring operating lessons in `./memory/operations/`, and reusable cross-agent knowledge in company memory
 
 On each heartbeat, in addition to the canonical Paperclip skill procedure:
 

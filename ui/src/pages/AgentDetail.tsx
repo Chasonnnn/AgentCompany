@@ -87,6 +87,7 @@ import {
   type Agent,
   type AgentSkillEntry,
   type AgentSkillSnapshot,
+  type MemoryFileSummary,
   type ConnectionContract,
   type AgentDetail as AgentDetailRecord,
   type BudgetPolicySummary,
@@ -310,6 +311,12 @@ function isMarkdown(pathValue: string) {
   return pathValue.toLowerCase().endsWith(".md");
 }
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function formatEnvForDisplay(envValue: unknown, censorUsernameInLogs: boolean): string {
   const env = asRecord(envValue);
   if (!env) return "<unable-to-parse>";
@@ -384,10 +391,11 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "instructions" | "memory" | "configuration" | "skills" | "runs" | "budget";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
+  if (value === "memory") return "memory";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
   if (value === "budget") return "budget";
@@ -901,6 +909,8 @@ export function AgentDetail() {
     const canonicalTab =
       activeView === "instructions"
         ? "instructions"
+        : activeView === "memory"
+          ? "memory"
         : activeView === "configuration"
           ? "configuration"
           : activeView === "skills"
@@ -1024,6 +1034,8 @@ export function AgentDetail() {
         crumbs.push({ label: `Run ${urlRunId.slice(0, 8)}` });
       } else if (activeView === "instructions") {
         crumbs.push({ label: "Instructions" });
+      } else if (activeView === "memory") {
+        crumbs.push({ label: "Memory" });
       } else if (activeView === "configuration") {
         crumbs.push({ label: "Configuration" });
       // } else if (activeView === "skills") { // TODO: bring back later
@@ -1168,6 +1180,7 @@ export function AgentDetail() {
             items={[
               { value: "dashboard", label: "Dashboard" },
               { value: "instructions", label: "Instructions" },
+              { value: "memory", label: "Memory" },
               { value: "skills", label: "Skills" },
               { value: "configuration", label: "Configuration" },
               { value: "runs", label: "Runs" },
@@ -1262,6 +1275,13 @@ export function AgentDetail() {
           onSaveActionChange={setSaveConfigAction}
           onCancelActionChange={setCancelConfigAction}
           onSavingChange={setConfigSaving}
+        />
+      )}
+
+      {activeView === "memory" && (
+        <AgentMemoryTab
+          agent={agent}
+          companyId={resolvedCompanyId ?? undefined}
         />
       )}
 
@@ -1818,6 +1838,300 @@ function ConfigurationTab({
               disabled={updatePermissions.isPending || taskAssignLocked}
             />
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Memory Tab ---- */
+
+function AgentMemoryTab({
+  agent,
+  companyId,
+}: {
+  agent: Agent;
+  companyId?: string;
+}) {
+  const queryClient = useQueryClient();
+  const { pushToast } = useToast();
+  const { isMobile } = useSidebar();
+  const [selectedFile, setSelectedFile] = useState("hot/MEMORY.md");
+  const [draft, setDraft] = useState<string | null>(null);
+  const [newFilePath, setNewFilePath] = useState("");
+  const [showNewFileInput, setShowNewFileInput] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<string[]>([]);
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set(["hot", "daily", "operations", "archive"]));
+  const [showFilePanel, setShowFilePanel] = useState(false);
+
+  const memoryQuery = useQuery({
+    queryKey: queryKeys.agents.memory(agent.id),
+    queryFn: () => agentsApi.memory(agent.id, companyId),
+    enabled: Boolean(companyId),
+  });
+
+  const memory = memoryQuery.data;
+  const fileOptions = useMemo(() => memory?.files.map((file) => file.path) ?? [], [memory]);
+  const visibleFilePaths = useMemo(
+    () => [...new Set(["hot/MEMORY.md", ...fileOptions, ...pendingFiles])],
+    [fileOptions, pendingFiles],
+  );
+  const fileTree = useMemo(
+    () => buildFileTree(Object.fromEntries(visibleFilePaths.map((filePath) => [filePath, ""]))),
+    [visibleFilePaths],
+  );
+  const selectedExists = fileOptions.includes(selectedFile);
+  const selectedSummary = memory?.files.find((file) => file.path === selectedFile) ?? null;
+
+  const fileQuery = useQuery({
+    queryKey: queryKeys.agents.memoryFile(agent.id, selectedFile),
+    queryFn: () => agentsApi.memoryFile(agent.id, selectedFile, companyId),
+    enabled: Boolean(companyId && selectedExists),
+  });
+
+  useEffect(() => {
+    if (!memory) return;
+    if (!fileOptions.includes(selectedFile) && !pendingFiles.includes(selectedFile)) {
+      setSelectedFile(fileOptions.includes("hot/MEMORY.md") ? "hot/MEMORY.md" : fileOptions[0] ?? "hot/MEMORY.md");
+    }
+  }, [fileOptions, memory, pendingFiles, selectedFile]);
+
+  useEffect(() => {
+    setDraft(null);
+  }, [agent.id, selectedFile, fileQuery.data?.content]);
+
+  const saveFile = useMutation({
+    mutationFn: (data: { path: string; content: string }) => agentsApi.saveMemoryFile(agent.id, data, companyId),
+    onSuccess: (_, variables) => {
+      setPendingFiles((prev) => prev.filter((pathValue) => pathValue !== variables.path));
+      setDraft(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.memory(agent.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.memoryFile(agent.id, variables.path) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.instructionsBundle(agent.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.instructionsFile(agent.id, "MEMORY.md") });
+      pushToast({ tone: "success", title: "Memory saved" });
+    },
+    onError: (err) => {
+      pushToast({ tone: "error", title: "Failed to save memory", body: err instanceof Error ? err.message : String(err) });
+    },
+  });
+
+  const migrateHot = useMutation({
+    mutationFn: () => agentsApi.migrateHotMemory(agent.id, companyId),
+    onSuccess: (result) => {
+      setDraft(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.memory(agent.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.memoryFile(agent.id, "hot/MEMORY.md") });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.instructionsBundle(agent.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.instructionsFile(agent.id, "MEMORY.md") });
+      pushToast({ tone: "success", title: "Hot memory migrated", body: `Archived to ${result.archivePath}` });
+    },
+    onError: (err) => {
+      pushToast({ tone: "error", title: "Failed to migrate memory", body: err instanceof Error ? err.message : String(err) });
+    },
+  });
+
+  const currentContent = selectedExists ? (fileQuery.data?.content ?? "") : "";
+  const displayValue = draft ?? currentContent;
+  const isHotFile = selectedFile === "hot/MEMORY.md";
+  const selectedOverHardLimit = isHotFile && (memory?.hotBytes ?? 0) > (memory?.hardLimitBytes ?? Number.POSITIVE_INFINITY);
+  const readOnly = Boolean(selectedSummary?.archived || fileQuery.data?.truncated || selectedOverHardLimit);
+  const dirty = draft !== null && draft !== currentContent;
+  const statusClass = memory?.status === "over_limit"
+    ? "text-red-600 dark:text-red-400"
+    : memory?.status === "warning"
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-green-600 dark:text-green-400";
+  const usagePercent = memory ? Math.min(100, Math.round((memory.hotBytes / memory.hardLimitBytes) * 100)) : 0;
+
+  if (memoryQuery.isLoading && !memory) return <PromptsTabSkeleton />;
+  if (!memory) return <p className="text-sm text-muted-foreground">Memory is unavailable for this agent.</p>;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium">Hot Memory</h3>
+            <p className="text-xs text-muted-foreground">
+              {formatBytes(memory.hotBytes)} / {formatBytes(memory.targetBytes)} target
+            </p>
+          </div>
+          <div className={cn("text-xs font-medium uppercase tracking-wide", statusClass)}>
+            {memory.status.replace("_", " ")}
+          </div>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              "h-full",
+              memory.status === "over_limit" ? "bg-red-500" : memory.status === "warning" ? "bg-amber-500" : "bg-green-500",
+            )}
+            style={{ width: `${usagePercent}%` }}
+          />
+        </div>
+        {memory.warnings.length > 0 && (
+          <div className="space-y-1">
+            {memory.warnings.map((warning) => (
+              <p key={warning} className="text-xs text-amber-600 dark:text-amber-300">{warning}</p>
+            ))}
+          </div>
+        )}
+        {memory.status === "over_limit" && (
+          <Button size="sm" onClick={() => migrateHot.mutate()} disabled={migrateHot.isPending}>
+            {migrateHot.isPending ? "Migrating..." : "Archive and migrate"}
+          </Button>
+        )}
+      </div>
+
+      <div className={cn("flex gap-0", isMobile && "flex-col gap-3")}>
+        <div className={cn(
+          "border border-border rounded-lg p-3 space-y-3 shrink-0",
+          isMobile && showFilePanel && "block",
+          isMobile && !showFilePanel && "hidden",
+        )} style={isMobile ? undefined : { width: 280 }}>
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium">Memory Files</h4>
+            <div className="flex items-center gap-1">
+              {!showNewFileInput && (
+                <Button type="button" size="icon" variant="outline" className="h-7 w-7" onClick={() => setShowNewFileInput(true)}>
+                  +
+                </Button>
+              )}
+              {isMobile && (
+                <Button type="button" size="icon" variant="ghost" className="h-7 w-7" onClick={() => setShowFilePanel(false)}>
+                  ✕
+                </Button>
+              )}
+            </div>
+          </div>
+          {showNewFileInput && (
+            <div className="space-y-2">
+              <Input
+                value={newFilePath}
+                onChange={(event) => setNewFilePath(event.target.value)}
+                placeholder="operations/repo-lessons.md"
+                className="font-mono text-sm"
+              />
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="flex-1"
+                  disabled={!newFilePath.trim() || newFilePath.includes("..")}
+                  onClick={() => {
+                    const candidate = newFilePath.trim();
+                    if (!candidate || candidate.includes("..")) return;
+                    setPendingFiles((prev) => prev.includes(candidate) ? prev : [...prev, candidate]);
+                    setSelectedFile(candidate);
+                    setDraft("");
+                    setNewFilePath("");
+                    setShowNewFileInput(false);
+                  }}
+                >
+                  Create
+                </Button>
+                <Button type="button" size="sm" variant="outline" className="flex-1" onClick={() => setShowNewFileInput(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+          <PackageFileTree
+            nodes={fileTree}
+            selectedFile={selectedFile}
+            expandedDirs={expandedDirs}
+            checkedFiles={new Set()}
+            onToggleDir={(dirPath) => setExpandedDirs((current) => {
+              const next = new Set(current);
+              if (next.has(dirPath)) next.delete(dirPath);
+              else next.add(dirPath);
+              return next;
+            })}
+            onSelectFile={(filePath) => {
+              setSelectedFile(filePath);
+              if (!fileOptions.includes(filePath)) setDraft("");
+              if (isMobile) setShowFilePanel(false);
+            }}
+            onToggleCheck={() => {}}
+            showCheckboxes={false}
+            renderFileExtra={(node) => {
+              const file = memory.files.find((entry: MemoryFileSummary) => entry.path === node.path);
+              if (!file) return null;
+              return (
+                <span className="ml-3 shrink-0 rounded border border-border text-muted-foreground px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+                  {file.archived ? "archive" : formatBytes(file.size)}
+                </span>
+              );
+            }}
+          />
+        </div>
+
+        <div className={cn("border border-border rounded-lg p-4 space-y-3 min-w-0 flex-1", isMobile && showFilePanel && "hidden")}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              {isMobile && (
+                <Button type="button" size="icon" variant="outline" className="h-7 w-7 shrink-0" onClick={() => setShowFilePanel(true)}>
+                  <FolderOpen className="h-3.5 w-3.5" />
+                </Button>
+              )}
+              <div className="min-w-0">
+                <h4 className="text-sm font-medium font-mono truncate">{selectedFile}</h4>
+                <p className="text-xs text-muted-foreground">
+                  {selectedExists ? `${selectedSummary?.layer ?? "memory"} file` : "New memory file"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {dirty && (
+                <Button type="button" size="sm" variant="ghost" onClick={() => setDraft(null)} disabled={saveFile.isPending}>
+                  Cancel
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => saveFile.mutate({ path: selectedFile, content: displayValue })}
+                disabled={readOnly || !dirty || saveFile.isPending}
+              >
+                {saveFile.isPending ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </div>
+
+          {selectedExists && fileQuery.isLoading && !fileQuery.data ? (
+            <PromptEditorSkeleton />
+          ) : readOnly ? (
+            <div className="space-y-2">
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                {selectedSummary?.archived
+                  ? "Archived memory is immutable."
+                  : fileQuery.data?.truncated
+                    ? `This file is too large for inline editing. Showing the first ${formatBytes(fileQuery.data.content.length)}.`
+                    : "Hot memory is over the hard limit. Archive and migrate before editing."}
+              </div>
+              <textarea
+                value={displayValue}
+                readOnly
+                className="min-h-[420px] w-full rounded-md border border-border bg-muted/20 px-3 py-2 font-mono text-sm outline-none"
+              />
+            </div>
+          ) : isMarkdown(selectedFile) ? (
+            <MarkdownEditor
+              key={selectedFile}
+              value={displayValue}
+              onChange={(value) => setDraft(value ?? "")}
+              placeholder="# Memory"
+              contentClassName="min-h-[420px] text-sm font-mono"
+            />
+          ) : (
+            <textarea
+              value={displayValue}
+              onChange={(event) => setDraft(event.target.value)}
+              className="min-h-[420px] w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm outline-none"
+              placeholder="Memory file contents"
+            />
+          )}
         </div>
       </div>
     </div>

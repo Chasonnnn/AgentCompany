@@ -4,6 +4,9 @@ export const queryKeys = {
     detail: (id: string) => ["companies", id] as const,
     stats: ["companies", "stats"] as const,
     documents: (companyId: string) => ["companies", companyId, "documents"] as const,
+    memory: (companyId: string) => ["companies", companyId, "memory"] as const,
+    memoryFile: (companyId: string, relativePath: string) =>
+      ["companies", companyId, "memory", "file", relativePath] as const,
     document: (companyId: string, key: string) => ["companies", companyId, "documents", key] as const,
     documentRevisions: (companyId: string, key: string) =>
       ["companies", companyId, "documents", key, "revisions"] as const,
@@ -45,6 +48,8 @@ export const queryKeys = {
     taskSessions: (id: string) => ["agents", "task-sessions", id] as const,
     skills: (id: string) => ["agents", "skills", id] as const,
     instructionsBundle: (id: string) => ["agents", "instructions-bundle", id] as const,
+    memory: (id: string) => ["agents", "memory", id] as const,
+    memoryFile: (id: string, relativePath: string) => ["agents", "memory", id, "file", relativePath] as const,
     instructionsFile: (id: string, relativePath: string) =>
       ["agents", "instructions-bundle", id, "file", relativePath] as const,
     keys: (agentId: string) => ["agents", "keys", agentId] as const,

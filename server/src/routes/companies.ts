@@ -13,6 +13,7 @@ import {
   feedbackVoteValueSchema,
   restoreProjectDocumentRevisionSchema,
   teamReservedDocumentKeySchema,
+  upsertMemoryFileSchema,
   upsertProjectDocumentSchema,
   updateCompanyBrandingSchema,
   updateCompanySchema,
@@ -30,6 +31,7 @@ import {
   feedbackService,
   logActivity,
 } from "../services/index.js";
+import { memoryService } from "../services/memory.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
@@ -45,6 +47,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   const budgets = budgetService(db);
   const documents = documentService(db);
   const feedback = feedbackService(db);
+  const memory = memoryService();
 
   function parseBooleanQuery(value: unknown) {
     return value === true || value === "true" || value === "1";
@@ -143,6 +146,64 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       return;
     }
     res.json(company);
+  });
+
+  router.get("/:companyId/memory", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const company = await svc.getById(companyId);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    res.json(await memory.getCompanyMemory(companyId));
+  });
+
+  router.get("/:companyId/memory/file", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const relativePath = typeof req.query.path === "string" ? req.query.path : "";
+    if (!relativePath.trim()) {
+      res.status(422).json({ error: "Query parameter 'path' is required" });
+      return;
+    }
+    const company = await svc.getById(companyId);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    res.json(await memory.readCompanyMemoryFile(companyId, relativePath));
+  });
+
+  router.put("/:companyId/memory/file", validate(upsertMemoryFileSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const company = await svc.getById(companyId);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const result = await memory.writeCompanyMemoryFile(companyId, req.body.path, req.body.content);
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "company.memory_file_updated",
+      entityType: "company",
+      entityId: companyId,
+      details: {
+        path: result.file.path,
+        size: result.file.size,
+        layer: result.file.layer,
+      },
+    });
+    res.json(result.file);
   });
 
   function assertCompanyDocumentKey(rawKey: string) {

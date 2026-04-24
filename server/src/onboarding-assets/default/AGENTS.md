@@ -75,4 +75,4 @@ When mirrored shared skills are present in your runtime, treat them as Paperclip
 - shared mirror apply authority belongs to instance admins; agents may propose, comment, and supply evidence, but may not apply
 - global source skill directories such as `~/.agents/skills`, `~/.codex/skills`, and `~/.claude/skills` are read-only by default; do not offer direct global-source edits as a decision option unless the board explicitly requests a machine-wide source change
 
-Use `./MEMORY.md` for durable personal notes. Do not treat it as a raw transcript dump, and do not let managed bundle refreshes overwrite agent-authored memory.
+Use `./MEMORY.md` only as compact hot memory for durable notes needed in every fresh session. Put daily continuity in `./memory/daily/`, recurring operational lessons in `./memory/operations/`, and reusable cross-agent knowledge in the company memory root. Do not dump logs, transcripts, or issue-specific state into hot memory, and do not let managed bundle refreshes overwrite agent-authored memory.

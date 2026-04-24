@@ -1,5 +1,6 @@
 import type {
   Company,
+  CompanyMemoryOverview,
   CompanyDocument,
   CompanyDocumentRevision,
   CompanyDocumentSummary,
@@ -15,6 +16,7 @@ import type {
   TeamDocumentSummary,
   UpsertProjectDocument,
   UpdateCompanyBranding,
+  MemoryFileDetail,
 } from "@paperclipai/shared";
 import { api } from "./client";
 
@@ -48,6 +50,11 @@ export const companiesApi = {
   ) => api.patch<Company>(`/companies/${companyId}`, data),
   updateBranding: (companyId: string, data: UpdateCompanyBranding) =>
     api.patch<Company>(`/companies/${companyId}/branding`, data),
+  memory: (companyId: string) => api.get<CompanyMemoryOverview>(`/companies/${companyId}/memory`),
+  memoryFile: (companyId: string, relativePath: string) =>
+    api.get<MemoryFileDetail>(`/companies/${companyId}/memory/file?path=${encodeURIComponent(relativePath)}`),
+  saveMemoryFile: (companyId: string, data: { path: string; content: string }) =>
+    api.put<MemoryFileDetail>(`/companies/${companyId}/memory/file`, data),
   listDocuments: (companyId: string) => api.get<CompanyDocumentSummary[]>(`/companies/${companyId}/documents`),
   getDocument: (companyId: string, key: string) =>
     api.get<CompanyDocument>(`/companies/${companyId}/documents/${encodeURIComponent(key)}`),
