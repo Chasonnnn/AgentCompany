@@ -525,7 +525,7 @@ export function agentSkillService(db: Db) {
         ? normalizedRequestedSkills
         : normalizedDesiredSkillIds.length > 0
           ? await Promise.all(normalizedDesiredSkillIds.map(async (skillId) => {
-            const skill = await companySkills.getById(skillId);
+            const skill = await companySkills.getById(agent.companyId, skillId);
             if (!skill) throw notFound("Skill not found");
             return skill.key;
           }))
@@ -562,7 +562,7 @@ export function agentSkillService(db: Db) {
     input: BulkSkillGrantRequest,
   ): Promise<BulkSkillGrantPlan> {
     const [skill, navigation, runtimeSkillEntries, companyAgents] = await Promise.all([
-      companySkills.getById(skillId),
+      companySkills.getById(companyId, skillId),
       agents.navigationForCompany(companyId, "department"),
       companySkills.listRuntimeSkillEntries(companyId, { materializeMissing: false }),
       agents.list(companyId),

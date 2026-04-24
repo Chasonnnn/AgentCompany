@@ -1776,7 +1776,7 @@ export function issueContinuityService(db: Db) {
       const finding = parsedFindings.document.findings[findingIndex]!;
 
       let targetSkill = parsed.companySkillId
-        ? await companySkillsSvc.getById(parsed.companySkillId)
+        ? await companySkillsSvc.getById(issue.companyId, parsed.companySkillId)
         : null;
       if (targetSkill && targetSkill.companyId !== issue.companyId) {
         throw notFound("Skill not found");
@@ -1786,7 +1786,7 @@ export function issueContinuityService(db: Db) {
           .select()
           .from(companySkills)
           .where(and(eq(companySkills.companyId, issue.companyId), eq(companySkills.sharedSkillId, parsed.sharedSkillId)))
-          .then((rows) => rows[0] ? companySkillsSvc.getById(rows[0].id) : null);
+          .then((rows) => rows[0] ? companySkillsSvc.getById(issue.companyId, rows[0].id) : null);
       }
       if (!targetSkill) {
         throw notFound("Skill not found");

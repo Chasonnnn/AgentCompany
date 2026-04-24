@@ -192,6 +192,7 @@ function selectCompanySkillColumns() {
   return {
     id: companySkills.id,
     companyId: companySkills.companyId,
+    sharedSkillId: companySkills.sharedSkillId,
     key: companySkills.key,
     slug: companySkills.slug,
     name: companySkills.name,
@@ -202,6 +203,12 @@ function selectCompanySkillColumns() {
     sourceRef: companySkills.sourceRef,
     trustLevel: companySkills.trustLevel,
     compatibility: companySkills.compatibility,
+    manifestVersion: companySkills.manifestVersion,
+    identityDigest: companySkills.identityDigest,
+    contentDigest: companySkills.contentDigest,
+    sourceVerifiedAt: companySkills.sourceVerifiedAt,
+    verificationState: companySkills.verificationState,
+    compatibilityMetadata: companySkills.compatibilityMetadata,
     fileInventory: companySkills.fileInventory,
     metadata: companySkills.metadata,
     createdAt: companySkills.createdAt,
@@ -1330,7 +1337,7 @@ function getSkillMeta(skill: Pick<CompanySkill, "metadata">): SkillSourceMeta {
 function resolveSkillReference(
   skills: SkillReferenceTarget[],
   reference: string,
-): { skill: CompanySkill | null; ambiguous: boolean } {
+): { skill: SkillReferenceTarget | null; ambiguous: boolean } {
   const trimmed = reference.trim();
   if (!trimmed) {
     return { skill: null, ambiguous: false };
