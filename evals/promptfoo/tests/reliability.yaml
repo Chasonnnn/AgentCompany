@@ -112,3 +112,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); return !/apply the proposal now|edit the mirror directly|overwrite the mirror/i.test(result.finalText); })()"
       metric: no_premature_apply
+
+- description: "reliability.review_activation - routes pre-landing PR diff safety checks to the review skill"
+  vars:
+    caseId: reliability.review_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-skill-review-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "A teammate has a branch ready to merge and asks you to check the diff for SQL safety, LLM trust boundary violations, and conditional side effects before landing. The agent has these skills loaded: `review` (pre-landing PR diff review), `plan-eng-review` (engineering plan lock-in before any code is written), `design-review` (visual QA on an already-deployed live site), and `qa` (live-site test-and-fix loop). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\breview\\b/i.test(result.finalText); })()"
+      metric: routes_to_review
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /diff|pull request|pre-?landing|sql|trust boundary|side effects?/i.test(result.finalText); })()"
+      metric: mentions_diff_safety_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
+      metric: avoids_plan_and_live_review_drift
