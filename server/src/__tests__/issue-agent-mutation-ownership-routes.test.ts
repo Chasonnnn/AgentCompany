@@ -525,6 +525,34 @@ describe("agent issue mutation checkout ownership", () => {
     );
   });
 
+  it("returns 409 run_id_mismatch when the service rejects a stale runId (AIW-27 D6-1b)", async () => {
+    mockIssueApprovalService.listApprovalsForIssue.mockResolvedValue([{ status: "approved" }]);
+    const { HttpError } = await vi.importActual<typeof import("../errors.js")>("../errors.js");
+    mockIssueService.assertCheckoutOwner.mockImplementation(async () => {
+      throw new HttpError(409, "run_id_mismatch", {
+        issueId,
+        status: "in_progress",
+        assigneeAgentId: ownerAgentId,
+        checkoutRunId: ownerRunId,
+        actorAgentId: ownerAgentId,
+        actorRunId: "stale-run",
+      });
+    });
+
+    const res = await request(await createApp(ownerActor()))
+      .patch(`/api/issues/${issueId}`)
+      .send({ title: "Stale run update" });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("run_id_mismatch");
+    expect(res.body.details).toMatchObject({
+      issueId,
+      actorAgentId: ownerAgentId,
+      actorRunId: "stale-run",
+    });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
   it("still blocks mixed mutations (title + assignee) from non-owners even with manager authority", async () => {
     const newOwnerAgentId = "77777777-7777-4777-8777-7777cccccccc";
     mockIssueService.getById.mockResolvedValue(

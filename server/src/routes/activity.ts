@@ -6,6 +6,11 @@ import { activityService as baseActivityService } from "../services/activity.js"
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 import { heartbeatService, issueService } from "../services/index.js";
 import { sanitizeRecord } from "../redaction.js";
+import {
+  buildIssuePrivilegeResolver,
+  isActorPrivilegedForIssue,
+  redactRunId,
+} from "../run-id-redaction.js";
 
 const createActivitySchema = z.object({
   actorType: z.enum(["agent", "user", "system"]).optional().default("system"),
@@ -46,8 +51,24 @@ export function activityRoutes(db: Db, deps?: Partial<ActivityRouteDeps>) {
       entityType: req.query.entityType as string | undefined,
       entityId: req.query.entityId as string | undefined,
     };
-    const result = await svc.list(filters);
-    res.json(result);
+    const rows = await svc.list(filters);
+    const issueIds = Array.from(
+      new Set(
+        rows
+          .filter((row) => row.entityType === "issue" && typeof row.entityId === "string")
+          .map((row) => row.entityId as string),
+      ),
+    );
+    const isPrivilegedForIssue = await buildIssuePrivilegeResolver(db, req, companyId, issueIds);
+    const redacted = rows.map((row) => {
+      if (!row.runId) return row;
+      const privileged =
+        row.entityType === "issue" && typeof row.entityId === "string"
+          ? isPrivilegedForIssue(row.entityId)
+          : req.actor.type === "board";
+      return { ...row, runId: redactRunId(row.runId, privileged) };
+    });
+    res.json(redacted);
   });
 
   router.post("/companies/:companyId/activity", validate(createActivitySchema), async (req, res) => {
@@ -70,8 +91,12 @@ export function activityRoutes(db: Db, deps?: Partial<ActivityRouteDeps>) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const result = await svc.forIssue(issue.id);
-    res.json(result);
+    const rows = await svc.forIssue(issue.id);
+    const privileged = await isActorPrivilegedForIssue(db, req, issue);
+    const redacted = rows.map((row) =>
+      row.runId ? { ...row, runId: redactRunId(row.runId, privileged) } : row,
+    );
+    res.json(redacted);
   });
 
   router.get("/issues/:id/runs", async (req, res) => {
@@ -82,8 +107,16 @@ export function activityRoutes(db: Db, deps?: Partial<ActivityRouteDeps>) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const result = await svc.runsForIssue(issue.companyId, issue.id);
-    res.json(result);
+    const rows = await svc.runsForIssue(issue.companyId, issue.id);
+    const privileged = await isActorPrivilegedForIssue(db, req, issue);
+    const redacted = rows.map((row) => {
+      const next: Record<string, unknown> = { ...row, runId: redactRunId(row.runId, privileged) };
+      if ("retryOfRunId" in row) {
+        next.retryOfRunId = redactRunId(row.retryOfRunId ?? null, privileged);
+      }
+      return next;
+    });
+    res.json(redacted);
   });
 
   router.get("/heartbeat-runs/:runId/issues", async (req, res) => {
