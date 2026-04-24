@@ -6,6 +6,7 @@ const OPENAI_MODELS_ENDPOINT = "https://api.openai.com/v1/models";
 const OPENAI_MODELS_TIMEOUT_MS = 5000;
 const OPENAI_MODELS_CACHE_TTL_MS = 60_000;
 const CODEX_VISIBLE_MODEL_IDS = new Set(codexFallbackModels.map((model) => model.id));
+const CODEX_VISIBLE_MODEL_ORDER = new Map(codexFallbackModels.map((model, index) => [model.id, index]));
 
 let cached: { keyFingerprint: string; expiresAt: number; models: AdapterModel[] } | null = null;
 
@@ -29,7 +30,10 @@ function mergedWithFallback(models: AdapterModel[]): AdapterModel[] {
   return dedupeModels([
     ...models,
     ...codexFallbackModels,
-  ]).sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true, sensitivity: "base" }));
+  ]).sort((a, b) =>
+    (CODEX_VISIBLE_MODEL_ORDER.get(a.id) ?? Number.MAX_SAFE_INTEGER)
+    - (CODEX_VISIBLE_MODEL_ORDER.get(b.id) ?? Number.MAX_SAFE_INTEGER)
+  );
 }
 
 function resolveOpenAiApiKey(): string | null {

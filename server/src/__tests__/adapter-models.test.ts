@@ -31,7 +31,7 @@ describe("adapter model listing", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("loads codex models dynamically and filters to GPT-5.5", async () => {
+  it("loads codex models dynamically and filters to visible Codex models", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
@@ -50,7 +50,7 @@ describe("adapter model listing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(first).toEqual(second);
     expect(first).toEqual(codexFallbackModels);
-    expect(first.every((model) => model.id === "gpt-5.5")).toBe(true);
+    expect(first.map((model) => model.id)).toEqual(["gpt-5.5", "gpt-5.3-codex-spark"]);
   });
 
   it("refreshes cached codex models on demand", async () => {

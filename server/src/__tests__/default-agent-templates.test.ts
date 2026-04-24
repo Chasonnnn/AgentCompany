@@ -25,5 +25,8 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(pack.files["technical-project-lead.md"]).toContain("Project Lead");
     expect(pack.files["audit-reviewer.md"]).toContain("inactive until engaged");
     expect(pack.files["productivity-monitor.md"]).toContain("advisory-only");
+    expect(pack.files["productivity-monitor.md"]).toContain("adapterType: codex_local");
+    expect(pack.files["productivity-monitor.md"]).toContain("model: gpt-5.3-codex-spark");
+    expect(pack.files["productivity-monitor.md"]).toContain("modelReasoningEffort: high");
   });
 });

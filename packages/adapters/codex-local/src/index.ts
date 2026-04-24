@@ -1,6 +1,7 @@
 export const type = "codex_local";
 export const label = "Codex (local)";
 export const DEFAULT_CODEX_LOCAL_MODEL = "gpt-5.5";
+export const CODEX_LOCAL_SPARK_MODEL = "gpt-5.3-codex-spark";
 export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
 export const CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS = ["gpt-5.5"] as const;
 
@@ -19,6 +20,7 @@ export function defaultCodexLocalFastModeForModel(
 
 export const models = [
   { id: DEFAULT_CODEX_LOCAL_MODEL, label: DEFAULT_CODEX_LOCAL_MODEL },
+  { id: CODEX_LOCAL_SPARK_MODEL, label: CODEX_LOCAL_SPARK_MODEL },
 ];
 
 export const agentConfigurationDoc = `# codex_local agent configuration
@@ -56,6 +58,7 @@ Notes:
 - Paperclip injects desired local skills into the effective CODEX_HOME/skills/ directory at execution time so Codex can discover "$paperclip" and related skills without polluting the project working directory. In managed-home mode (the default) this is ~/.paperclip/instances/<id>/companies/<companyId>/codex-home/skills/; when CODEX_HOME is explicitly overridden in adapter config, that override is used instead.
 - Unless explicitly overridden in adapter config, Paperclip runs Codex with a per-company managed CODEX_HOME under the active Paperclip instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
 - Some model/tool combinations reject certain effort levels (for example minimal with web search enabled).
+- \`gpt-5.3-codex-spark\` is available as a lightweight Codex-local model for narrowly scoped specialist roles. Spark does not opt into the GPT-5.5 Fast Mode service-tier flag by default.
 - Fast mode is currently supported on GPT-5.5 only. Eligible models default this on when config omits \`fastMode\`. When enabled, Paperclip applies \`serviceTier: "fast"\` and \`config.features.fast_mode = true\` on the app-server thread/turn.
 - When Paperclip realizes a workspace/runtime for a run, it injects PAPERCLIP_WORKSPACE_* and PAPERCLIP_RUNTIME_* env vars for agent-side tooling.
 `;
