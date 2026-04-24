@@ -288,6 +288,74 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("Treat this wake payload as the highest-priority change");
     expect(prompt).toContain("issue: PAP-1580 Update prompts");
   });
+
+  it("renders productivity report packets as read-only advisory context", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_assigned",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-1581",
+        title: "Monitor productivity",
+        status: "todo",
+      },
+      productivityReport: {
+        kind: "paperclip/productivity-report.v1",
+        scope: "company",
+        companyId: "company-1",
+        window: "7d",
+        generatedAt: "2026-04-24T20:00:00.000Z",
+        totals: {
+          runCount: 10,
+          terminalRunCount: 8,
+          usefulRunCount: 4,
+          lowYieldRunCount: 2,
+          planOnlyRunCount: 1,
+          emptyResponseRunCount: 0,
+          needsFollowupRunCount: 1,
+          continuationExhaustionCount: 0,
+          completedIssueCount: 1,
+          totalTokens: 1_250_000,
+        },
+        ratios: {
+          usefulRunRate: 0.5,
+          lowYieldRunRate: 0.25,
+          tokensPerUsefulRun: 312_500,
+          tokensPerCompletedIssue: 1_250_000,
+          avgTimeToFirstUsefulActionMs: 180_000,
+        },
+        recommendations: ["Check low-yield agents first."],
+        agents: [
+          {
+            agentId: "agent-1",
+            agentName: "QA",
+            health: "watch",
+            usefulRunRate: 0.4,
+            lowYieldRunCount: 2,
+            tokensPerUsefulRun: 500_000,
+          },
+        ],
+        lowYieldRuns: [
+          {
+            runId: "run-1",
+            agentName: "QA",
+            issueIdentifier: "PAP-10",
+            issueTitle: "Overplanned fix",
+            livenessState: "plan_only",
+            totalTokens: 80_000,
+            nextAction: "Reduce QA ceremony.",
+          },
+        ],
+      },
+    });
+
+    expect(prompt).toContain("Productivity report packet:");
+    expect(prompt).toContain("useful runs: 50% (4/8)");
+    expect(prompt).toContain("Check low-yield agents first.");
+    expect(prompt).toContain("QA: watch");
+    expect(prompt).toContain("PAP-10 Overplanned fix");
+    expect(prompt).toContain("Use this packet as read-only evidence");
+    expect(prompt).toContain("Do not mutate target issues");
+  });
 });
 
 describe("renderPaperclipWakePrompt conference-room payloads", () => {

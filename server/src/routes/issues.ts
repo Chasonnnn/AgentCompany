@@ -50,6 +50,7 @@ import {
   getClosedIsolatedExecutionWorkspaceMessage,
   isClosedIsolatedExecutionWorkspace,
   type ExecutionWorkspace,
+  type ProductivitySummary,
 } from "@paperclipai/shared";
 import { trackAgentTaskCompleted } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
@@ -78,6 +79,7 @@ import {
   workProductService,
   environmentService,
 } from "../services/index.js";
+import { productivityService } from "../services/productivity.js";
 import { portfolioClusterService } from "../services/portfolio-clusters.js";
 import { buildIssueOperatorState } from "../services/issue-operator-state.js";
 import { resolveIssueHeartbeatMode } from "../services/issue-heartbeat-mode.js";
@@ -146,6 +148,7 @@ type IssueRouteDeps = {
   officeCoordinationService: ReturnType<typeof officeCoordinationService>;
   portfolioClusterService: ReturnType<typeof portfolioClusterService>;
   projectService: ReturnType<typeof projectService>;
+  productivityService: ReturnType<typeof productivityService>;
   routineService: ReturnType<typeof routineService>;
   workProductService: ReturnType<typeof workProductService>;
   conferenceContextService: ReturnType<typeof conferenceContextService>;
@@ -663,6 +666,7 @@ export function issueRoutes(
   const officeCoordinationSvc =
     opts?.services?.officeCoordinationService ?? officeCoordinationService(db);
   const projectsSvc = opts?.services?.projectService ?? projectService(db);
+  const productivitySvc = opts?.services?.productivityService ?? productivityService(db);
   const portfolioClustersSvc =
     opts?.services?.portfolioClusterService ?? portfolioClusterService(db);
   const goalsSvc = opts?.services?.goalService ?? goalService(db);
@@ -1146,6 +1150,46 @@ export function issueRoutes(
     }
 
     return { project, goal: null };
+  }
+
+  function buildProductivityWakeReport(summary: ProductivitySummary) {
+    const agents = summary.agents.slice(0, 5).map((agent) => ({
+      agentId: agent.agentId,
+      agentName: agent.agentName,
+      health: agent.health,
+      usefulRunRate: agent.ratios.usefulRunRate,
+      lowYieldRunCount: agent.totals.lowYieldRunCount,
+      tokensPerUsefulRun: agent.ratios.tokensPerUsefulRun,
+    }));
+    return {
+      kind: "paperclip/productivity-report.v1",
+      scope: "company",
+      companyId: summary.companyId,
+      window: summary.window,
+      generatedAt: summary.generatedAt,
+      totals: {
+        runCount: summary.totals.runCount,
+        terminalRunCount: summary.totals.terminalRunCount,
+        usefulRunCount: summary.totals.usefulRunCount,
+        lowYieldRunCount: summary.totals.lowYieldRunCount,
+        planOnlyRunCount: summary.totals.planOnlyRunCount,
+        emptyResponseRunCount: summary.totals.emptyResponseRunCount,
+        needsFollowupRunCount: summary.totals.needsFollowupRunCount,
+        continuationExhaustionCount: summary.totals.continuationExhaustionCount,
+        completedIssueCount: summary.totals.completedIssueCount,
+        totalTokens: summary.totals.totalTokens,
+      },
+      ratios: {
+        usefulRunRate: summary.ratios.usefulRunRate,
+        lowYieldRunRate: summary.ratios.lowYieldRunRate,
+        tokensPerUsefulRun: summary.ratios.tokensPerUsefulRun,
+        tokensPerCompletedIssue: summary.ratios.tokensPerCompletedIssue,
+        avgTimeToFirstUsefulActionMs: summary.ratios.avgTimeToFirstUsefulActionMs,
+      },
+      lowYieldRuns: summary.lowYieldRuns.slice(0, 5),
+      agents,
+      recommendations: summary.recommendations.slice(0, 5),
+    };
   }
 
   // Resolve issue identifiers (e.g. "PAP-39") to UUIDs for all /issues/:id routes
@@ -2065,7 +2109,7 @@ export function issueRoutes(
         ? req.query.wakeCommentId.trim()
         : null;
 
-    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments, continuity] =
+    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments, continuity, assignedAgent] =
       await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
@@ -2078,7 +2122,12 @@ export function issueRoutes(
         userId: req.actor.type === "board" ? req.actor.userId ?? null : null,
         isBoard: req.actor.type === "board",
       }),
+      issue.assigneeAgentId ? agentsSvc.getById(issue.assigneeAgentId) : null,
     ]);
+    const productivityReport =
+      assignedAgent?.archetypeKey === "productivity_monitor"
+        ? buildProductivityWakeReport(await productivitySvc.companySummary(issue.companyId, { window: "7d" }))
+        : null;
     const continuityState = continuity?.continuityState ?? null;
     const executionState = continuity?.continuityBundle?.executionState ?? null;
     const planApproval = continuityState?.planApproval ?? continuity?.continuityBundle?.planApproval ?? null;
@@ -2168,6 +2217,7 @@ export function issueRoutes(
         contentPath: withContentPath(a).contentPath,
         createdAt: a.createdAt,
       })),
+      productivityReport,
     });
   });
 

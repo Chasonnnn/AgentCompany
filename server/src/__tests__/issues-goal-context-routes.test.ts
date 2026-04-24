@@ -184,7 +184,16 @@ async function createHarness(options?: {
         hasPermission: vi.fn(),
       } as any,
       agentService: {
-        getById: vi.fn(),
+        getById: vi.fn(async (id: string) =>
+          id === legacyProjectLinkedIssue.assigneeAgentId
+            ? {
+                id,
+                companyId: "company-1",
+                name: "Productivity Monitor",
+                role: "general",
+                archetypeKey: "productivity_monitor",
+              }
+            : null),
       } as any,
       documentService: {
         getIssueDocumentPayload: vi.fn(async () => ({})),
@@ -251,6 +260,107 @@ async function createHarness(options?: {
       } as any,
       issueService: issueService as any,
       logActivity: vi.fn(async () => undefined),
+      productivityService: {
+        companySummary: vi.fn(async () => ({
+          companyId: "company-1",
+          window: "7d",
+          generatedAt: "2026-04-24T20:00:00.000Z",
+          from: null,
+          totals: {
+            runCount: 10,
+            terminalRunCount: 8,
+            usefulRunCount: 4,
+            completedRunCount: 1,
+            blockedRunCount: 0,
+            lowYieldRunCount: 2,
+            planOnlyRunCount: 1,
+            emptyResponseRunCount: 0,
+            needsFollowupRunCount: 1,
+            failedRunCount: 0,
+            continuationExhaustionCount: 0,
+            completedIssueCount: 1,
+            inputTokens: 0,
+            cachedInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 1_250_000,
+            costCents: 0,
+            estimatedApiCostCents: 0,
+            durationMs: 0,
+            timeToFirstUsefulActionMs: 180_000,
+          },
+          ratios: {
+            usefulRunRate: 0.5,
+            lowYieldRunRate: 0.25,
+            tokensPerUsefulRun: 312_500,
+            tokensPerCompletedIssue: 1_250_000,
+            avgRunDurationMs: null,
+            avgTimeToFirstUsefulActionMs: 180_000,
+          },
+          agents: [{
+            agentId: "33333333-3333-4333-8333-333333333333",
+            agentName: "Productivity Monitor",
+            agentStatus: "active",
+            adapterType: "codex_local",
+            role: "general",
+            archetypeKey: "productivity_monitor",
+            health: "watch",
+            totals: {
+              runCount: 2,
+              terminalRunCount: 2,
+              usefulRunCount: 1,
+              completedRunCount: 0,
+              blockedRunCount: 0,
+              lowYieldRunCount: 1,
+              planOnlyRunCount: 1,
+              emptyResponseRunCount: 0,
+              needsFollowupRunCount: 0,
+              failedRunCount: 0,
+              continuationExhaustionCount: 0,
+              completedIssueCount: 0,
+              inputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 500_000,
+              costCents: 0,
+              estimatedApiCostCents: 0,
+              durationMs: 0,
+              timeToFirstUsefulActionMs: 180_000,
+            },
+            ratios: {
+              usefulRunRate: 0.5,
+              lowYieldRunRate: 0.5,
+              tokensPerUsefulRun: 500_000,
+              tokensPerCompletedIssue: null,
+              avgRunDurationMs: null,
+              avgTimeToFirstUsefulActionMs: 180_000,
+            },
+            lowYieldRuns: [],
+          }],
+          lowYieldRuns: [{
+            runId: "run-1",
+            agentId: "agent-1",
+            agentName: "QA",
+            issueId: "issue-10",
+            issueIdentifier: "PAP-10",
+            issueTitle: "Overplanned fix",
+            projectId: null,
+            projectName: null,
+            status: "succeeded",
+            livenessState: "plan_only",
+            livenessReason: "Plan only",
+            continuationAttempt: 0,
+            startedAt: "2026-04-24T19:00:00.000Z",
+            finishedAt: "2026-04-24T19:03:00.000Z",
+            durationMs: 180_000,
+            totalTokens: 80_000,
+            estimatedApiCostCents: 0,
+            nextAction: "Reduce QA ceremony.",
+          }],
+          recommendations: ["Check low-yield agents first."],
+        })),
+      } as any,
       projectService: projectService as any,
       routineService: {
         syncRunStatusForIssue: vi.fn(async () => undefined),
@@ -302,6 +412,51 @@ describe("issue goal context routes", () => {
     expect(res.body.attachments).toEqual([]);
     expect(res.body.mode).toBe("planning");
     expect(res.body.planningMode).toBe(true);
+  });
+
+  it("injects a read-only productivity report packet for assigned Productivity Monitor issues", async () => {
+    const { app, issueService } = await createHarness();
+    issueService.getById.mockResolvedValue({
+      ...legacyProjectLinkedIssue,
+      title: "Monitor productivity",
+    });
+
+    const res = await request(app).get(
+      "/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.productivityReport).toEqual(expect.objectContaining({
+      kind: "paperclip/productivity-report.v1",
+      scope: "company",
+      window: "7d",
+    }));
+    expect(res.body.productivityReport.totals).toMatchObject({
+      terminalRunCount: 8,
+      usefulRunCount: 4,
+      lowYieldRunCount: 2,
+    });
+    expect(res.body.productivityReport.lowYieldRuns).toHaveLength(1);
+    expect(res.body.productivityReport.agents[0]).toMatchObject({
+      agentName: "Productivity Monitor",
+      health: "watch",
+    });
+  });
+
+  it("does not inject productivity reports for non-monitor assignees", async () => {
+    const { app } = await createHarness({
+      issue: {
+        ...legacyProjectLinkedIssue,
+        assigneeAgentId: null,
+      },
+    });
+
+    const res = await request(app).get(
+      "/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.productivityReport).toBeNull();
   });
 
   it("surfaces blocker summaries on GET /issues/:id/heartbeat-context", async () => {

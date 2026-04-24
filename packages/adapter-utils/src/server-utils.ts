@@ -658,6 +658,55 @@ type PaperclipWakeBlockerSummary = {
   priority: string | null;
 };
 
+type PaperclipWakeProductivityLowYieldRun = {
+  runId: string | null;
+  agentName: string | null;
+  issueIdentifier: string | null;
+  issueTitle: string | null;
+  livenessState: string | null;
+  totalTokens: number;
+  nextAction: string | null;
+};
+
+type PaperclipWakeProductivityAgentSummary = {
+  agentId: string | null;
+  agentName: string | null;
+  health: string | null;
+  usefulRunRate: number;
+  lowYieldRunCount: number;
+  tokensPerUsefulRun: number | null;
+};
+
+type PaperclipWakeProductivityReport = {
+  kind: string | null;
+  scope: string | null;
+  companyId: string | null;
+  window: string | null;
+  generatedAt: string | null;
+  totals: {
+    runCount: number;
+    terminalRunCount: number;
+    usefulRunCount: number;
+    lowYieldRunCount: number;
+    planOnlyRunCount: number;
+    emptyResponseRunCount: number;
+    needsFollowupRunCount: number;
+    continuationExhaustionCount: number;
+    completedIssueCount: number;
+    totalTokens: number;
+  };
+  ratios: {
+    usefulRunRate: number;
+    lowYieldRunRate: number;
+    tokensPerUsefulRun: number | null;
+    tokensPerCompletedIssue: number | null;
+    avgTimeToFirstUsefulActionMs: number | null;
+  };
+  lowYieldRuns: PaperclipWakeProductivityLowYieldRun[];
+  agents: PaperclipWakeProductivityAgentSummary[];
+  recommendations: string[];
+};
+
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
@@ -686,6 +735,7 @@ type PaperclipWakePayload = {
   sharedSkills: PaperclipWakeSharedSkill[];
   sharedSkillReview: PaperclipWakeSharedSkillReview | null;
   officeCoordination: PaperclipWakeOfficeCoordination | null;
+  productivityReport: PaperclipWakeProductivityReport | null;
   conferenceRoom: PaperclipWakeConferenceRoom | null;
   conferenceRoomMessage: PaperclipWakeConferenceRoomMessage | null;
   conferenceRoomThread: PaperclipWakeConferenceRoomMessage[];
@@ -1118,6 +1168,75 @@ function normalizePaperclipWakeBlockerSummary(value: unknown): PaperclipWakeBloc
   return { id, identifier, title, status, priority };
 }
 
+function nullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizePaperclipWakeProductivityReport(value: unknown): PaperclipWakeProductivityReport | null {
+  const report = parseObject(value);
+  const kind = asString(report.kind, "").trim() || null;
+  if (kind !== "paperclip/productivity-report.v1") return null;
+  const totals = parseObject(report.totals);
+  const ratios = parseObject(report.ratios);
+  const lowYieldRuns = Array.isArray(report.lowYieldRuns)
+    ? report.lowYieldRuns.map((entry) => {
+        const run = parseObject(entry);
+        return {
+          runId: asString(run.runId, "").trim() || null,
+          agentName: asString(run.agentName, "").trim() || null,
+          issueIdentifier: asString(run.issueIdentifier, "").trim() || null,
+          issueTitle: asString(run.issueTitle, "").trim() || null,
+          livenessState: asString(run.livenessState, "").trim() || null,
+          totalTokens: asNumber(run.totalTokens, 0),
+          nextAction: asString(run.nextAction, "").trim() || null,
+        };
+      }).slice(0, 5)
+    : [];
+  const agents = Array.isArray(report.agents)
+    ? report.agents.map((entry) => {
+        const agent = parseObject(entry);
+        return {
+          agentId: asString(agent.agentId, "").trim() || null,
+          agentName: asString(agent.agentName, "").trim() || null,
+          health: asString(agent.health, "").trim() || null,
+          usefulRunRate: asNumber(agent.usefulRunRate, 0),
+          lowYieldRunCount: asNumber(agent.lowYieldRunCount, 0),
+          tokensPerUsefulRun: nullableNumber(agent.tokensPerUsefulRun),
+        };
+      }).slice(0, 5)
+    : [];
+
+  return {
+    kind,
+    scope: asString(report.scope, "").trim() || null,
+    companyId: asString(report.companyId, "").trim() || null,
+    window: asString(report.window, "").trim() || null,
+    generatedAt: asString(report.generatedAt, "").trim() || null,
+    totals: {
+      runCount: asNumber(totals.runCount, 0),
+      terminalRunCount: asNumber(totals.terminalRunCount, 0),
+      usefulRunCount: asNumber(totals.usefulRunCount, 0),
+      lowYieldRunCount: asNumber(totals.lowYieldRunCount, 0),
+      planOnlyRunCount: asNumber(totals.planOnlyRunCount, 0),
+      emptyResponseRunCount: asNumber(totals.emptyResponseRunCount, 0),
+      needsFollowupRunCount: asNumber(totals.needsFollowupRunCount, 0),
+      continuationExhaustionCount: asNumber(totals.continuationExhaustionCount, 0),
+      completedIssueCount: asNumber(totals.completedIssueCount, 0),
+      totalTokens: asNumber(totals.totalTokens, 0),
+    },
+    ratios: {
+      usefulRunRate: asNumber(ratios.usefulRunRate, 0),
+      lowYieldRunRate: asNumber(ratios.lowYieldRunRate, 0),
+      tokensPerUsefulRun: nullableNumber(ratios.tokensPerUsefulRun),
+      tokensPerCompletedIssue: nullableNumber(ratios.tokensPerCompletedIssue),
+      avgTimeToFirstUsefulActionMs: nullableNumber(ratios.avgTimeToFirstUsefulActionMs),
+    },
+    lowYieldRuns,
+    agents,
+    recommendations: asStringArray(report.recommendations).slice(0, 5),
+  };
+}
+
 function normalizePaperclipWakeExecutionPrincipal(value: unknown): PaperclipWakeExecutionPrincipal | null {
   const principal = parseObject(value);
   const typeRaw = asString(principal.type, "").trim().toLowerCase();
@@ -1195,6 +1314,7 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     : [];
   const sharedSkillReview = normalizePaperclipWakeSharedSkillReview(payload.sharedSkillReview);
   const officeCoordination = normalizePaperclipWakeOfficeCoordination(payload.officeCoordination);
+  const productivityReport = normalizePaperclipWakeProductivityReport(payload.productivityReport);
 
   const activeTreeHold = normalizePaperclipWakeTreeHoldSummary(payload.activeTreeHold);
   const unresolvedBlockerIssueIds = Array.isArray(payload.unresolvedBlockerIssueIds)
@@ -1217,6 +1337,7 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     !normalizePaperclipWakeIssue(payload.issue) &&
     sharedSkills.length === 0 &&
     !officeCoordination &&
+    !productivityReport &&
     !conferenceRoom &&
     !conferenceRoomMessage &&
     conferenceRoomThread.length === 0
@@ -1252,6 +1373,7 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     sharedSkills,
     sharedSkillReview,
     officeCoordination,
+    productivityReport,
     conferenceRoom,
     conferenceRoomMessage,
     conferenceRoomThread,
@@ -1263,6 +1385,17 @@ export function stringifyPaperclipWakePayload(value: unknown): string | null {
   const normalized = normalizePaperclipWakePayload(value);
   if (!normalized) return null;
   return JSON.stringify(normalized);
+}
+
+function formatWakeRate(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatWakeTokens(value: number | null) {
+  if (value == null) return "n/a";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return String(value);
 }
 
 export function renderPaperclipWakePrompt(
@@ -1588,6 +1721,45 @@ export function renderPaperclipWakePrompt(
       "",
       "The harness already checked out this issue for the current run.",
       "Do not call the checkout endpoint again unless you intentionally switch away and later need to reclaim the issue.",
+    );
+  }
+
+  if (normalized.productivityReport) {
+    const report = normalized.productivityReport;
+    lines.push(
+      "",
+      "Productivity report packet:",
+      `- scope: ${report.scope ?? "unknown"} (${report.window ?? "unknown"} window)`,
+      `- useful runs: ${formatWakeRate(report.ratios.usefulRunRate)} (${report.totals.usefulRunCount}/${report.totals.terminalRunCount})`,
+      `- low yield: ${formatWakeRate(report.ratios.lowYieldRunRate)} (${report.totals.lowYieldRunCount} runs)`,
+      `- tokens per useful run: ${formatWakeTokens(report.ratios.tokensPerUsefulRun)}; total tokens: ${formatWakeTokens(report.totals.totalTokens)}`,
+      `- completed issues: ${report.totals.completedIssueCount}`,
+      `- continuation exhaustion: ${report.totals.continuationExhaustionCount}`,
+    );
+    if (report.recommendations.length > 0) {
+      lines.push("- current recommendations:", ...report.recommendations.map((entry) => `  - ${entry}`));
+    }
+    if (report.agents.length > 0) {
+      lines.push("- agents to inspect first:");
+      for (const agent of report.agents) {
+        lines.push(
+          `  - ${agent.agentName ?? agent.agentId ?? "unknown"}: ${agent.health ?? "unknown"}, useful ${formatWakeRate(agent.usefulRunRate)}, low-yield ${agent.lowYieldRunCount}, tokens/useful ${formatWakeTokens(agent.tokensPerUsefulRun)}`,
+        );
+      }
+    }
+    if (report.lowYieldRuns.length > 0) {
+      lines.push("- recent low-yield examples:");
+      for (const run of report.lowYieldRuns) {
+        lines.push(
+          `  - ${run.issueIdentifier ?? "unlinked"}${run.issueTitle ? ` ${run.issueTitle}` : ""}: ${run.agentName ?? "unknown agent"}, ${run.livenessState ?? "unknown"}, ${formatWakeTokens(run.totalTokens)} tokens`,
+        );
+        if (run.nextAction) lines.push(`    next: ${run.nextAction}`);
+      }
+    }
+    lines.push(
+      "",
+      "Use this packet as read-only evidence for advisory recommendations on the assigned monitoring issue.",
+      "Do not mutate target issues, approvals, routing, adapter configuration, or implementation artifacts from this report.",
     );
   }
 
