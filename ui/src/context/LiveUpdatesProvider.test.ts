@@ -215,7 +215,7 @@ describe("LiveUpdatesProvider agent invalidation", () => {
       queryKey: queryKeys.agents.detail("agent-1"),
     });
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.heartbeats("company-1", "agent-1"),
+      queryKey: queryKeys.heartbeatsAgentScope("company-1", "agent-1"),
     });
   });
 

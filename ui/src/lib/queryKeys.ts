@@ -197,8 +197,12 @@ export const queryKeys = {
     ["usage-window-spend", companyId] as const,
   usageQuotaWindows: (companyId: string) =>
     ["usage-quota-windows", companyId] as const,
-  heartbeats: (companyId: string, agentId?: string) =>
+  heartbeatsScope: (companyId: string) =>
+    ["heartbeats", companyId] as const,
+  heartbeatsAgentScope: (companyId: string, agentId: string) =>
     ["heartbeats", companyId, agentId] as const,
+  heartbeats: (companyId: string, agentId?: string, limit: number | "all" = 50) =>
+    ["heartbeats", companyId, agentId ?? null, limit] as const,
   runDetail: (runId: string) => ["heartbeat-run", runId] as const,
   runWorkspaceOperations: (runId: string) => ["heartbeat-run", runId, "workspace-operations"] as const,
   liveRuns: (companyId: string) => ["live-runs", companyId] as const,

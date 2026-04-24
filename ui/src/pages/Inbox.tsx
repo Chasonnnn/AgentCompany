@@ -807,8 +807,8 @@ export function Inbox() {
   });
 
   const { data: heartbeatRuns, isLoading: isRunsLoading } = useQuery({
-    queryKey: queryKeys.heartbeats(selectedCompanyId!),
-    queryFn: () => heartbeatsApi.list(selectedCompanyId!),
+    queryKey: queryKeys.heartbeats(selectedCompanyId!, undefined, 100),
+    queryFn: () => heartbeatsApi.list(selectedCompanyId!, undefined, 100),
     enabled: !!selectedCompanyId,
   });
 
@@ -1282,8 +1282,8 @@ export function Inbox() {
       setRetryingRunIds((prev) => new Set(prev).add(run.id));
     },
     onSuccess: ({ newRun, originalRun }) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(originalRun.companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(originalRun.companyId, originalRun.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeatsScope(originalRun.companyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeatsAgentScope(originalRun.companyId, originalRun.agentId) });
       navigate(`/agents/${originalRun.agentId}/runs/${newRun.id}`);
     },
     onSettled: (_data, _error, run) => {
