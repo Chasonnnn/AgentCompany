@@ -1,3 +1,4 @@
+import type { Server } from "node:http";
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -67,6 +68,7 @@ async function createApp(actor: any) {
     revokeBoardApiKey: [] as unknown[][],
     logActivity: [] as unknown[][],
   };
+
 
   const [{ accessRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/access.js")>("../routes/access.js"),
@@ -140,9 +142,12 @@ async function createApp(actor: any) {
   app.use(errorHandler);
 
   return { app, state, calls };
+
 }
 
 describe("cli auth routes", () => {
+  afterEach(closeCurrentServer);
+
   beforeEach(() => {
     vi.resetModules();
     vi.doUnmock("../routes/access.js");

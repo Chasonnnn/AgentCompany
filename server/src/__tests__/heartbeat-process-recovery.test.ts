@@ -401,6 +401,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.status).toBe("failed");
 
+
     const issue = await db
       .select()
       .from(issues)

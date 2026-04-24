@@ -248,6 +248,30 @@ export const INBOX_MINE_ISSUE_STATUS_FILTER = INBOX_MINE_ISSUE_STATUSES.join(","
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 
+export const ISSUE_THREAD_INTERACTION_KINDS = [
+  "suggest_tasks",
+  "ask_user_questions",
+  "request_confirmation",
+] as const;
+export type IssueThreadInteractionKind = (typeof ISSUE_THREAD_INTERACTION_KINDS)[number];
+
+export const ISSUE_THREAD_INTERACTION_STATUSES = [
+  "pending",
+  "accepted",
+  "rejected",
+  "expired",
+  "failed",
+] as const;
+export type IssueThreadInteractionStatus = (typeof ISSUE_THREAD_INTERACTION_STATUSES)[number];
+
+export const ISSUE_THREAD_INTERACTION_CONTINUATION_POLICIES = [
+  "none",
+  "wake_assignee",
+  "wake_assignee_on_accept",
+] as const;
+export type IssueThreadInteractionContinuationPolicy =
+  (typeof ISSUE_THREAD_INTERACTION_CONTINUATION_POLICIES)[number];
+
 export const ISSUE_ORIGIN_KINDS = ["manual", "routine_execution"] as const;
 export type BuiltInIssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 export type PluginIssueOriginKind = `plugin:${string}`;
@@ -325,7 +349,7 @@ export const ADVISOR_KINDS = [
 ] as const;
 export type AdvisorKind = (typeof ADVISOR_KINDS)[number];
 
-export const ENVIRONMENT_DRIVERS = ["local"] as const;
+export const ENVIRONMENT_DRIVERS = ["local", "ssh"] as const;
 export type EnvironmentDriver = (typeof ENVIRONMENT_DRIVERS)[number];
 
 export const ENVIRONMENT_STATUSES = ["active", "archived"] as const;
@@ -690,6 +714,7 @@ export const PERMISSION_KEYS = [
   "tasks:assign_scope",
   "tasks:manage_active_checkouts",
   "joins:approve",
+  "environments:manage",
 ] as const;
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 

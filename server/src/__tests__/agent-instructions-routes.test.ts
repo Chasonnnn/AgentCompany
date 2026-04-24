@@ -37,6 +37,7 @@ const mockAgentSkillService = vi.hoisted(() => ({
 }));
 const mockAgentTemplateService = vi.hoisted(() => ({
   resolveRevisionForInstantiation: vi.fn(),
+
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
@@ -54,6 +55,7 @@ vi.mock("../services/index.js", () => ({
   agentSkillService: () => mockAgentSkillService,
   companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
   budgetService: () => ({}),
+  environmentService: () => mockEnvironmentService,
   heartbeatService: () => ({}),
   issueApprovalService: () => ({}),
   issueService: () => ({}),
@@ -99,6 +101,7 @@ function makeAgent() {
     adapterType: "codex_local",
     adapterConfig: {},
     runtimeConfig: {},
+    defaultEnvironmentId: null,
     permissions: null,
     updatedAt: new Date(),
   };

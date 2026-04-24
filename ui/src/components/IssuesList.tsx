@@ -732,14 +732,10 @@ export function IssuesList({
                   const parentIssue = issue.parentId ? issueById.get(issue.parentId) ?? null : null;
                   const issueBadge = issueBadgeById?.get(issue.id);
                   const isMutedIssue = mutedIssueIds?.has(issue.id) === true;
-                  const assigneeUserProfile = issue.assigneeUserId
-                    ? companyUserProfileMap.get(issue.assigneeUserId) ?? null
-                    : null;
                   const assigneeUserLabel = formatAssigneeUserLabel(
                     issue.assigneeUserId,
                     currentUserId,
-                    companyUserLabelMap,
-                  ) ?? assigneeUserProfile?.label ?? null;
+                  ) ?? null;
                   const toggleCollapse = (e: { preventDefault: () => void; stopPropagation: () => void }) => {
                     e.preventDefault();
                     e.stopPropagation();

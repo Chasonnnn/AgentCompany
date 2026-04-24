@@ -35,6 +35,7 @@ Core fields:
 - command (string, optional): defaults to "opencode"
 - extraArgs (string[], optional): additional CLI args
 - env (object, optional): KEY=VALUE environment variables
+- localExecutionPolicy (object, optional): local execution policy override; omit for historical permissive behavior
 
 Operational fields:
 - timeoutSec (number, optional): run timeout in seconds

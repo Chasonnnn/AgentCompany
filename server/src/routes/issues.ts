@@ -15,6 +15,7 @@ import {
   createIssueWorkProductSchema,
   createIssueLabelSchema,
   checkoutIssueSchema,
+  createChildIssueSchema,
   createIssueSchema,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
@@ -75,6 +76,7 @@ import {
   projectService,
   routineService,
   workProductService,
+  environmentService,
 } from "../services/index.js";
 import { portfolioClusterService } from "../services/portfolio-clusters.js";
 import { buildIssueOperatorState } from "../services/issue-operator-state.js";
@@ -97,6 +99,11 @@ import {
   queueIssueAssignmentWakeup,
   shouldWakeAssignedAgentForIssue,
 } from "../services/issue-assignment-wakeup.js";
+import { assertEnvironmentSelectionForCompany } from "./environment-selection.js";
+import {
+  assertNoAgentHostWorkspaceCommandMutation,
+  collectIssueWorkspaceCommandPaths,
+} from "./workspace-command-authz.js";
 import {
   applyIssueExecutionPolicyTransition,
   normalizeIssueExecutionPolicy,
@@ -839,6 +846,47 @@ export function issueRoutes(
 
   function parseBooleanQuery(value: unknown) {
     return value === true || value === "true" || value === "1";
+  }
+
+  async function assertIssueEnvironmentSelection(
+    companyId: string,
+    environmentId: string | null | undefined,
+  ) {
+    if (environmentId === undefined || environmentId === null) return;
+    await assertEnvironmentSelectionForCompany(
+      environmentService(db),
+      companyId,
+      environmentId,
+      { allowedDrivers: ["local", "ssh"] },
+    );
+  }
+
+  async function logExpiredRequestConfirmations(input: {
+    issue: { id: string; companyId: string; identifier?: string | null };
+    interactions: Array<{ id: string; kind: string; status: string; result?: unknown }>;
+    actor: ReturnType<typeof getActorInfo>;
+    source: string;
+  }) {
+    for (const interaction of input.interactions) {
+      await logActivity(db, {
+        companyId: input.issue.companyId,
+        actorType: input.actor.actorType,
+        actorId: input.actor.actorId,
+        agentId: input.actor.agentId,
+        runId: input.actor.runId,
+        action: "issue.thread_interaction_expired",
+        entityType: "issue",
+        entityId: input.issue.id,
+        details: {
+          identifier: input.issue.identifier ?? null,
+          interactionId: interaction.id,
+          interactionKind: interaction.kind,
+          interactionStatus: interaction.status,
+          source: input.source,
+          result: interaction.result ?? null,
+        },
+      });
+    }
   }
 
   function parseDateQuery(value: unknown, field: string) {
@@ -2825,6 +2873,7 @@ export function issueRoutes(
     if (hasExplicitAssignee) {
       await assertCanAssignTasks(req, companyId);
     }
+    await assertIssueEnvironmentSelection(companyId, req.body.executionWorkspaceSettings?.environmentId);
 
     const actor = getActorInfo(req);
     const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
@@ -2978,6 +3027,63 @@ export function issueRoutes(
     }));
   });
 
+  router.post("/issues/:id/children", validate(createChildIssueSchema), async (req, res) => {
+    const parentId = req.params.id as string;
+    const parent = await svc.getById(parentId);
+    if (!parent) {
+      res.status(404).json({ error: "Parent issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, parent.companyId);
+    assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(req.body));
+    if (req.body.assigneeAgentId || req.body.assigneeUserId) {
+      await assertCanAssignTasks(req, parent.companyId);
+    }
+    await assertIssueEnvironmentSelection(parent.companyId, req.body.executionWorkspaceSettings?.environmentId);
+
+    const actor = getActorInfo(req);
+    const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
+    const { issue, parentBlockerAdded } = await svc.createChild(parent.id, {
+      ...req.body,
+      executionPolicy,
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      actorAgentId: actor.agentId,
+      actorUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+
+    await logActivity(db, {
+      companyId: parent.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.child_created",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        parentId: parent.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        inheritedExecutionWorkspaceFromIssueId: parent.id,
+        ...(Array.isArray(req.body.blockedByIssueIds) ? { blockedByIssueIds: req.body.blockedByIssueIds } : {}),
+        ...(parentBlockerAdded ? { parentBlockerAdded: true } : {}),
+      },
+    });
+
+    void queueIssueAssignmentWakeup({
+      heartbeat,
+      issue,
+      reason: "issue_assigned",
+      mutation: "create",
+      contextSource: "issue.child_create",
+      requestedByActorType: actor.actorType,
+      requestedByActorId: actor.actorId,
+    });
+
+    res.status(201).json(issue);
+  });
+
   router.patch("/issues/:id", validate(updateIssueRouteSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await svc.getById(id);
@@ -3023,6 +3129,7 @@ export function issueRoutes(
     ) {
       updateFields.pullRequestUrl = incomingPullRequestUrl;
     }
+    await assertIssueEnvironmentSelection(existing.companyId, updateFields.executionWorkspaceSettings?.environmentId);
     const effectiveReopenRequested =
       reopenRequested ||
       (!!commentBody &&

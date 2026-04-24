@@ -61,6 +61,7 @@ describe("GET /invites/:token/test-resolution", () => {
     lookup.mockReset();
     requestHead.mockReset();
     accessRoutesModule.setInviteResolutionNetworkForTest({ lookup, requestHead });
+
   });
 
   afterEach(() => {

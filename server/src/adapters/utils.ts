@@ -76,7 +76,10 @@ export function buildInvocationEnvForLogs(
 }
 
 // Re-export runChildProcess with the server's pino logger wired in.
-import type { RunProcessResult } from "@paperclipai/adapter-utils/server-utils";
+import type {
+  NormalizedLocalExecutionPolicy,
+  RunProcessResult,
+} from "@paperclipai/adapter-utils/server-utils";
 const _runChildProcess = serverUtils.runChildProcess;
 
 export async function runChildProcess(
@@ -89,6 +92,8 @@ export async function runChildProcess(
     timeoutSec: number;
     graceSec: number;
     onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+    localExecutionPolicy?: NormalizedLocalExecutionPolicy | null;
+    declaredEnvKeys?: string[];
   },
 ): Promise<RunProcessResult> {
   return _runChildProcess(runId, command, args, {

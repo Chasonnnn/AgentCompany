@@ -488,6 +488,7 @@ const createAgentSchemaBase = z.object({
   adapterType: optionalAgentAdapterTypeSchema,
   adapterConfig: adapterConfigSchema.optional(),
   runtimeConfig: z.record(z.unknown()).optional(),
+  defaultEnvironmentId: z.string().uuid().optional().nullable(),
   budgetMonthlyCents: z.number().int().nonnegative().optional(),
   permissions: agentPermissionsSchema.optional(),
   metadata: z.record(z.unknown()).optional().nullable(),

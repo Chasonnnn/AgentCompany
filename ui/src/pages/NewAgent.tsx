@@ -28,7 +28,7 @@ import { getUIAdapter, listUIAdapters } from "../adapters";
 import { useDisabledAdaptersSync } from "../adapters/use-disabled-adapters";
 import { isValidAdapterType } from "../adapters/metadata";
 import { ReportsToPicker } from "../components/ReportsToPicker";
-import { buildNewAgentRuntimeConfig } from "../lib/new-agent-runtime-config";
+import { buildNewAgentHirePayload } from "../lib/new-agent-hire-payload";
 
 const DEFAULT_VISIBLE_ROLES = AGENT_ROLES.filter(
   (candidate) => !["cto", "cmo", "cfo", "coo", "pm"].includes(candidate),
@@ -160,25 +160,20 @@ export function NewAgent() {
         return;
       }
     }
-    createAgent.mutate({
-      name: name.trim(),
-      role: effectiveRole,
-      ...(title.trim() ? { title: title.trim() } : {}),
-      ...(reportsTo ? { reportsTo } : {}),
-      orgLevel: isFirstAgent ? "executive" : orgLevel,
-      departmentKey: isFirstAgent ? "executive" : departmentKey,
-      ...(departmentKey === "custom" && departmentName.trim()
-        ? { departmentName: departmentName.trim() }
-        : {}),
-      ...(selectedSkillKeys.length > 0 ? { desiredSkills: selectedSkillKeys } : {}),
-      adapterType: configValues.adapterType,
-      adapterConfig: buildAdapterConfig(),
-      runtimeConfig: buildNewAgentRuntimeConfig({
-        heartbeatEnabled: configValues.heartbeatEnabled,
-        intervalSec: configValues.intervalSec,
+    createAgent.mutate(
+      buildNewAgentHirePayload({
+        name,
+        effectiveRole,
+        title,
+        reportsTo,
+        orgLevel: isFirstAgent ? "executive" : orgLevel,
+        departmentKey: isFirstAgent ? "executive" : departmentKey,
+        departmentName: departmentKey === "custom" ? departmentName : undefined,
+        selectedSkillKeys,
+        configValues,
+        adapterConfig: buildAdapterConfig(),
       }),
-      budgetMonthlyCents: 0,
-    });
+    );
   }
 
   const availableSkills = companySkills ?? [];

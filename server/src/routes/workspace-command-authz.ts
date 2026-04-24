@@ -70,6 +70,33 @@ export function collectProjectWorkspaceCommandPaths(workspacePatch: unknown, pre
     : [];
 }
 
+export function collectIssueWorkspaceCommandPaths(input: {
+  executionWorkspaceSettings?: unknown;
+  assigneeAdapterOverrides?: unknown;
+}): string[] {
+  const paths: string[] = [];
+  if (isRecord(input.executionWorkspaceSettings)) {
+    paths.push(
+      ...collectWorkspaceStrategyCommandPaths(
+        input.executionWorkspaceSettings.workspaceStrategy,
+        "executionWorkspaceSettings.workspaceStrategy",
+      ),
+    );
+  }
+  if (isRecord(input.assigneeAdapterOverrides)) {
+    const adapterConfig = input.assigneeAdapterOverrides.adapterConfig;
+    if (isRecord(adapterConfig)) {
+      paths.push(
+        ...collectWorkspaceStrategyCommandPaths(
+          adapterConfig.workspaceStrategy,
+          "assigneeAdapterOverrides.adapterConfig.workspaceStrategy",
+        ),
+      );
+    }
+  }
+  return paths;
+}
+
 export function collectExecutionWorkspaceCommandPaths(input: {
   config?: unknown;
   metadata?: unknown;

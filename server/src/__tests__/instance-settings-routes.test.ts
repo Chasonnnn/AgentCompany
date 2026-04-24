@@ -98,6 +98,7 @@ describe("instance settings routes", () => {
     vi.doUnmock("../middleware/index.js");
     vi.doUnmock("../middleware/validate.js");
     vi.doUnmock("../services/index.js");
+
   });
 
   it("allows local board users to read and update experimental settings", async () => {
@@ -112,6 +113,7 @@ describe("instance settings routes", () => {
     const getRes = await request(readApp).get("/api/instance/settings/experimental");
     expect(getRes.status).toBe(200);
     expect(getRes.body).toEqual({
+      enableEnvironments: false,
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
     });
@@ -144,6 +146,24 @@ describe("instance settings routes", () => {
     expect(res.body).toEqual({
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: true,
+    });
+  });
+
+  it("allows local board users to update environment controls", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    await request(app)
+      .patch("/api/instance/settings/experimental")
+      .send({ enableEnvironments: true })
+      .expect(200);
+
+    expect(mockInstanceSettingsService.updateExperimental).toHaveBeenCalledWith({
+      enableEnvironments: true,
     });
   });
 

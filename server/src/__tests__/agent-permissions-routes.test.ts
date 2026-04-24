@@ -1,6 +1,7 @@
+import type { Server } from "node:http";
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const companyId = "22222222-2222-4222-8222-222222222222";
@@ -19,6 +20,7 @@ const baseAgent = {
   adapterType: "process",
   adapterConfig: {},
   runtimeConfig: {},
+  defaultEnvironmentId: null,
   budgetMonthlyCents: 0,
   spentMonthlyCents: 0,
   pauseReason: null,
@@ -54,6 +56,10 @@ const mockApprovalService = vi.hoisted(() => ({
 
 const mockBudgetService = vi.hoisted(() => ({
   upsertPolicy: vi.fn(),
+}));
+
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
 }));
 
 const mockHeartbeatService = vi.hoisted(() => ({
@@ -93,6 +99,7 @@ const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
 function createDbStub() {
+
   return {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
@@ -115,6 +122,7 @@ async function createApp(actor: Record<string, unknown>) {
   const [{ agentRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+
   ]);
   const app = express();
   app.use(express.json());
@@ -152,16 +160,23 @@ async function createApp(actor: Record<string, unknown>) {
     }),
   );
   app.use(errorHandler);
-  return app;
+  sharedServer = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => {
+    sharedServer?.once("listening", resolve);
+  });
+  return sharedServer;
 }
 
-describe("agent permission routes", () => {
+describe.sequential("agent permission routes", () => {
+  afterEach(closeSharedServer);
+
   beforeEach(() => {
     vi.resetModules();
     vi.resetAllMocks();
     vi.doUnmock("../routes/agents.js");
     vi.doUnmock("../routes/authz.js");
     vi.doUnmock("../middleware/index.js");
+
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
     mockAgentService.getById.mockResolvedValue(baseAgent);
@@ -195,6 +210,7 @@ describe("agent permission routes", () => {
       }),
     );
     mockBudgetService.upsertPolicy.mockResolvedValue(undefined);
+    mockEnvironmentService.getById.mockResolvedValue(null);
     mockAgentInstructionsService.materializeManagedBundle.mockImplementation(
       async (agent: Record<string, unknown>, files: Record<string, string>) => ({
         bundle: null,
@@ -212,6 +228,7 @@ describe("agent permission routes", () => {
     mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(async (_companyId, config) => ({ config }));
     mockLogActivity.mockResolvedValue(undefined);
   });
+
 
   it("grants tasks:assign by default when board creates a new agent", async () => {
     const app = await createApp({
@@ -324,6 +341,7 @@ describe("agent permission routes", () => {
       }),
     );
   });
+
 
   it("exposes explicit task assignment access on agent detail", async () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([

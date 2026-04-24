@@ -26,6 +26,7 @@ Core fields:
 - thinking (string, optional): thinking level (off, minimal, low, medium, high, xhigh)
 - command (string, optional): defaults to "pi"
 - env (object, optional): KEY=VALUE environment variables
+- localExecutionPolicy (object, optional): local execution policy override; omit for historical permissive behavior
 
 Operational fields:
 - timeoutSec (number, optional): run timeout in seconds

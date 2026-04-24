@@ -85,3 +85,14 @@ export function trackErrorHandlerCrash(
 ): void {
   client.track("error.handler_crash", { error_code: dims.errorCode });
 }
+
+export function trackLocalExecutionPolicyViolation(
+  client: TelemetryClient,
+  dims: { adapterType: string; policyPreset: string; violationKind: string },
+): void {
+  client.track("adapter.local_execution_policy_violation", {
+    adapter_type: dims.adapterType,
+    policy_preset: dims.policyPreset,
+    violation_kind: dims.violationKind,
+  });
+}

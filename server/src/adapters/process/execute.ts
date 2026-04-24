@@ -1,5 +1,10 @@
 import type { AdapterExecutionContext, AdapterExecutionResult } from "../types.js";
 import {
+  parseLocalExecutionPolicy,
+  permissiveLocalExecutionPolicy,
+  LocalExecutionPolicyError,
+} from "@paperclipai/adapter-utils/local-execution-policy";
+import {
   asString,
   asNumber,
   asStringArray,
@@ -15,9 +20,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const { runId, agent, config, onLog, onMeta } = ctx;
   const command = asString(config.command, "");
   if (!command) throw new Error("Process adapter missing command");
-  if (config.unsafeAllowLocalExecution !== true) {
-    throw new Error(
-      "Process adapter is disabled by default. Set adapterConfig.unsafeAllowLocalExecution=true to allow local command execution.",
+  const localExecutionPolicy =
+    parseLocalExecutionPolicy(config.localExecutionPolicy, { defaultPreset: "custom" }) ??
+    (config.unsafeAllowLocalExecution === true ? permissiveLocalExecutionPolicy() : null);
+  if (!localExecutionPolicy) {
+    throw new LocalExecutionPolicyError(
+      "Process adapter is disabled by default. Set adapterConfig.localExecutionPolicy or unsafeAllowLocalExecution=true (deprecated) to allow local command execution.",
+      {
+        policyPreset: "disabled",
+        violationKind: "local_execution_disabled",
+      },
     );
   }
 
@@ -55,6 +67,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     timeoutSec,
     graceSec,
     onLog,
+    localExecutionPolicy,
+    declaredEnvKeys: Object.keys(envConfig),
   });
 
   if (proc.timedOut) {

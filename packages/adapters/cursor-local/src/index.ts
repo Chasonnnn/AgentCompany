@@ -68,6 +68,7 @@ Core fields:
 - mode (string, optional): Cursor execution mode passed as --mode (plan|ask). Leave unset for normal autonomous runs.
 - command (string, optional): defaults to "agent"
 - extraArgs (string[], optional): additional CLI args
+- localExecutionPolicy (object, optional): local execution policy override; omit for historical permissive behavior
 - env (object, optional): KEY=VALUE environment variables
 
 Operational fields:

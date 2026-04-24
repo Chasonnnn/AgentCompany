@@ -32,11 +32,13 @@ const mockDocumentService = vi.hoisted(() => ({
   upsertProjectDocument: vi.fn(),
   restoreProjectDocumentRevision: vi.fn(),
   deleteProjectDocument: vi.fn(),
+
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackProjectCreated = vi.hoisted(() => vi.fn());
 const mockTrackGoalCreated = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
+
 
 vi.mock("../services/workspace-runtime.js", () => ({
   startRuntimeServicesForWorkspaceControl: vi.fn(),
@@ -44,6 +46,7 @@ vi.mock("../services/workspace-runtime.js", () => ({
 }));
 
 function createApp(route: express.Router) {
+
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -99,6 +102,7 @@ describe("project and goal telemetry routes", () => {
     vi.clearAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
+    mockEnvironmentService.getById.mockReset();
     mockSecretService.normalizeEnvBindingsForPersistence.mockImplementation(async (_companyId, env) => env);
     mockProjectService.create.mockResolvedValue({
       id: "project-1",

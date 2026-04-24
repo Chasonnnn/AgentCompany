@@ -93,7 +93,8 @@ const guardedProcessAdapter: ServerAdapterModule = {
 Adapter: process
 
 Safety:
-- unsafeAllowLocalExecution (boolean, required): must be true or the adapter fails closed before spawning anything
+- localExecutionPolicy (object, preferred): policy object for local execution controls; use { preset: "permissive" } to match the historical fully-trusted behavior
+- unsafeAllowLocalExecution (boolean, deprecated alias): maps to the permissive preset for backward compatibility
 - This adapter is intended for explicitly trusted local development only
 
 Core fields:

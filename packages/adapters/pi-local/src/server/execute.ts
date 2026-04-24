@@ -1,7 +1,27 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
+import {
+  parseLocalExecutionPolicy,
+  permissiveLocalExecutionPolicy,
+} from "@paperclipai/adapter-utils/local-execution-policy";
+import {
+  adapterExecutionTargetIsRemote,
+  adapterExecutionTargetPaperclipApiUrl,
+  adapterExecutionTargetRemoteCwd,
+  adapterExecutionTargetSessionIdentity,
+  adapterExecutionTargetSessionMatches,
+  adapterExecutionTargetUsesManagedHome,
+  describeAdapterExecutionTarget,
+  ensureAdapterExecutionTargetCommandResolvable,
+  ensureAdapterExecutionTargetFile,
+  prepareAdapterExecutionTargetRuntime,
+  readAdapterExecutionTarget,
+  resolveAdapterExecutionTargetCommandForLogs,
+  runAdapterExecutionTargetProcess,
+} from "@paperclipai/adapter-utils/execution-target";
 import {
   asString,
   asNumber,
@@ -11,12 +31,10 @@ import {
   joinPromptSections,
   buildInvocationEnvForLogs,
   ensureAbsoluteDirectory,
-  ensureCommandResolvable,
   ensurePaperclipSkillSymlink,
   ensurePathInEnv,
   prepareManagedAdapterHome,
   readPaperclipRuntimeSkillEntries,
-  resolveCommandForLogs,
   resolvePaperclipDesiredSkillNames,
   resolveSharedLocalAdapterHomeDir,
   removeMaintainerOnlySkillSymlinks,
@@ -95,6 +113,19 @@ async function ensurePiSkillsInjected(
   }
 }
 
+async function buildPiSkillsDir(config: Record<string, unknown>): Promise<string> {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-pi-skills-"));
+  const target = path.join(tmp, "skills");
+  await fs.mkdir(target, { recursive: true });
+  const availableEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+  const desiredNames = new Set(resolvePaperclipDesiredSkillNames(config, availableEntries));
+  for (const entry of availableEntries) {
+    if (!desiredNames.has(entry.key)) continue;
+    await fs.symlink(entry.source, path.join(target, entry.runtimeName));
+  }
+  return target;
+}
+
 function resolvePiBiller(env: Record<string, string>, provider: string | null): string {
   return inferOpenAiCompatibleBiller(env, null) ?? provider ?? "unknown";
 }
@@ -109,8 +140,18 @@ function buildSessionPath(agentId: string, timestamp: string, sessionsDir: strin
   return path.join(sessionsDir, `${safeTimestamp}-${agentId}.jsonl`);
 }
 
+function buildRemoteSessionPath(runtimeRootDir: string, agentId: string, timestamp: string): string {
+  const safeTimestamp = timestamp.replace(/[:.]/g, "-");
+  return path.posix.join(runtimeRootDir, "sessions", `${safeTimestamp}-${agentId}.jsonl`);
+}
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
+  const executionTarget = readAdapterExecutionTarget({
+    executionTarget: ctx.executionTarget,
+    legacyRemoteExecution: ctx.executionTransport?.remoteExecution,
+  });
+  const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
 
   const promptTemplate = asString(
     config.promptTemplate,
@@ -140,15 +181,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
+  const effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
+
 
   // Build environment
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
+  const localExecutionPolicy =
+    parseLocalExecutionPolicy(config.localExecutionPolicy, { defaultPreset: "permissive" }) ??
+    permissiveLocalExecutionPolicy();
   env.PAPERCLIP_RUN_ID = runId;
-  
+
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
     (typeof context.issueId === "string" && context.issueId.trim().length > 0 && context.issueId.trim()) ||
@@ -190,6 +236,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (workspaceRepoRef) env.PAPERCLIP_WORKSPACE_REPO_REF = workspaceRepoRef;
   if (agentHome) env.AGENT_HOME = agentHome;
   if (workspaceHints.length > 0) env.PAPERCLIP_WORKSPACES_JSON = JSON.stringify(workspaceHints);
+  const targetPaperclipApiUrl = adapterExecutionTargetPaperclipApiUrl(executionTarget);
+  if (targetPaperclipApiUrl) env.PAPERCLIP_API_URL = targetPaperclipApiUrl;
 
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
@@ -215,26 +263,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const desiredPiSkillNames = resolvePaperclipDesiredSkillNames(config, piSkillEntries);
   await ensurePiSkillsInjected(onLog, piSkillEntries, piSkillsDir, desiredPiSkillNames);
   
+
   const runtimeEnv = Object.fromEntries(
     Object.entries(ensurePathInEnv({ ...process.env, ...env })).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  await ensureCommandResolvable(command, cwd, runtimeEnv);
-  const resolvedCommand = await resolveCommandForLogs(command, cwd, runtimeEnv);
+  await ensureAdapterExecutionTargetCommandResolvable(command, executionTarget, cwd, runtimeEnv);
+  const resolvedCommand = await resolveAdapterExecutionTargetCommandForLogs(command, executionTarget, cwd, runtimeEnv);
   const loggedEnv = buildInvocationEnvForLogs(env, {
     runtimeEnv,
     includeRuntimeKeys: ["HOME"],
     resolvedCommand,
   });
 
-  // Validate model is available before execution
-  await ensurePiModelConfiguredAndAvailable({
-    model,
-    command,
-    cwd,
-    env: runtimeEnv,
-  });
+  if (!executionTargetIsRemote) {
+    await ensurePiModelConfiguredAndAvailable({
+      model,
+      command,
+      cwd,
+      env: runtimeEnv,
+    });
+  }
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
@@ -243,11 +293,49 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (fromExtraArgs.length > 0) return fromExtraArgs;
     return asStringArray(config.args);
   })();
+  let restoreRemoteWorkspace: (() => Promise<void>) | null = null;
+  let remoteRuntimeRootDir: string | null = null;
+  let localSkillsDir: string | null = null;
+  let remoteSkillsDir: string | null = null;
 
-  // Handle session
+  if (executionTargetIsRemote) {
+    try {
+      localSkillsDir = await buildPiSkillsDir(config);
+      await onLog(
+        "stdout",
+        `[paperclip] Syncing workspace and Pi runtime assets to ${describeAdapterExecutionTarget(executionTarget)}.\n`,
+      );
+      const preparedRemoteRuntime = await prepareAdapterExecutionTargetRuntime({
+        target: executionTarget,
+        adapterKey: "pi",
+        workspaceLocalDir: cwd,
+        assets: [
+          {
+            key: "skills",
+            localDir: localSkillsDir,
+            followSymlinks: true,
+          },
+        ],
+      });
+      restoreRemoteWorkspace = () => preparedRemoteRuntime.restoreWorkspace();
+      if (adapterExecutionTargetUsesManagedHome(executionTarget) && preparedRemoteRuntime.runtimeRootDir) {
+        env.HOME = preparedRemoteRuntime.runtimeRootDir;
+      }
+      remoteRuntimeRootDir = preparedRemoteRuntime.runtimeRootDir;
+      remoteSkillsDir = preparedRemoteRuntime.assetDirs.skills ?? null;
+    } catch (error) {
+      await Promise.allSettled([
+        restoreRemoteWorkspace?.(),
+        localSkillsDir ? fs.rm(path.dirname(localSkillsDir), { recursive: true, force: true }).catch(() => undefined) : Promise.resolve(),
+      ]);
+      throw error;
+    }
+  }
+
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
+  const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
   const canResumeSession =
     runtimeSessionId.length > 0 &&
     (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
@@ -255,21 +343,32 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? runtimeSessionId
     : buildSessionPath(agent.id, new Date().toISOString(), sessionsDir);
   
+
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
-      `[paperclip] Pi session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
+      executionTargetIsRemote
+        ? `[paperclip] Pi session "${runtimeSessionId}" does not match the current remote execution identity and will not be resumed in "${effectiveExecutionCwd}". Starting a fresh remote session.\n`
+        : `[paperclip] Pi session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${effectiveExecutionCwd}".\n`,
     );
   }
 
-  // Ensure session file exists (Pi requires this on first run)
   if (!canResumeSession) {
-    try {
-      await fs.writeFile(sessionPath, "", { flag: "wx" });
-    } catch (err) {
-      // File may already exist, that's ok
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw err;
+    if (executionTargetIsRemote) {
+      await ensureAdapterExecutionTargetFile(runId, executionTarget, sessionPath, {
+        cwd,
+        env,
+        timeoutSec: 15,
+        graceSec: 5,
+        onLog,
+      });
+    } else {
+      try {
+        await fs.writeFile(sessionPath, "", { flag: "wx" });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw err;
+        }
       }
     }
   }
@@ -280,7 +379,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? path.resolve(cwd, instructionsFilePath)
     : "";
   const instructionsFileDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
-  
+
   let systemPromptExtension = "";
   let instructionsReadFailed = false;
   if (resolvedInstructionsFilePath) {
@@ -357,14 +456,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const buildArgs = (sessionFile: string): string[] => {
     const args: string[] = [];
-    
+
     // Use JSON mode for structured output with print mode (non-interactive)
     args.push("--mode", "json");
     args.push("-p"); // Non-interactive mode: process prompt and exit
-    
+
     // Use --append-system-prompt to extend Pi's default system prompt
     args.push("--append-system-prompt", renderedSystemPromptExtension);
-    
+
     if (provider) args.push("--provider", provider);
     if (modelId) args.push("--model", modelId);
     if (thinking) args.push("--thinking", thinking);
@@ -375,8 +474,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     // Add Paperclip skills directory so Pi can load the paperclip skill
     args.push("--skill", piSkillsDir);
 
+
     if (extraArgs.length > 0) args.push(...extraArgs);
-    
+
     // Add the user prompt as the last argument
     args.push(userPrompt);
 
@@ -389,7 +489,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       await onMeta({
         adapterType: "pi_local",
         command: resolvedCommand,
-        cwd,
+        cwd: effectiveExecutionCwd,
         commandNotes,
         commandArgs: args,
         env: loggedEnv,
@@ -407,13 +507,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         await onLog(stream, chunk);
         return;
       }
-      
+
       // Buffer stdout and emit only complete lines
       stdoutBuffer += chunk;
       const lines = stdoutBuffer.split("\n");
       // Keep the last (potentially incomplete) line in the buffer
       stdoutBuffer = lines.pop() || "";
-      
+
       // Emit complete lines
       for (const line of lines) {
         if (line) {
@@ -422,20 +522,22 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
     };
 
-    const proc = await runChildProcess(runId, command, args, {
+    const proc = await runAdapterExecutionTargetProcess(runId, executionTarget, command, args, {
       cwd,
-      env: runtimeEnv,
+      env: executionTargetIsRemote ? env : runtimeEnv,
       timeoutSec,
       graceSec,
       onSpawn,
+      localExecutionPolicy,
+      declaredEnvKeys: Object.keys(envConfig),
       onLog: bufferedOnLog,
     });
-    
+
     // Flush any remaining buffer content
     if (stdoutBuffer) {
       await onLog("stdout", stdoutBuffer);
     }
-    
+
     return {
       proc,
       rawStderr: proc.stderr,
@@ -463,7 +565,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
     const resolvedSessionId = clearSessionOnMissingSession ? null : sessionPath;
     const resolvedSessionParams = resolvedSessionId
-      ? { sessionId: resolvedSessionId, cwd }
+      ? {
+          sessionId: resolvedSessionId,
+          cwd: effectiveExecutionCwd,
+          ...(workspaceId ? { workspaceId } : {}),
+          ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
+          ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
+          ...(executionTargetIsRemote
+            ? {
+                remoteExecution: adapterExecutionTargetSessionIdentity(executionTarget),
+              }
+            : {}),
+        }
       : null;
 
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
@@ -499,30 +612,48 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     };
   };
 
-  const initial = await runAttempt(sessionPath);
-  const initialFailed =
-    !initial.proc.timedOut && ((initial.proc.exitCode ?? 0) !== 0 || initial.parsed.errors.length > 0);
-  
-  if (
-    canResumeSession &&
-    initialFailed &&
-    isPiUnknownSessionError(initial.proc.stdout, initial.rawStderr)
-  ) {
-    await onLog(
-      "stdout",
-      `[paperclip] Pi session "${runtimeSessionId}" is unavailable; retrying with a fresh session.\n`,
-    );
-    const newSessionPath = buildSessionPath(agent.id, new Date().toISOString(), sessionsDir);
-    try {
-      await fs.writeFile(newSessionPath, "", { flag: "wx" });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw err;
+  try {
+    const initial = await runAttempt(sessionPath);
+    const initialFailed =
+      !initial.proc.timedOut && ((initial.proc.exitCode ?? 0) !== 0 || initial.parsed.errors.length > 0);
+    if (
+      canResumeSession &&
+      initialFailed &&
+      isPiUnknownSessionError(initial.proc.stdout, initial.rawStderr)
+    ) {
+      await onLog(
+        "stdout",
+        `[paperclip] Pi session "${runtimeSessionId}" is unavailable; retrying with a fresh session.\n`,
+      );
+      const newSessionPath = executionTargetIsRemote && remoteRuntimeRootDir
+        ? buildRemoteSessionPath(remoteRuntimeRootDir, agent.id, new Date().toISOString())
+        : buildSessionPath(agent.id, new Date().toISOString(), sessionsDir);
+      if (executionTargetIsRemote) {
+        await ensureAdapterExecutionTargetFile(runId, executionTarget, newSessionPath, {
+          cwd,
+          env,
+          timeoutSec: 15,
+          graceSec: 5,
+          onLog,
+        });
+      } else {
+        try {
+          await fs.writeFile(newSessionPath, "", { flag: "wx" });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+            throw err;
+          }
+        }
       }
+      const retry = await runAttempt(newSessionPath);
+      return toResult(retry, true);
     }
-    const retry = await runAttempt(newSessionPath);
-    return toResult(retry, true);
-  }
 
-  return toResult(initial);
+    return toResult(initial);
+  } finally {
+    await Promise.all([
+      restoreRemoteWorkspace?.(),
+      localSkillsDir ? fs.rm(path.dirname(localSkillsDir), { recursive: true, force: true }).catch(() => undefined) : Promise.resolve(),
+    ]);
+  }
 }

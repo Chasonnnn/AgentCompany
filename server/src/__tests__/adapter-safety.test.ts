@@ -273,10 +273,26 @@ describe("adapter safety guards", () => {
             args: ["-e", "console.log('blocked')"],
           }) as any,
         ),
-      ).rejects.toThrow(/unsafeAllowLocalExecution=true/i);
+      ).rejects.toThrow(/localExecutionPolicy|unsafeAllowLocalExecution=true/i);
     });
 
-    it("executes only when unsafeAllowLocalExecution is explicitly enabled", async () => {
+    it("executes when localExecutionPolicy enables permissive execution", async () => {
+      const { execute } = await import("../adapters/process/execute.js");
+
+      const result = await execute(
+        makeExecutionContext({
+          command: process.execPath,
+          args: ["-e", "console.log('process adapter ok')"],
+          localExecutionPolicy: { preset: "permissive" },
+        }) as any,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.timedOut).toBe(false);
+      expect(result.resultJson?.stdout).toContain("process adapter ok");
+    });
+
+    it("keeps the deprecated boolean as a permissive alias", async () => {
       const { execute } = await import("../adapters/process/execute.js");
 
       const result = await execute(

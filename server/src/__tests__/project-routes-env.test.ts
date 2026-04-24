@@ -17,10 +17,14 @@ const mockProjectService = vi.hoisted(() => ({
 const mockSecretService = vi.hoisted(() => ({
   normalizeEnvBindingsForPersistence: vi.fn(),
 }));
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockDocumentService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
+
 
 async function createApp() {
   vi.doUnmock("../routes/projects.js");
@@ -107,6 +111,7 @@ describe("project env routes", () => {
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockProjectService.createWorkspace.mockResolvedValue(null);
     mockProjectService.listWorkspaces.mockResolvedValue([]);
+    mockEnvironmentService.getById.mockReset();
     mockSecretService.normalizeEnvBindingsForPersistence.mockImplementation(async (_companyId, env) => env);
   });
 

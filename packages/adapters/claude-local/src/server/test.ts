@@ -3,6 +3,7 @@ import type {
   AdapterEnvironmentTestContext,
   AdapterEnvironmentTestResult,
 } from "@paperclipai/adapter-utils";
+import { parseLocalExecutionPolicy } from "@paperclipai/adapter-utils/local-execution-policy";
 import fs from "node:fs/promises";
 import os from "node:os";
 import {
@@ -75,6 +76,7 @@ async function readClaudeAuthStatus(
       timeoutSec: 10,
       graceSec: 2,
       onLog: async () => {},
+      localExecutionPolicy: buildClaudeEnvironmentProbePolicy(command, cwd, env),
     },
   );
   if (probe.timedOut || (probe.exitCode ?? 1) !== 0) return null;
@@ -104,6 +106,40 @@ function resolveClaudeConfigDir(env: NodeJS.ProcessEnv): string {
     ? env.HOME.trim()
     : os.homedir();
   return path.join(home, ".claude");
+}
+
+function buildClaudeEnvironmentProbePolicy(
+  command: string,
+  cwd: string,
+  env: Record<string, string>,
+) {
+  const allowedEnvKeys = Array.from(
+    new Set(
+      Object.keys(env).filter((key) =>
+        key === "PATH" ||
+        key === "HOME" ||
+        key === "TMPDIR" ||
+        key === "USER" ||
+        key === "LOGNAME" ||
+        key === "CLAUDE_CONFIG_DIR" ||
+        key === "CLAUDE_CODE_USE_BEDROCK" ||
+        key.startsWith("PAPERCLIP_") ||
+        key.startsWith("ANTHROPIC_") ||
+        key.startsWith("AWS_"),
+      ),
+    ),
+  );
+
+  return parseLocalExecutionPolicy(
+    {
+      preset: "claude_environment_probe",
+      allowedCommands: [path.basename(command)],
+      allowedEnvKeys,
+      allowedFsPaths: [cwd, resolveClaudeConfigDir(env), os.tmpdir()],
+      allowedNetwork: "all",
+    },
+    { defaultPreset: "claude_environment_probe" },
+  )!;
 }
 
 async function readSkipAutoPermissionPromptWarning(
@@ -284,6 +320,8 @@ export async function testEnvironment(
           graceSec: 5,
           stdin: "Respond with hello.",
           onLog: async () => {},
+          localExecutionPolicy: buildClaudeEnvironmentProbePolicy(command, cwd, env),
+          declaredEnvKeys: Object.keys(env),
         },
       );
 

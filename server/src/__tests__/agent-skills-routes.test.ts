@@ -23,6 +23,9 @@ const mockApprovalService = vi.hoisted(() => ({
   create: vi.fn(),
 }));
 const mockBudgetService = vi.hoisted(() => ({}));
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
 const mockHeartbeatService = vi.hoisted(() => ({}));
 const mockIssueApprovalService = vi.hoisted(() => ({
   linkManyForApproval: vi.fn(),
@@ -78,6 +81,7 @@ vi.mock("@paperclipai/shared/telemetry", () => ({
 vi.mock("../telemetry.js", () => ({
   getTelemetryClient: mockGetTelemetryClient,
 }));
+
 
 vi.mock("../adapters/index.js", () => ({
   findServerAdapter: vi.fn(() => mockAdapter),
@@ -169,6 +173,7 @@ function makeAgent(adapterType: string, overrides: Record<string, unknown> = {})
     adapterType,
     adapterConfig: {},
     runtimeConfig: {},
+    defaultEnvironmentId: null,
     permissions: null,
     updatedAt: new Date(),
     archetypeKey: null,

@@ -30,6 +30,7 @@ import {
   defaultIssueExecutionWorkspaceSettingsForProject,
   gateProjectExecutionWorkspacePolicy,
   issueExecutionWorkspaceModeForPersistedWorkspace,
+  parseIssueExecutionWorkspaceSettings,
   parseProjectExecutionWorkspacePolicy,
 } from "./execution-workspace-policy.js";
 import { instanceSettingsService } from "./instance-settings.js";
@@ -188,6 +189,12 @@ type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId" | "projectI
   labelIds?: string[];
   blockedByIssueIds?: string[];
   inheritExecutionWorkspaceFromIssueId?: string | null;
+};
+type IssueChildCreateInput = IssueCreateInput & {
+  acceptanceCriteria?: string[];
+  blockParentUntilDone?: boolean;
+  actorAgentId?: string | null;
+  actorUserId?: string | null;
 };
 type IssueUpdateInput = Partial<Omit<typeof issues.$inferInsert, "projectId">> & {
   projectId?: string | null;
@@ -1828,6 +1835,61 @@ export function issueService(db: Db) {
       };
     },
 
+    createChild: async (
+      parentIssueId: string,
+      data: IssueChildCreateInput,
+    ) => {
+      const parent = await db
+        .select()
+        .from(issues)
+        .where(eq(issues.id, parentIssueId))
+        .then((rows) => rows[0] ?? null);
+      if (!parent) throw notFound("Parent issue not found");
+
+      const [{ childCount }] = await db
+        .select({ childCount: sql<number>`count(*)::int` })
+        .from(issues)
+        .where(and(eq(issues.companyId, parent.companyId), eq(issues.parentId, parent.id)));
+      if (childCount >= MAX_CHILD_ISSUES_CREATED_BY_HELPER) {
+        throw unprocessable(`Parent issue already has the maximum ${MAX_CHILD_ISSUES_CREATED_BY_HELPER} child issues for this helper`);
+      }
+
+      const {
+        acceptanceCriteria,
+        blockParentUntilDone,
+        actorAgentId,
+        actorUserId,
+        ...issueData
+      } = data;
+      const child = await issueService(db).create(parent.companyId, {
+        ...issueData,
+        parentId: parent.id,
+        projectId: issueData.projectId ?? parent.projectId,
+        goalId: issueData.goalId ?? parent.goalId,
+        requestDepth: Math.max(parent.requestDepth + 1, issueData.requestDepth ?? 0),
+        description: appendAcceptanceCriteriaToDescription(issueData.description, acceptanceCriteria),
+        inheritExecutionWorkspaceFromIssueId: parent.id,
+      });
+
+      if (blockParentUntilDone) {
+        const existingBlockers = await db
+          .select({ blockerIssueId: issueRelations.issueId })
+          .from(issueRelations)
+          .where(and(eq(issueRelations.companyId, parent.companyId), eq(issueRelations.relatedIssueId, parent.id), eq(issueRelations.type, "blocks")));
+        await syncBlockedByIssueIds(
+          parent.id,
+          parent.companyId,
+          [...new Set([...existingBlockers.map((row) => row.blockerIssueId), child.id])],
+          { agentId: actorAgentId ?? null, userId: actorUserId ?? null },
+        );
+      }
+
+      return {
+        issue: child,
+        parentBlockerAdded: Boolean(blockParentUntilDone),
+      };
+    },
+
     create: async (
       companyId: string,
       data: IssueCreateInput,
@@ -2181,6 +2243,36 @@ export function issueService(db: Db) {
       };
 
       return dbOrTx === db ? db.transaction(runUpdate) : runUpdate(dbOrTx);
+    },
+
+    clearExecutionWorkspaceEnvironmentSelection: async (companyId: string, environmentId: string) => {
+      const rows = await db
+        .select({
+          id: issues.id,
+          executionWorkspaceSettings: issues.executionWorkspaceSettings,
+        })
+        .from(issues)
+        .where(eq(issues.companyId, companyId));
+
+      let cleared = 0;
+      for (const row of rows) {
+        const settings = parseIssueExecutionWorkspaceSettings(row.executionWorkspaceSettings);
+        if (settings?.environmentId !== environmentId) continue;
+
+        await db
+          .update(issues)
+          .set({
+            executionWorkspaceSettings: {
+              ...settings,
+              environmentId: null,
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(issues.id, row.id));
+        cleared += 1;
+      }
+
+      return cleared;
     },
 
     remove: (id: string) =>

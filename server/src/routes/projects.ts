@@ -16,6 +16,7 @@ import { trackProjectCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import {
   documentService,
+  environmentService,
   heartbeatService,
   officeCoordinationService,
   projectService,
@@ -35,6 +36,7 @@ import {
 import { assertCanManageProjectWorkspaceRuntimeServices } from "./workspace-runtime-service-authz.js";
 import { appendWithCap } from "../adapters/utils.js";
 import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination-wakeup.js";
+import { assertEnvironmentSelectionForCompany } from "./environment-selection.js";
 
 const WORKSPACE_CONTROL_OUTPUT_MAX_CHARS = 256 * 1024;
 
@@ -73,6 +75,22 @@ export function projectRoutes(
   const trackProjectCreatedFn =
     opts?.telemetry?.trackProjectCreated ?? trackProjectCreated;
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
+  const environmentsSvc = environmentService(db);
+
+  async function assertProjectEnvironmentSelection(companyId: string, environmentId: string | null | undefined) {
+    if (environmentId === undefined || environmentId === null) return;
+    await assertEnvironmentSelectionForCompany(environmentsSvc, companyId, environmentId, {
+      allowedDrivers: ["local", "ssh"],
+    });
+  }
+
+  function readProjectPolicyEnvironmentId(policy: unknown): string | null | undefined {
+    if (!policy || typeof policy !== "object" || !("environmentId" in policy)) {
+      return undefined;
+    }
+    const environmentId = (policy as { environmentId?: unknown }).environmentId;
+    return typeof environmentId === "string" || environmentId === null ? environmentId : undefined;
+  }
 
   async function resolveCompanyIdForProjectReference(req: Request) {
     const companyIdQuery = req.query.companyId;
@@ -324,6 +342,10 @@ export function projectRoutes(
     };
 
     const { workspace, ...projectData } = req.body as CreateProjectPayload;
+    await assertProjectEnvironmentSelection(
+      companyId,
+      readProjectPolicyEnvironmentId(projectData.executionWorkspacePolicy),
+    );
     assertNoAgentHostWorkspaceCommandMutation(
       req,
       [
@@ -400,6 +422,10 @@ export function projectRoutes(
     assertNoAgentHostWorkspaceCommandMutation(
       req,
       collectProjectExecutionWorkspaceCommandPaths(body.executionWorkspacePolicy),
+    );
+    await assertProjectEnvironmentSelection(
+      existing.companyId,
+      readProjectPolicyEnvironmentId(body.executionWorkspacePolicy),
     );
     if (typeof body.archivedAt === "string") {
       body.archivedAt = new Date(body.archivedAt);
