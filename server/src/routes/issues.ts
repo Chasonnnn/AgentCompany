@@ -1917,6 +1917,7 @@ export function issueRoutes(
         blocks: relations.blocks,
         assigneeAgentId: issue.assigneeAgentId,
         assigneeUserId: issue.assigneeUserId,
+        pullRequestUrl: issue.pullRequestUrl ?? null,
         updatedAt: issue.updatedAt,
       },
       ancestors: ancestors.map((ancestor) => ({
@@ -2784,11 +2785,23 @@ export function issueRoutes(
       reopen: reopenRequested,
       interrupt: interruptRequested,
       hiddenAt: hiddenAtRaw,
-      pullRequestUrl: _pullRequestUrl,
+      pullRequestUrl: incomingPullRequestUrl,
       selfAttest: _selfAttest,
       autoRouteReviewer: _autoRouteReviewer,
       ...updateFields
     } = req.body;
+    // AIW-148 (AIW-29 follow-up): persist pullRequestUrl when the in_review
+    // gate accepts a URL. Gate shape is frozen; selfAttest-only entries
+    // intentionally do not write a URL. We also accept updates on subsequent
+    // in_review->in_review PATCHes so reviewers can correct the link without
+    // a status bounce.
+    if (
+      typeof incomingPullRequestUrl === "string" &&
+      incomingPullRequestUrl.length > 0 &&
+      req.body.status === "in_review"
+    ) {
+      updateFields.pullRequestUrl = incomingPullRequestUrl;
+    }
     const effectiveReopenRequested =
       reopenRequested ||
       (!!commentBody &&
