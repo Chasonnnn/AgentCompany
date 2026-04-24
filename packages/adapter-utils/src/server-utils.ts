@@ -1635,6 +1635,88 @@ export function renderPaperclipWakePrompt(
   const omittedInlineCommentCount = Math.max(0, normalized.comments.length - inlineComments.length);
   const includeSharedSkillDetails = normalized.reason === "shared_skill_review_requested";
 
+  if (normalized.productivityReport) {
+    const report = normalized.productivityReport;
+    const lines = resumedSession
+      ? [
+          "## Paperclip Resume Delta",
+          "",
+          "You are resuming an advisory-only Productivity Monitor session.",
+          "Use the compact productivity report packet below before fetching any broader context.",
+          "Do not load the full company run ledger or full issue list. Drill down one agent or one run at a time only when the packet shows a concrete reason.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- monitoring issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
+          `- issue status: ${normalized.issue?.status ?? "unknown"}`,
+          `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
+        ]
+      : [
+          "## Paperclip Wake Payload",
+          "",
+          "Treat this as an advisory-only Productivity Monitor wake.",
+          "Use the compact productivity report packet below before fetching any broader context.",
+          "Do not load the full company run ledger or full issue list. Drill down one agent or one run at a time only when the packet shows a concrete reason.",
+          "Write recommendations only on the assigned monitoring issue or requested report surface.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- monitoring issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
+          `- issue status: ${normalized.issue?.status ?? "unknown"}`,
+          `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
+        ];
+
+    lines.push(
+      "",
+      "Productivity report packet:",
+      `- scope: ${report.scope ?? "unknown"} (${report.window ?? "unknown"} window)`,
+      `- useful runs: ${formatWakeRate(report.ratios.usefulRunRate)} (${report.totals.usefulRunCount}/${report.totals.terminalRunCount})`,
+      `- low yield: ${formatWakeRate(report.ratios.lowYieldRunRate)} (${report.totals.lowYieldRunCount} runs)`,
+      `- tokens per useful run: ${formatWakeTokens(report.ratios.tokensPerUsefulRun)}; total tokens: ${formatWakeTokens(report.totals.totalTokens)}`,
+      `- completed issues: ${report.totals.completedIssueCount}`,
+      `- continuation exhaustion: ${report.totals.continuationExhaustionCount}`,
+    );
+    if (report.recommendations.length > 0) {
+      lines.push("- current recommendations:", ...report.recommendations.map((entry) => `  - ${entry}`));
+    }
+    if (report.agents.length > 0) {
+      lines.push("- agents to inspect first:");
+      for (const agent of report.agents) {
+        lines.push(
+          `  - ${agent.agentName ?? agent.agentId ?? "unknown"}: ${agent.health ?? "unknown"}, useful ${formatWakeRate(agent.usefulRunRate)}, low-yield ${agent.lowYieldRunCount}, tokens/useful ${formatWakeTokens(agent.tokensPerUsefulRun)}`,
+        );
+      }
+    }
+    if (report.lowYieldRuns.length > 0) {
+      lines.push("- recent low-yield examples:");
+      for (const run of report.lowYieldRuns) {
+        lines.push(
+          `  - ${run.issueIdentifier ?? "unlinked"}${run.issueTitle ? ` ${run.issueTitle}` : ""}: ${run.agentName ?? "unknown agent"}, ${run.livenessState ?? "unknown"}, ${formatWakeTokens(run.totalTokens)} tokens`,
+        );
+        if (run.nextAction) lines.push(`    next: ${run.nextAction}`);
+      }
+    }
+
+    if (inlineComments.length > 0) {
+      lines.push("", "Latest monitoring issue comment:");
+      for (const comment of inlineComments) {
+        lines.push(
+          `- comment ${comment.id ?? "unknown"} at ${comment.createdAt ?? "unknown"}${comment.bodyTruncated ? " (truncated)" : ""}`,
+          comment.body,
+        );
+      }
+    }
+
+    lines.push(
+      "",
+      "Recommended workflow:",
+      "1. Start from the packet totals and the agents listed above.",
+      "2. Fetch a specific agent productivity summary only when you need detail for that agent.",
+      "3. Fetch a specific run only when you need evidence for a recommendation.",
+      "4. Post a compact advisory report; do not mutate target issues, approvals, routing, adapter configuration, or implementation artifacts.",
+    );
+
+    return lines.join("\n");
+  }
+
   const lines = resumedSession
       ? [
         "## Paperclip Resume Delta",
@@ -1721,45 +1803,6 @@ export function renderPaperclipWakePrompt(
       "",
       "The harness already checked out this issue for the current run.",
       "Do not call the checkout endpoint again unless you intentionally switch away and later need to reclaim the issue.",
-    );
-  }
-
-  if (normalized.productivityReport) {
-    const report = normalized.productivityReport;
-    lines.push(
-      "",
-      "Productivity report packet:",
-      `- scope: ${report.scope ?? "unknown"} (${report.window ?? "unknown"} window)`,
-      `- useful runs: ${formatWakeRate(report.ratios.usefulRunRate)} (${report.totals.usefulRunCount}/${report.totals.terminalRunCount})`,
-      `- low yield: ${formatWakeRate(report.ratios.lowYieldRunRate)} (${report.totals.lowYieldRunCount} runs)`,
-      `- tokens per useful run: ${formatWakeTokens(report.ratios.tokensPerUsefulRun)}; total tokens: ${formatWakeTokens(report.totals.totalTokens)}`,
-      `- completed issues: ${report.totals.completedIssueCount}`,
-      `- continuation exhaustion: ${report.totals.continuationExhaustionCount}`,
-    );
-    if (report.recommendations.length > 0) {
-      lines.push("- current recommendations:", ...report.recommendations.map((entry) => `  - ${entry}`));
-    }
-    if (report.agents.length > 0) {
-      lines.push("- agents to inspect first:");
-      for (const agent of report.agents) {
-        lines.push(
-          `  - ${agent.agentName ?? agent.agentId ?? "unknown"}: ${agent.health ?? "unknown"}, useful ${formatWakeRate(agent.usefulRunRate)}, low-yield ${agent.lowYieldRunCount}, tokens/useful ${formatWakeTokens(agent.tokensPerUsefulRun)}`,
-        );
-      }
-    }
-    if (report.lowYieldRuns.length > 0) {
-      lines.push("- recent low-yield examples:");
-      for (const run of report.lowYieldRuns) {
-        lines.push(
-          `  - ${run.issueIdentifier ?? "unlinked"}${run.issueTitle ? ` ${run.issueTitle}` : ""}: ${run.agentName ?? "unknown agent"}, ${run.livenessState ?? "unknown"}, ${formatWakeTokens(run.totalTokens)} tokens`,
-        );
-        if (run.nextAction) lines.push(`    next: ${run.nextAction}`);
-      }
-    }
-    lines.push(
-      "",
-      "Use this packet as read-only evidence for advisory recommendations on the assigned monitoring issue.",
-      "Do not mutate target issues, approvals, routing, adapter configuration, or implementation artifacts from this report.",
     );
   }
 

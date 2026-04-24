@@ -12,6 +12,7 @@ import {
   type EnvironmentLeaseStatus,
   type ExecutionWorkspace,
   type ExecutionWorkspaceConfig,
+  type ProductivitySummary,
   type RunLivenessState,
 } from "@paperclipai/shared";
 import {
@@ -58,6 +59,7 @@ import { getTelemetryClient } from "../telemetry.js";
 import { maybeTrackLocalExecutionPolicyViolation } from "./local-execution-policy-metrics.js";
 import { companySkillService } from "./company-skills.js";
 import { officeCoordinationService } from "./office-coordination.js";
+import { productivityService } from "./productivity.js";
 import { sharedSkillService } from "./shared-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
@@ -156,6 +158,7 @@ const execFile = promisify(execFileCallback);
 const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
+const PRODUCTIVITY_MONITOR_ARCHETYPE_KEY = "productivity_monitor";
 export const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS = [
   2 * 60 * 1000,
   10 * 60 * 1000,
@@ -190,6 +193,46 @@ function readHeartbeatRunErrorFamily(
     return "transient_upstream";
   }
   return null;
+}
+
+function buildProductivityWakeReport(summary: ProductivitySummary) {
+  const agents = summary.agents.slice(0, 5).map((agent) => ({
+    agentId: agent.agentId,
+    agentName: agent.agentName,
+    health: agent.health,
+    usefulRunRate: agent.ratios.usefulRunRate,
+    lowYieldRunCount: agent.totals.lowYieldRunCount,
+    tokensPerUsefulRun: agent.ratios.tokensPerUsefulRun,
+  }));
+  return {
+    kind: "paperclip/productivity-report.v1",
+    scope: "company",
+    companyId: summary.companyId,
+    window: summary.window,
+    generatedAt: summary.generatedAt,
+    totals: {
+      runCount: summary.totals.runCount,
+      terminalRunCount: summary.totals.terminalRunCount,
+      usefulRunCount: summary.totals.usefulRunCount,
+      lowYieldRunCount: summary.totals.lowYieldRunCount,
+      planOnlyRunCount: summary.totals.planOnlyRunCount,
+      emptyResponseRunCount: summary.totals.emptyResponseRunCount,
+      needsFollowupRunCount: summary.totals.needsFollowupRunCount,
+      continuationExhaustionCount: summary.totals.continuationExhaustionCount,
+      completedIssueCount: summary.totals.completedIssueCount,
+      totalTokens: summary.totals.totalTokens,
+    },
+    ratios: {
+      usefulRunRate: summary.ratios.usefulRunRate,
+      lowYieldRunRate: summary.ratios.lowYieldRunRate,
+      tokensPerUsefulRun: summary.ratios.tokensPerUsefulRun,
+      tokensPerCompletedIssue: summary.ratios.tokensPerCompletedIssue,
+      avgTimeToFirstUsefulActionMs: summary.ratios.avgTimeToFirstUsefulActionMs,
+    },
+    lowYieldRuns: summary.lowYieldRuns.slice(0, 5),
+    agents,
+    recommendations: summary.recommendations.slice(0, 5),
+  };
 }
 
 function readTransientRetryNotBeforeFromRun(run: Pick<typeof heartbeatRuns.$inferSelect, "resultJson">) {
@@ -1506,6 +1549,7 @@ async function buildPaperclipWakePayload(input: {
     : [];
   const sharedSkillReview = parseObject(input.contextSnapshot.sharedSkillReview);
   const officeCoordination = parseObject(input.contextSnapshot.paperclipOfficeCoordination);
+  const productivityReport = parseObject(input.contextSnapshot.productivityReport);
   const officeCoordinationQueueCounts = parseObject(officeCoordination.queueCounts);
   const normalizedOfficeCoordination =
     Object.keys(officeCoordination).length > 0
@@ -1783,6 +1827,7 @@ async function buildPaperclipWakePayload(input: {
     !issueSummary &&
     sharedSkills.length === 0 &&
     !normalizedOfficeCoordination &&
+    Object.keys(productivityReport).length === 0 &&
     !conferenceRoom &&
     !conferenceRoomMessage
   ) {
@@ -1919,6 +1964,7 @@ async function buildPaperclipWakePayload(input: {
             : [],
         }
       : null,
+    productivityReport: Object.keys(productivityReport).length > 0 ? productivityReport : null,
     officeCoordination: normalizedOfficeCoordination,
     conferenceRoom: conferenceRoom
       ? {
@@ -4568,34 +4614,47 @@ export function heartbeatService(db: Db) {
           continuityState: issueContext.continuityState,
         }
       : null;
-    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
-    const sharedRuntimeSkillIds = runtimeSkillEntries.flatMap((entry) =>
-      typeof entry.sharedSkillId === "string" && entry.sharedSkillId.trim().length > 0 ? [entry.sharedSkillId] : []);
-    if (sharedRuntimeSkillIds.length > 0) {
-      context.paperclipSharedSkills = await sharedSkillsSvc.buildRuntimeContext(sharedRuntimeSkillIds);
-    } else {
+    const isProductivityMonitor = agent.archetypeKey === PRODUCTIVITY_MONITOR_ARCHETYPE_KEY;
+    const runtimeSkillEntries = isProductivityMonitor
+      ? []
+      : await companySkills.listRuntimeSkillEntries(agent.companyId);
+    if (isProductivityMonitor) {
+      context.productivityReport = buildProductivityWakeReport(
+        await productivityService(db).companySummary(agent.companyId, { window: "7d" }),
+      );
       delete context.paperclipSharedSkills;
-    }
-    const officeCoordinationContext = parseObject(context.paperclipOfficeCoordination);
-    const officeTrigger =
-      typeof officeCoordinationContext.trigger === "object" &&
-      officeCoordinationContext.trigger !== null &&
-      !Array.isArray(officeCoordinationContext.trigger)
-        ? {
-            reason: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).reason) ?? "office_coordination_requested",
-            entityType: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).entityType),
-            entityId: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).entityId),
-            summary: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).summary),
-          }
-        : null;
-    if (await officeCoordinationSvc.isOfficeOperatorAgent(agent.id, agent.companyId)) {
-      context.paperclipOfficeCoordination = await officeCoordinationSvc.buildWakeSnapshot({
-        companyId: agent.companyId,
-        officeAgentId: agent.id,
-        trigger: officeTrigger,
-      });
-    } else {
+      delete context.sharedSkillReview;
       delete context.paperclipOfficeCoordination;
+    } else {
+      delete context.productivityReport;
+      const sharedRuntimeSkillIds = runtimeSkillEntries.flatMap((entry) =>
+        typeof entry.sharedSkillId === "string" && entry.sharedSkillId.trim().length > 0 ? [entry.sharedSkillId] : []);
+      if (sharedRuntimeSkillIds.length > 0) {
+        context.paperclipSharedSkills = await sharedSkillsSvc.buildRuntimeContext(sharedRuntimeSkillIds);
+      } else {
+        delete context.paperclipSharedSkills;
+      }
+      const officeCoordinationContext = parseObject(context.paperclipOfficeCoordination);
+      const officeTrigger =
+        typeof officeCoordinationContext.trigger === "object" &&
+        officeCoordinationContext.trigger !== null &&
+        !Array.isArray(officeCoordinationContext.trigger)
+          ? {
+              reason: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).reason) ?? "office_coordination_requested",
+              entityType: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).entityType),
+              entityId: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).entityId),
+              summary: readNonEmptyString((officeCoordinationContext.trigger as Record<string, unknown>).summary),
+            }
+          : null;
+      if (await officeCoordinationSvc.isOfficeOperatorAgent(agent.id, agent.companyId)) {
+        context.paperclipOfficeCoordination = await officeCoordinationSvc.buildWakeSnapshot({
+          companyId: agent.companyId,
+          officeAgentId: agent.id,
+          trigger: officeTrigger,
+        });
+      } else {
+        delete context.paperclipOfficeCoordination;
+      }
     }
     const paperclipWakePayload = await buildPaperclipWakePayload({
       db,
