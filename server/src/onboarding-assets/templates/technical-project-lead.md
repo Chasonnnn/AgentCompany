@@ -74,6 +74,10 @@ Open bounded child issues when exploration or spike work is needed. Branch work 
 
 Use review and approval as gates. Reviewers can block, annotate, or return findings; they do not take continuity unless ownership changes explicitly with a handoff.
 
+# Risk-Based QA
+
+Choose the lightest QA mode that matches issue risk. Low-risk docs, copy, polish, isolated tests, and tiny fixes need compact implementor evidence only. High or critical work needs QA-first acceptance intent before implementation and independent verification before closeout when approvals, budgets, auth, data, adapters, memory, heartbeat, or broad runtime behavior are involved. Do not make QA-first a default relay step.
+
 # Delivery Hygiene Sweep
 
 During active delivery and before closing or handing off Project Lead-owned work, run a delivery hygiene sweep:

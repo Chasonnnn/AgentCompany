@@ -247,10 +247,10 @@ function recommendationsFor(summary: {
     recommendations.push("Tighten default wake context and ask agents to do one concrete issue action before broad planning.");
   }
   if (summary.totals.planOnlyRunCount > 0) {
-    recommendations.push("Review plan-only runs for issues that could skip formal planning and move directly to implementation or verification.");
+    recommendations.push("Review plan-only runs for issues that could skip formal planning, avoid unnecessary QA ceremony, or need QA-first acceptance before implementation.");
   }
   if (summary.totals.continuationExhaustionCount > 0) {
-    recommendations.push("Inspect continuation-exhausted runs; they usually need smaller task scope or clearer acceptance criteria.");
+    recommendations.push("Inspect continuation-exhausted runs; they usually need smaller task scope, clearer acceptance criteria, or a tighter risk-based QA mode.");
   }
   const lowYieldAgents = summary.agents?.filter((agent) => agent.health === "low_yield").slice(0, 3) ?? [];
   if (lowYieldAgents.length > 0) {

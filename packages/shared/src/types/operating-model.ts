@@ -1,4 +1,4 @@
-import type { ConferenceRoomKind } from "../constants.js";
+import type { ConferenceRoomKind, IssuePriority, IssueQaMode, IssueQaRiskTier } from "../constants.js";
 
 export interface ConnectionContractCadence {
   workerUpdates?: string | null;
@@ -256,6 +256,22 @@ export interface ParsedIssueBranchReturnDocument {
   document: IssueBranchReturnDocument;
   body: string;
   frontmatter: Record<string, unknown>;
+}
+
+export interface IssueQaPolicyInput {
+  title?: string | null;
+  description?: string | null;
+  labels?: Array<string | { name?: string | null; key?: string | null; slug?: string | null }> | null;
+  originKind?: string | null;
+  priority?: IssuePriority | string | null;
+  changedPaths?: string[] | null;
+  subsystemKeywords?: string[] | null;
+}
+
+export interface IssueQaPolicySuggestion {
+  riskTier: IssueQaRiskTier;
+  mode: IssueQaMode;
+  reasons: string[];
 }
 
 export interface ReservedDocumentDescriptor {

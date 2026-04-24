@@ -558,6 +558,7 @@ Invariants:
 4. Review and approval can block or redirect, but do not implicitly transfer ownership.
 5. Spec changes require explicit authority; plan changes do not.
 6. Any ownership transfer must produce a handoff artifact.
+7. QA is risk-based: high and critical work can require QA-first acceptance intent, while low-risk work should stay evidence-light.
 
 Issue working-set tiers:
 
@@ -581,6 +582,15 @@ Execution document semantics:
   Durable reviewer return artifact with structured findings, outcome, evidence, and owner-facing next action
 - `branch-return`
   Durable branch-owner return artifact with proposed parent updates, merge checklist, unresolved risks, and returned artifacts
+
+Risk-based QA:
+
+- `test-plan` records risk tier and QA mode without creating a separate state machine
+- low-risk docs, copy, polish, isolated tests, and tiny fixes use `evidence_only`
+- medium contained work uses `independent_verify`
+- high schema, auth, company-scope, adapter/session, heartbeat, memory, cost, productivity, or cross-layer work uses `qa_first`
+- critical security, data-loss, budget, approval/governance, production-like migration, or broad runtime work uses `full_gate`
+- QA-first means compact acceptance intent before implementation, not a baton-pass ownership transfer
 
 Branch work:
 
@@ -746,6 +756,7 @@ Continuity orchestration rules:
 - `progress-checkpoint` appends a valid checkpoint and refreshes the top continuity snapshot
 - `review-return` writes `review-findings`, returns work to the same owner, and updates gate state without changing assignee
 - `review-resubmit` marks findings addressed, records the owner response, and reopens the same review gate explicitly
+- risk-based QA hints are advisory and must not block checkout or assignment by themselves
 - `handoff-repair` and `handoff-cancel` remediate malformed or stale pending handoffs explicitly; no silent auto-repair is allowed
 - `spec-thaw` creates or links an approval-backed thaw request; approval remains the governed artifact
 - `branches` creates child-issue branch work; branch state lives in parent/child continuity state rather than separate workflow tables

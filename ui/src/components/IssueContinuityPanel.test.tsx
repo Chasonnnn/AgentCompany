@@ -449,6 +449,54 @@ describe("IssueContinuityPanel", () => {
     expect(container.querySelector("[data-testid='continuity-advanced-panel']")).toBeNull();
   });
 
+  it("renders QA risk and mode from the test plan when present", async () => {
+    const issue = createIssue();
+    const response = createContinuityResponse({
+      issue,
+      issueDocumentBodies: {
+        spec: "Spec started",
+        plan: "Plan started",
+        progress: "Progress started",
+        "test-plan": [
+          "## Risk and QA Mode",
+          "",
+          "- Risk tier: `high`",
+          "- QA mode: `qa_first`",
+          "",
+          "## Coverage",
+          "",
+          "- Auth route and UI settings panel.",
+        ].join("\n"),
+      },
+    });
+
+    await renderPanel({ issue, response });
+
+    const chip = container.querySelector("[data-testid='continuity-qa-risk-chip']");
+    expect(chip?.textContent).toContain("QA: High risk / QA first");
+  });
+
+  it("falls back to suggested QA policy when test-plan metadata is missing", async () => {
+    const issue = createIssue({
+      title: "Fix docs typo",
+      description: "Tiny copy-only change.",
+    });
+    const response = createContinuityResponse({
+      issue,
+      issueDocumentBodies: {
+        spec: "Spec started",
+        plan: "Plan started",
+        progress: "Progress started",
+        "test-plan": "Coverage only.",
+      },
+    });
+
+    await renderPanel({ issue, response });
+
+    const chip = container.querySelector("[data-testid='continuity-qa-risk-chip']");
+    expect(chip?.textContent).toContain("QA: Low risk / Evidence only");
+  });
+
   it("opens artifacts at the plan doc from the primary planning action", async () => {
     const issue = createIssue();
     const onOpenArtifacts = vi.fn();

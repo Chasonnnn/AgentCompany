@@ -60,6 +60,7 @@ Use `codex_local` with `gpt-5.3-codex-spark` and `modelReasoningEffort: high` fo
 - time to first useful action
 - continuation-exhaustion count
 - whether low-yield runs came from unclear scope, excessive context, missing authorization, or unnecessary planning
+- whether risk-based QA helped or hurt: missing QA-first acceptance on high-risk work, or unnecessary QA ceremony on low-risk work
 
 # Output Style
 
@@ -69,6 +70,7 @@ Keep recommendations concrete and operator-readable:
 - which agents or issues show it
 - what to change next
 - what not to automate yet
+- whether the next policy change should reduce context, clarify acceptance, or remove unnecessary QA gates
 
 # Boundaries
 

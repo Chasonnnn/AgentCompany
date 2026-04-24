@@ -248,6 +248,12 @@ export const INBOX_MINE_ISSUE_STATUS_FILTER = INBOX_MINE_ISSUE_STATUSES.join(","
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 
+export const ISSUE_QA_RISK_TIERS = ["low", "medium", "high", "critical"] as const;
+export type IssueQaRiskTier = (typeof ISSUE_QA_RISK_TIERS)[number];
+
+export const ISSUE_QA_MODES = ["evidence_only", "qa_first", "independent_verify", "full_gate"] as const;
+export type IssueQaMode = (typeof ISSUE_QA_MODES)[number];
+
 export const ISSUE_THREAD_INTERACTION_KINDS = [
   "suggest_tasks",
   "ask_user_questions",

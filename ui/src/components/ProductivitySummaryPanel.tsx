@@ -35,7 +35,7 @@ export function ProductivityMetricGrid({ totals, ratios }: { totals: Productivit
       <Metric
         label="Low Yield"
         value={formatRate(ratios.lowYieldRunRate)}
-        subtext={`${totals.lowYieldRunCount} plan-only, empty, or follow-up-only runs`}
+        subtext={`${totals.lowYieldRunCount} plan-only, empty, follow-up-only, or QA-ceremony review candidates`}
       />
       <Metric
         label="Tokens / Useful"

@@ -11,11 +11,13 @@ import {
   parseConnectionContractMarkdown,
   parseIssueBranchCharterMarkdown,
   parseIssueHandoffMarkdown,
+  parseIssueQaPolicyMarkdown,
   parseIssueProgressMarkdown,
   parseIssueReviewFindingsMarkdown,
   parsePacketEnvelopeMarkdown,
   packetEnvelopeSchema,
   projectReservedDocumentKeySchema,
+  suggestIssueQaPolicy,
 } from "./index.js";
 
 describe("operating model schemas", () => {
@@ -329,6 +331,38 @@ describe("operating model schemas", () => {
     expect(buildIssueDocumentTemplate("branch-charter")).toContain("paperclip/issue-branch-charter.v1");
     expect(buildIssueDocumentTemplate("review-findings")).toContain("paperclip/issue-review-findings.v1");
     expect(buildIssueDocumentTemplate("branch-return")).toContain("paperclip/issue-branch-return.v1");
+  });
+
+  it("scaffolds compact QA risk policy in test plans and blocking/advisory review findings", () => {
+    const testPlan = buildIssueDocumentTemplate("test-plan");
+    expect(testPlan).toContain("## Risk and QA Mode");
+    expect(testPlan).toContain("Risk tier: `medium`");
+    expect(testPlan).toContain("QA mode: `independent_verify`");
+    expect(parseIssueQaPolicyMarkdown(testPlan!)).toEqual({
+      riskTier: "medium",
+      mode: "independent_verify",
+    });
+
+    const reviewFindings = buildIssueDocumentTemplate("review-findings");
+    expect(reviewFindings).toContain("## Blocking Findings");
+    expect(reviewFindings).toContain("## Advisory Notes");
+  });
+
+  it("suggests risk-based QA policy without persistence", () => {
+    expect(suggestIssueQaPolicy({
+      title: "Fix README copy typo",
+      description: "Tiny docs-only wording fix",
+    })).toMatchObject({ riskTier: "low", mode: "evidence_only" });
+
+    expect(suggestIssueQaPolicy({
+      title: "Add auth route and React settings panel",
+      description: "Touches permissions, server API, and UI",
+    })).toMatchObject({ riskTier: "high", mode: "qa_first" });
+
+    expect(suggestIssueQaPolicy({
+      title: "Update budget hard-stop approval behavior",
+      priority: "critical",
+    })).toMatchObject({ riskTier: "critical", mode: "full_gate" });
   });
 
   it("injects issue context into scaffolded continuity templates", () => {

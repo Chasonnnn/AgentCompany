@@ -4,10 +4,14 @@ import type { Agent, Issue, IssueBranchMergePreview } from "@paperclipai/shared"
 import {
   buildIssueDocumentTemplate,
   getReservedIssueDocumentDescriptor,
+  ISSUE_QA_MODE_LABELS,
+  ISSUE_QA_RISK_TIER_LABELS,
   parseIssueBranchReturnMarkdown,
   parseIssueHandoffMarkdown,
+  parseIssueQaPolicyMarkdown,
   parseIssueProgressMarkdown,
   parseIssueReviewFindingsMarkdown,
+  suggestIssueQaPolicy,
 } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { companySkillsApi } from "../api/companySkills";
@@ -60,6 +64,19 @@ function tierLabel(tier: string) {
       return "Normal";
     default:
       return "Tiny";
+  }
+}
+
+function qaRiskTone(riskTier: string): "default" | "info" | "warn" | "danger" | "success" {
+  switch (riskTier) {
+    case "low":
+      return "success";
+    case "high":
+      return "warn";
+    case "critical":
+      return "danger";
+    default:
+      return "info";
   }
 }
 
@@ -712,6 +729,18 @@ export function IssueContinuityPanel({
   const reviewFindingsDoc = bundle?.issueDocuments["review-findings"]?.body
     ? parseIssueReviewFindingsMarkdown(bundle.issueDocuments["review-findings"].body)
     : null;
+  const testPlanBody = bundle?.issueDocuments["test-plan"]?.body ?? null;
+  const parsedQaPolicy = testPlanBody ? parseIssueQaPolicyMarkdown(testPlanBody) : null;
+  const suggestedQaPolicy = useMemo(() => suggestIssueQaPolicy({
+    title: issue.title,
+    description: issue.description,
+    priority: issue.priority,
+    originKind: issue.originKind ?? null,
+    labels: issue.labels?.map((label) => label.name) ?? [],
+  }), [issue.description, issue.labels, issue.originKind, issue.priority, issue.title]);
+  const qaPolicy = parsedQaPolicy
+    ? { ...parsedQaPolicy, reasons: [] as string[], source: "test-plan" as const }
+    : { ...suggestedQaPolicy, source: "suggested" as const };
   const branchReturnDoc = bundle?.issueDocuments["branch-return"]?.body
     ? parseIssueBranchReturnMarkdown(bundle.issueDocuments["branch-return"].body)
     : null;
@@ -886,6 +915,13 @@ export function IssueContinuityPanel({
             </span>
             <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", chipClass(lifecycle.tone))}>
               {lifecycle.label}
+            </span>
+            <span
+              data-testid="continuity-qa-risk-chip"
+              className={cn("rounded-full border px-2 py-0.5 text-[11px]", chipClass(qaRiskTone(qaPolicy.riskTier)))}
+              title={qaPolicy.source === "test-plan" ? "From test-plan Risk and QA Mode" : "Suggested from issue metadata"}
+            >
+              QA: {ISSUE_QA_RISK_TIER_LABELS[qaPolicy.riskTier]} / {ISSUE_QA_MODE_LABELS[qaPolicy.mode]}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">

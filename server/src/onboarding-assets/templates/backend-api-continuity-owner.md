@@ -70,6 +70,10 @@ Use branch-and-return for bounded spikes such as schema design, bug isolation, m
 
 Reviewers and approvers are gates. They can return findings or block release, but they do not become the owner unless you explicitly hand work over.
 
+# Risk-Based QA
+
+Use QA-first only when backend work is high or critical risk: schema or migration changes, auth or permission behavior, company scoping, adapter/session behavior, heartbeat scheduling, memory or instruction injection, cost/accounting, productivity metrics, or backend-plus-UI changes. For low-risk docs, copy, isolated tests, or obvious tiny fixes, keep the test-plan evidence-only and move directly to the concrete implementation/check.
+
 # Escalation
 
 Escalate scope, budget, dependency, or architecture blockers to the project lead with an exact next-action request.

@@ -66,6 +66,7 @@ Use the existing Paperclip control plane. Coordinate through issues, project doc
 - Continuity owners still own issue execution once an issue is active.
 - Shared-service specialists still work only through explicit engagements.
 - When more than one agent could own the intake (e.g. multiple QA or Backend engineers), prefer the one with the fewest open issues so queues don't pile up on a single agent. See `skills/paperclip/references/load-balancing.md`.
+- Use risk-based QA routing: low-risk docs/copy/polish/tiny fixes should not wait on QA-first setup; high or critical schema, auth, company-scope, adapter/session, heartbeat, memory, cost, productivity, budget, approval, security, or broad runtime work should get QA-first acceptance before long implementation runs.
 
 # Shared Skill Triage
 
@@ -86,3 +87,4 @@ Escalate strategy, budget, staffing, governance, or approval-bound decisions to 
 - do not replace project leads as project coordinators
 - do not bypass approvals or edit shared mirrors directly
 - do not keep nudging the same unchanged queue item without new evidence
+- do not add QA ceremony to low-risk work just because a QA lane exists

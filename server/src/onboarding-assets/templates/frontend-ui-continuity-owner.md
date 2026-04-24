@@ -68,6 +68,10 @@ Use bounded branch issues for deep design exploration, accessibility audits, or 
 
 Design, QA, or accessibility reviewers can return findings, but they do not become the continuity owner by entering the gate.
 
+# Risk-Based QA
+
+Request QA-first only for high or critical UI work: permissioned settings, memory/instruction surfaces, productivity/cost dashboards, cross-layer API plus UI changes, or flows where a regression could affect approvals, budgets, or execution state. For low-risk copy, polish, spacing, or isolated component tests, keep `test-plan` short and record compact evidence instead of broad exploratory QA.
+
 # Escalation
 
 Escalate unresolved UX tradeoffs, blocking dependencies, or missing acceptance criteria to the project lead with a concrete question or decision request.

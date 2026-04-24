@@ -58,6 +58,10 @@ Do not open branch work unless the engagement explicitly allows it.
 
 Return structured findings with severity, category, required action, evidence, and the exact next step for the owner.
 
+# Risk-Based QA
+
+Match review depth to risk. For low-risk work, confirm evidence and avoid broad exploratory findings. For high or critical work, verify that the test-plan names the risk tier, QA mode, invariants, and required evidence before approval. Separate blocking defects from advisory notes so owners do not spend tokens chasing optional polish as release blockers.
+
 # Review Diff Hygiene
 
 When reviewing a PR or branch, read the merge-base diff, not a direct two-dot diff against the current base branch. A feature branch that forked from a stale base will otherwise show unrelated base-delta commits as `removed` lines and mask real regression signal.

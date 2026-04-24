@@ -3,11 +3,16 @@ import {
   CONFERENCE_ROOM_KINDS,
   ISSUE_RESERVED_DOCUMENT_KEYS,
   ISSUE_CONTINUITY_TIERS,
+  ISSUE_QA_MODES,
+  ISSUE_QA_RISK_TIERS,
   PROJECT_RESERVED_DOCUMENT_KEYS,
   TEAM_RESERVED_DOCUMENT_KEYS,
   type ConferenceRoomKind,
   type CompanyReservedDocumentKey,
   type IssueContinuityTier,
+  type IssuePriority,
+  type IssueQaMode,
+  type IssueQaRiskTier,
   type IssueReservedDocumentKey,
   type ProjectReservedDocumentKey,
   type TeamReservedDocumentKey,
@@ -38,6 +43,133 @@ const ISSUE_CONTINUITY_TIER_REQUIREMENTS: Record<IssueContinuityTier, string[]> 
   normal: ["spec", "plan", "progress", "test-plan"],
   long_running: ["spec", "plan", "runbook", "progress", "test-plan", "handoff"],
 };
+
+export const ISSUE_QA_RISK_TIER_LABELS: Record<IssueQaRiskTier, string> = {
+  low: "Low risk",
+  medium: "Medium risk",
+  high: "High risk",
+  critical: "Critical risk",
+};
+
+export const ISSUE_QA_MODE_LABELS: Record<IssueQaMode, string> = {
+  evidence_only: "Evidence only",
+  qa_first: "QA first",
+  independent_verify: "Independent verify",
+  full_gate: "Full gate",
+};
+
+export interface IssueQaPolicyInput {
+  title?: string | null;
+  description?: string | null;
+  labels?: Array<string | { name?: string | null; key?: string | null; slug?: string | null }> | null;
+  originKind?: string | null;
+  priority?: IssuePriority | string | null;
+  changedPaths?: string[] | null;
+  subsystemKeywords?: string[] | null;
+}
+
+export interface IssueQaPolicySuggestion {
+  riskTier: IssueQaRiskTier;
+  mode: IssueQaMode;
+  reasons: string[];
+}
+
+function inputParts(input: IssueQaPolicyInput): string[] {
+  const labels = (input.labels ?? []).map((label) => {
+    if (typeof label === "string") return label;
+    return label.name ?? label.key ?? label.slug ?? "";
+  });
+  return [
+    input.title ?? "",
+    input.description ?? "",
+    input.originKind ?? "",
+    input.priority ?? "",
+    ...(input.changedPaths ?? []),
+    ...(input.subsystemKeywords ?? []),
+    ...labels,
+  ].map((part) => part.toLowerCase());
+}
+
+function matchesAny(parts: string[], patterns: RegExp[]) {
+  return patterns.some((pattern) => parts.some((part) => pattern.test(part)));
+}
+
+export function qaModeForRiskTier(riskTier: IssueQaRiskTier): IssueQaMode {
+  switch (riskTier) {
+    case "low":
+      return "evidence_only";
+    case "medium":
+      return "independent_verify";
+    case "high":
+      return "qa_first";
+    case "critical":
+      return "full_gate";
+  }
+}
+
+export function suggestIssueQaPolicy(input: IssueQaPolicyInput): IssueQaPolicySuggestion {
+  const parts = inputParts(input);
+  const reasons: string[] = [];
+
+  const criticalPatterns = [
+    /\bsecurity\b/,
+    /\bsecret\b/,
+    /\bdata[- ]?loss\b/,
+    /\bdestructive\b/,
+    /\bproduction[- ]?data\b/,
+    /\bbudget\b.*\b(enforcement|hard[- ]?stop|pause)\b/,
+    /\bapproval\b|\bgovernance\b/,
+    /\bbroad\b.*\b(runtime|execution)\b/,
+  ];
+  if (input.priority === "critical" || matchesAny(parts, criticalPatterns)) {
+    if (input.priority === "critical") reasons.push("critical priority");
+    if (matchesAny(parts, criticalPatterns)) reasons.push("security, governance, budget, data-loss, or broad runtime signal");
+    return { riskTier: "critical", mode: "full_gate", reasons };
+  }
+
+  const highPatterns = [
+    /\b(db|database|schema|migration|drizzle|sql)\b/,
+    /\b(auth|permission|access|company[- ]?scope|scoping)\b/,
+    /\b(adapter|session|resume|heartbeat|schedule|scheduler|wake)\b/,
+    /\b(memory|instruction|prompt[- ]?injection|agents\.md)\b/,
+    /\b(cost|accounting|productivity|token)\b/,
+  ];
+  const hasBackendSignal = matchesAny(parts, [/\b(api|server|backend|route|service)\b/]);
+  const hasUiSignal = matchesAny(parts, [/\b(ui|frontend|react|component|page)\b/]);
+  if (matchesAny(parts, highPatterns) || (hasBackendSignal && hasUiSignal)) {
+    if (matchesAny(parts, highPatterns)) reasons.push("high-risk subsystem signal");
+    if (hasBackendSignal && hasUiSignal) reasons.push("cross-layer backend and UI signal");
+    return { riskTier: "high", mode: "qa_first", reasons };
+  }
+
+  const lowPatterns = [
+    /\b(doc|docs|readme|copy|wording|typo)\b/,
+    /\b(polish|style|spacing|small ui)\b/,
+    /\bisolated test\b|\btest[- ]?only\b/,
+    /\bone[- ]?line\b|\btiny\b/,
+  ];
+  if (matchesAny(parts, lowPatterns)) {
+    return { riskTier: "low", mode: "evidence_only", reasons: ["low-risk documentation, copy, polish, isolated-test, or tiny-fix signal"] };
+  }
+
+  return { riskTier: "medium", mode: "independent_verify", reasons: ["default contained-work policy"] };
+}
+
+export function parseIssueQaPolicyMarkdown(body: string): Pick<IssueQaPolicySuggestion, "riskTier" | "mode"> | null {
+  const riskMatch = body.match(/risk\s*tier\s*:\s*`?([a-z_ -]+)`?/i);
+  const modeMatch = body.match(/qa\s*mode\s*:\s*`?([a-z_ -]+)`?/i);
+  const riskTier = riskMatch?.[1]?.trim().toLowerCase().replaceAll(" ", "_");
+  const mode = modeMatch?.[1]?.trim().toLowerCase().replaceAll(" ", "_");
+  if (
+    !riskTier
+    || !mode
+    || !ISSUE_QA_RISK_TIERS.includes(riskTier as IssueQaRiskTier)
+    || !ISSUE_QA_MODES.includes(mode as IssueQaMode)
+  ) {
+    return null;
+  }
+  return { riskTier: riskTier as IssueQaRiskTier, mode: mode as IssueQaMode };
+}
 
 export const PROJECT_RESERVED_DOCUMENT_DESCRIPTORS: Record<ProjectReservedDocumentKey, ReservedDocumentDescriptor> = {
   context: {
@@ -306,6 +438,12 @@ export function buildIssueDocumentTemplate(
       ].join("\n");
     case "test-plan":
       return [
+        "## Risk and QA Mode",
+        "",
+        "- Risk tier: `medium`",
+        "- QA mode: `independent_verify`",
+        "- Low-risk work should keep evidence compact; high or critical work should name exact invariants before implementation.",
+        "",
         "## Coverage",
         "",
         "- List the user-visible behavior, runtime path, or document contract this issue must validate.",
@@ -357,7 +495,13 @@ export function buildIssueDocumentTemplate(
         '      - "Link or artifact"',
         "---",
         "",
-        "Optional reviewer narrative or summary below the structured findings.",
+        "## Blocking Findings",
+        "",
+        "- Findings that must be addressed before approval or closeout.",
+        "",
+        "## Advisory Notes",
+        "",
+        "- Non-blocking quality notes or follow-up suggestions.",
       ].join("\n");
     case ISSUE_BRANCH_CHARTER_DOCUMENT_KEY:
       return [

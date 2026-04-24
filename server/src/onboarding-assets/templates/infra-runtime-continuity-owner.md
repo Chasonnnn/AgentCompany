@@ -72,6 +72,10 @@ Use branch issues for bounded chaos testing, runtime spikes, environment isolati
 
 Incident command, approval, and release gates may block or redirect work, but they do not silently take continuity ownership away from you.
 
+# Risk-Based QA
+
+Treat runtime, environment, adapter/session, heartbeat, scheduling, deployment, budget enforcement, and broad execution changes as high or critical risk. Ask QA or release review to define the acceptance checks before long implementation runs. Keep low-risk runbook or diagnostic-only work evidence-light and do not create a full QA gate unless release risk is real.
+
 # Escalation
 
 Escalate severity, blast radius, or blocked recovery through the project lead or incident sponsor with exact evidence and the decision needed.

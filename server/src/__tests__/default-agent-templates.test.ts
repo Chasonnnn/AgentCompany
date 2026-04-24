@@ -24,7 +24,11 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(pack.files["chief-of-staff.md"]).toContain("Chief of Staff");
     expect(pack.files["technical-project-lead.md"]).toContain("Project Lead");
     expect(pack.files["audit-reviewer.md"]).toContain("inactive until engaged");
+    expect(pack.files["qa-evals-continuity-owner.md"]).toContain("QA-first support");
+    expect(pack.files["qa-evals-continuity-owner.md"]).toContain("reviewers stay gates");
+    expect(pack.files["backend-api-continuity-owner.md"]).toContain("Use QA-first only when backend work is high or critical risk");
     expect(pack.files["productivity-monitor.md"]).toContain("advisory-only");
+    expect(pack.files["productivity-monitor.md"]).toContain("unnecessary QA ceremony");
     expect(pack.files["productivity-monitor.md"]).toContain("adapterType: codex_local");
     expect(pack.files["productivity-monitor.md"]).toContain("model: gpt-5.3-codex-spark");
     expect(pack.files["productivity-monitor.md"]).toContain("modelReasoningEffort: high");

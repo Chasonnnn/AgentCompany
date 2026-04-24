@@ -69,6 +69,10 @@ Use bounded branches for targeted evals, flaky-test isolation, release smoke wor
 
 When you act as reviewer, write structured findings and return work to the current owner without taking continuity. When you own the issue, reviewers stay gates rather than substitute owners.
 
+# Risk-Based QA
+
+When asked for QA-first support, write compact acceptance criteria and the exact evidence needed; do not produce exhaustive test essays. Require QA-first for high or critical work such as schema, auth, company scoping, adapter/session, heartbeat, memory/instructions, cost/accounting, productivity metrics, security, data-loss, budget, approval, or broad runtime changes. For low-risk docs, copy, polish, isolated tests, and obvious tiny fixes, prefer evidence-only verification and avoid adding process cost.
+
 # Escalation
 
 Escalate release risk, missing evidence, or unstable harness behavior with exact severity and the next action needed from leadership.

@@ -53,6 +53,7 @@ Hard rule:
 - the issue thread decides how the work thinks
 - reviewers and approvers are gates, not baton-pass owners
 - subagents are for bounded branch work or adversarial review, not default relay chains
+- QA is risk-based: use it early where it prevents expensive rework, not as a mandatory relay step
 - the default org-facing UI is an accountability map, not an execution tree
 - the recommended default company is lean: 1-2 executive sponsors, one company-wide office operator, 1-3 project leads, 4-6 continuity owners, and optional shared-service leads only when justified
 - executive sponsors are governance-only by default; they are sponsor metadata for projects, not normal project execution members
@@ -246,6 +247,36 @@ Paperclip uses three default issue working-set tiers:
 - remediation is explicit and actor-scoped: stale progress, invalid handoffs, open findings, and returned branches must surface as server-derived actions, not client heuristics
 - real-run continuity eval traces may be captured nightly beside seeded evals, but they remain informational and read-only until the signal is stable
 - provider-native planning or ask-user features are optional accelerators only; the Paperclip issue docs and decision-question artifacts remain the persisted source of truth across adapters
+
+### 7.3 Risk-Based QA
+
+QA mode is advisory policy captured in `test-plan`, not a separate workflow state.
+
+Risk tiers:
+
+- low
+  Docs, copy, small UI polish, isolated tests, or obvious tiny fixes.
+- medium
+  Normal contained backend or UI behavior.
+- high
+  DB/schema, auth/permissions, company scoping, adapter/session behavior, heartbeat/scheduling, memory/instructions, cost/accounting, productivity metrics, or cross-layer backend + UI work.
+- critical
+  Security-sensitive changes, data-loss risk, budget enforcement, approval/governance behavior, production-like migrations, or broad execution/runtime changes.
+
+QA modes:
+
+- `evidence_only`
+  The implementor records what was checked; no QA-first step.
+- `qa_first`
+  QA writes or reviews compact acceptance/test intent before implementation.
+- `independent_verify`
+  QA verifies after implementation through `test-plan` and `review-findings`.
+- `full_gate`
+  QA-first plus independent verification before approval or closeout.
+
+Default mapping: low -> `evidence_only`, medium -> `independent_verify`, high -> `qa_first`, critical -> `full_gate`.
+
+Low-risk issues should keep `test-plan` short and avoid broad exploratory checklists. High and critical issues should name exact invariants and required evidence before implementation spends long runs guessing. QA and reviewers remain gates; they do not become continuity owners unless the issue is explicitly reassigned with handoff.
 
 Runbook precedence:
 

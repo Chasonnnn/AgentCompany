@@ -50,6 +50,8 @@ export {
   INBOX_MINE_ISSUE_STATUSES,
   INBOX_MINE_ISSUE_STATUS_FILTER,
   ISSUE_PRIORITIES,
+  ISSUE_QA_RISK_TIERS,
+  ISSUE_QA_MODES,
   ISSUE_ORIGIN_KINDS,
   ISSUE_RELATION_TYPES,
   ISSUE_TREE_CONTROL_MODES,
@@ -185,6 +187,8 @@ export {
   type IssueStatus,
   type IssueOperatorState,
   type IssuePriority,
+  type IssueQaRiskTier,
+  type IssueQaMode,
   type BuiltInIssueOriginKind,
   type PluginIssueOriginKind,
   type IssueOriginKind,
@@ -1430,6 +1434,11 @@ export {
   getIssueContinuityTierRequirements,
   buildIssueDocumentTemplate,
   isIssueDocumentScaffoldBaseline,
+  ISSUE_QA_RISK_TIER_LABELS,
+  ISSUE_QA_MODE_LABELS,
+  qaModeForRiskTier,
+  suggestIssueQaPolicy,
+  parseIssueQaPolicyMarkdown,
   describePacketEnvelope,
 } from "./operating-model.js";
 
@@ -1504,6 +1513,8 @@ export type {
   ParsedIssueBranchCharter,
   ParsedIssueReviewFindingsDocument,
   ParsedIssueBranchReturnDocument,
+  IssueQaPolicyInput,
+  IssueQaPolicySuggestion,
   ReservedDocumentDescriptor,
   ConferenceRoomKindDescriptor,
 } from "./types/operating-model.js";
