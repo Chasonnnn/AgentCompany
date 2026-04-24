@@ -113,16 +113,26 @@ export interface AutoRouteCommentInput {
  * Build the system-authored comment body posted to the issue thread when the
  * auto-route gate fires (or the explicit-reviewer path fires). Uses Paperclip
  * agent-mention links so the UI renders the participants.
+ *
+ * AIW-151: the second line spells out the close-out channels so QA heartbeats
+ * do not fall back to `feedback_reviewer_no_checkout` ("comment-only") when
+ * the auto-route has already made them the `assigneeAgentId`. The continuity
+ * gate at `routes/issues.ts:3233` is skipped whenever actor === assignee, so
+ * the reviewer's `PATCH status=done|in_progress` succeeds without `/checkout`
+ * or `/release`.
  */
+const REVIEWER_CLOSE_OUT_GUIDANCE =
+  "Reviewer: PATCH status=done with an APPROVE comment to close; PATCH status=in_progress (reassigning to the executor) with a comment to request changes. Do NOT /checkout (rejects in_review) or /release (demotes to todo).";
+
 export function buildAutoRouteComment(input: AutoRouteCommentInput): string {
   const reviewerMention = `[@${input.reviewer.name}](agent://${input.reviewer.id})`;
   if (input.routedBy === "explicit") {
-    return `Routed for QA review — reviewer: ${reviewerMention}.`;
+    return `Routed for QA review — reviewer: ${reviewerMention}.\n\n${REVIEWER_CLOSE_OUT_GUIDANCE}`;
   }
   const executorMention = input.executor
     ? `[@${input.executor.name}](agent://${input.executor.id})`
     : "unknown executor";
-  return `Auto-routed for QA review — executor: ${executorMention}, reviewer: ${reviewerMention} (least-loaded among qa_evals_continuity_owner).`;
+  return `Auto-routed for QA review — executor: ${executorMention}, reviewer: ${reviewerMention} (least-loaded among qa_evals_continuity_owner).\n\n${REVIEWER_CLOSE_OUT_GUIDANCE}`;
 }
 
 /**

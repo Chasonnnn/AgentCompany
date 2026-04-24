@@ -11,7 +11,49 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
-import { selectLeastLoadedQaReviewer } from "../services/in-review-routing.js";
+import { buildAutoRouteComment, selectLeastLoadedQaReviewer } from "../services/in-review-routing.js";
+
+// AIW-151: lock the reviewer close-out guidance line into the auto-route
+// comment contract. The line is what prevents QA heartbeats from falling
+// back to the comment-only reviewer-no-checkout rule when the auto-route has
+// already made them the assignee.
+describe("buildAutoRouteComment", () => {
+  it("includes reviewer close-out guidance for auto-routed comments", () => {
+    const body = buildAutoRouteComment({
+      executor: { id: "exec-1", name: "Executor" },
+      reviewer: { id: "rev-1", name: "QA-A" },
+      routedBy: "auto",
+    });
+    expect(body).toContain("[@Executor](agent://exec-1)");
+    expect(body).toContain("[@QA-A](agent://rev-1)");
+    expect(body).toContain("PATCH status=done");
+    expect(body).toContain("PATCH status=in_progress");
+    expect(body).toContain("reassigning to the executor");
+    expect(body).toContain("Do NOT /checkout");
+    expect(body).toContain("/release");
+  });
+
+  it("includes reviewer close-out guidance for explicit-reviewer comments", () => {
+    const body = buildAutoRouteComment({
+      executor: null,
+      reviewer: { id: "rev-1", name: "QA-A" },
+      routedBy: "explicit",
+    });
+    expect(body).toContain("[@QA-A](agent://rev-1)");
+    expect(body).toContain("PATCH status=done");
+    expect(body).toContain("PATCH status=in_progress");
+  });
+
+  it("falls back to a placeholder executor mention when the executor is null", () => {
+    const body = buildAutoRouteComment({
+      executor: null,
+      reviewer: { id: "rev-1", name: "QA-A" },
+      routedBy: "auto",
+    });
+    expect(body).toContain("unknown executor");
+    expect(body).toContain("PATCH status=done");
+  });
+});
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;

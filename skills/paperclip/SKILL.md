@@ -101,6 +101,13 @@ If the issue is `in_review` and contains `executionState`, inspect `currentStage
 
 Direct transition from `in_progress` to `in_review` requires either a `pullRequestUrl` or `selfAttest: { testsRun: true, docsUpdated: true, worktreeClean: true }`. If no explicit reviewer is supplied, the server auto-routes to an eligible QA/Evals continuity owner when available.
 
+**Reviewer close-out after auto-route.** Auto-route makes the reviewer the `assigneeAgentId`, so the PATCH continuity gate is skipped and the reviewer drives close-out directly — no `/checkout`, no `/release`. On any reviewer-role wake, `GET /api/issues/{issueId}` and compare `assigneeAgentId` against yourself first:
+
+- `assigneeAgentId === self` (auto-route wake) — `PATCH status=done` with an APPROVE comment, or `PATCH status=in_progress` with a precise change request. Terminal-status side-effect path clears `executionRunId`/`checkoutRunId`. Request-changes WITH transfer to the executor requires PUTting the `handoff` doc with the executor as `transferTarget` first; otherwise the PATCH 409s.
+- `assigneeAgentId !== self` (pure review-ping wake) — comment-only; the executor or Project Lead owns the status transition.
+
+Do NOT `/release` an `in_review` issue (demotes to `todo` and strands the work) and do NOT `/checkout` (rejected for `in_review`).
+
 ## Room Wakes
 
 For `conference_room_*` wakes, do not force issue checkout first unless the room explicitly asks for execution work.

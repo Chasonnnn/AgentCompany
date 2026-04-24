@@ -45,14 +45,19 @@ const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 
 const mockInReviewRouting = vi.hoisted(() => ({
   selectLeastLoadedQaReviewer: vi.fn(),
+  // Kept in sync with the real implementation in
+  // `services/in-review-routing.ts`. AIW-151 added the reviewer close-out
+  // guidance line; the integration test below asserts it survives the route.
   buildAutoRouteComment: vi.fn(
     (input: { executor: { id: string; name: string } | null; reviewer: { id: string; name: string }; routedBy: "auto" | "explicit" }) => {
       const reviewer = `[@${input.reviewer.name}](agent://${input.reviewer.id})`;
-      if (input.routedBy === "explicit") return `Routed for QA review — reviewer: ${reviewer}.`;
+      const guidance =
+        "Reviewer: PATCH status=done with an APPROVE comment to close; PATCH status=in_progress (reassigning to the executor) with a comment to request changes. Do NOT /checkout (rejects in_review) or /release (demotes to todo).";
+      if (input.routedBy === "explicit") return `Routed for QA review — reviewer: ${reviewer}.\n\n${guidance}`;
       const executor = input.executor
         ? `[@${input.executor.name}](agent://${input.executor.id})`
         : "unknown executor";
-      return `Auto-routed for QA review — executor: ${executor}, reviewer: ${reviewer} (least-loaded among qa_evals_continuity_owner).`;
+      return `Auto-routed for QA review — executor: ${executor}, reviewer: ${reviewer} (least-loaded among qa_evals_continuity_owner).\n\n${guidance}`;
     },
   ),
   inReviewRoutingMissingReviewerError: vi.fn(() => ({
@@ -172,11 +177,13 @@ describe("PATCH /issues/:id — in_review auto-route gate", () => {
     mockInReviewRouting.buildAutoRouteComment.mockImplementation(
       (input: { executor: { id: string; name: string } | null; reviewer: { id: string; name: string }; routedBy: "auto" | "explicit" }) => {
         const reviewer = `[@${input.reviewer.name}](agent://${input.reviewer.id})`;
-        if (input.routedBy === "explicit") return `Routed for QA review — reviewer: ${reviewer}.`;
+        const guidance =
+          "Reviewer: PATCH status=done with an APPROVE comment to close; PATCH status=in_progress (reassigning to the executor) with a comment to request changes. Do NOT /checkout (rejects in_review) or /release (demotes to todo).";
+        if (input.routedBy === "explicit") return `Routed for QA review — reviewer: ${reviewer}.\n\n${guidance}`;
         const executor = input.executor
           ? `[@${input.executor.name}](agent://${input.executor.id})`
           : "unknown executor";
-        return `Auto-routed for QA review — executor: ${executor}, reviewer: ${reviewer} (least-loaded among qa_evals_continuity_owner).`;
+        return `Auto-routed for QA review — executor: ${executor}, reviewer: ${reviewer} (least-loaded among qa_evals_continuity_owner).\n\n${guidance}`;
       },
     );
     mockInReviewRouting.inReviewRoutingMissingReviewerError.mockReturnValue({
@@ -269,6 +276,11 @@ describe("PATCH /issues/:id — in_review auto-route gate", () => {
     expect(commentCall).toBeTruthy();
     expect(commentCall![1]).toContain("[@Executor](agent://");
     expect(commentCall![1]).toContain("[@QA-A](agent://");
+    // AIW-151: the close-out guidance line MUST be posted so QA heartbeats
+    // know to PATCH instead of falling back to the comment-only rule.
+    expect(commentCall![1]).toContain("PATCH status=done");
+    expect(commentCall![1]).toContain("PATCH status=in_progress");
+    expect(commentCall![1]).toContain("Do NOT /checkout");
 
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -337,6 +349,8 @@ describe("PATCH /issues/:id — in_review auto-route gate", () => {
     );
     expect(commentCall).toBeTruthy();
     expect(commentCall![1]).toContain(`agent://${QA_REVIEWER_B_ID}`);
+    // AIW-151: same close-out guidance on the explicit-reviewer path.
+    expect(commentCall![1]).toContain("PATCH status=done");
 
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
