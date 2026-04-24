@@ -10,6 +10,7 @@ const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
   resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
+  getAgentStatusById: vi.fn(async () => "idle"),
   getRelationSummaries: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
@@ -153,8 +154,9 @@ describe("issue update comment wakeups", () => {
       lastPreparedAt: null,
       lastBundleHash: null,
     });
-    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [], droppedMentions: { terminated: [] } });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
+    mockIssueService.getAgentStatusById.mockResolvedValue("idle");
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);

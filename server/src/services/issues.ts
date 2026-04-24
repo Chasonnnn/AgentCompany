@@ -565,6 +565,86 @@ function decodeNumericHtmlEntity(digits: string, radix: 16 | 10): string | null 
   }
 }
 
+export type DroppedMentionEntry = { token?: string; agentId?: string; name: string };
+
+export type ResolveMentionedAgentsResult = {
+  agentIds: string[];
+  ambiguousTokens: string[];
+  droppedMentions: { terminated: DroppedMentionEntry[] };
+};
+
+async function resolveMentionedAgentsImpl(
+  db: Db,
+  companyId: string,
+  body: string,
+): Promise<ResolveMentionedAgentsResult> {
+  const re = /\B@([^\s@,!?.]+)/g;
+  const tokens = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const normalized = normalizeAgentMentionToken(m[1]);
+    if (normalized) tokens.add(normalized.toLowerCase());
+  }
+
+  const explicitAgentMentionIds = extractAgentMentionIds(body);
+  if (tokens.size === 0 && explicitAgentMentionIds.length === 0) {
+    return {
+      agentIds: [],
+      ambiguousTokens: [],
+      droppedMentions: { terminated: [] },
+    };
+  }
+  const rows = await db
+    .select({ id: agents.id, name: agents.name, status: agents.status })
+    .from(agents)
+    .where(eq(agents.companyId, companyId));
+  const liveRows = rows.filter((row) => row.status !== "terminated");
+  const rowsById = new Map(rows.map((row) => [row.id, row]));
+  const liveById = new Map(liveRows.map((row) => [row.id, row]));
+  const resolved = new Set<string>();
+  const droppedTerminated: DroppedMentionEntry[] = [];
+  const seenTerminatedKeys = new Set<string>();
+  const recordDropped = (entry: DroppedMentionEntry) => {
+    const key = entry.agentId ?? `name:${entry.name.toLowerCase()}`;
+    if (seenTerminatedKeys.has(key)) return;
+    seenTerminatedKeys.add(key);
+    droppedTerminated.push(entry);
+  };
+  for (const explicitAgentId of explicitAgentMentionIds) {
+    if (liveById.has(explicitAgentId)) {
+      resolved.add(explicitAgentId);
+      continue;
+    }
+    const terminatedRow = rowsById.get(explicitAgentId);
+    if (terminatedRow && terminatedRow.status === "terminated") {
+      recordDropped({ agentId: terminatedRow.id, name: terminatedRow.name });
+    }
+  }
+  const ambiguousTokens: string[] = [];
+  for (const token of tokens) {
+    const liveMatches = liveRows.filter((agent) => agent.name.toLowerCase() === token);
+    if (liveMatches.length === 1) {
+      resolved.add(liveMatches[0]!.id);
+      continue;
+    }
+    if (liveMatches.length > 1) {
+      ambiguousTokens.push(token);
+      continue;
+    }
+    const terminatedMatches = rows.filter(
+      (agent) => agent.status === "terminated" && agent.name.toLowerCase() === token,
+    );
+    for (const match of terminatedMatches) {
+      recordDropped({ token, agentId: match.id, name: match.name });
+    }
+  }
+  return {
+    agentIds: [...resolved],
+    ambiguousTokens,
+    droppedMentions: { terminated: droppedTerminated },
+  };
+}
+
 /** Decodes HTML character references in a raw @mention capture so UI-encoded bodies match agent names. */
 export function normalizeAgentMentionToken(raw: string): string {
   let s = raw.replace(/&#x([0-9a-fA-F]+);/gi, (full, hex: string) => decodeNumericHtmlEntity(hex, 16) ?? full);
@@ -2836,74 +2916,24 @@ export function issueService(db: Db) {
         return existing;
       }),
 
-    resolveMentionedAgents: async (companyId: string, body: string) => {
-      const re = /\B@([^\s@,!?.]+)/g;
-      const tokens = new Set<string>();
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(body)) !== null) {
-        const normalized = normalizeAgentMentionToken(m[1]);
-        if (normalized) tokens.add(normalized.toLowerCase());
-      }
+    resolveMentionedAgents: (companyId: string, body: string) =>
+      resolveMentionedAgentsImpl(db, companyId, body),
 
-      const explicitAgentMentionIds = extractAgentMentionIds(body);
-      if (tokens.size === 0 && explicitAgentMentionIds.length === 0) {
-        return { agentIds: [] as string[], ambiguousTokens: [] as string[] };
-      }
-      const rows = await db
-        .select({ id: agents.id, name: agents.name })
-        .from(agents)
-        .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
-      const rowsById = new Map(rows.map((row) => [row.id, row]));
-      const resolved = new Set<string>();
-      for (const explicitAgentId of explicitAgentMentionIds) {
-        if (rowsById.has(explicitAgentId)) {
-          resolved.add(explicitAgentId);
-        }
-      }
-      const ambiguousTokens: string[] = [];
-      for (const token of tokens) {
-        const matches = rows.filter((agent) => agent.name.toLowerCase() === token);
-        if (matches.length === 1) {
-          resolved.add(matches[0]!.id);
-          continue;
-        }
-        if (matches.length > 1) {
-          ambiguousTokens.push(token);
-        }
-      }
+    findMentionedAgents: async (companyId: string, body: string) => {
+      const result = await resolveMentionedAgentsImpl(db, companyId, body);
       return {
-        agentIds: [...resolved],
-        ambiguousTokens,
+        agentIds: result.agentIds,
+        droppedMentions: result.droppedMentions,
       };
     },
 
-    findMentionedAgents: async (companyId: string, body: string) => {
-      const resolved = await db
-        .select({ id: agents.id, name: agents.name, status: agents.status })
+    getAgentStatusById: async (agentId: string): Promise<string | null> => {
+      const row = await db
+        .select({ status: agents.status })
         .from(agents)
-        .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
-      const re = /\B@([^\s@,!?.]+)/g;
-      const tokens = new Set<string>();
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(body)) !== null) {
-        const normalized = normalizeAgentMentionToken(m[1]);
-        if (normalized) tokens.add(normalized.toLowerCase());
-      }
-      const explicitAgentMentionIds = extractAgentMentionIds(body);
-      const rowsById = new Map(resolved.map((row) => [row.id, row]));
-      const agentIds = new Set<string>();
-      for (const explicitAgentId of explicitAgentMentionIds) {
-        if (rowsById.has(explicitAgentId)) {
-          agentIds.add(explicitAgentId);
-        }
-      }
-      for (const token of tokens) {
-        const matches = resolved.filter((agent) => agent.name.toLowerCase() === token);
-        if (matches.length === 1) {
-          agentIds.add(matches[0]!.id);
-        }
-      }
-      return [...agentIds];
+        .where(eq(agents.id, agentId))
+        .then((rows) => rows[0] ?? null);
+      return row?.status ?? null;
     },
 
     findMentionedProjectIds: async (issueId: string) => {

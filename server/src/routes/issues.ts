@@ -3788,37 +3788,66 @@ export function issueRoutes(
         const skipAssigneeCommentWake = selfComment || isClosed;
 
         if (assigneeId && !assigneeChanged && !skipAssigneeCommentWake && !blockCurrentIssueWakeups) {
-          addWakeup(assigneeId, {
-            source: "automation",
-            triggerDetail: "system",
-            reason: reopened ? "issue_reopened_via_comment" : "issue_commented",
-            payload: {
-              issueId: id,
-              commentId: comment.id,
-              mutation: "comment",
-              ...(reopened ? { reopenedFrom: reopenFromStatus } : {}),
-              ...(interruptedRunId ? { interruptedRunId } : {}),
-            },
-            requestedByActorType: actor.actorType,
-            requestedByActorId: actor.actorId,
-            contextSnapshot: {
-              issueId: id,
-              taskId: id,
-              commentId: comment.id,
-              wakeCommentId: comment.id,
-              source: reopened ? "issue.comment.reopen" : "issue.comment",
-              wakeReason: reopened ? "issue_reopened_via_comment" : "issue_commented",
-              ...(reopened ? { reopenedFrom: reopenFromStatus } : {}),
-              ...(interruptedRunId ? { interruptedRunId } : {}),
-            },
-          });
+          const assigneeStatus = await svc.getAgentStatusById(assigneeId);
+          if (assigneeStatus === "terminated") {
+            logger.info(
+              { issueId: id, agentId: assigneeId },
+              "assignee terminated, comment wake suppressed",
+            );
+          } else {
+            addWakeup(assigneeId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: reopened ? "issue_reopened_via_comment" : "issue_commented",
+              payload: {
+                issueId: id,
+                commentId: comment.id,
+                mutation: "comment",
+                ...(reopened ? { reopenedFrom: reopenFromStatus } : {}),
+                ...(interruptedRunId ? { interruptedRunId } : {}),
+              },
+              requestedByActorType: actor.actorType,
+              requestedByActorId: actor.actorId,
+              contextSnapshot: {
+                issueId: id,
+                taskId: id,
+                commentId: comment.id,
+                wakeCommentId: comment.id,
+                source: reopened ? "issue.comment.reopen" : "issue.comment",
+                wakeReason: reopened ? "issue_reopened_via_comment" : "issue_commented",
+                ...(reopened ? { reopenedFrom: reopenFromStatus } : {}),
+                ...(interruptedRunId ? { interruptedRunId } : {}),
+              },
+            });
+          }
         }
 
         let mentionedIds: string[] = [];
+        let droppedTerminatedFromPatch: Array<{ token?: string; agentId?: string; name: string }> = [];
         try {
-          mentionedIds = (await svc.resolveMentionedAgents(issue.companyId, commentBody)).agentIds;
+          const mentionResolution = await svc.resolveMentionedAgents(issue.companyId, commentBody);
+          mentionedIds = mentionResolution.agentIds;
+          droppedTerminatedFromPatch = mentionResolution.droppedMentions.terminated;
         } catch (err) {
           logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+        }
+
+        if (droppedTerminatedFromPatch.length > 0) {
+          await logActivity(db, {
+            companyId: issue.companyId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            runId: actor.runId,
+            action: "issue.mention_dropped_terminated",
+            entityType: "issue",
+            entityId: id,
+            details: {
+              commentId: comment.id,
+              identifier: issue.identifier,
+              droppedMentions: { terminated: droppedTerminatedFromPatch },
+            },
+          });
         }
 
         for (const mentionedId of mentionedIds) {
@@ -4326,6 +4355,7 @@ export function issueRoutes(
     let currentIssue = issue;
     const commentReferenceSummaryBefore = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
     let mentionedIds: string[] = [];
+    let droppedTerminatedMentions: Array<{ token?: string; agentId?: string; name: string }> = [];
 
     try {
       const mentionResolution = await svc.resolveMentionedAgents(issue.companyId, req.body.body);
@@ -4339,6 +4369,7 @@ export function issueRoutes(
         return;
       }
       mentionedIds = mentionResolution.agentIds;
+      droppedTerminatedMentions = mentionResolution.droppedMentions.terminated;
     } catch (err) {
       logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
     }
@@ -4439,6 +4470,24 @@ export function issueRoutes(
       },
     });
 
+    if (droppedTerminatedMentions.length > 0) {
+      await logActivity(db, {
+        companyId: currentIssue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.mention_dropped_terminated",
+        entityType: "issue",
+        entityId: currentIssue.id,
+        details: {
+          commentId: comment.id,
+          identifier: currentIssue.identifier,
+          droppedMentions: { terminated: droppedTerminatedMentions },
+        },
+      });
+    }
+
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
     void (async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
@@ -4447,54 +4496,63 @@ export function issueRoutes(
       const selfComment = actorIsAgent && actor.actorId === assigneeId;
       const skipWake = selfComment || isClosed;
       if (assigneeId && (reopened || !skipWake)) {
-        if (reopened) {
-          wakeups.set(assigneeId, {
-            source: "automation",
-            triggerDetail: "system",
-            reason: "issue_reopened_via_comment",
-            payload: {
-              issueId: currentIssue.id,
-              commentId: comment.id,
-              reopenedFrom: reopenFromStatus,
-              mutation: "comment",
-              ...(interruptedRunId ? { interruptedRunId } : {}),
-            },
-            requestedByActorType: actor.actorType,
-            requestedByActorId: actor.actorId,
-            contextSnapshot: {
-              issueId: currentIssue.id,
-              taskId: currentIssue.id,
-              commentId: comment.id,
-              wakeCommentId: comment.id,
-              source: "issue.comment.reopen",
-              wakeReason: "issue_reopened_via_comment",
-              reopenedFrom: reopenFromStatus,
-              ...(interruptedRunId ? { interruptedRunId } : {}),
-            },
-          });
+        const assigneeStatus = await svc.getAgentStatusById(assigneeId);
+        if (assigneeStatus === "terminated") {
+          logger.info(
+            { issueId: currentIssue.id, agentId: assigneeId },
+            "assignee terminated, comment wake suppressed",
+          );
+          // Skip enqueuing assignee wake; mention path below is unaffected.
         } else {
-          wakeups.set(assigneeId, {
-            source: "automation",
-            triggerDetail: "system",
-            reason: "issue_commented",
-            payload: {
-              issueId: currentIssue.id,
-              commentId: comment.id,
-              mutation: "comment",
-              ...(interruptedRunId ? { interruptedRunId } : {}),
-            },
-            requestedByActorType: actor.actorType,
-            requestedByActorId: actor.actorId,
-            contextSnapshot: {
-              issueId: currentIssue.id,
-              taskId: currentIssue.id,
-              commentId: comment.id,
-              wakeCommentId: comment.id,
-              source: "issue.comment",
-              wakeReason: "issue_commented",
-              ...(interruptedRunId ? { interruptedRunId } : {}),
-            },
-          });
+          if (reopened) {
+            wakeups.set(assigneeId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: "issue_reopened_via_comment",
+              payload: {
+                issueId: currentIssue.id,
+                commentId: comment.id,
+                reopenedFrom: reopenFromStatus,
+                mutation: "comment",
+                ...(interruptedRunId ? { interruptedRunId } : {}),
+              },
+              requestedByActorType: actor.actorType,
+              requestedByActorId: actor.actorId,
+              contextSnapshot: {
+                issueId: currentIssue.id,
+                taskId: currentIssue.id,
+                commentId: comment.id,
+                wakeCommentId: comment.id,
+                source: "issue.comment.reopen",
+                wakeReason: "issue_reopened_via_comment",
+                reopenedFrom: reopenFromStatus,
+                ...(interruptedRunId ? { interruptedRunId } : {}),
+              },
+            });
+          } else {
+            wakeups.set(assigneeId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: "issue_commented",
+              payload: {
+                issueId: currentIssue.id,
+                commentId: comment.id,
+                mutation: "comment",
+                ...(interruptedRunId ? { interruptedRunId } : {}),
+              },
+              requestedByActorType: actor.actorType,
+              requestedByActorId: actor.actorId,
+              contextSnapshot: {
+                issueId: currentIssue.id,
+                taskId: currentIssue.id,
+                commentId: comment.id,
+                wakeCommentId: comment.id,
+                source: "issue.comment",
+                wakeReason: "issue_commented",
+                ...(interruptedRunId ? { interruptedRunId } : {}),
+              },
+            });
+          }
         }
       }
 
@@ -4527,7 +4585,10 @@ export function issueRoutes(
       }
     })();
 
-    res.status(201).json(comment);
+    res.status(201).json({
+      ...comment,
+      droppedMentions: { terminated: droppedTerminatedMentions },
+    });
   });
 
   router.post("/issues/:id/feedback-votes", validate(upsertIssueFeedbackVoteSchema), async (req, res) => {

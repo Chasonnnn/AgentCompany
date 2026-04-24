@@ -13,8 +13,9 @@ const mockIssueService = vi.hoisted(() => ({
   update: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
-  resolveMentionedAgents: vi.fn(async () => ({ agentIds: [], ambiguousTokens: [] })),
+  resolveMentionedAgents: vi.fn(async () => ({ agentIds: [], ambiguousTokens: [], droppedMentions: { terminated: [] } })),
   findMentionedAgents: vi.fn(async () => []),
+  getAgentStatusById: vi.fn(async () => "idle"),
 }));
 
 function registerRouteMocks() {
