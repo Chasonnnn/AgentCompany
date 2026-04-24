@@ -304,6 +304,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
   it("suppresses normal wakeups while allowing comment interaction wakes under a pause hold", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     const rootIssueId = randomUUID();
     const childIssueId = randomUUID();
 
@@ -312,6 +313,12 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       name: "Paperclip",
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Pause hold wakeups",
+      status: "in_progress",
     });
     await db.insert(agents).values({
       id: agentId,
@@ -333,6 +340,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       {
         id: rootIssueId,
         companyId,
+        projectId,
         title: "Paused root",
         status: "todo",
         priority: "medium",
@@ -341,6 +349,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       {
         id: childIssueId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Paused child",
         status: "todo",
@@ -407,6 +416,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
   it("allows comment interaction wakes when a legacy hold has a full_pause note", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     const rootIssueId = randomUUID();
 
     await db.insert(companies).values({
@@ -414,6 +424,12 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       name: "Paperclip",
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Legacy full pause hold",
+      status: "in_progress",
     });
     await db.insert(agents).values({
       id: agentId,
@@ -434,6 +450,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     await db.insert(issues).values({
       id: rootIssueId,
       companyId,
+      projectId,
       title: "Paused root",
       status: "todo",
       priority: "medium",

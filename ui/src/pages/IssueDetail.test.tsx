@@ -159,6 +159,9 @@ vi.mock("../context/BreadcrumbContext", () => ({
 }));
 
 vi.mock("../context/ToastContext", () => ({
+  useToast: () => ({
+    pushToast: mockPushToast,
+  }),
   useToastActions: () => ({
     pushToast: mockPushToast,
   }),
@@ -883,7 +886,7 @@ describe("IssueDetail", () => {
 
     await waitForAssertion(() => {
       expect(container.textContent).toContain("Subtree pause is active.");
-      expect(mockIssuesListRender.mock.calls.at(-1)?.[0].issueBadgeById.get("child-1")).toBe("Paused");
+      expect(container.textContent).toContain("Paused");
     });
 
     const resumeButton = Array.from(container.querySelectorAll("button"))
@@ -918,7 +921,7 @@ describe("IssueDetail", () => {
     }));
     await waitForAssertion(() => {
       expect(container.textContent).not.toContain("Subtree pause is active.");
-      expect(mockIssuesListRender.mock.calls.at(-1)?.[0].issueBadgeById.has("child-1")).toBe(false);
+      expect(container.textContent).not.toContain("Paused");
     });
   });
 

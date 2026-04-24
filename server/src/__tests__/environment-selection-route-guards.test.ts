@@ -29,6 +29,17 @@ const mockEnvironmentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 
+const mockHeartbeatService = vi.hoisted(() => ({
+  getRun: vi.fn(),
+  getActiveRunForAgent: vi.fn(),
+  wakeup: vi.fn(),
+}));
+
+const mockOfficeCoordinationService = vi.hoisted(() => ({
+  findOfficeOperator: vi.fn(),
+  buildWakeSnapshot: vi.fn(),
+}));
+
 const mockReferenceSummary = vi.hoisted(() => ({
   inbound: [],
   outbound: [],
@@ -59,14 +70,14 @@ vi.mock("../services/index.js", () => ({
     getById: vi.fn(),
     getDefaultCompanyGoal: vi.fn(),
   }),
-  heartbeatService: () => ({
-    getRun: vi.fn(),
-    getActiveRunForAgent: vi.fn(),
-  }),
+  heartbeatService: () => mockHeartbeatService,
+  officeCoordinationService: () => mockOfficeCoordinationService,
   issueApprovalService: () => ({
     listApprovalsForIssue: vi.fn(),
     unlink: vi.fn(),
   }),
+  issueContinuityService: () => ({}),
+  issueDecisionQuestionService: () => ({}),
   feedbackService: () => ({
     listIssueVotesForUser: vi.fn(),
     listFeedbackTraces: vi.fn(),
@@ -168,7 +179,13 @@ describe.sequential("execution environment route guards", () => {
     mockIssueService.getByIdentifier.mockReset();
     mockIssueService.assertCheckoutOwner.mockReset();
     mockEnvironmentService.getById.mockReset();
+    mockHeartbeatService.getRun.mockReset();
+    mockHeartbeatService.getActiveRunForAgent.mockReset();
+    mockHeartbeatService.wakeup.mockReset();
+    mockOfficeCoordinationService.findOfficeOperator.mockReset();
+    mockOfficeCoordinationService.buildWakeSnapshot.mockReset();
     mockLogActivity.mockReset();
+    mockOfficeCoordinationService.findOfficeOperator.mockResolvedValue(null);
   });
 
   it("accepts SSH environments on project create", async () => {

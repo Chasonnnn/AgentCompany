@@ -40,6 +40,10 @@ const mockAgentTemplateService = vi.hoisted(() => ({
 
 }));
 
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
@@ -66,8 +70,12 @@ vi.mock("../services/index.js", () => ({
 }));
 
 vi.mock("../adapters/index.js", () => ({
+  detectAdapterModel: vi.fn(),
+  findActiveServerAdapter: vi.fn((type: string) => ({ type })),
   findServerAdapter: vi.fn((type: string) => ({ type })),
   listAdapterModels: vi.fn(),
+  refreshAdapterModels: vi.fn(),
+  requireServerAdapter: vi.fn((type: string) => ({ type })),
 }));
 
 function createApp() {
@@ -111,6 +119,7 @@ describe("agent instructions bundle routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(null);
+    mockEnvironmentService.getById.mockResolvedValue(null);
     mockAgentSkillService.resolveDesiredSkillAssignment.mockImplementation(
       async (
         _companyId: string,

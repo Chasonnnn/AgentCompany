@@ -6224,25 +6224,15 @@ export function heartbeatService(db: Db) {
           );
         }
 
-        if (!activeExecutionRun && dependencyReadiness && !dependencyReadiness.isDependencyReady && !blockedInteractionWake) {
-          await tx.insert(agentWakeupRequests).values({
-            companyId: agent.companyId,
-            agentId,
-            source,
-            triggerDetail,
-            reason: "issue_dependencies_blocked",
-            payload: {
-              ...(payload ?? {}),
-              issueId,
-              unresolvedBlockerIssueIds: dependencyReadiness.unresolvedBlockerIssueIds,
-            },
-            status: "skipped",
-            requestedByActorType: opts.requestedByActorType ?? null,
-            requestedByActorId: opts.requestedByActorId ?? null,
-            idempotencyKey: opts.idempotencyKey ?? null,
-            finishedAt: new Date(),
-          });
-          return { kind: "skipped" as const };
+        if (dependencyReadiness && !dependencyReadiness.isDependencyReady && !blockedInteractionWake) {
+          enrichedContextSnapshot.unresolvedBlockerIssueIds = dependencyReadiness.unresolvedBlockerIssueIds;
+          enrichedContextSnapshot.unresolvedBlockerCount = dependencyReadiness.unresolvedBlockerCount;
+          enrichedContextSnapshot.unresolvedBlockerSummaries = await listUnresolvedBlockerSummaries(
+            tx,
+            issue.companyId,
+            issue.id,
+            dependencyReadiness.unresolvedBlockerIssueIds,
+          );
         }
 
         if (activeExecutionRun) {

@@ -11,8 +11,16 @@ const { markdownEditorFocusMock } = vi.hoisted(() => ({
   markdownEditorFocusMock: vi.fn(),
 }));
 
-const { threadMessagesMock } = vi.hoisted(() => ({
-  threadMessagesMock: vi.fn(() => <div data-testid="thread-messages" />),
+const { threadMessagesMock, useMessageMock } = vi.hoisted(() => ({
+  threadMessagesMock: vi.fn((_components?: { UserMessage: () => ReactNode }) => <div data-testid="thread-messages" />),
+  useMessageMock: vi.fn(() => ({
+    id: "message",
+    role: "assistant",
+    createdAt: new Date("2026-04-06T12:00:00.000Z"),
+    content: [],
+    metadata: { custom: {} },
+    status: { type: "complete" },
+  })),
 }));
 
 vi.mock("@assistant-ui/react", () => ({
@@ -25,7 +33,7 @@ vi.mock("@assistant-ui/react", () => ({
       <div data-testid="thread-viewport" className={className}>{children}</div>
     ),
     Empty: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-    Messages: () => threadMessagesMock(),
+    Messages: ({ components }: { components: { UserMessage: () => ReactNode } }) => threadMessagesMock(components),
   },
   MessagePrimitive: {
     Root: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -34,14 +42,7 @@ vi.mock("@assistant-ui/react", () => ({
   },
   useAui: () => ({ thread: () => ({ append: vi.fn() }) }),
   useAuiState: () => false,
-  useMessage: () => ({
-    id: "message",
-    role: "assistant",
-    createdAt: new Date("2026-04-06T12:00:00.000Z"),
-    content: [],
-    metadata: { custom: {} },
-    status: { type: "complete" },
-  }),
+  useMessage: () => useMessageMock(),
 }));
 
 vi.mock("./transcript/useLiveRunTranscripts", () => ({
@@ -106,6 +107,12 @@ vi.mock("./StatusBadge", () => ({
   StatusBadge: ({ status }: { status: string }) => <span>{status}</span>,
 }));
 
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("../hooks/usePaperclipIssueRuntime", () => ({
   usePaperclipIssueRuntime: () => ({}),
 }));
@@ -128,6 +135,7 @@ describe("IssueChatThread", () => {
     vi.useRealTimers();
     markdownEditorFocusMock.mockReset();
     threadMessagesMock.mockReset();
+    useMessageMock.mockClear();
   });
 
   it("drops the count heading and does not use an internal scrollbox", () => {
@@ -239,6 +247,25 @@ describe("IssueChatThread", () => {
 
   it("shows deferred wake badge only for hold-deferred queued comments", () => {
     const root = createRoot(container);
+    threadMessagesMock.mockImplementation((components?: { UserMessage: () => ReactNode }) => {
+      if (!components) return <div data-testid="thread-messages" />;
+      const UserMessage = components.UserMessage;
+      return <UserMessage />;
+    });
+    useMessageMock.mockReturnValue({
+      id: "comment-hold",
+      role: "user",
+      createdAt: new Date("2026-04-06T12:00:00.000Z"),
+      content: [],
+      metadata: {
+        custom: {
+          anchorId: "comment-hold",
+          queueState: "queued",
+          queueReason: "hold",
+        },
+      },
+      status: { type: "complete" },
+    });
 
     act(() => {
       root.render(
@@ -268,6 +295,21 @@ describe("IssueChatThread", () => {
     });
 
     expect(container.textContent).toContain("Deferred wake");
+
+    useMessageMock.mockReturnValue({
+      id: "comment-active-run",
+      role: "user",
+      createdAt: new Date("2026-04-06T12:01:00.000Z"),
+      content: [],
+      metadata: {
+        custom: {
+          anchorId: "comment-active-run",
+          queueState: "queued",
+          queueReason: "active_run",
+        },
+      },
+      status: { type: "complete" },
+    });
 
     act(() => {
       root.render(

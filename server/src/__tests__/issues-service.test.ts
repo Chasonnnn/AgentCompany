@@ -1907,6 +1907,7 @@ describeEmbeddedPostgres("issueService.clearExecutionRunIfTerminal", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Execution lock cleanup");
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -1930,6 +1931,7 @@ describeEmbeddedPostgres("issueService.clearExecutionRunIfTerminal", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Execution lock",
       status: "in_progress",
       priority: "medium",

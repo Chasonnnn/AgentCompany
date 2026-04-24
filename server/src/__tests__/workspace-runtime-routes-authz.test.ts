@@ -24,6 +24,14 @@ const mockEnvironmentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 
+const mockDocumentService = vi.hoisted(() => ({}));
+const mockHeartbeatService = vi.hoisted(() => ({
+  wakeup: vi.fn(),
+}));
+const mockOfficeCoordinationService = vi.hoisted(() => ({
+  findOfficeOperator: vi.fn(),
+  buildWakeSnapshot: vi.fn(),
+}));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
@@ -36,9 +44,12 @@ function registerModuleMocks() {
   }));
 
   vi.doMock("../services/index.js", () => ({
+    documentService: () => mockDocumentService,
     executionWorkspaceService: () => mockExecutionWorkspaceService,
     environmentService: () => mockEnvironmentService,
+    heartbeatService: () => mockHeartbeatService,
     logActivity: mockLogActivity,
+    officeCoordinationService: () => mockOfficeCoordinationService,
     projectService: () => mockProjectService,
     secretService: () => mockSecretService,
     workspaceOperationService: () => mockWorkspaceOperationService,
@@ -163,6 +174,9 @@ describe("workspace runtime service route authorization", () => {
     registerModuleMocks();
     vi.resetAllMocks();
     mockEnvironmentService.getById.mockReset();
+    mockHeartbeatService.wakeup.mockReset();
+    mockOfficeCoordinationService.findOfficeOperator.mockReset();
+    mockOfficeCoordinationService.buildWakeSnapshot.mockReset();
     mockSecretService.normalizeEnvBindingsForPersistence.mockImplementation(async (_companyId, env) => env);
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockProjectService.create.mockResolvedValue(buildProject());
@@ -239,6 +253,7 @@ describe("workspace runtime service route authorization", () => {
     mockExecutionWorkspaceService.update.mockResolvedValue(buildExecutionWorkspace());
     mockAssertCanManageProjectWorkspaceRuntimeServices.mockResolvedValue(undefined);
     mockAssertCanManageExecutionWorkspaceRuntimeServices.mockResolvedValue(undefined);
+    mockOfficeCoordinationService.findOfficeOperator.mockResolvedValue(null);
   });
 
   it("rejects agent callers for project workspace runtime service mutations when workspace auth denies access", async () => {

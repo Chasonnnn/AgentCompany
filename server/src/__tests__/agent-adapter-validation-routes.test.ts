@@ -52,6 +52,10 @@ const mockHeartbeatService = vi.hoisted(() => ({
   cancelActiveForAgent: vi.fn(),
 }));
 
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+
 const mockIssueApprovalService = vi.hoisted(() => ({
   linkManyForApproval: vi.fn(),
 }));
@@ -98,6 +102,7 @@ async function createApp() {
     agentSkillService: () => mockAgentSkillService,
     companySkillService: () => mockCompanySkillService,
     budgetService: () => mockBudgetService,
+    environmentService: () => mockEnvironmentService,
     heartbeatService: () => mockHeartbeatService,
     issueApprovalService: () => mockIssueApprovalService,
     issueService: () => ({}),
@@ -168,6 +173,8 @@ describe("agent routes adapter validation", () => {
     mockAccessService.hasPermission.mockResolvedValue(true);
     mockAccessService.ensureMembership.mockResolvedValue(undefined);
     mockAccessService.setPrincipalPermission.mockResolvedValue(undefined);
+    mockEnvironmentService.getById.mockReset();
+    mockEnvironmentService.getById.mockResolvedValue(null);
     mockLogActivity.mockResolvedValue(undefined);
     mockAgentService.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
       id: "11111111-1111-4111-8111-111111111111",

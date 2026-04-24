@@ -31,6 +31,7 @@ vi.mock("../services/index.js", () => ({
   approvalService: () => ({}),
   companySkillService: () => ({ listRuntimeSkillEntries: vi.fn() }),
   budgetService: () => ({}),
+  environmentService: () => ({ getById: vi.fn() }),
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,

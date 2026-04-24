@@ -12,6 +12,7 @@ import {
   issueComments,
   issueRelations,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -46,6 +47,7 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
     await db.delete(activityLog);
     await db.delete(issues);
     await db.delete(heartbeatRuns);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -69,6 +71,7 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
   async function seedCompanyAgentAndRuns() {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     const failedRunId = randomUUID();
     const currentRunId = randomUUID();
 
@@ -77,6 +80,12 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
       name: "Paperclip",
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Stale execution lock routes",
+      status: "in_progress",
     });
     await db.insert(agents).values({
       id: agentId,
@@ -108,7 +117,7 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
       },
     ]);
 
-    return { companyId, agentId, failedRunId, currentRunId };
+    return { companyId, agentId, projectId, failedRunId, currentRunId };
   }
 
   function agentActor(companyId: string, agentId: string, runId: string): Express.Request["actor"] {
@@ -133,11 +142,12 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
   }
 
   it("allows an assigned agent PATCH to recover a terminal stale executionRunId", async () => {
-    const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+    const { companyId, agentId, projectId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
     const issueId = randomUUID();
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Stale execution lock",
       status: "in_progress",
       priority: "high",
@@ -172,11 +182,12 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
   });
 
   it("allows the rightful assignee to release after the owning run failed", async () => {
-    const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+    const { companyId, agentId, projectId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
     const issueId = randomUUID();
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Failed run release",
       status: "in_progress",
       priority: "high",
@@ -214,11 +225,12 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
   });
 
   it("restricts admin force-release to board users with company access and writes an audit event", async () => {
-    const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+    const { companyId, agentId, projectId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
     const issueId = randomUUID();
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Admin force release",
       status: "in_progress",
       priority: "high",

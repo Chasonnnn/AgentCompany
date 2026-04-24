@@ -9,6 +9,7 @@ import {
   issueTreeHoldMembers,
   issueTreeHolds,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -40,6 +41,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
     await db.delete(issueTreeHolds);
     await db.delete(issues);
     await db.delete(heartbeatRuns);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -47,6 +49,17 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
   afterAll(async () => {
     await tempDb?.cleanup();
   });
+
+  async function insertProject(companyId: string, name = "Issue tree control") {
+    const projectId = randomUUID();
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name,
+      status: "in_progress",
+    });
+    return projectId;
+  }
 
   it("previews a subtree without changing issue statuses", async () => {
     const companyId = randomUUID();
@@ -84,6 +97,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    const projectId = await insertProject(companyId, "Preview subtree");
 
     await db.insert(heartbeatRuns).values({
       id: runId,
@@ -98,6 +112,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: rootIssueId,
         companyId,
+        projectId,
         title: "Root",
         status: "todo",
         priority: "medium",
@@ -106,6 +121,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: runningChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Running child",
         status: "in_progress",
@@ -117,6 +133,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: doneChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Done child",
         status: "done",
@@ -126,6 +143,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: cancelledChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Cancelled child",
         status: "cancelled",
@@ -178,9 +196,11 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(companyId, "Hold snapshots");
     await db.insert(issues).values({
       id: rootIssueId,
       companyId,
+      projectId,
       title: "Root",
       status: "todo",
       priority: "medium",
@@ -224,10 +244,12 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(companyId, "Cancel restore");
     await db.insert(issues).values([
       {
         id: rootIssueId,
         companyId,
+        projectId,
         title: "Root",
         status: "done",
         priority: "medium",
@@ -236,6 +258,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: runningChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Running child",
         status: "in_progress",
@@ -245,6 +268,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: todoChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Todo child",
         status: "todo",
@@ -254,6 +278,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: doneChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Done child",
         status: "done",
@@ -347,6 +372,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(companyId, "Pause hold checkout");
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -362,6 +388,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: rootIssueId,
         companyId,
+        projectId,
         title: "Paused root",
         status: "todo",
         priority: "medium",
@@ -370,6 +397,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: childIssueId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Paused child",
         status: "todo",

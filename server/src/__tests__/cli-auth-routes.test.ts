@@ -3,6 +3,19 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+let currentServer: Server | null = null;
+
+async function closeCurrentServer() {
+  if (!currentServer) return;
+  await new Promise<void>((resolve, reject) => {
+    currentServer?.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  currentServer = null;
+}
+
 async function createApp(actor: any) {
   vi.doUnmock("../routes/access.js");
   vi.doUnmock("../middleware/index.js");

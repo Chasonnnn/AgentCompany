@@ -111,6 +111,7 @@ describeEmbeddedPostgres("heartbeat local environment lifecycle", () => {
       adapterConfig: {
         command: process.execPath,
         args: ["-e", "process.exit(0)"],
+        localExecutionPolicy: { preset: "permissive" },
       },
       runtimeConfig: {},
       permissions: {},

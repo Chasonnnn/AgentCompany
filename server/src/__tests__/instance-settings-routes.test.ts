@@ -16,6 +16,7 @@ async function createHarness(actor: any) {
       feedbackDataSharingPreference: "prompt",
     },
     experimental: {
+      enableEnvironments: false,
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
     },
@@ -125,6 +126,7 @@ describe("instance settings routes", () => {
 
     expect(patchRes.status).toBe(200);
     expect(patchRes.body).toEqual({
+      enableEnvironments: false,
       enableIsolatedWorkspaces: true,
       autoRestartDevServerWhenIdle: false,
     });
@@ -144,27 +146,34 @@ describe("instance settings routes", () => {
       .expect(200);
 
     expect(res.body).toEqual({
+      enableEnvironments: false,
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: true,
     });
   });
 
   it("allows local board users to update environment controls", async () => {
-    const app = await createApp({
+    const { app, calls, state } = await createHarness({
       type: "board",
       userId: "local-board",
       source: "local_implicit",
       isInstanceAdmin: true,
     });
 
-    await request(app)
+    const res = await request(app)
       .patch("/api/instance/settings/experimental")
       .send({ enableEnvironments: true })
       .expect(200);
 
-    expect(mockInstanceSettingsService.updateExperimental).toHaveBeenCalledWith({
+    expect(res.body).toEqual({
       enableEnvironments: true,
+      enableIsolatedWorkspaces: false,
+      autoRestartDevServerWhenIdle: false,
     });
+    expect(state.experimental.enableEnvironments).toBe(true);
+    expect(calls.updateExperimental).toEqual([[{
+      enableEnvironments: true,
+    }]]);
   });
 
   it("allows local board users to read and update general settings", async () => {

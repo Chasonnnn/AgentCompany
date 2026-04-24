@@ -25,6 +25,16 @@ const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockSecretService = vi.hoisted(() => ({
   normalizeEnvBindingsForPersistence: vi.fn(),
 }));
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+const mockHeartbeatService = vi.hoisted(() => ({
+  wakeup: vi.fn(),
+}));
+const mockOfficeCoordinationService = vi.hoisted(() => ({
+  findOfficeOperator: vi.fn(),
+  buildWakeSnapshot: vi.fn(),
+}));
 const mockDocumentService = vi.hoisted(() => ({
   listProjectDocuments: vi.fn(),
   getProjectDocumentByKey: vi.fn(),
@@ -43,6 +53,18 @@ const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 vi.mock("../services/workspace-runtime.js", () => ({
   startRuntimeServicesForWorkspaceControl: vi.fn(),
   stopRuntimeServicesForProjectWorkspace: vi.fn(),
+}));
+
+vi.mock("../services/index.js", () => ({
+  documentService: () => mockDocumentService,
+  goalService: () => mockGoalService,
+  environmentService: () => mockEnvironmentService,
+  heartbeatService: () => mockHeartbeatService,
+  logActivity: mockLogActivity,
+  officeCoordinationService: () => mockOfficeCoordinationService,
+  projectService: () => mockProjectService,
+  secretService: () => mockSecretService,
+  workspaceOperationService: () => mockWorkspaceOperationService,
 }));
 
 function createApp(route: express.Router) {
@@ -69,7 +91,9 @@ function createProjectApp() {
     projectRoutes({} as any, {
       services: {
         documentService: mockDocumentService as any,
+        heartbeatService: mockHeartbeatService as any,
         logActivity: mockLogActivity as any,
+        officeCoordinationService: mockOfficeCoordinationService as any,
         projectService: mockProjectService as any,
         secretService: mockSecretService as any,
         workspaceOperationService: mockWorkspaceOperationService as any,
@@ -103,6 +127,9 @@ describe("project and goal telemetry routes", () => {
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockEnvironmentService.getById.mockReset();
+    mockHeartbeatService.wakeup.mockReset();
+    mockOfficeCoordinationService.findOfficeOperator.mockReset();
+    mockOfficeCoordinationService.buildWakeSnapshot.mockReset();
     mockSecretService.normalizeEnvBindingsForPersistence.mockImplementation(async (_companyId, env) => env);
     mockProjectService.create.mockResolvedValue({
       id: "project-1",
@@ -119,6 +146,7 @@ describe("project and goal telemetry routes", () => {
       level: "team",
       status: "planned",
     });
+    mockOfficeCoordinationService.findOfficeOperator.mockResolvedValue(null);
     mockLogActivity.mockResolvedValue(undefined);
   });
 

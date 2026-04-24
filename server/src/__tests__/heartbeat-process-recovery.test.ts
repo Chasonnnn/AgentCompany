@@ -3,12 +3,18 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  agentRuntimeState,
   agents,
   agentWakeupRequests,
+  activityLog,
+  companySkills,
   companies,
   createDb,
+  documents,
+  documentRevisions,
   heartbeatRunEvents,
   heartbeatRuns,
+  issueDocuments,
   issues,
   projects,
 } from "@paperclipai/db";
@@ -17,8 +23,20 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { runningProcesses } from "../adapters/index.ts";
+import { documentService } from "../services/documents.ts";
 const mockTelemetryClient = vi.hoisted(() => ({ track: vi.fn() }));
 const mockTrackAgentFirstHeartbeat = vi.hoisted(() => vi.fn());
+const mockAdapterExecute = vi.hoisted(() =>
+  vi.fn(async () => ({
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    errorMessage: null,
+    summary: "Recovered heartbeat run.",
+    provider: "test",
+    model: "test-model",
+  })),
+);
 
 vi.mock("../telemetry.ts", () => ({
   getTelemetryClient: () => mockTelemetryClient,
@@ -31,6 +49,22 @@ vi.mock("@paperclipai/shared/telemetry", async () => {
   return {
     ...actual,
     trackAgentFirstHeartbeat: mockTrackAgentFirstHeartbeat,
+  };
+});
+
+vi.mock("../adapters/index.ts", async () => {
+  const actual = await vi.importActual<typeof import("../adapters/index.ts")>("../adapters/index.ts");
+  return {
+    ...actual,
+    getServerAdapter: vi.fn((adapterType: string) =>
+      adapterType === "codex_local"
+        ? {
+            type: "codex_local",
+            supportsLocalAgentJwt: false,
+            execute: mockAdapterExecute,
+          }
+        : actual.getServerAdapter(adapterType),
+    ),
   };
 });
 
@@ -67,6 +101,27 @@ async function waitForPidExit(pid: number, timeoutMs = 2_000) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return !isPidAlive(pid);
+}
+
+async function waitForValue<T>(fn: () => Promise<T | null>, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await fn();
+    if (value != null) return value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return await fn();
+}
+
+async function waitForRunToSettle(
+  heartbeat: ReturnType<typeof heartbeatService>,
+  runId: string,
+  timeoutMs = 5_000,
+) {
+  return await waitForValue(async () => {
+    const run = await heartbeat.getRun(runId);
+    return run && !["queued", "running"].includes(run.status) ? run : null;
+  }, timeoutMs);
 }
 
 async function spawnOrphanedProcessGroup() {
@@ -135,12 +190,18 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       }
     }
     cleanupPids.clear();
+    await db.delete(issueDocuments);
+    await db.delete(documentRevisions);
+    await db.delete(documents);
     await db.delete(issues);
+    await db.delete(activityLog);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(projects);
+    await db.delete(agentRuntimeState);
     await db.delete(agents);
+    await db.delete(companySkills);
     await db.delete(companies);
   });
 
@@ -254,6 +315,34 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     }
 
     return { companyId, agentId, runId, wakeupRequestId, issueId };
+  }
+
+  async function seedContinuityDocs(companyId: string, issueId: string, agentId: string) {
+    const docs = documentService(db);
+    for (const key of ["spec", "plan", "progress", "test-plan"] as const) {
+      await docs.upsertIssueDocument({
+        companyId,
+        issueId,
+        key,
+        title: key,
+        format: "markdown",
+        body: `# ${key}\n\nTransient recovery fixture.`,
+        createdByAgentId: agentId,
+      });
+    }
+  }
+
+  async function seedQueuedIssueRunFixture() {
+    const fixture = await seedRunFixture({
+      agentStatus: "idle",
+      runStatus: "queued",
+      processPid: null,
+      processGroupId: null,
+      processLossRetryCount: 0,
+      includeIssue: true,
+    });
+    await seedContinuityDocs(fixture.companyId, fixture.issueId, fixture.agentId);
+    return fixture;
   }
 
   it("keeps a local run active when the recorded pid is still alive", async () => {

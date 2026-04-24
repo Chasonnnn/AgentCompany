@@ -35,6 +35,23 @@ const mockBudgetService = vi.hoisted(() => ({
   upsertPolicy: vi.fn(),
 }));
 
+const mockAgentProjectPlacementService = vi.hoisted(() => ({
+  previewForInput: vi.fn(),
+  applyPrimaryPlacement: vi.fn(),
+}));
+
+const mockAgentTemplateService = vi.hoisted(() => ({
+  resolveRevisionForInstantiation: vi.fn(),
+}));
+
+const mockAgentSkillService = vi.hoisted(() => ({
+  resolveDesiredSkillAssignment: vi.fn(),
+}));
+
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelActiveForAgent: vi.fn(),
 }));
@@ -57,11 +74,15 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 function registerModuleMocks() {
   vi.doMock("../services/index.js", () => ({
     agentService: () => ({}),
+    agentProjectPlacementService: () => mockAgentProjectPlacementService,
+    agentSkillService: () => mockAgentSkillService,
+    agentTemplateService: () => mockAgentTemplateService,
     agentInstructionsService: () => mockAgentInstructionsService,
     accessService: () => mockAccessService,
     approvalService: () => mockApprovalService,
     companySkillService: () => mockCompanySkillService,
     budgetService: () => mockBudgetService,
+    environmentService: () => mockEnvironmentService,
     heartbeatService: () => mockHeartbeatService,
     issueApprovalService: () => mockIssueApprovalService,
     issueService: () => ({}),

@@ -98,6 +98,19 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
+let sharedServer: Server | null = null;
+
+async function closeSharedServer() {
+  if (!sharedServer) return;
+  await new Promise<void>((resolve, reject) => {
+    sharedServer?.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  sharedServer = null;
+}
+
 function createDbStub() {
 
   return {

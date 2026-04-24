@@ -25,6 +25,9 @@ const mockBudgetService = vi.hoisted(() => ({
   upsertPolicy: vi.fn(),
 }));
 const mockHeartbeatService = vi.hoisted(() => ({}));
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
 const mockIssueApprovalService = vi.hoisted(() => ({
   linkManyForApproval: vi.fn(),
 }));
@@ -70,6 +73,7 @@ function registerRouteMocks() {
     agentSkillService: () => mockAgentSkillService,
     agentTemplateService: () => mockAgentTemplateService,
     budgetService: () => mockBudgetService,
+    environmentService: () => mockEnvironmentService,
     heartbeatService: () => mockHeartbeatService,
     issueApprovalService: () => mockIssueApprovalService,
     issueService: () => ({}),

@@ -2355,6 +2355,11 @@ export function IssueDetail() {
                     <span className="font-mono text-muted-foreground shrink-0">
                       {child.identifier ?? child.id.slice(0, 8)}
                     </span>
+                    {heldIssueIds.has(child.id) ? (
+                      <span className="shrink-0 rounded-full border border-amber-300/70 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-200">
+                        Paused
+                      </span>
+                    ) : null}
                     <span className="truncate">{child.title}</span>
                   </div>
                   {child.assigneeAgentId && (() => {

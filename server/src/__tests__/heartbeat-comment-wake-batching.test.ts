@@ -623,6 +623,7 @@ describe("heartbeat comment wake batching", () => {
     const primaryAgentId = randomUUID();
     const mentionedAgentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const heartbeat = heartbeatService(db);
 
@@ -632,6 +633,12 @@ describe("heartbeat comment wake batching", () => {
         name: "Paperclip",
         issuePrefix,
         requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(projects).values({
+        id: projectId,
+        companyId,
+        name: "Mention wake batching",
+        status: "in_progress",
       });
 
       await db.insert(agents).values([
@@ -680,6 +687,7 @@ describe("heartbeat comment wake batching", () => {
       await db.insert(issues).values({
         id: issueId,
         companyId,
+        projectId,
         title: "Prevent concurrent mention execution",
         status: "todo",
         priority: "high",
@@ -807,6 +815,7 @@ describe("heartbeat comment wake batching", () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const heartbeat = heartbeatService(db);
 
@@ -816,6 +825,12 @@ describe("heartbeat comment wake batching", () => {
         name: "Paperclip",
         issuePrefix,
         requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(projects).values({
+        id: projectId,
+        companyId,
+        name: "Comment summary fallback",
+        status: "in_progress",
       });
 
       await db.insert(agents).values({
@@ -842,6 +857,7 @@ describe("heartbeat comment wake batching", () => {
       await db.insert(issues).values({
         id: issueId,
         companyId,
+        projectId,
         title: "Use existing comment",
         status: "todo",
         priority: "medium",
