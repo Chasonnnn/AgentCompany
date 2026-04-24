@@ -85,6 +85,7 @@ import { buildExternalAdapters } from "./plugin-loader.js";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
+import { assertAdapterTrusted, markAdapterTrusted } from "./trust.js";
 
 const guardedProcessAdapter: ServerAdapterModule = {
   ...processAdapter,
@@ -292,6 +293,7 @@ function registerBuiltInAdapters() {
     guardedProcessAdapter,
     guardedHttpAdapter,
   ]) {
+    markAdapterTrusted(adapter);
     adaptersByType.set(adapter.type, adapter);
   }
 }
@@ -339,13 +341,14 @@ function getDisabledAdapterTypesFromStore(): string[] {
 export function resolveExternalAdapterRegistration(
   externalAdapter: ServerAdapterModule,
 ): ServerAdapterModule {
-  return {
+  const resolved: ServerAdapterModule = {
     ...externalAdapter,
     sessionManagement:
       externalAdapter.sessionManagement
         ?? getAdapterSessionManagement(externalAdapter.type)
         ?? undefined,
   };
+  return markAdapterTrusted(resolved);
 }
 
 /**
@@ -396,6 +399,7 @@ export function registerServerAdapter(adapter: ServerAdapterModule): void {
       builtinFallbacks.set(adapter.type, existing);
     }
   }
+  markAdapterTrusted(adapter);
   adaptersByType.set(adapter.type, adapter);
 }
 
@@ -420,11 +424,14 @@ export function requireServerAdapter(type: string): ServerAdapterModule {
   if (!adapter) {
     throw new Error(`Unknown adapter type: ${type}`);
   }
+  assertAdapterTrusted(adapter, `requireServerAdapter(${type})`);
   return adapter;
 }
 
 export function getServerAdapter(type: string): ServerAdapterModule {
-  return findActiveServerAdapter(type) ?? guardedProcessAdapter;
+  const adapter = findActiveServerAdapter(type) ?? guardedProcessAdapter;
+  assertAdapterTrusted(adapter, `getServerAdapter(${type})`);
+  return adapter;
 }
 
 export async function listAdapterModels(type: string): Promise<{ id: string; label: string }[]> {
@@ -531,9 +538,12 @@ export function findServerAdapter(type: string): ServerAdapterModule | null {
 }
 
 export function findActiveServerAdapter(type: string): ServerAdapterModule | null {
+  let adapter: ServerAdapterModule | undefined;
   if (pausedOverrides.has(type)) {
-    const fallback = builtinFallbacks.get(type);
-    if (fallback) return fallback;
+    adapter = builtinFallbacks.get(type);
   }
-  return adaptersByType.get(type) ?? null;
+  adapter = adapter ?? adaptersByType.get(type);
+  if (!adapter) return null;
+  assertAdapterTrusted(adapter, `findActiveServerAdapter(${type})`);
+  return adapter;
 }
