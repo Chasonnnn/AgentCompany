@@ -189,7 +189,8 @@ export const issueDocFreezeExceptionSchema = z.object({
   grantedByAgentId: z.string().uuid().nullable(),
   grantedByUserId: z.string().nullable(),
 });
-export type IssueDocFreezeException = z.infer<typeof issueDocFreezeExceptionSchema>;
+// Canonical `IssueDocFreezeException` lives in ../types/issue.ts. Avoid a
+// parallel z.infer<> alias here so the schema and the interface cannot drift.
 
 export const issuePlanApprovalSummarySchema = z.object({
   approvalId: z.string().uuid().nullable().optional().default(null),

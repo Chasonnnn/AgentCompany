@@ -59,6 +59,7 @@ describe("issue continuity schemas", () => {
       lastBranchReturnAt: null,
       lastPreparedAt: "2026-04-14T09:00:00.000Z",
       lastBundleHash: "abc123",
+      docFreezeExceptions: [],
       planApproval: {
         approvalId: null,
         status: null,

@@ -127,6 +127,60 @@ function createRouteHarness() {
           },
         };
       }),
+      listIssueDocumentRevisions: vi.fn(async () => [
+        {
+          id: "rev-prior",
+          documentId: "doc-spec",
+          revisionNumber: 1,
+          title: null,
+          format: "markdown",
+          body: scaffoldSpec,
+          changeSummary: null,
+          baseRevisionId: null,
+          createdByAgentId: null,
+          createdByUserId: null,
+          createdByRunId: null,
+          createdAt: new Date("2026-04-23T19:00:00.000Z"),
+        },
+      ]),
+      restoreIssueDocumentRevision: vi.fn(async (_input: { issueId: string; key: string; revisionId: string }) => ({
+        document: {
+          id: "doc-spec",
+          companyId,
+          issueId: issue.id,
+          key: "spec",
+          title: null,
+          format: "markdown",
+          body: scaffoldSpec,
+          latestRevisionId: "rev-restored",
+          latestRevisionNumber: 3,
+          createdByAgentId: null,
+          createdByUserId: null,
+          updatedByAgentId: null,
+          updatedByUserId: null,
+          createdAt: new Date("2026-04-23T20:00:00.000Z"),
+          updatedAt: new Date("2026-04-23T23:00:00.000Z"),
+        },
+        restoredFromRevisionId: "rev-prior",
+        restoredFromRevisionNumber: 1,
+      })),
+      deleteIssueDocument: vi.fn(async () => ({
+        id: "doc-spec",
+        companyId,
+        issueId: issue.id,
+        key: "spec",
+        title: null,
+        format: "markdown",
+        body: "",
+        latestRevisionId: "rev-deleted",
+        latestRevisionNumber: 3,
+        createdByAgentId: null,
+        createdByUserId: null,
+        updatedByAgentId: null,
+        updatedByUserId: null,
+        createdAt: new Date("2026-04-23T20:00:00.000Z"),
+        updatedAt: new Date("2026-04-23T23:00:00.000Z"),
+      })),
     },
     accessService: {
       canUser: vi.fn(async () => true),
@@ -431,6 +485,91 @@ describe("issue continuity doc-freeze friction", () => {
       .post(`/api/issues/${issueId}/continuity/doc-unfreeze`)
       .send({ decisionNote: "Another exec may also thaw when no sponsor", documentKeys: ["plan"] });
     expect(secondRes.status).toBe(201);
+  });
+
+  it("fails closed on sponsor lookup errors: transient DB failure denies doc-unfreeze rather than authorizing every company executive", async () => {
+    const harness = createRouteHarness();
+    harness.projectService.getById.mockRejectedValue(new Error("transient db failure"));
+
+    const execApp = await createApp(harness, { type: "agent", agentId: executiveAgentId });
+    const res = await request(execApp)
+      .post(`/api/issues/${issueId}/continuity/doc-unfreeze`)
+      .send({ decisionNote: "should fail closed under lookup error", documentKeys: ["spec"] });
+    expect(res.status).toBe(403);
+    expect(harness.issueContinuityService.grantDocFreezeExceptions).not.toHaveBeenCalled();
+  });
+
+  it("restore consumes the executive_thaw exception so the next restore or PUT is re-frozen", async () => {
+    const harness = createRouteHarness();
+    const editedBody = `${scaffoldSpec}\n\n## Edits by continuity owner`;
+    harness.setStoredSpecBody(editedBody);
+
+    const execApp = await createApp(harness, { type: "agent", agentId: executiveAgentId });
+    const grantRes = await request(execApp)
+      .post(`/api/issues/${issueId}/continuity/doc-unfreeze`)
+      .send({ decisionNote: "Exec thaw for restore", documentKeys: ["spec"] });
+    expect(grantRes.status).toBe(201);
+
+    const ownerApp = await createApp(harness, { type: "agent", agentId: ownerAgentId });
+    const restoreRes = await request(ownerApp)
+      .post(`/api/issues/${issueId}/documents/spec/revisions/rev-prior/restore`)
+      .send({});
+    expect(restoreRes.status).toBe(200);
+    expect(harness.documentsService.restoreIssueDocumentRevision).toHaveBeenCalledTimes(1);
+    expect(harness.issueContinuityService.consumeDocFreezeException).toHaveBeenCalledWith(issueId, "spec");
+    expect(harness.logActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.document_restored",
+        details: expect.objectContaining({
+          thawPath: "executive_thaw",
+          thawDecisionNote: "Exec thaw for restore",
+          thawGrantedByAgentId: executiveAgentId,
+        }),
+      }),
+    );
+
+    harness.documentsService.restoreIssueDocumentRevision.mockClear();
+    const secondRestoreRes = await request(ownerApp)
+      .post(`/api/issues/${issueId}/documents/spec/revisions/rev-prior/restore`)
+      .send({});
+    expect(secondRestoreRes.status).toBe(403);
+    expect(harness.documentsService.restoreIssueDocumentRevision).not.toHaveBeenCalled();
+  });
+
+  it("delete consumes the executive_thaw exception so a subsequent PUT is re-frozen", async () => {
+    const harness = createRouteHarness();
+    const editedBody = `${scaffoldSpec}\n\n## Edits by continuity owner`;
+    harness.setStoredSpecBody(editedBody);
+
+    const execApp = await createApp(harness, { type: "agent", agentId: executiveAgentId });
+    const grantRes = await request(execApp)
+      .post(`/api/issues/${issueId}/continuity/doc-unfreeze`)
+      .send({ decisionNote: "Exec thaw for delete", documentKeys: ["spec"] });
+    expect(grantRes.status).toBe(201);
+
+    const boardApp = await createApp(harness, { type: "board" });
+    const deleteRes = await request(boardApp).delete(`/api/issues/${issueId}/documents/spec`);
+    expect(deleteRes.status).toBe(200);
+    expect(harness.documentsService.deleteIssueDocument).toHaveBeenCalledTimes(1);
+    expect(harness.issueContinuityService.consumeDocFreezeException).toHaveBeenCalledWith(issueId, "spec");
+    expect(harness.logActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.document_deleted",
+        details: expect.objectContaining({
+          thawPath: "executive_thaw",
+          thawDecisionNote: "Exec thaw for delete",
+          thawGrantedByAgentId: executiveAgentId,
+        }),
+      }),
+    );
+
+    const ownerApp = await createApp(harness, { type: "agent", agentId: ownerAgentId });
+    const postDeletePutRes = await request(ownerApp)
+      .put(`/api/issues/${issueId}/documents/spec`)
+      .send({ format: "markdown", body: `${editedBody}\n\n## Post-delete edit should be refrozen` });
+    expect(postDeletePutRes.status).toBe(403);
   });
 
   it("keeps the board scope-change thaw path intact: an approved linked approval routes through thawPath=approved_linked_approval", async () => {

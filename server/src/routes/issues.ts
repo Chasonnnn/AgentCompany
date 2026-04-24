@@ -713,7 +713,10 @@ export function issueRoutes(
       if (!cluster?.executiveSponsorAgentId) return true;
       return cluster.executiveSponsorAgentId === actorAgent.id;
     } catch {
-      return true;
+      // Fail closed: a transient project/cluster lookup failure must not
+      // authorize every company executive to thaw. Re-raise-like deny mirrors
+      // the spec's "project's sponsoring executive" gate.
+      return false;
     }
   }
 
@@ -2329,18 +2332,16 @@ export function issueRoutes(
         res.status(403).json({ error: "Only the continuity owner can restore this document while execution is active" });
         return;
       }
-      {
-        const restoreGate = await requireApprovedLinkedApprovalForActiveDocumentEdit(
-          res,
-          issue.id,
-          documentKey,
-          continuityActive,
-          "Restoring",
-          issue,
-          revision.body,
-        );
-        if (!restoreGate.ok) return;
-      }
+      const restoreGate = await requireApprovedLinkedApprovalForActiveDocumentEdit(
+        res,
+        issue.id,
+        documentKey,
+        continuityActive,
+        "Restoring",
+        issue,
+        revision.body,
+      );
+      if (!restoreGate.ok) return;
       if (documentKey === "progress" && !parseIssueProgressMarkdown(revision.body)) {
         res.status(422).json({ error: "Progress documents require paperclip/issue-progress.v1 frontmatter" });
         return;
@@ -2372,6 +2373,11 @@ export function issueRoutes(
       const referenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
       const referenceDiff = issueReferencesSvc.diffIssueReferenceSummary(referenceSummaryBefore, referenceSummaryAfter);
 
+      let consumedThawException: Awaited<ReturnType<typeof continuitySvc.consumeDocFreezeException>> = null;
+      if (restoreGate.thawPath === "executive_thaw" && restoreGate.thawExceptionKey) {
+        consumedThawException = await continuitySvc.consumeDocFreezeException(issue.id, restoreGate.thawExceptionKey);
+      }
+
       await logActivity(db, {
         companyId: issue.companyId,
         actorType: actor.actorType,
@@ -2389,6 +2395,14 @@ export function issueRoutes(
           revisionNumber: result.document.latestRevisionNumber,
           restoredFromRevisionId: result.restoredFromRevisionId,
           restoredFromRevisionNumber: result.restoredFromRevisionNumber,
+          ...(restoreGate.thawPath ? { thawPath: restoreGate.thawPath } : {}),
+          ...(consumedThawException
+            ? {
+              thawDecisionNote: consumedThawException.decisionNote,
+              thawGrantedByAgentId: consumedThawException.grantedByAgentId,
+              thawGrantedAt: consumedThawException.grantedAt,
+            }
+            : {}),
           ...summarizeIssueReferenceActivityDetails({
             addedReferencedIssues: referenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
             removedReferencedIssues: referenceDiff.removedReferencedIssues.map(summarizeIssueRelationForActivity),
@@ -2421,17 +2435,15 @@ export function issueRoutes(
       return;
     }
     const continuityActive = isContinuityActive(issue);
-    {
-      const deleteGate = await requireApprovedLinkedApprovalForActiveDocumentEdit(
-        res,
-        issue.id,
-        keyParsed.data,
-        continuityActive,
-        "Deleting",
-        issue,
-      );
-      if (!deleteGate.ok) return;
-    }
+    const deleteGate = await requireApprovedLinkedApprovalForActiveDocumentEdit(
+      res,
+      issue.id,
+      keyParsed.data,
+      continuityActive,
+      "Deleting",
+      issue,
+    );
+    if (!deleteGate.ok) return;
     const referenceSummaryBefore = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
     const removed = await documentsSvc.deleteIssueDocument(issue.id, keyParsed.data);
     if (!removed) {
@@ -2442,6 +2454,10 @@ export function issueRoutes(
     const referenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
     const referenceDiff = issueReferencesSvc.diffIssueReferenceSummary(referenceSummaryBefore, referenceSummaryAfter);
     const actor = getActorInfo(req);
+    let consumedThawException: Awaited<ReturnType<typeof continuitySvc.consumeDocFreezeException>> = null;
+    if (deleteGate.thawPath === "executive_thaw" && deleteGate.thawExceptionKey) {
+      consumedThawException = await continuitySvc.consumeDocFreezeException(issue.id, deleteGate.thawExceptionKey);
+    }
     await logActivity(db, {
       companyId: issue.companyId,
       actorType: actor.actorType,
@@ -2455,6 +2471,14 @@ export function issueRoutes(
         key: removed.key,
         documentId: removed.id,
         title: removed.title,
+        ...(deleteGate.thawPath ? { thawPath: deleteGate.thawPath } : {}),
+        ...(consumedThawException
+          ? {
+            thawDecisionNote: consumedThawException.decisionNote,
+            thawGrantedByAgentId: consumedThawException.grantedByAgentId,
+            thawGrantedAt: consumedThawException.grantedAt,
+          }
+          : {}),
         ...summarizeIssueReferenceActivityDetails({
           addedReferencedIssues: referenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
           removedReferencedIssues: referenceDiff.removedReferencedIssues.map(summarizeIssueRelationForActivity),
