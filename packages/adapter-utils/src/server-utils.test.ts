@@ -348,13 +348,16 @@ describe("renderPaperclipWakePrompt", () => {
       },
     });
 
+    expect(prompt).toContain("advisory-only Productivity Monitor wake");
+    expect(prompt).toContain("Do not load the full company run ledger or full issue list");
     expect(prompt).toContain("Productivity report packet:");
     expect(prompt).toContain("useful runs: 50% (4/8)");
     expect(prompt).toContain("Check low-yield agents first.");
     expect(prompt).toContain("QA: watch");
     expect(prompt).toContain("PAP-10 Overplanned fix");
-    expect(prompt).toContain("Use this packet as read-only evidence");
-    expect(prompt).toContain("Do not mutate target issues");
+    expect(prompt).toContain("Fetch a specific agent productivity summary only when you need detail");
+    expect(prompt).toContain("do not mutate target issues");
+    expect(prompt).not.toContain("Before generic repo exploration");
   });
 });
 
