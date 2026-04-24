@@ -210,7 +210,7 @@ export async function testEnvironment(
           code: "codex_fast_mode_unsupported_model",
           level: "warn",
           message: configuredExecArgs.fastModeIgnoredReason,
-          hint: "Switch the agent model to GPT-5.4 to enable Codex Fast mode.",
+          hint: "Switch the agent model to GPT-5.5 to enable Codex Fast mode.",
         });
       }
       const execArgs = buildCodexExecArgs({ ...config, fastMode: false });

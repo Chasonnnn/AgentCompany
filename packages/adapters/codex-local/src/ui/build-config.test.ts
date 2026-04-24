@@ -8,7 +8,7 @@ function makeValues(overrides: Partial<CreateConfigValues> = {}): CreateConfigVa
     cwd: "",
     instructionsFilePath: "",
     promptTemplate: "",
-    model: "gpt-5.4",
+    model: "gpt-5.5",
     thinkingEffort: "",
     chrome: false,
     dangerouslySkipPermissions: true,
@@ -45,7 +45,7 @@ describe("buildCodexLocalConfig", () => {
     );
 
     expect(config).toMatchObject({
-      model: "gpt-5.4",
+      model: "gpt-5.5",
       search: true,
       fastMode: true,
       dangerouslyBypassApprovalsAndSandbox: true,
@@ -54,14 +54,14 @@ describe("buildCodexLocalConfig", () => {
 
   it("defaults fast mode on for eligible models when omitted", () => {
     const values = makeValues({
-      model: "gpt-5.4",
+      model: "gpt-5.5",
     }) as unknown as Record<string, unknown>;
     delete values.fastMode;
 
     const config = buildCodexLocalConfig(values as unknown as CreateConfigValues);
 
     expect(config).toMatchObject({
-      model: "gpt-5.4",
+      model: "gpt-5.5",
       fastMode: true,
     });
   });
@@ -69,13 +69,13 @@ describe("buildCodexLocalConfig", () => {
   it("preserves an explicit fast mode disable on eligible models", () => {
     const config = buildCodexLocalConfig(
       makeValues({
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         fastMode: false,
       }),
     );
 
     expect(config).toMatchObject({
-      model: "gpt-5.4",
+      model: "gpt-5.5",
       fastMode: false,
     });
   });

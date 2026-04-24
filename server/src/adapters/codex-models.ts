@@ -5,6 +5,7 @@ import { readConfigFile } from "../config-file.js";
 const OPENAI_MODELS_ENDPOINT = "https://api.openai.com/v1/models";
 const OPENAI_MODELS_TIMEOUT_MS = 5000;
 const OPENAI_MODELS_CACHE_TTL_MS = 60_000;
+const CODEX_VISIBLE_MODEL_IDS = new Set(codexFallbackModels.map((model) => model.id));
 
 let cached: { keyFingerprint: string; expiresAt: number; models: AdapterModel[] } | null = null;
 
@@ -60,7 +61,9 @@ async function fetchOpenAiModels(apiKey: string): Promise<AdapterModel[]> {
       if (typeof item !== "object" || item === null) continue;
       const id = (item as { id?: unknown }).id;
       if (typeof id !== "string" || id.trim().length === 0) continue;
-      models.push({ id, label: id });
+      const trimmed = id.trim();
+      if (!CODEX_VISIBLE_MODEL_IDS.has(trimmed)) continue;
+      models.push({ id: trimmed, label: trimmed });
     }
     return dedupeModels(models);
   } catch {

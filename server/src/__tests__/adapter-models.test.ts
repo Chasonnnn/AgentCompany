@@ -31,12 +31,13 @@ describe("adapter model listing", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("loads codex models dynamically and merges fallback options", async () => {
+  it("loads codex models dynamically and filters to GPT-5.5", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: async () => ({
         data: [
+          { id: "gpt-5.5" },
           { id: "gpt-5-pro" },
           { id: "gpt-5" },
         ],
@@ -48,8 +49,8 @@ describe("adapter model listing", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(first).toEqual(second);
-    expect(first.some((model) => model.id === "gpt-5-pro")).toBe(true);
-    expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
+    expect(first).toEqual(codexFallbackModels);
+    expect(first.every((model) => model.id === "gpt-5.5")).toBe(true);
   });
 
   it("refreshes cached codex models on demand", async () => {
@@ -58,7 +59,7 @@ describe("adapter model listing", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          data: [{ id: "gpt-5" }],
+          data: [{ id: "gpt-5" }, { id: "gpt-5-pro" }],
         }),
       } as Response)
       .mockResolvedValueOnce({
@@ -72,8 +73,8 @@ describe("adapter model listing", () => {
     const refreshed = await refreshAdapterModels("codex_local");
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(initial.some((model) => model.id === "gpt-5")).toBe(true);
-    expect(refreshed.some((model) => model.id === "gpt-5.5")).toBe(true);
+    expect(initial).toEqual(codexFallbackModels);
+    expect(refreshed).toEqual(codexFallbackModels);
   });
 
   it("falls back to static codex models when OpenAI model discovery fails", async () => {

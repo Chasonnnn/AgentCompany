@@ -47,6 +47,7 @@ import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolv
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 import { buildCodexExecArgs } from "./codex-args.js";
 import { CodexAppServerClient, NO_RESPONSE } from "./app-server-client.js";
+import { DEFAULT_CODEX_LOCAL_MODEL } from "../index.js";
 import {
   buildDecisionQuestionCapture,
   buildPendingUserInputResponse,
@@ -324,7 +325,7 @@ function buildInitializeCapabilities(planningMode: boolean) {
 
 function buildCollaborationMode(config: Record<string, unknown>, planningMode: boolean) {
   if (!planningMode) return null;
-  const model = asString(config.model, "").trim() || "gpt-5.3-codex";
+  const model = asString(config.model, "").trim() || DEFAULT_CODEX_LOCAL_MODEL;
   const configuredEffort = asString(
     config.modelReasoningEffort,
     asString(config.reasoningEffort, ""),
