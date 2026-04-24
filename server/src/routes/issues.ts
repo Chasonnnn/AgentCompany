@@ -32,6 +32,8 @@ import {
   progressCheckpointIssueContinuitySchema,
   prepareIssueContinuitySchema,
   requestIssueSpecThawSchema,
+  requestIssueContinuityDocUnfreezeSchema,
+  isIssueDocumentScaffoldBaseline,
   restoreIssueDocumentRevisionSchema,
   returnIssueContinuityBranchSchema,
   reviewResubmitIssueContinuitySchema,
@@ -74,6 +76,7 @@ import {
   routineService,
   workProductService,
 } from "../services/index.js";
+import { portfolioClusterService } from "../services/portfolio-clusters.js";
 import { buildIssueOperatorState } from "../services/issue-operator-state.js";
 import { resolveIssueHeartbeatMode } from "../services/issue-heartbeat-mode.js";
 import { assertInReviewEntryGate } from "../services/issue-review-gate.js";
@@ -134,6 +137,7 @@ type IssueRouteDeps = {
   issueReferenceService: ReturnType<typeof createFallbackIssueReferenceService>;
   logActivity: typeof baseLogActivity;
   officeCoordinationService: ReturnType<typeof officeCoordinationService>;
+  portfolioClusterService: ReturnType<typeof portfolioClusterService>;
   projectService: ReturnType<typeof projectService>;
   routineService: ReturnType<typeof routineService>;
   workProductService: ReturnType<typeof workProductService>;
@@ -180,6 +184,11 @@ function createFallbackIssueContinuityService() {
       continuityState: null,
       continuityBundle: null,
     }),
+    grantDocFreezeExceptions: async () => ({
+      continuityState: null,
+      grantedKeys: [] as string[],
+    }),
+    consumeDocFreezeException: async () => null,
     requestPlanApproval: async () => ({
       approvalId: null,
       approvalStatus: null,
@@ -647,6 +656,8 @@ export function issueRoutes(
   const officeCoordinationSvc =
     opts?.services?.officeCoordinationService ?? officeCoordinationService(db);
   const projectsSvc = opts?.services?.projectService ?? projectService(db);
+  const portfolioClustersSvc =
+    opts?.services?.portfolioClusterService ?? portfolioClusterService(db);
   const goalsSvc = opts?.services?.goalService ?? goalService(db);
   const issueApprovalsSvc = opts?.services?.issueApprovalService ?? issueApprovalService(db);
   const continuitySvc = opts?.services?.issueContinuityService
@@ -678,11 +689,99 @@ export function issueRoutes(
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
   });
 
+  // An executive actor is either the board, or an agent with org_level='executive'
+  // in the same company whose role matches the project's sponsoring executive
+  // agent id (when set). When no sponsoring executive is set on the project's
+  // portfolio cluster, any same-company executive agent qualifies — this mirrors
+  // the spec's "project's sponsoring executive" gate without creating a lockout
+  // when the org chart has not been populated yet.
+  async function isSponsoringExecutiveActor(
+    req: Request,
+    issue: { companyId: string; projectId: string | null },
+  ) {
+    if (req.actor.type === "board") return true;
+    if (req.actor.type !== "agent" || !req.actor.agentId) return false;
+    if (req.actor.companyId !== issue.companyId) return false;
+    const actorAgent = await agentsSvc.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== issue.companyId) return false;
+    if (actorAgent.orgLevel !== "executive") return false;
+    if (!issue.projectId) return true;
+    try {
+      const project = await projectsSvc.getById(issue.projectId);
+      if (!project?.portfolioClusterId) return true;
+      const cluster = await portfolioClustersSvc.getById(project.portfolioClusterId);
+      if (!cluster?.executiveSponsorAgentId) return true;
+      return cluster.executiveSponsorAgentId === actorAgent.id;
+    } catch {
+      // Fail closed: a transient project/cluster lookup failure must not
+      // authorize every company executive to thaw. Re-raise-like deny mirrors
+      // the spec's "project's sponsoring executive" gate.
+      return false;
+    }
+  }
+
   function activeExecutionDocumentApprovalError(documentKey: string, action: "Editing" | "Restoring" | "Deleting") {
     if (documentKey === "spec") {
       return `${action} a frozen spec requires an approved linked approval`;
     }
     return `${action} ${documentKey} during active execution requires an approved linked approval`;
+  }
+
+  type DocumentEditThawPath = "approved_linked_approval" | "scaffold_bypass" | "executive_thaw";
+
+  type DocumentEditGateIssue = {
+    id: string;
+    title: string | null;
+    description?: string | null;
+    continuityState?: unknown;
+  };
+
+  async function resolveContinuityDocumentEditGate(
+    issue: DocumentEditGateIssue,
+    documentKey: string,
+    continuityActive: boolean,
+    candidateBody: string,
+  ): Promise<{ ok: true; thawPath: DocumentEditThawPath | null; thawExceptionKey?: string } | { ok: false; error: string }> {
+    if (!continuityActive || !EXECUTION_APPROVAL_GATED_DOCUMENT_KEYS.has(documentKey)) {
+      return { ok: true, thawPath: null };
+    }
+    const linkedApprovals = await issueApprovalsSvc.listApprovalsForIssue(issue.id);
+    if (linkedApprovals.some((approval) => approval.status === "approved")) {
+      return { ok: true, thawPath: "approved_linked_approval" };
+    }
+    const continuityStateRaw = issue.continuityState && typeof issue.continuityState === "object"
+      ? (issue.continuityState as Record<string, unknown>)
+      : null;
+    const rawTier = continuityStateRaw?.tier;
+    const tier = (typeof rawTier === "string" ? (rawTier as "tiny" | "normal" | "long_running") : null);
+    const existingDoc = await documentsSvc.getIssueDocumentByKey(issue.id, documentKey);
+    const storedBody = existingDoc?.body ?? "";
+    if (
+      storedBody.length > 0 &&
+      isIssueDocumentScaffoldBaseline(documentKey, storedBody, {
+        title: issue.title,
+        description: issue.description ?? null,
+        tier,
+      })
+    ) {
+      return { ok: true, thawPath: "scaffold_bypass" };
+    }
+    if (storedBody.length === 0) {
+      const isCandidateScaffold = isIssueDocumentScaffoldBaseline(documentKey, candidateBody, {
+        title: issue.title,
+        description: issue.description ?? null,
+        tier,
+      });
+      if (isCandidateScaffold) return { ok: true, thawPath: "scaffold_bypass" };
+    }
+    const docFreezeExceptions = Array.isArray(continuityStateRaw?.docFreezeExceptions)
+      ? (continuityStateRaw!.docFreezeExceptions as Array<{ key?: string }>)
+      : [];
+    const matchingException = docFreezeExceptions.find((exception) => exception?.key === documentKey) ?? null;
+    if (matchingException) {
+      return { ok: true, thawPath: "executive_thaw", thawExceptionKey: documentKey };
+    }
+    return { ok: false, error: "" };
   }
 
   async function requireApprovedLinkedApprovalForActiveDocumentEdit(
@@ -691,12 +790,26 @@ export function issueRoutes(
     documentKey: string,
     continuityActive: boolean,
     action: "Editing" | "Restoring" | "Deleting",
-  ) {
-    if (!continuityActive || !EXECUTION_APPROVAL_GATED_DOCUMENT_KEYS.has(documentKey)) return true;
-    const linkedApprovals = await issueApprovalsSvc.listApprovalsForIssue(issueId);
-    if (linkedApprovals.some((approval) => approval.status === "approved")) return true;
+    existingIssue?: DocumentEditGateIssue,
+    candidateBody: string = "",
+  ): Promise<{ ok: true; thawPath: DocumentEditThawPath | null; thawExceptionKey?: string } | { ok: false }> {
+    if (!continuityActive || !EXECUTION_APPROVAL_GATED_DOCUMENT_KEYS.has(documentKey)) {
+      return { ok: true, thawPath: null };
+    }
+    const issue = existingIssue ?? (await svc.getById(issueId));
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return { ok: false };
+    }
+    const resolution = await resolveContinuityDocumentEditGate(
+      issue as DocumentEditGateIssue,
+      documentKey,
+      continuityActive,
+      candidateBody,
+    );
+    if (resolution.ok) return resolution;
     res.status(403).json({ error: activeExecutionDocumentApprovalError(documentKey, action) });
-    return false;
+    return { ok: false };
   }
 
   function withContentPath<T extends { id: string }>(attachment: T) {
@@ -1560,6 +1673,56 @@ export function issueRoutes(
     );
   });
 
+  // POST /issues/:id/continuity/doc-unfreeze — sponsoring-executive bypass for the
+  // first-content freeze on spec/plan/test-plan/handoff. Grants one-shot thaw
+  // tokens per requested key that the next PUT for that key consumes. Board
+  // retains scope-change thaw via approval revision; this endpoint only covers
+  // first-content mechanics.
+  router.post(
+    "/issues/:id/continuity/doc-unfreeze",
+    validate(requestIssueContinuityDocUnfreezeSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const issue = await svc.getById(id);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, issue.companyId);
+      const authorized = await isSponsoringExecutiveActor(req, issue);
+      if (!authorized) {
+        res.status(403).json({
+          error: "Only the project sponsoring executive or board can unfreeze continuity docs",
+        });
+        return;
+      }
+      const actor = getActorInfo(req);
+      const result = await continuitySvc.grantDocFreezeExceptions(issue.id, req.body, {
+        agentId: actor.agentId ?? null,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.continuity_doc_unfreeze_granted",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          thawPath: "executive_thaw",
+          decisionNote: req.body.decisionNote,
+          documentKeys: result.grantedKeys,
+        },
+      });
+      res.status(result.grantedKeys.length > 0 ? 201 : 200).json({
+        continuityState: result.continuityState,
+        grantedKeys: result.grantedKeys,
+      });
+    },
+  );
+
   router.post("/issues/:id/continuity/branches", validate(createIssueContinuityBranchSchema), async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
@@ -2048,9 +2211,16 @@ export function issueRoutes(
       res.status(403).json({ error: "Only the continuity owner can edit this document while execution is active" });
       return;
     }
-    if (!(await requireApprovedLinkedApprovalForActiveDocumentEdit(res, issue.id, documentKey, continuityActive, "Editing"))) {
-      return;
-    }
+    const gate = await requireApprovedLinkedApprovalForActiveDocumentEdit(
+      res,
+      issue.id,
+      documentKey,
+      continuityActive,
+      "Editing",
+      issue,
+      req.body.body,
+    );
+    if (!gate.ok) return;
 
     const actor = getActorInfo(req);
     const referenceSummaryBefore = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
@@ -2071,6 +2241,11 @@ export function issueRoutes(
     const referenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
     const referenceDiff = issueReferencesSvc.diffIssueReferenceSummary(referenceSummaryBefore, referenceSummaryAfter);
 
+    let consumedThawException: Awaited<ReturnType<typeof continuitySvc.consumeDocFreezeException>> = null;
+    if (gate.thawPath === "executive_thaw" && gate.thawExceptionKey) {
+      consumedThawException = await continuitySvc.consumeDocFreezeException(issue.id, gate.thawExceptionKey);
+    }
+
     await logActivity(db, {
       companyId: issue.companyId,
       actorType: actor.actorType,
@@ -2086,6 +2261,14 @@ export function issueRoutes(
         title: doc.title,
         format: doc.format,
         revisionNumber: doc.latestRevisionNumber,
+        ...(gate.thawPath ? { thawPath: gate.thawPath } : {}),
+        ...(consumedThawException
+          ? {
+            thawDecisionNote: consumedThawException.decisionNote,
+            thawGrantedByAgentId: consumedThawException.grantedByAgentId,
+            thawGrantedAt: consumedThawException.grantedAt,
+          }
+          : {}),
         ...summarizeIssueReferenceActivityDetails({
           addedReferencedIssues: referenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
           removedReferencedIssues: referenceDiff.removedReferencedIssues.map(summarizeIssueRelationForActivity),
@@ -2150,9 +2333,16 @@ export function issueRoutes(
         res.status(403).json({ error: "Only the continuity owner can restore this document while execution is active" });
         return;
       }
-      if (!(await requireApprovedLinkedApprovalForActiveDocumentEdit(res, issue.id, documentKey, continuityActive, "Restoring"))) {
-        return;
-      }
+      const restoreGate = await requireApprovedLinkedApprovalForActiveDocumentEdit(
+        res,
+        issue.id,
+        documentKey,
+        continuityActive,
+        "Restoring",
+        issue,
+        revision.body,
+      );
+      if (!restoreGate.ok) return;
       if (documentKey === "progress" && !parseIssueProgressMarkdown(revision.body)) {
         res.status(422).json({ error: "Progress documents require paperclip/issue-progress.v1 frontmatter" });
         return;
@@ -2184,6 +2374,11 @@ export function issueRoutes(
       const referenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
       const referenceDiff = issueReferencesSvc.diffIssueReferenceSummary(referenceSummaryBefore, referenceSummaryAfter);
 
+      let consumedThawException: Awaited<ReturnType<typeof continuitySvc.consumeDocFreezeException>> = null;
+      if (restoreGate.thawPath === "executive_thaw" && restoreGate.thawExceptionKey) {
+        consumedThawException = await continuitySvc.consumeDocFreezeException(issue.id, restoreGate.thawExceptionKey);
+      }
+
       await logActivity(db, {
         companyId: issue.companyId,
         actorType: actor.actorType,
@@ -2201,6 +2396,14 @@ export function issueRoutes(
           revisionNumber: result.document.latestRevisionNumber,
           restoredFromRevisionId: result.restoredFromRevisionId,
           restoredFromRevisionNumber: result.restoredFromRevisionNumber,
+          ...(restoreGate.thawPath ? { thawPath: restoreGate.thawPath } : {}),
+          ...(consumedThawException
+            ? {
+              thawDecisionNote: consumedThawException.decisionNote,
+              thawGrantedByAgentId: consumedThawException.grantedByAgentId,
+              thawGrantedAt: consumedThawException.grantedAt,
+            }
+            : {}),
           ...summarizeIssueReferenceActivityDetails({
             addedReferencedIssues: referenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
             removedReferencedIssues: referenceDiff.removedReferencedIssues.map(summarizeIssueRelationForActivity),
@@ -2233,9 +2436,15 @@ export function issueRoutes(
       return;
     }
     const continuityActive = isContinuityActive(issue);
-    if (!(await requireApprovedLinkedApprovalForActiveDocumentEdit(res, issue.id, keyParsed.data, continuityActive, "Deleting"))) {
-      return;
-    }
+    const deleteGate = await requireApprovedLinkedApprovalForActiveDocumentEdit(
+      res,
+      issue.id,
+      keyParsed.data,
+      continuityActive,
+      "Deleting",
+      issue,
+    );
+    if (!deleteGate.ok) return;
     const referenceSummaryBefore = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
     const removed = await documentsSvc.deleteIssueDocument(issue.id, keyParsed.data);
     if (!removed) {
@@ -2246,6 +2455,10 @@ export function issueRoutes(
     const referenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(issue.id);
     const referenceDiff = issueReferencesSvc.diffIssueReferenceSummary(referenceSummaryBefore, referenceSummaryAfter);
     const actor = getActorInfo(req);
+    let consumedThawException: Awaited<ReturnType<typeof continuitySvc.consumeDocFreezeException>> = null;
+    if (deleteGate.thawPath === "executive_thaw" && deleteGate.thawExceptionKey) {
+      consumedThawException = await continuitySvc.consumeDocFreezeException(issue.id, deleteGate.thawExceptionKey);
+    }
     await logActivity(db, {
       companyId: issue.companyId,
       actorType: actor.actorType,
@@ -2259,6 +2472,14 @@ export function issueRoutes(
         key: removed.key,
         documentId: removed.id,
         title: removed.title,
+        ...(deleteGate.thawPath ? { thawPath: deleteGate.thawPath } : {}),
+        ...(consumedThawException
+          ? {
+            thawDecisionNote: consumedThawException.decisionNote,
+            thawGrantedByAgentId: consumedThawException.grantedByAgentId,
+            thawGrantedAt: consumedThawException.grantedAt,
+          }
+          : {}),
         ...summarizeIssueReferenceActivityDetails({
           addedReferencedIssues: referenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
           removedReferencedIssues: referenceDiff.removedReferencedIssues.map(summarizeIssueRelationForActivity),
