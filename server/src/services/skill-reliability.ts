@@ -8,6 +8,7 @@ import {
   documents,
   issueDocuments,
   issues,
+  projectWorkspaces,
   sharedSkillProposals,
   sharedSkills,
 } from "@paperclipai/db";
@@ -126,10 +127,54 @@ function normalizeSkillSummary(skill: CompanySkillDetail) {
   };
 }
 
-async function loadPromptfooCaseIds() {
-  const testsDir = path.resolve(process.cwd(), "evals/promptfoo/tests");
-  const entries = await fs.readdir(testsDir, { withFileTypes: true }).catch(() => []);
+const PROMPTFOO_TESTS_SUBPATH = "evals/promptfoo/tests";
+const ARCHITECTURE_SCENARIOS_SUBPATH = "evals/architecture/scenarios.ts";
+
+async function listCompanyWorkspaceCwds(db: Db, companyId: string): Promise<string[]> {
+  const rows = await db
+    .select({ cwd: projectWorkspaces.cwd })
+    .from(projectWorkspaces)
+    .where(eq(projectWorkspaces.companyId, companyId))
+    .orderBy(desc(projectWorkspaces.isPrimary), asc(projectWorkspaces.createdAt));
+  const seen = new Set<string>();
+  const cwds: string[] = [];
+  for (const row of rows) {
+    const cwd = row.cwd?.trim();
+    if (!cwd || seen.has(cwd)) continue;
+    seen.add(cwd);
+    cwds.push(cwd);
+  }
+  return cwds;
+}
+
+export async function resolveEvalRoot(candidates: readonly string[]): Promise<string | null> {
+  const seen = new Set<string>();
+  const ordered = [...candidates, process.cwd()];
+  for (const candidate of ordered) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    const testsDir = path.resolve(candidate, PROMPTFOO_TESTS_SUBPATH);
+    const scenariosPath = path.resolve(candidate, ARCHITECTURE_SCENARIOS_SUBPATH);
+    const testsExists = await fs
+      .stat(testsDir)
+      .then((stat) => stat.isDirectory())
+      .catch(() => false);
+    const scenariosExists = await fs
+      .stat(scenariosPath)
+      .then((stat) => stat.isFile())
+      .catch(() => false);
+    if (testsExists || scenariosExists) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+export async function loadPromptfooCaseIds(evalRoot: string | null): Promise<Set<string>> {
   const ids = new Set<string>();
+  if (!evalRoot) return ids;
+  const testsDir = path.resolve(evalRoot, PROMPTFOO_TESTS_SUBPATH);
+  const entries = await fs.readdir(testsDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".yaml")) continue;
     const content = await fs.readFile(path.join(testsDir, entry.name), "utf8").catch(() => "");
@@ -141,10 +186,11 @@ async function loadPromptfooCaseIds() {
   return ids;
 }
 
-async function loadArchitectureScenarioIds() {
-  const scenariosPath = path.resolve(process.cwd(), "evals/architecture/scenarios.ts");
-  const content = await fs.readFile(scenariosPath, "utf8").catch(() => "");
+export async function loadArchitectureScenarioIds(evalRoot: string | null): Promise<Set<string>> {
   const ids = new Set<string>();
+  if (!evalRoot) return ids;
+  const scenariosPath = path.resolve(evalRoot, ARCHITECTURE_SCENARIOS_SUBPATH);
+  const content = await fs.readFile(scenariosPath, "utf8").catch(() => "");
   const matches = content.matchAll(/id:\s*"([^"]+)"/g);
   for (const match of matches) {
     if (match[1]) ids.add(match[1].trim());
@@ -299,8 +345,10 @@ export function skillReliabilityService(db: Db) {
 
   async function buildAudit(companyId: string, skillId?: string): Promise<CompanySkillReliabilityAudit> {
     const details = await readBaseDetails(companyId, skillId);
-    const promptfooIds = await loadPromptfooCaseIds();
-    const architectureIds = await loadArchitectureScenarioIds();
+    const workspaceCwds = await listCompanyWorkspaceCwds(db, companyId);
+    const evalRoot = await resolveEvalRoot(workspaceCwds);
+    const promptfooIds = await loadPromptfooCaseIds(evalRoot);
+    const architectureIds = await loadArchitectureScenarioIds(evalRoot);
     const hardeningIssues = await readLinkedHardeningIssues(db, companyId, details.map((skill) => skill.key));
     const proposalBySharedSkill = await readLinkedProposals(
       db,
