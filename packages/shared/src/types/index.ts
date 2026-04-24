@@ -204,6 +204,15 @@ export type {
   MemoryMigrationResult,
 } from "./memory.js";
 export type {
+  ProductivityWindow,
+  ProductivityHealthStatus,
+  ProductivityTotals,
+  ProductivityRatios,
+  LowYieldRunSummary,
+  AgentProductivitySummary,
+  ProductivitySummary,
+} from "./productivity.js";
+export type {
   SharedServiceEngagement,
   SharedServiceEngagementAssignment,
   SharedServiceEngagementCreateRequest,

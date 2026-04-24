@@ -27,6 +27,7 @@ import { Activity } from "./pages/Activity";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
 import { CompanyMemory } from "./pages/CompanyMemory";
+import { CompanyProductivity } from "./pages/CompanyProductivity";
 import { CompanySettingsDocs } from "./pages/CompanySettingsDocs";
 import { CompanyAccess } from "./pages/CompanyAccess";
 import { CompanyInvites } from "./pages/CompanyInvites";
@@ -140,6 +141,7 @@ function boardRoutes() {
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
       <Route path="company/memory" element={<CompanyMemory />} />
+      <Route path="company/productivity" element={<CompanyProductivity />} />
       <Route path="company/settings/docs" element={<CompanySettingsDocs />} />
       <Route path="company/settings/access" element={<CompanyAccess />} />
       <Route path="company/settings/invites" element={<CompanyInvites />} />

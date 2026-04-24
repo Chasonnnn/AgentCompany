@@ -1526,7 +1526,7 @@ describe("codex execute", () => {
           cwd: workspace,
           search: true,
           fastMode: true,
-          model: "gpt-5.4",
+          model: "gpt-5.5",
           env: {
             PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
           },

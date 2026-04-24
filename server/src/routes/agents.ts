@@ -61,6 +61,7 @@ import {
   workspaceOperationService,
 } from "../services/index.js";
 import { memoryService } from "../services/memory.js";
+import { productivityService } from "../services/productivity.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
@@ -115,6 +116,7 @@ type AgentRouteDeps = {
   secretService: ReturnType<typeof secretService>;
   agentInstructionsService: ReturnType<typeof agentInstructionsService>;
   memoryService: ReturnType<typeof memoryService>;
+  productivityService: ReturnType<typeof productivityService>;
   workspaceOperationService: ReturnType<typeof workspaceOperationService>;
   instanceSettingsService: ReturnType<typeof instanceSettingsService>;
 };
@@ -196,6 +198,7 @@ export function agentRoutes(
   const instructions =
     opts?.services?.agentInstructionsService ?? agentInstructionsService();
   const memory = opts?.services?.memoryService ?? memoryService();
+  const productivity = opts?.services?.productivityService ?? productivityService(db);
   const skillSync = opts?.services?.agentSkillService ?? agentSkillService(db);
   const workspaceOperations =
     opts?.services?.workspaceOperationService ?? workspaceOperationService(db);
@@ -509,6 +512,10 @@ export function agentRoutes(
   function readProjectPlacement(value: unknown) {
     const parsed = agentProjectPlacementInputSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
+  }
+
+  function parseProductivityWindow(value: unknown) {
+    return value === "30d" || value === "all" ? value : "7d";
   }
 
   function placementActorFromRequest(req: Request) {
@@ -2429,6 +2436,23 @@ export function agentRoutes(
     }
     await assertCanReadAgent(req, existing);
     res.json(await memory.getAgentMemory(existing));
+  });
+
+  router.get("/agents/:id/productivity", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertBoard(req);
+    assertCompanyAccess(req, existing.companyId);
+    const summary = await productivity.agentSummary(existing.id, { window: parseProductivityWindow(req.query.window) });
+    if (!summary) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    res.json(summary);
   });
 
   router.get("/agents/:id/memory/file", async (req, res) => {

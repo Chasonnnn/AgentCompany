@@ -1497,6 +1497,11 @@ export function renderPaperclipWakePrompt(
     return lines.join("\n");
   }
 
+  const maxInlineComments = resumedSession ? 1 : 3;
+  const inlineComments = normalized.comments.slice(-maxInlineComments);
+  const omittedInlineCommentCount = Math.max(0, normalized.comments.length - inlineComments.length);
+  const includeSharedSkillDetails = normalized.reason === "shared_skill_review_requested";
+
   const lines = resumedSession
       ? [
         "## Paperclip Resume Delta",
@@ -1504,7 +1509,7 @@ export function renderPaperclipWakePrompt(
         "You are resuming an existing Paperclip session.",
         "This heartbeat is scoped to the issue below. Do not switch to another issue until you have handled this wake.",
         "Focus on the new wake delta below and continue the current task without restating the full heartbeat boilerplate.",
-        "Fetch the API thread only when `fallbackFetchNeeded` is true or you need broader history than this batch.",
+        "Do not replay the full issue thread unless `fallbackFetchNeeded` is true or this delta is insufficient.",
         "",
         `- reason: ${normalized.reason ?? "unknown"}`,
         `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
@@ -1519,7 +1524,7 @@ export function renderPaperclipWakePrompt(
         "This heartbeat is scoped to the issue below. Do not switch to another issue until you have handled this wake.",
         "Before generic repo exploration or boilerplate heartbeat updates, acknowledge the latest comment and explain how it changes your next action.",
         "Use this inline wake data first before refetching the issue thread.",
-        "Only fetch the API thread when `fallbackFetchNeeded` is true or you need broader history than this batch.",
+        "Only fetch the API thread when `fallbackFetchNeeded` is true or you need broader history than this small delta.",
         "",
         `- reason: ${normalized.reason ?? "unknown"}`,
         `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
@@ -1571,10 +1576,10 @@ export function renderPaperclipWakePrompt(
       lines.push(`- active tree hold: ${hold.holdId ?? "unknown"}${hold.rootIssueId ? ` rooted at ${hold.rootIssueId}` : ""}${hold.mode ? ` (${hold.mode})` : ""}`);
     }
   }
-  if (normalized.missingCount > 0) {
-    lines.push(`- omitted comments: ${normalized.missingCount}`);
+  if (normalized.missingCount > 0 || omittedInlineCommentCount > 0) {
+    lines.push(`- omitted comments: ${normalized.missingCount + omittedInlineCommentCount}`);
   }
-  if (normalized.sharedSkills.length > 0) {
+  if (includeSharedSkillDetails && normalized.sharedSkills.length > 0) {
     lines.push(`- shared skills in runtime: ${normalized.sharedSkills.length}`);
   }
 
@@ -1598,7 +1603,7 @@ export function renderPaperclipWakePrompt(
     );
   }
 
-  if (normalized.sharedSkills.length > 0) {
+  if (includeSharedSkillDetails && normalized.sharedSkills.length > 0) {
     lines.push("", "Shared skill mirror context:");
     for (const skill of normalized.sharedSkills) {
       lines.push(
@@ -1772,11 +1777,11 @@ export function renderPaperclipWakePrompt(
     }
   }
 
-  if (normalized.comments.length > 0) {
-    lines.push("New comments in order:");
+  if (inlineComments.length > 0) {
+    lines.push(resumedSession ? "Latest wake comment:" : "New comments in order:");
   }
 
-  for (const [index, comment] of normalized.comments.entries()) {
+  for (const [index, comment] of inlineComments.entries()) {
     const authorLabel = comment.authorId
       ? `${comment.authorType ?? "unknown"} ${comment.authorId}`
       : comment.authorType ?? "unknown";

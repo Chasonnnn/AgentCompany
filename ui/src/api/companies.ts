@@ -11,6 +11,7 @@ import type {
   CompanyPortabilityImportResult,
   CompanyPortabilityPreviewRequest,
   CompanyPortabilityPreviewResult,
+  ProductivitySummary,
   TeamDocument,
   TeamDocumentRevision,
   TeamDocumentSummary,
@@ -51,6 +52,8 @@ export const companiesApi = {
   updateBranding: (companyId: string, data: UpdateCompanyBranding) =>
     api.patch<Company>(`/companies/${companyId}/branding`, data),
   memory: (companyId: string) => api.get<CompanyMemoryOverview>(`/companies/${companyId}/memory`),
+  productivity: (companyId: string, window: "7d" | "30d" | "all" = "7d") =>
+    api.get<ProductivitySummary>(`/companies/${companyId}/productivity?window=${encodeURIComponent(window)}`),
   memoryFile: (companyId: string, relativePath: string) =>
     api.get<MemoryFileDetail>(`/companies/${companyId}/memory/file?path=${encodeURIComponent(relativePath)}`),
   saveMemoryFile: (companyId: string, data: { path: string; content: string }) =>

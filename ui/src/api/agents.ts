@@ -10,6 +10,7 @@ import type {
   AgentInstructionsBundle,
   AgentInstructionsFileDetail,
   AgentMemoryOverview,
+  AgentProductivitySummary,
   MemoryFileDetail,
   MemoryMigrationResult,
   AgentSkillSnapshot,
@@ -173,6 +174,10 @@ export const agentsApi = {
     api.get<AgentInstructionsBundle>(agentPath(id, companyId, "/instructions-bundle")),
   memory: (id: string, companyId?: string) =>
     api.get<AgentMemoryOverview>(agentPath(id, companyId, "/memory")),
+  productivity: (id: string, companyId?: string, window: "7d" | "30d" | "all" = "7d") =>
+    api.get<AgentProductivitySummary>(
+      agentPath(id, companyId, `/productivity?window=${encodeURIComponent(window)}`),
+    ),
   memoryFile: (id: string, relativePath: string, companyId?: string) =>
     api.get<MemoryFileDetail>(
       agentPath(id, companyId, `/memory/file?path=${encodeURIComponent(relativePath)}`),

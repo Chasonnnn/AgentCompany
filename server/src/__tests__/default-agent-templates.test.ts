@@ -15,6 +15,7 @@ describe("loadDefaultAgentTemplatePack", () => {
         "frontend-ui-continuity-owner.md",
         "infra-runtime-continuity-owner.md",
         "audit-reviewer.md",
+        "productivity-monitor.md",
         "research-specialist.md",
         "consulting-specialist.md",
         "growth-specialist.md",
@@ -23,5 +24,6 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(pack.files["chief-of-staff.md"]).toContain("Chief of Staff");
     expect(pack.files["technical-project-lead.md"]).toContain("Project Lead");
     expect(pack.files["audit-reviewer.md"]).toContain("inactive until engaged");
+    expect(pack.files["productivity-monitor.md"]).toContain("advisory-only");
   });
 });

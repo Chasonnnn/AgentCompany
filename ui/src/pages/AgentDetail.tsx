@@ -37,6 +37,7 @@ import { CopyText } from "../components/CopyText";
 import { EntityRow } from "../components/EntityRow";
 import { Identity } from "../components/Identity";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { LowYieldRunList, ProductivityMetricGrid } from "../components/ProductivitySummaryPanel";
 import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
@@ -391,11 +392,12 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "memory" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "instructions" | "memory" | "productivity" | "configuration" | "skills" | "runs" | "budget";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "memory") return "memory";
+  if (value === "productivity") return "productivity";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
   if (value === "budget") return "budget";
@@ -911,6 +913,8 @@ export function AgentDetail() {
         ? "instructions"
         : activeView === "memory"
           ? "memory"
+        : activeView === "productivity"
+          ? "productivity"
         : activeView === "configuration"
           ? "configuration"
           : activeView === "skills"
@@ -1036,6 +1040,8 @@ export function AgentDetail() {
         crumbs.push({ label: "Instructions" });
       } else if (activeView === "memory") {
         crumbs.push({ label: "Memory" });
+      } else if (activeView === "productivity") {
+        crumbs.push({ label: "Productivity" });
       } else if (activeView === "configuration") {
         crumbs.push({ label: "Configuration" });
       // } else if (activeView === "skills") { // TODO: bring back later
@@ -1181,6 +1187,7 @@ export function AgentDetail() {
               { value: "dashboard", label: "Dashboard" },
               { value: "instructions", label: "Instructions" },
               { value: "memory", label: "Memory" },
+              { value: "productivity", label: "Productivity" },
               { value: "skills", label: "Skills" },
               { value: "configuration", label: "Configuration" },
               { value: "runs", label: "Runs" },
@@ -1280,6 +1287,13 @@ export function AgentDetail() {
 
       {activeView === "memory" && (
         <AgentMemoryTab
+          agent={agent}
+          companyId={resolvedCompanyId ?? undefined}
+        />
+      )}
+
+      {activeView === "productivity" && (
+        <AgentProductivityTab
           agent={agent}
           companyId={resolvedCompanyId ?? undefined}
         />
@@ -1840,6 +1854,75 @@ function ConfigurationTab({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---- Productivity Tab ---- */
+
+function AgentProductivityTab({
+  agent,
+  companyId,
+}: {
+  agent: Agent;
+  companyId?: string;
+}) {
+  const [windowKey, setWindowKey] = useState<"7d" | "30d" | "all">("7d");
+  const productivityQuery = useQuery({
+    queryKey: queryKeys.agents.productivity(agent.id, windowKey),
+    queryFn: () => agentsApi.productivity(agent.id, companyId, windowKey),
+    enabled: Boolean(agent.id),
+  });
+
+  if (productivityQuery.isLoading && !productivityQuery.data) return <PromptsTabSkeleton />;
+  const summary = productivityQuery.data;
+  if (!summary) return <p className="text-sm text-muted-foreground">No productivity data is available for this agent.</p>;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-semibold">Productivity</h3>
+          <p className="text-sm text-muted-foreground">
+            Read-only rollup of useful actions, low-yield runs, token ratios, and continuation health.
+          </p>
+        </div>
+        <div className="flex gap-1 rounded border border-border p-1">
+          {(["7d", "30d", "all"] as const).map((option) => (
+            <Button
+              key={option}
+              type="button"
+              size="sm"
+              variant={windowKey === option ? "default" : "ghost"}
+              onClick={() => setWindowKey(option)}
+            >
+              {option === "7d" ? "7 days" : option === "30d" ? "30 days" : "All"}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <ProductivityMetricGrid totals={summary.totals} ratios={summary.ratios} />
+
+      <section className="grid gap-3 md:grid-cols-3">
+        <div className="border border-border p-4">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">Completed issues</div>
+          <div className="mt-2 text-2xl font-semibold tabular-nums">{summary.totals.completedIssueCount}</div>
+        </div>
+        <div className="border border-border p-4">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">Plan-only runs</div>
+          <div className="mt-2 text-2xl font-semibold tabular-nums">{summary.totals.planOnlyRunCount}</div>
+        </div>
+        <div className="border border-border p-4">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">Empty runs</div>
+          <div className="mt-2 text-2xl font-semibold tabular-nums">{summary.totals.emptyResponseRunCount}</div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h4 className="text-sm font-medium">Recent Low-Yield Runs</h4>
+        <LowYieldRunList runs={summary.lowYieldRuns} />
+      </section>
     </div>
   );
 }

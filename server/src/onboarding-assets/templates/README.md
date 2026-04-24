@@ -8,5 +8,6 @@ They are intentionally smaller than the old relay-style org packs:
 - one project lead
 - continuity owners for real execution lanes
 - specialist templates for scoped shared-service or reviewer work
+- productivity monitor template for advisory throughput and token-efficiency reports
 
 These files are imported as reusable templates, not instantiated as live agents by default.

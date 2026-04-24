@@ -32,6 +32,7 @@ import {
   logActivity,
 } from "../services/index.js";
 import { memoryService } from "../services/memory.js";
+import { productivityService } from "../services/productivity.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { agentHasCreatePermission } from "../services/agent-permissions.js";
@@ -47,6 +48,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   const budgets = budgetService(db);
   const documents = documentService(db);
   const feedback = feedbackService(db);
+  const productivity = productivityService(db);
   const memory = memoryService();
 
   function parseBooleanQuery(value: unknown) {
@@ -60,6 +62,10 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       throw badRequest(`Invalid ${field} query value`);
     }
     return parsed;
+  }
+
+  function parseProductivityWindow(value: unknown) {
+    return value === "30d" || value === "all" ? value : "7d";
   }
 
   async function assertCanUpdateBranding(req: Request, companyId: string) {
@@ -158,6 +164,18 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       return;
     }
     res.json(await memory.getCompanyMemory(companyId));
+  });
+
+  router.get("/:companyId/productivity", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const company = await svc.getById(companyId);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    res.json(await productivity.companySummary(companyId, { window: parseProductivityWindow(req.query.window) }));
   });
 
   router.get("/:companyId/memory/file", async (req, res) => {

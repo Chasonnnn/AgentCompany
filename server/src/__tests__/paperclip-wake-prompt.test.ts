@@ -233,4 +233,66 @@ describe("Paperclip room wake prompts", () => {
     expect(prompt).toContain("The board requested revisions on your plan approval.");
     expect(prompt).toContain("revise the plan document");
   });
+
+  it("keeps resumed issue wakes to the latest delta by default", () => {
+    const payload = {
+      reason: "issue_commented",
+      issue: {
+        id: "issue-1",
+        identifier: "AIW-12",
+        title: "Audit the architecture",
+        status: "in_progress",
+        priority: "high",
+      },
+      mode: "execution",
+      continuityStatus: "executing",
+      openDecisionQuestionCount: 0,
+      blockingDecisionQuestionCount: 0,
+      checkedOutByHarness: true,
+      commentIds: ["comment-1", "comment-2"],
+      latestCommentId: "comment-2",
+      comments: [
+        {
+          id: "comment-1",
+          body: "Older context that should not be replayed.",
+          createdAt: "2026-04-24T10:00:00.000Z",
+          author: { type: "user", id: "board" },
+        },
+        {
+          id: "comment-2",
+          body: "Latest requested change.",
+          createdAt: "2026-04-24T10:05:00.000Z",
+          author: { type: "user", id: "board" },
+        },
+      ],
+      requestedCount: 2,
+      includedCount: 2,
+      missingCount: 0,
+      fallbackFetchNeeded: false,
+      sharedSkills: [
+        {
+          sharedSkillId: "skill-1",
+          key: "paperclip",
+          name: "Paperclip",
+          mirrorState: "synced",
+          sourceDriftState: "clean",
+          proposalAllowed: true,
+          applyAllowed: false,
+        },
+      ],
+      conferenceRoom: null,
+      conferenceRoomMessage: null,
+      conferenceRoomThread: [],
+      conferenceRoomPendingResponses: [],
+    };
+
+    const prompt = renderPaperclipWakePrompt(payload, { resumedSession: true });
+
+    expect(prompt).toContain("Paperclip Resume Delta");
+    expect(prompt).toContain("Latest wake comment:");
+    expect(prompt).toContain("Latest requested change.");
+    expect(prompt).toContain("omitted comments: 1");
+    expect(prompt).not.toContain("Older context that should not be replayed.");
+    expect(prompt).not.toContain("Shared skill mirror context:");
+  });
 });
