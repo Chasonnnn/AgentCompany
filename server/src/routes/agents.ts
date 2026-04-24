@@ -175,6 +175,8 @@ export function agentRoutes(
     "instructionsFilePath",
     "agentsMdPath",
   ] as const;
+  const MANAGED_INSTRUCTIONS_ROOT_PATTERN =
+    /[/\\]companies[/\\][0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[/\\]agents[/\\][0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[/\\]instructions(?:$|[/\\])/i;
 
   const router = Router();
   const svc = opts?.services?.agentService ?? agentService(db);
@@ -533,6 +535,24 @@ export function agentRoutes(
     return merged;
   }
 
+  function stripClonedManagedInstructionsBundleConfig(adapterConfig: Record<string, unknown>) {
+    const next = { ...adapterConfig };
+    const bundleMode = asNonEmptyString(next.instructionsBundleMode);
+    const rootPath = asNonEmptyString(next.instructionsRootPath);
+    const filePath = asNonEmptyString(next.instructionsFilePath) ?? asNonEmptyString(next.agentsMdPath);
+    const pointsAtManagedRoot =
+      (rootPath !== null && MANAGED_INSTRUCTIONS_ROOT_PATTERN.test(rootPath))
+      || (filePath !== null && MANAGED_INSTRUCTIONS_ROOT_PATTERN.test(filePath));
+    if (bundleMode !== "managed" && !pointsAtManagedRoot) {
+      return next;
+    }
+
+    for (const key of KNOWN_INSTRUCTIONS_BUNDLE_KEYS) {
+      delete next[key];
+    }
+    return next;
+  }
+
   function parseBooleanLike(value: unknown): boolean | null {
     if (typeof value === "boolean") return value;
     if (typeof value === "number") {
@@ -743,7 +763,7 @@ export function agentRoutes(
       return agent;
     }
 
-    const adapterConfig = asRecord(agent.adapterConfig) ?? {};
+    const adapterConfig = stripClonedManagedInstructionsBundleConfig(asRecord(agent.adapterConfig) ?? {});
     const hasExplicitInstructionsBundle =
       Boolean(asNonEmptyString(adapterConfig.instructionsBundleMode))
       || Boolean(asNonEmptyString(adapterConfig.instructionsRootPath))
@@ -775,7 +795,7 @@ export function agentRoutes(
           "AGENTS.md": promptTemplate,
         };
     const materialized = await instructions.materializeManagedBundle(
-      agent,
+      { ...agent, adapterConfig },
       files,
       {
         entryFile: "AGENTS.md",
@@ -1956,7 +1976,9 @@ export function agentRoutes(
         const createInput = { ...templateResolved.mergedInput };
         const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
           seedAgent.adapterType,
-          ((seedAgent.adapterConfig ?? {}) as Record<string, unknown>),
+          stripClonedManagedInstructionsBundleConfig(
+            ((seedAgent.adapterConfig ?? {}) as Record<string, unknown>),
+          ),
         );
         const mergedDesiredSkillRefs = mergeDefaultDesiredSkills(
           undefined,

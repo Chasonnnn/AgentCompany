@@ -824,6 +824,35 @@ describe("agent skill routes", () => {
   });
 
   it("creates and adopts a chief-of-staff office operator, then reparents project leads", async () => {
+    const ceoInstructionsRoot = `/tmp/company-1/agents/${ceoId}/instructions`;
+    mockAgentService.list.mockResolvedValue([
+      makeAgent("claude_local", {
+        id: ceoId,
+        name: "CEO",
+        role: "ceo",
+        archetypeKey: "ceo",
+        operatingClass: "executive",
+        reportsTo: null,
+        status: "active",
+        adapterConfig: {
+          model: "claude-opus-4-7",
+          instructionsBundleMode: "managed",
+          instructionsBundleRole: "ceo",
+          instructionsRootPath: ceoInstructionsRoot,
+          instructionsEntryFile: "AGENTS.md",
+          instructionsFilePath: `${ceoInstructionsRoot}/AGENTS.md`,
+        },
+      }),
+      makeAgent("claude_local", {
+        id: projectLeadId,
+        name: "Project Lead",
+        role: "engineer",
+        archetypeKey: "project_lead",
+        operatingClass: "project_leadership",
+        reportsTo: ceoId,
+        status: "active",
+      }),
+    ]);
     mockAgentTemplateService.resolveRevisionForInstantiation.mockResolvedValue(
       makeTemplateResolution({
         name: "Chief of Staff",
@@ -835,6 +864,7 @@ describe("agent skill routes", () => {
         archetypeKey: "chief_of_staff",
         departmentKey: "operations",
         departmentName: "Operations",
+        instructionsBody: "You are the Chief of Staff.",
       }),
     );
 
@@ -849,6 +879,28 @@ describe("agent skill routes", () => {
         role: "coo",
         archetypeKey: "chief_of_staff",
         reportsTo: ceoId,
+        adapterConfig: expect.not.objectContaining({
+          instructionsRootPath: ceoInstructionsRoot,
+          instructionsFilePath: `${ceoInstructionsRoot}/AGENTS.md`,
+        }),
+      }),
+    );
+    expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "coo",
+        adapterConfig: expect.not.objectContaining({
+          instructionsRootPath: ceoInstructionsRoot,
+          instructionsFilePath: `${ceoInstructionsRoot}/AGENTS.md`,
+        }),
+      }),
+      expect.objectContaining({
+        "AGENTS.md": "You are the Chief of Staff.",
+        "MEMORY.md": expect.any(String),
+        "HEARTBEAT.md": expect.any(String),
+      }),
+      expect.objectContaining({
+        bundleRole: "manager",
+        memoryOwnership: "agent_authored",
       }),
     );
     expect(mockAgentService.update).toHaveBeenCalledWith(projectLeadId, { reportsTo: expect.any(String) });

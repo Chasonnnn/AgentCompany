@@ -177,6 +177,12 @@ function isProtectedMemoryFile(relativePath: string) {
   return normalizeRelativeFilePath(relativePath) === "MEMORY.md";
 }
 
+function isConfiguredManagedRootMismatch(state: BundleState, managedRootPath: string) {
+  return state.mode === "managed"
+    && Boolean(state.rootPath)
+    && path.resolve(state.rootPath!) !== managedRootPath;
+}
+
 function resolveLegacyInstructionsPath(candidatePath: string, config: Record<string, unknown>): string {
   if (path.isAbsolute(candidatePath)) return candidatePath;
   const cwd = asString(config.cwd);
@@ -322,7 +328,21 @@ function deriveBundleState(agent: AgentLike): BundleState {
 async function recoverManagedBundleState(agent: AgentLike, state: BundleState): Promise<BundleState> {
   const managedRootPath = resolveManagedInstructionsRoot(agent);
   const stat = await statIfExists(managedRootPath);
-  if (!stat?.isDirectory()) return state;
+  if (!stat?.isDirectory()) {
+    if (isConfiguredManagedRootMismatch(state, managedRootPath)) {
+      return {
+        ...state,
+        mode: "managed",
+        rootPath: managedRootPath,
+        resolvedEntryPath: path.resolve(managedRootPath, state.entryFile),
+        warnings: [
+          ...state.warnings,
+          `Ignoring stale managed instructions root ${state.rootPath}; expected ${managedRootPath}.`,
+        ],
+      };
+    }
+    return state;
+  }
 
   const files = await listFilesRecursive(managedRootPath);
   if (files.length === 0) return state;
@@ -467,6 +487,9 @@ function buildPersistedBundleConfig(
 
   return applyBundleConfig(current.config, {
     mode: current.mode,
+    bundleRole: current.bundleRole,
+    rootPolicy: current.rootPolicy,
+    memoryOwnership: current.memoryOwnership,
     rootPath: current.rootPath,
     entryFile: current.entryFile,
     clearLegacyPromptTemplate: options?.clearLegacyPromptTemplate,
@@ -480,15 +503,16 @@ async function writeBundleFiles(
 ) {
   for (const [relativePath, content] of Object.entries(files)) {
     const normalizedPath = normalizeRelativeFilePath(relativePath);
+    const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
+    const existingStat = await statIfExists(absolutePath);
     if (
       isProtectedMemoryFile(normalizedPath)
       && options?.memoryOwnership === "agent_authored"
       && options?.resetMemory !== true
+      && existingStat?.isFile()
     ) {
       continue;
     }
-    const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
-    const existingStat = await statIfExists(absolutePath);
     if (existingStat?.isFile() && !options?.overwriteExisting) continue;
     await fs.mkdir(path.dirname(absolutePath), { recursive: true });
     await fs.writeFile(absolutePath, content, "utf8");
@@ -800,14 +824,16 @@ export function agentInstructionsService() {
       content,
     ] as const);
     for (const [relativePath, content] of normalizedEntries) {
+      const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
+      const existingStat = await statIfExists(absolutePath);
       if (
         isProtectedMemoryFile(relativePath)
         && (options?.memoryOwnership ?? "agent_authored") === "agent_authored"
         && options?.resetMemory !== true
+        && existingStat?.isFile()
       ) {
         continue;
       }
-      const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, content, "utf8");
     }
@@ -857,6 +883,7 @@ export function agentInstructionsService() {
         isProtectedMemoryFile(normalizedPath)
         && prepared.state.memoryOwnership === "agent_authored"
         && options?.resetMemory !== true
+        && existing?.isFile()
       ) {
         continue;
       }

@@ -358,4 +358,77 @@ describe("agent instructions service", () => {
     ]);
     expect(exported.files).toEqual({ "AGENTS.md": "# Managed Agent\n" });
   });
+
+  it("creates missing agent-authored MEMORY.md but does not overwrite an existing one", async () => {
+    const paperclipHome = await makeTempDir("paperclip-agent-instructions-memory-");
+    cleanupDirs.add(paperclipHome);
+    process.env.PAPERCLIP_HOME = paperclipHome;
+    process.env.PAPERCLIP_INSTANCE_ID = "test-instance";
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({});
+
+    const first = await svc.materializeManagedBundle(agent, {
+      "AGENTS.md": "# Agent\n",
+      "MEMORY.md": "# MEMORY.md\n\nInitial memory.\n",
+    }, {
+      memoryOwnership: "agent_authored",
+    });
+    const memoryPath = path.join(first.bundle.managedRootPath, "MEMORY.md");
+
+    await expect(fs.readFile(memoryPath, "utf8")).resolves.toBe("# MEMORY.md\n\nInitial memory.\n");
+    await fs.writeFile(memoryPath, "# MEMORY.md\n\nAgent-authored note.\n", "utf8");
+
+    await svc.materializeManagedBundle({ ...agent, adapterConfig: first.adapterConfig }, {
+      "AGENTS.md": "# Agent updated\n",
+      "MEMORY.md": "# MEMORY.md\n\nReplacement memory.\n",
+    }, {
+      memoryOwnership: "agent_authored",
+    });
+
+    await expect(fs.readFile(memoryPath, "utf8")).resolves.toBe("# MEMORY.md\n\nAgent-authored note.\n");
+  });
+
+  it("repairs defaults into the target managed root when configured metadata points at another agent", async () => {
+    const paperclipHome = await makeTempDir("paperclip-agent-instructions-rehome-");
+    cleanupDirs.add(paperclipHome);
+    process.env.PAPERCLIP_HOME = paperclipHome;
+    process.env.PAPERCLIP_INSTANCE_ID = "test-instance";
+
+    const staleRoot = path.join(
+      paperclipHome,
+      "instances",
+      "test-instance",
+      "companies",
+      "company-1",
+      "agents",
+      "other-agent",
+      "instructions",
+    );
+    await fs.mkdir(staleRoot, { recursive: true });
+    await fs.writeFile(path.join(staleRoot, "AGENTS.md"), "# Other Agent\n", "utf8");
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({
+      instructionsBundleMode: "managed",
+      instructionsRootPath: staleRoot,
+      instructionsEntryFile: "AGENTS.md",
+      instructionsFilePath: path.join(staleRoot, "AGENTS.md"),
+    });
+
+    const result = await svc.repairManagedBundleDefaults(agent, {
+      "AGENTS.md": "# Correct Agent\n",
+      "MEMORY.md": "# MEMORY.md\n\nCorrect memory.\n",
+    });
+
+    expect(result.adapterConfig).toMatchObject({
+      instructionsBundleMode: "managed",
+      instructionsRootPath: result.bundle.managedRootPath,
+      instructionsFilePath: path.join(result.bundle.managedRootPath, "AGENTS.md"),
+    });
+    expect(result.createdFiles.sort()).toEqual(["AGENTS.md", "MEMORY.md"]);
+    await expect(fs.readFile(path.join(result.bundle.managedRootPath, "AGENTS.md"), "utf8")).resolves.toBe("# Correct Agent\n");
+    await expect(fs.readFile(path.join(result.bundle.managedRootPath, "MEMORY.md"), "utf8")).resolves.toBe("# MEMORY.md\n\nCorrect memory.\n");
+    await expect(fs.readFile(path.join(staleRoot, "AGENTS.md"), "utf8")).resolves.toBe("# Other Agent\n");
+  });
 });
