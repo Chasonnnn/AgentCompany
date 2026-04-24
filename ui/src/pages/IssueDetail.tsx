@@ -87,6 +87,7 @@ import {
   Copy,
   EyeOff,
   GitBranch,
+  GitPullRequest,
   Hexagon,
   ListTree,
   MessageSquare,
@@ -1735,6 +1736,19 @@ export function IssueDetail() {
               Routine
             </Link>
           )}
+
+          {issue.pullRequestUrl ? (
+            <a
+              href={issue.pullRequestUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0 hover:bg-emerald-500/20 transition-colors"
+              title={issue.pullRequestUrl}
+            >
+              <GitPullRequest className="h-3 w-3" />
+              PR
+            </a>
+          ) : null}
 
           {issue.projectId ? (
             <Link
