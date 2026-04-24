@@ -658,22 +658,29 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   );
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
+  const codexTransientFallbackMode = asString(context.codexTransientFallbackMode, "");
+  const forceFreshSessionForTransientFallback = codexTransientFallbackMode.includes("fresh_session");
+  const forceSaferTransientInvocation = codexTransientFallbackMode.includes("safer_invocation");
   const canResumeSession =
     runtimeSessionId.length > 0 &&
-    (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
-  const sessionId = canResumeSession ? runtimeSessionId : null;
+    (executionTargetIsRemote
+      ? adapterExecutionTargetSessionMatches(runtimeRemoteExecution, executionTarget) &&
+        (runtimeSessionCwd.length === 0 || runtimeSessionCwd === effectiveExecutionCwd)
+      : runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
+  const sessionId = canResumeSession && !forceFreshSessionForTransientFallback ? runtimeSessionId : null;
   const pendingUserInput = parsePendingUserInput(runtimeSessionParams.pendingUserInput);
   const answeredDecisionQuestion = extractDecisionQuestionAnswer(context);
-  if (runtimeSessionId && !canResumeSession) {
-
+  if (runtimeSessionId && forceFreshSessionForTransientFallback) {
     await onLog(
       "stdout",
-      `[paperclip] Codex session "${runtimeSessionId}" does not match the current remote execution identity and will not be resumed in "${effectiveExecutionCwd}". Starting a fresh remote session.\n`,
+      `[paperclip] Codex transient fallback requested a fresh session instead of resuming "${runtimeSessionId}".\n`,
     );
   } else if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
-      `[paperclip] Codex session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${effectiveExecutionCwd}".\n`,
+      executionTargetIsRemote
+        ? `[paperclip] Codex session "${runtimeSessionId}" does not match the current remote execution identity and will not be resumed in "${effectiveExecutionCwd}". Starting a fresh remote session.\n`
+        : `[paperclip] Codex session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${effectiveExecutionCwd}".\n`,
     );
   }
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
@@ -741,6 +748,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   })();
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
+  const continuationSummary = parseObject(context.paperclipContinuationSummary);
+  const transientFallbackHandoffNote =
+    forceFreshSessionForTransientFallback && asString(continuationSummary.body, "").trim().length > 0
+      ? `Paperclip session handoff:\n\n${asString(continuationSummary.body, "").trim()}`
+      : "";
   const projectContextNote = renderPaperclipProjectContext(context);
   const prompt = joinPromptSections([
     promptInstructionsPrefix,
@@ -748,6 +760,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     wakePrompt,
     projectContextNote,
     sessionHandoffNote,
+    transientFallbackHandoffNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
@@ -756,7 +769,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     wakePromptChars: wakePrompt.length,
     projectContextChars: projectContextNote.length,
-    sessionHandoffChars: sessionHandoffNote.length,
+    sessionHandoffChars: sessionHandoffNote.length + transientFallbackHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
 
@@ -814,12 +827,26 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
 
   const runExecAttempt = async (resumeSessionId: string | null) => {
-    const execArgs = buildCodexExecArgs(config, { resumeSessionId });
+    const execConfig = forceSaferTransientInvocation
+      ? {
+          ...config,
+          fastMode: false,
+        }
+      : config;
+    const execArgs = buildCodexExecArgs(execConfig, { resumeSessionId });
     const args = execArgs.args;
+    const transientNotes = [
+      ...(forceSaferTransientInvocation
+        ? ["Codex transient fallback requested safer invocation settings for this retry."]
+        : []),
+      ...(forceFreshSessionForTransientFallback
+        ? ["Codex transient fallback forced a fresh session with a continuation handoff."]
+        : []),
+    ];
     const commandNotesWithFastMode =
       execArgs.fastModeIgnoredReason == null
-        ? commandNotes
-        : [...commandNotes, execArgs.fastModeIgnoredReason];
+        ? [...commandNotes, ...transientNotes]
+        : [...commandNotes, execArgs.fastModeIgnoredReason, ...transientNotes];
     if (onMeta) {
       await onMeta({
         adapterType: "codex_local",

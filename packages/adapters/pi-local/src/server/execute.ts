@@ -360,10 +360,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
   const canResumeSession =
     runtimeSessionId.length > 0 &&
-    (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
+    (executionTargetIsRemote
+      ? adapterExecutionTargetSessionMatches(runtimeRemoteExecution, executionTarget) &&
+        (runtimeSessionCwd.length === 0 || runtimeSessionCwd === effectiveExecutionCwd)
+      : runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
   const sessionPath = canResumeSession
     ? runtimeSessionId
-    : buildSessionPath(agent.id, new Date().toISOString(), sessionsDir);
+    : executionTargetIsRemote && remoteRuntimeRootDir
+      ? buildRemoteSessionPath(remoteRuntimeRootDir, agent.id, new Date().toISOString())
+      : buildSessionPath(agent.id, new Date().toISOString(), sessionsDir);
   
 
   if (runtimeSessionId && !canResumeSession) {
@@ -478,6 +483,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const buildArgs = (sessionFile: string): string[] => {
     const args: string[] = [];
+    const effectivePiSkillsDir = remoteSkillsDir ?? piSkillsDir;
 
     // Use JSON mode for structured output with print mode (non-interactive)
     args.push("--mode", "json");
@@ -494,7 +500,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     args.push("--session", sessionFile);
 
     // Add Paperclip skills directory so Pi can load the paperclip skill
-    args.push("--skill", piSkillsDir);
+    args.push("--skill", effectivePiSkillsDir);
 
 
     if (extraArgs.length > 0) args.push(...extraArgs);

@@ -285,9 +285,8 @@ describe("renderPaperclipWakePrompt", () => {
       },
     });
 
-    expect(prompt).toContain("Execution contract:");
-    expect(prompt).toContain("Start actionable work in this heartbeat");
-    expect(prompt).toContain("Use child issues for parallel or long delegated work");
+    expect(prompt).toContain("Treat this wake payload as the highest-priority change");
+    expect(prompt).toContain("issue: PAP-1580 Update prompts");
   });
 });
 

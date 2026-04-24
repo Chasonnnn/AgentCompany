@@ -2623,7 +2623,7 @@ export function companySkillService(db: Db) {
   async function upsertImportedSkills(companyId: string, imported: ImportedSkill[]): Promise<CompanySkill[]> {
     const out: CompanySkill[] = [];
     const existingSkills = await db
-      .select()
+      .select(selectCompanySkillColumns())
       .from(companySkills)
       .where(eq(companySkills.companyId, companyId))
       .orderBy(asc(companySkills.name), asc(companySkills.key))
@@ -2763,7 +2763,7 @@ export function companySkillService(db: Db) {
 
   async function deleteSkill(companyId: string, skillId: string): Promise<CompanySkill | null> {
     const row = await db
-      .select()
+      .select(selectCompanySkillColumns())
       .from(companySkills)
       .where(and(eq(companySkills.id, skillId), eq(companySkills.companyId, companyId)))
       .then((rows) => rows[0] ?? null);

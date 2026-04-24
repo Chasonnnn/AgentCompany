@@ -256,17 +256,30 @@ function handleMessage(message) {
 }
 
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  while (true) {
-    const newlineIndex = buffer.indexOf("\\n");
-    if (newlineIndex < 0) break;
-    const line = buffer.slice(0, newlineIndex).trim();
-    buffer = buffer.slice(newlineIndex + 1);
-    if (!line) continue;
-    handleMessage(JSON.parse(line));
-  }
-});
+if (payload.argv[0] === "exec") {
+  process.stdin.on("data", (chunk) => {
+    payload.prompt += chunk;
+  });
+  process.stdin.on("end", () => {
+    payload.prompts.push(payload.prompt);
+    writeCapture();
+    send({ type: "thread.started", thread_id: threadId });
+    send({ type: "item.completed", item: { type: "agent_message", text: "hello" } });
+    send({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } });
+  });
+} else {
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    while (true) {
+      const newlineIndex = buffer.indexOf("\\n");
+      if (newlineIndex < 0) break;
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (!line) continue;
+      handleMessage(JSON.parse(line));
+    }
+  });
+}
 
 writeCapture();
 `;
@@ -679,6 +692,7 @@ describe("codex execute", () => {
 
     const previousHome = process.env.HOME;
     process.env.HOME = root;
+    process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT = "exec";
 
     try {
       const result = await execute({
@@ -729,6 +743,7 @@ describe("codex execute", () => {
 
     const previousHome = process.env.HOME;
     process.env.HOME = root;
+    process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT = "exec";
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 3, 22, 22, 29, 0));
 
@@ -789,6 +804,7 @@ describe("codex execute", () => {
 
     const previousHome = process.env.HOME;
     process.env.HOME = root;
+    process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT = "exec";
 
     let commandNotes: string[] = [];
     try {
