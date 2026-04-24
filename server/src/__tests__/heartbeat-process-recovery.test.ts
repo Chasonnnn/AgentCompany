@@ -401,7 +401,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.status).toBe("failed");
 
-
     const issue = await db
       .select()
       .from(issues)
@@ -409,6 +408,54 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBeNull();
     expect(issue?.checkoutRunId).toBe(runId);
+  });
+
+  it("schedules a bounded retry for codex transient upstream failures instead of blocking the issue immediately", async () => {
+    mockAdapterExecute.mockResolvedValueOnce({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorCode: "adapter_failed",
+      errorFamily: "transient_upstream",
+      errorMessage:
+        "Error running remote compact task: We're currently experiencing high demand, which may cause temporary errors.",
+      provider: "openai",
+      model: "gpt-5.4",
+      resultJson: {
+        errorFamily: "transient_upstream",
+      },
+    });
+
+    const { agentId, runId, issueId } = await seedQueuedIssueRunFixture();
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForRunToSettle(heartbeat, runId);
+
+    const runs = await waitForValue(async () => {
+      const rows = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+      return rows.length >= 2 ? rows : null;
+    });
+    expect(runs).toHaveLength(2);
+
+    const failedRun = runs?.find((row) => row.id === runId);
+    const retryRun = runs?.find((row) => row.id !== runId);
+    expect(failedRun?.status).toBe("failed");
+    expect(failedRun?.errorCode).toBe("adapter_failed");
+    expect((failedRun?.resultJson as Record<string, unknown> | null)?.errorFamily).toBe("transient_upstream");
+    expect(retryRun?.status).toBe("scheduled_retry");
+    expect(retryRun?.scheduledRetryReason).toBe("transient_failure");
+    expect((retryRun?.contextSnapshot as Record<string, unknown> | null)?.codexTransientFallbackMode).toBe("same_session");
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBe(retryRun?.id ?? null);
   });
 
   it("clears the detached warning when the run reports activity again", async () => {

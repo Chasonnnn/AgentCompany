@@ -66,6 +66,7 @@ import {
   findActiveServerAdapter,
   findServerAdapter,
   listAdapterModels,
+  refreshAdapterModels,
   requireServerAdapter,
 } from "../adapters/index.js";
 import { redactEventPayload } from "../redaction.js";
@@ -1064,7 +1065,12 @@ export function agentRoutes(
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const type = assertKnownAdapterType(req.params.type as string);
-    const models = await listAdapterModels(type);
+    const refresh = typeof req.query.refresh === "string"
+      ? ["1", "true", "yes"].includes(req.query.refresh.toLowerCase())
+      : false;
+    const models = refresh
+      ? await refreshAdapterModels(type)
+      : await listAdapterModels(type);
     res.json(models);
   });
 

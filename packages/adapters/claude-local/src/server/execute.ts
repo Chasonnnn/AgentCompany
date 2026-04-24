@@ -46,8 +46,10 @@ import {
   parseClaudeStreamJson,
   describeClaudeFailure,
   detectClaudeLoginRequired,
+  extractClaudeRetryNotBefore,
   isClaudeMaxTurnsResult,
   isClaudeRecoverableResumeFilesystemError,
+  isClaudeTransientUpstreamError,
   isClaudeUnknownSessionError,
 } from "./parse.js";
 import { listClaudeSharedHostSkillEntries, resolveClaudeDesiredSkillNames } from "./skills.js";
@@ -689,16 +691,48 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     );
 
     if (!hasStructuredOutput) {
+      const fallbackErrorMessage = parseFallbackErrorMessage(proc);
+      const transientUpstream =
+        !loginMeta.requiresLogin &&
+        (proc.exitCode ?? 0) !== 0 &&
+        isClaudeTransientUpstreamError({
+          parsed: null,
+          stdout: proc.stdout,
+          stderr: proc.stderr,
+          errorMessage: fallbackErrorMessage,
+        });
+      const transientRetryNotBefore = transientUpstream
+        ? extractClaudeRetryNotBefore({
+            parsed: null,
+            stdout: proc.stdout,
+            stderr: proc.stderr,
+            errorMessage: fallbackErrorMessage,
+          })
+        : null;
+      const errorCode = loginMeta.requiresLogin
+        ? "claude_auth_required"
+        : transientUpstream
+        ? "claude_transient_upstream"
+        : null;
       return {
         exitCode: proc.exitCode,
         signal: proc.signal,
         timedOut: false,
-        errorMessage: parseFallbackErrorMessage(proc),
-        errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
+        errorMessage: fallbackErrorMessage,
+        errorCode,
+        errorFamily: transientUpstream ? "transient_upstream" : null,
+        retryNotBefore: transientRetryNotBefore ? transientRetryNotBefore.toISOString() : null,
         errorMeta,
         resultJson: {
           stdout: proc.stdout,
           stderr: proc.stderr,
+          ...(transientUpstream ? { errorFamily: "transient_upstream" } : {}),
+          ...(transientRetryNotBefore
+            ? { retryNotBefore: transientRetryNotBefore.toISOString() }
+            : {}),
+          ...(transientRetryNotBefore
+            ? { transientRetryNotBefore: transientRetryNotBefore.toISOString() }
+            : {}),
         },
         clearSession: Boolean(opts.clearSessionOnMissingSession),
       };
@@ -736,20 +770,54 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       } as Record<string, unknown>)
       : null;
     const clearSessionForMaxTurns = isClaudeMaxTurnsResult(parsed);
-    const fallbackResultJson = {
-      stdout: proc.stdout,
-      stderr: proc.stderr,
+    const parsedIsError = parsed ? asBoolean(parsed.is_error, false) : false;
+    const failed = (proc.exitCode ?? 0) !== 0 || parsedIsError;
+    const errorMessage = failed
+      ? (parsed ? describeClaudeFailure(parsed) : null) ?? parseFallbackErrorMessage(proc)
+      : null;
+    const transientUpstream =
+      failed &&
+      !loginMeta.requiresLogin &&
+      isClaudeTransientUpstreamError({
+        parsed: parsed ?? null,
+        stdout: proc.stdout,
+        stderr: proc.stderr,
+        errorMessage,
+      });
+    const transientRetryNotBefore = transientUpstream
+      ? extractClaudeRetryNotBefore({
+          parsed: parsed ?? null,
+          stdout: proc.stdout,
+          stderr: proc.stderr,
+          errorMessage,
+        })
+      : null;
+    const resolvedErrorCode = loginMeta.requiresLogin
+      ? "claude_auth_required"
+      : transientUpstream
+      ? "claude_transient_upstream"
+      : null;
+    const fallbackResultJson = parsedStream.resultJson && typeof parsedStream.resultJson === "object"
+      ? parsedStream.resultJson as Record<string, unknown>
+      : {
+          stdout: proc.stdout,
+          stderr: proc.stderr,
+        };
+    const mergedResultJson: Record<string, unknown> = {
+      ...(parsed ?? fallbackResultJson),
+      ...(transientUpstream ? { errorFamily: "transient_upstream" } : {}),
+      ...(transientRetryNotBefore ? { retryNotBefore: transientRetryNotBefore.toISOString() } : {}),
+      ...(transientRetryNotBefore ? { transientRetryNotBefore: transientRetryNotBefore.toISOString() } : {}),
     };
 
     return {
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: false,
-      errorMessage:
-        (proc.exitCode ?? 0) === 0
-          ? null
-          : (parsed ? describeClaudeFailure(parsed) : null) ?? parseFallbackErrorMessage(proc),
-      errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
+      errorMessage,
+      errorCode: resolvedErrorCode,
+      errorFamily: transientUpstream ? "transient_upstream" : null,
+      retryNotBefore: transientRetryNotBefore ? transientRetryNotBefore.toISOString() : null,
       errorMeta,
       usage,
       sessionId: resolvedSessionId,
@@ -760,7 +828,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       model: parsedStream.model || (parsed ? asString(parsed.model, model) : model),
       billingType,
       costUsd: parsedStream.costUsd ?? (parsed ? asNumber(parsed.total_cost_usd, 0) : null),
-      resultJson: parsed ?? parsedStream.resultJson ?? fallbackResultJson,
+      resultJson: mergedResultJson,
       summary: parsedStream.summary || (parsed ? asString(parsed.result, "") : ""),
       question: parsedStream.question ?? null,
       questions: parsedStream.questions ?? null,

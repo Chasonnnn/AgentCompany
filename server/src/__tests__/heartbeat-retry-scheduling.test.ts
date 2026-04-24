@@ -71,14 +71,23 @@ describeEmbeddedPostgres("heartbeat scheduled retry scheduling", () => {
     await tempDb?.cleanup();
   });
 
-  async function seedRetryFixture(input?: { scheduledRetryAttempt?: number }) {
+  async function seedRetryFixture(input?: {
+    scheduledRetryAttempt?: number;
+    errorCode?: string;
+    errorFamily?: "transient_upstream" | null;
+    retryNotBefore?: string | null;
+    resultJson?: Record<string, unknown> | null;
+    adapterType?: "codex_local" | "claude_local";
+    agentName?: string;
+    now?: Date;
+  }) {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
     const projectId = randomUUID();
     const wakeupRequestId = randomUUID();
     const runId = randomUUID();
-    const now = new Date("2026-04-22T12:00:00.000Z");
+    const now = input?.now ?? new Date("2026-04-22T12:00:00.000Z");
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 
     await db.insert(companies).values({
@@ -97,10 +106,10 @@ describeEmbeddedPostgres("heartbeat scheduled retry scheduling", () => {
     await db.insert(agents).values({
       id: agentId,
       companyId,
-      name: "RetryAgent",
+      name: input?.agentName ?? "RetryAgent",
       role: "engineer",
       status: "active",
-      adapterType: "codex_local",
+      adapterType: input?.adapterType ?? "codex_local",
       adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
@@ -141,10 +150,20 @@ describeEmbeddedPostgres("heartbeat scheduled retry scheduling", () => {
       status: "failed",
       wakeupRequestId,
       error: "process lost",
-      errorCode: "process_lost",
+      errorCode: input?.errorCode ?? "process_lost",
       finishedAt: now,
       retryOfRunId: null,
       scheduledRetryAttempt: input?.scheduledRetryAttempt ?? 0,
+      scheduledRetryReason: input?.scheduledRetryAttempt ? "transient_failure" : null,
+      resultJson: input?.resultJson ?? {
+        ...(input?.errorFamily ? { errorFamily: input.errorFamily } : {}),
+        ...(input?.retryNotBefore
+          ? {
+              retryNotBefore: input.retryNotBefore,
+              transientRetryNotBefore: input.retryNotBefore,
+            }
+          : {}),
+      },
       contextSnapshot: { issueId, taskId: issueId },
     });
 
@@ -276,5 +295,88 @@ describeEmbeddedPostgres("heartbeat scheduled retry scheduling", () => {
       .then((rows) => rows.find((row) => row.message?.startsWith("Bounded retry exhausted")) ?? null);
 
     expect(exhaustionEvent?.message).toContain("Bounded retry exhausted");
+  });
+
+  it("advances codex transient fallback stages across bounded retry attempts", async () => {
+    const fallbackModes = [
+      "same_session",
+      "safer_invocation",
+      "fresh_session",
+      "fresh_session_safer_invocation",
+    ] as const;
+
+    for (const [index, expectedMode] of fallbackModes.entries()) {
+      const now = new Date(`2026-04-20T1${index}:00:00.000Z`);
+      const { runId } = await seedRetryFixture({
+        now,
+        errorCode: "adapter_failed",
+        errorFamily: "transient_upstream",
+        scheduledRetryAttempt: index,
+      });
+      const svc = heartbeatService(db);
+
+      const scheduled = await svc.scheduleBoundedRetry(runId, {
+        now,
+        random: () => 0.5,
+      });
+
+      expect(scheduled.outcome).toBe("scheduled");
+      if (scheduled.outcome !== "scheduled") continue;
+
+      const retryRun = await db
+        .select({
+          contextSnapshot: heartbeatRuns.contextSnapshot,
+          wakeupRequestId: heartbeatRuns.wakeupRequestId,
+        })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, scheduled.run.id))
+        .then((rows) => rows[0] ?? null);
+      expect((retryRun?.contextSnapshot as Record<string, unknown> | null)?.codexTransientFallbackMode).toBe(expectedMode);
+
+      const wakeupRequest = await db
+        .select({ payload: agentWakeupRequests.payload })
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.id, retryRun?.wakeupRequestId ?? ""))
+        .then((rows) => rows[0] ?? null);
+      expect((wakeupRequest?.payload as Record<string, unknown> | null)?.codexTransientFallbackMode).toBe(expectedMode);
+
+      await db.delete(heartbeatRunEvents);
+      await db.delete(heartbeatRuns);
+      await db.delete(agentWakeupRequests);
+      await db.delete(issues);
+      await db.delete(projects);
+      await db.delete(agents);
+      await db.delete(companies);
+    }
+  });
+
+  it("honors retry-not-before timestamps when they exceed the default bounded backoff", async () => {
+    const now = new Date("2026-04-22T22:29:00.000Z");
+    const retryNotBefore = new Date("2026-04-22T23:31:00.000Z");
+    const { runId } = await seedRetryFixture({
+      now,
+      errorCode: "adapter_failed",
+      errorFamily: "transient_upstream",
+      retryNotBefore: retryNotBefore.toISOString(),
+    });
+    const svc = heartbeatService(db);
+
+    const scheduled = await svc.scheduleBoundedRetry(runId, {
+      now,
+      random: () => 0.5,
+    });
+
+    expect(scheduled.outcome).toBe("scheduled");
+    if (scheduled.outcome !== "scheduled") return;
+    expect(scheduled.dueAt.toISOString()).toBe(retryNotBefore.toISOString());
+
+    const retryRun = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, scheduled.run.id))
+      .then((rows) => rows[0] ?? null);
+    expect((retryRun?.contextSnapshot as Record<string, unknown> | null)?.transientRetryNotBefore).toBe(
+      retryNotBefore.toISOString(),
+    );
   });
 });
