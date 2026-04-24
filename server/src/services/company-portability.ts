@@ -604,7 +604,24 @@ type ImportMode = "board_full" | "agent_safe";
 type ImportBehaviorOptions = {
   mode?: ImportMode;
   sourceCompanyId?: string | null;
+  allowPlanOverride?: boolean;
 };
+
+// Mirrors `EXECUTION_APPROVAL_GATED_DOCUMENT_KEYS` in server/src/routes/issues.ts.
+// Keep in sync: these are the reserved doc keys whose post-exec writes require
+// an approved linked approval (AIW-26 / D2-1).
+const EXECUTION_APPROVAL_GATED_IMPORT_DOCUMENT_KEYS = new Set([
+  "spec",
+  "plan",
+  "runbook",
+  "test-plan",
+]);
+
+const CONTINUITY_ACTIVE_IMPORT_STATUSES = new Set([
+  "in_progress",
+  "in_review",
+  "blocked",
+]);
 
 type AgentLike = {
   id: string;
@@ -3849,6 +3866,9 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     ) {
       throw unprocessable("Safe import routes only allow create or skip actions.");
     }
+    if (mode === "agent_safe" && input.allowPlanOverride) {
+      throw unprocessable("Safe import routes do not allow allowPlanOverride; use the board import endpoint for disaster-recovery plan overrides.");
+    }
 
     const sourceManifest = plan.source.manifest;
     const warnings = [...plan.preview.warnings];
@@ -4460,15 +4480,17 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           }
           continue;
         }
+        const resolvedIssueStatus = manifestIssue.status && ISSUE_STATUSES.includes(manifestIssue.status as any)
+          ? manifestIssue.status as typeof ISSUE_STATUSES[number]
+          : "backlog";
+        const importedIssueIsContinuityActive = CONTINUITY_ACTIVE_IMPORT_STATUSES.has(resolvedIssueStatus);
         const createdIssue = await issues.create(targetCompany.id, {
           projectId,
           projectWorkspaceId,
           title: manifestIssue.title,
           description,
           assigneeAgentId,
-          status: manifestIssue.status && ISSUE_STATUSES.includes(manifestIssue.status as any)
-            ? manifestIssue.status as typeof ISSUE_STATUSES[number]
-            : "backlog",
+          status: resolvedIssueStatus,
           priority: manifestIssue.priority && ISSUE_PRIORITIES.includes(manifestIssue.priority as any)
             ? manifestIssue.priority as typeof ISSUE_PRIORITIES[number]
             : "medium",
@@ -4481,6 +4503,15 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           const documentPath = buildPortableReservedDocPath(manifestIssue.path, key);
           const markdown = readPortableTextFile(plan.source.files, documentPath);
           if (typeof markdown !== "string") continue;
+          if (
+            importedIssueIsContinuityActive &&
+            EXECUTION_APPROVAL_GATED_IMPORT_DOCUMENT_KEYS.has(key) &&
+            !input.allowPlanOverride
+          ) {
+            throw unprocessable(
+              `Importing ${key} for task ${manifestIssue.slug} during active execution requires an approved linked approval; pass allowPlanOverride: true on the import request to acknowledge the disaster-recovery override.`,
+            );
+          }
           await documents.upsertIssueDocument({
             issueId: createdIssue.id,
             key,

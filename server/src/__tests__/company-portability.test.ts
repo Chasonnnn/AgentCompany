@@ -2753,6 +2753,111 @@ describe("company portability", () => {
     }));
   });
 
+  it("rejects importing a plan doc onto a continuity-active issue without allowPlanOverride", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.create.mockResolvedValue({ id: "company-imported", name: "Imported Paperclip" });
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    projectSvc.create.mockResolvedValue({
+      id: "project-created",
+      name: "Launch",
+      urlKey: "launch",
+    });
+    issueSvc.create.mockResolvedValue({
+      id: "issue-created",
+      title: "Write rollout plan",
+    });
+
+    const files = {
+      "OPERATING_SYSTEM.md": "# OPERATING_SYSTEM.md\n",
+      "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Imported Paperclip"', "---", ""].join("\n"),
+      ".paperclip.yaml": [
+        'schema: "paperclip/v1"',
+        "tasks:",
+        "  write-rollout-plan:",
+        '    status: "in_progress"',
+        "",
+      ].join("\n"),
+      "projects/launch/PROJECT.md": ['---', 'name: "Launch"', "---", ""].join("\n"),
+      "tasks/write-rollout-plan/TASK.md": [
+        "---",
+        'name: "Write rollout plan"',
+        'project: "launch"',
+        "---",
+        "",
+        "Do the work.",
+        "",
+      ].join("\n"),
+      "tasks/write-rollout-plan/docs/plan.md": "# Smuggled plan",
+    };
+
+    await expect(
+      portability.importBundle({
+        source: { type: "inline", rootPath: "paperclip-demo", files },
+        include: { company: true, agents: false, projects: true, issues: true, skills: false },
+        target: { mode: "new_company", newCompanyName: "Imported Paperclip" },
+        collisionStrategy: "rename",
+      }, "user-1"),
+    ).rejects.toThrow(/Importing plan for task write-rollout-plan during active execution/);
+
+    expect(documentSvc.upsertIssueDocument).not.toHaveBeenCalledWith(
+      expect.objectContaining({ key: "plan" }),
+    );
+  });
+
+  it("allows importing a plan doc onto a continuity-active issue when allowPlanOverride is set", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.create.mockResolvedValue({ id: "company-imported", name: "Imported Paperclip" });
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    projectSvc.create.mockResolvedValue({
+      id: "project-created",
+      name: "Launch",
+      urlKey: "launch",
+    });
+    issueSvc.create.mockResolvedValue({
+      id: "issue-created",
+      title: "Write rollout plan",
+    });
+
+    const files = {
+      "OPERATING_SYSTEM.md": "# OPERATING_SYSTEM.md\n",
+      "COMPANY.md": ['---', 'schema: "agentcompanies/v1"', 'name: "Imported Paperclip"', "---", ""].join("\n"),
+      ".paperclip.yaml": [
+        'schema: "paperclip/v1"',
+        "tasks:",
+        "  write-rollout-plan:",
+        '    status: "in_progress"',
+        "",
+      ].join("\n"),
+      "projects/launch/PROJECT.md": ['---', 'name: "Launch"', "---", ""].join("\n"),
+      "tasks/write-rollout-plan/TASK.md": [
+        "---",
+        'name: "Write rollout plan"',
+        'project: "launch"',
+        "---",
+        "",
+        "Do the work.",
+        "",
+      ].join("\n"),
+      "tasks/write-rollout-plan/docs/plan.md": "# DR plan",
+    };
+
+    await portability.importBundle({
+      source: { type: "inline", rootPath: "paperclip-demo", files },
+      include: { company: true, agents: false, projects: true, issues: true, skills: false },
+      target: { mode: "new_company", newCompanyName: "Imported Paperclip" },
+      collisionStrategy: "rename",
+      allowPlanOverride: true,
+    }, "user-1");
+
+    expect(documentSvc.upsertIssueDocument).toHaveBeenCalledWith(expect.objectContaining({
+      issueId: "issue-created",
+      key: "plan",
+      body: "# DR plan",
+    }));
+  });
+
   it("normalizes path traversal attempts in import file keys to stay within package root", async () => {
     const portability = companyPortabilityService({} as any);
 

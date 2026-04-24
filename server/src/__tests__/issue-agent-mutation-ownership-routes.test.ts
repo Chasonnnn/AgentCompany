@@ -420,6 +420,33 @@ describe("agent issue mutation checkout ownership", () => {
     expect(mockDocumentService.upsertIssueDocument).not.toHaveBeenCalled();
   });
 
+  it("blocks plan edits when executionState is populated even if status is not in_progress", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "todo",
+        startedAt: null,
+        executionState: {
+          status: "pending",
+          currentStageId: null,
+          currentStageIndex: null,
+          currentStageType: null,
+          currentParticipant: null,
+          returnAssignee: null,
+          completedStageIds: [],
+          lastDecisionId: null,
+          lastDecisionOutcome: null,
+        },
+      }),
+    );
+    const res = await request(await createApp(ownerActor()))
+      .put(`/api/issues/${issueId}/documents/plan`)
+      .send({ format: "markdown", body: "# needs approval" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Editing plan during active execution requires an approved linked approval");
+    expect(mockDocumentService.upsertIssueDocument).not.toHaveBeenCalled();
+  });
+
   it("allows agents with the active-checkout management grant to mutate active checkouts", async () => {
     mockAccessService.hasPermission.mockImplementation(async (
       _companyId: string,
