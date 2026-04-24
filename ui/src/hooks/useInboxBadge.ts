@@ -181,8 +181,8 @@ export function useInboxBadge(companyId: string | null | undefined) {
   const mineIssues = useMemo(() => getRecentTouchedIssues(mineIssuesRaw), [mineIssuesRaw]);
 
   const { data: heartbeatRuns = [] } = useQuery({
-    queryKey: queryKeys.heartbeats(companyId!),
-    queryFn: () => heartbeatsApi.list(companyId!),
+    queryKey: queryKeys.heartbeats(companyId!, undefined, 50),
+    queryFn: () => heartbeatsApi.list(companyId!, undefined, 50),
     enabled: !!companyId,
   });
 

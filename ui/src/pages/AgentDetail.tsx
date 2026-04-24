@@ -802,6 +802,7 @@ export function AgentDetail() {
   const needsDashboardData = activeView === "dashboard";
   const needsRunData = activeView === "runs" || Boolean(urlRunId);
   const shouldLoadHeartbeats = needsDashboardData || needsRunData;
+  const heartbeatRunLimit: number | "all" = needsRunData ? "all" : 50;
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const saveConfigActionRef = useRef<(() => void) | null>(null);
@@ -835,8 +836,8 @@ export function AgentDetail() {
   });
 
   const { data: heartbeats } = useQuery({
-    queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined),
-    queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
+    queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined, heartbeatRunLimit),
+    queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined, heartbeatRunLimit),
     enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
   });
 
@@ -954,7 +955,7 @@ export function AgentDetail() {
       if (resolvedCompanyId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
         if (agent?.id) {
-          queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(resolvedCompanyId, agent.id) });
+          queryClient.invalidateQueries({ queryKey: queryKeys.heartbeatsAgentScope(resolvedCompanyId, agent.id) });
         }
       }
       if (action === "invoke" && data && typeof data === "object" && "id" in data) {
@@ -3654,7 +3655,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
     mutationFn: () => heartbeatsApi.cancel(run.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.runDetail(run.id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.companyId, run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeatsAgentScope(run.companyId, run.agentId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(run.companyId) });
       const context = asRecord(run.contextSnapshot);
       const issueId = context ? asNonEmptyString(context.issueId) : null;
@@ -3696,7 +3697,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
       return result;
     },
     onSuccess: (resumedRun) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.companyId, run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeatsAgentScope(run.companyId, run.agentId) });
       navigate(`/agents/${agentRouteId}/runs/${resumedRun.id}`);
     },
   });
@@ -3728,7 +3729,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
       return result;
     },
     onSuccess: (newRun) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.companyId, run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeatsAgentScope(run.companyId, run.agentId) });
       navigate(`/agents/${agentRouteId}/runs/${newRun.id}`);
     },
   });
