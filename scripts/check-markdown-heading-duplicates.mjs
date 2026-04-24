@@ -9,6 +9,10 @@ const DOC_FILE_NAMES = new Set(["AGENTS.md", "TOOLS.md"]);
 const SKIP_DIR_NAMES = new Set([".git", "node_modules", ".stage", "dist"]);
 const HEADING_RE = /^(#{1,2})\s+(.+?)\s*$/;
 const NUMBERED_HEADING_RE = /^(\d+(?:\.\d+)*)\.\s+/;
+const PLACEHOLDER_PATTERNS = [
+  /\byour .+ will go here\b/i,
+  /\badd notes about them as you acquire and use them\b/i,
+];
 
 function getRepoRoot() {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
@@ -76,22 +80,43 @@ function findDuplicateHeadings(filePath, repoRoot) {
   return errors;
 }
 
+function findPlaceholderText(filePath, repoRoot) {
+  const relativePath = path.relative(repoRoot, filePath) || path.basename(filePath);
+  const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
+  const errors = [];
+
+  lines.forEach((line, index) => {
+    const normalizedLine = line.trim();
+    if (normalizedLine.length === 0) return;
+
+    const matchedPattern = PLACEHOLDER_PATTERNS.find((pattern) => pattern.test(normalizedLine));
+    if (!matchedPattern) return;
+
+    errors.push(`${relativePath}:${index + 1} contains unresolved placeholder text: "${normalizedLine}"`);
+  });
+
+  return errors;
+}
+
 export function runHeadingDuplicateCheck({ repoRoot = getRepoRoot(), log = console.log, error = console.error } = {}) {
   const files = collectManagedDocs(repoRoot)
     .filter((filePath) => statSync(filePath).isFile())
     .sort((left, right) => left.localeCompare(right));
 
-  const errors = files.flatMap((filePath) => findDuplicateHeadings(filePath, repoRoot));
+  const errors = files.flatMap((filePath) => [
+    ...findDuplicateHeadings(filePath, repoRoot),
+    ...findPlaceholderText(filePath, repoRoot),
+  ]);
 
   if (errors.length > 0) {
-    error("ERROR: Duplicate H1/H2 headings found in tracked AGENTS.md/TOOLS.md files:\n");
+    error("ERROR: Managed AGENTS.md/TOOLS.md hygiene check failed:\n");
     for (const issue of errors) {
       error(`  ${issue}`);
     }
     return 1;
   }
 
-  log(`  ✓  Checked ${files.length} AGENTS.md/TOOLS.md files for duplicate H1/H2 headings.`);
+  log(`  ✓  Checked ${files.length} AGENTS.md/TOOLS.md files for duplicate H1/H2 headings and placeholders.`);
   return 0;
 }
 
