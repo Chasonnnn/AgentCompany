@@ -68,7 +68,7 @@ vi.mock("../adapters/index.ts", async () => {
   };
 });
 
-import { heartbeatService } from "../services/heartbeat.ts";
+import { heartbeatService, resetHeartbeatReaperTicksForTests } from "../services/heartbeat.ts";
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
@@ -177,6 +177,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
   afterEach(async () => {
     vi.clearAllMocks();
+    resetHeartbeatReaperTicksForTests();
     runningProcesses.clear();
     for (const child of childProcesses) {
       child.kill("SIGKILL");
@@ -232,6 +233,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     includeIssue?: boolean;
     runErrorCode?: string | null;
     runError?: string | null;
+    updatedAt?: Date;
   }) {
     const companyId = randomUUID();
     const agentId = randomUUID();
@@ -295,7 +297,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       errorCode: input?.runErrorCode ?? null,
       error: input?.runError ?? null,
       startedAt: now,
-      updatedAt: new Date("2026-03-19T00:00:00.000Z"),
+      updatedAt: input?.updatedAt ?? new Date("2026-03-19T00:00:00.000Z"),
     });
 
     if (input?.includeIssue !== false) {
@@ -497,6 +499,42 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBeNull();
     expect(issue?.checkoutRunId).toBe(runId);
+  });
+
+  it("records stale-run recovery metrics once a running run exceeds the staleness threshold", async () => {
+    const staleThresholdMs = 5 * 60 * 1000;
+    const updatedAt = new Date(Date.now() - (6 * 60 * 1000));
+    const { runId, issueId } = await seedRunFixture({
+      processPid: 999_999_999,
+      processLossRetryCount: 1,
+      updatedAt,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns({ staleThresholdMs });
+    expect(result.reaped).toBe(1);
+    expect(result.runIds).toEqual([runId]);
+    expect(result.reapedCount).toBe(1);
+    expect(result.reapedRuns).toHaveLength(1);
+    expect(result.reapedRuns[0]?.runId).toBe(runId);
+    expect(result.reapedRuns[0]?.timeSinceLockMs).toBeGreaterThanOrEqual(staleThresholdMs);
+    expect(result.timeSinceLockMs).toEqual({
+      count: 1,
+      minMs: result.reapedRuns[0]?.timeSinceLockMs ?? null,
+      p50Ms: result.reapedRuns[0]?.timeSinceLockMs ?? null,
+      p95Ms: result.reapedRuns[0]?.timeSinceLockMs ?? null,
+      maxMs: result.reapedRuns[0]?.timeSinceLockMs ?? null,
+    });
+
+    const run = await heartbeat.getRun(runId);
+    expect(run?.status).toBe("failed");
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBeNull();
   });
 
   it("schedules a bounded retry for codex transient upstream failures instead of blocking the issue immediately", async () => {

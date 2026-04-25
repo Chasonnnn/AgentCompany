@@ -11,6 +11,7 @@ import { boardMutationGuard } from "./middleware/board-mutation-guard.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "./middleware/private-hostname-guard.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { healthRoutes } from "./routes/health.js";
+import { adminRoutes } from "./routes/admin.js";
 import { companyRoutes } from "./routes/companies.js";
 import { companySkillRoutes } from "./routes/company-skills.js";
 import { sharedSkillRoutes } from "./routes/shared-skills.js";
@@ -212,6 +213,7 @@ export async function createApp(
       companyDeletionEnabled: opts.companyDeletionEnabled,
     }),
   );
+  api.use(adminRoutes());
   api.use("/companies", companyRoutes(db, opts.storageService));
   api.use(companySkillRoutes(db));
   api.use(sharedSkillRoutes(db));
