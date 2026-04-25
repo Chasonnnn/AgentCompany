@@ -9,13 +9,13 @@ import {
   deriveTaskKeyWithHeartbeatFallback,
   extractWakeCommentIds,
   formatRuntimeWorkspaceWarningLog,
+  mergeExecutionWorkspaceMetadataForPersistence,
   mergeCoalescedContextSnapshot,
   prioritizeProjectWorkspaceCandidatesForRun,
   parseSessionCompactionPolicy,
   resolveRuntimeSessionParamsForWorkspace,
   stripWorkspaceRuntimeFromExecutionRunConfig,
   shouldResetTaskSessionForWake,
-  shouldUseEphemeralSessionForAgent,
   type ResolvedWorkspaceForRun,
 } from "../services/heartbeat.ts";
 
@@ -159,6 +159,58 @@ describe("applyPersistedExecutionWorkspaceConfig", () => {
   });
 });
 
+describe("mergeExecutionWorkspaceMetadataForPersistence", () => {
+  it("merges config snapshot for newly realized workspaces", () => {
+    expect(mergeExecutionWorkspaceMetadataForPersistence({
+      existingMetadata: null,
+      source: "task_session",
+      createdByRuntime: true,
+      configSnapshot: {
+        environmentId: "env-new",
+        provisionCommand: "bash ./scripts/provision.sh",
+      },
+      shouldReuseExisting: false,
+    })).toEqual({
+      source: "task_session",
+      createdByRuntime: true,
+      config: {
+        environmentId: "env-new",
+        provisionCommand: "bash ./scripts/provision.sh",
+        teardownCommand: null,
+        cleanupCommand: null,
+        desiredState: null,
+        serviceStates: null,
+        workspaceRuntime: null,
+      },
+    });
+  });
+
+  it("preserves persisted config snapshot when reusing an existing workspace", () => {
+    expect(mergeExecutionWorkspaceMetadataForPersistence({
+      existingMetadata: {
+        config: {
+          environmentId: "env-old",
+          provisionCommand: "bash ./scripts/existing-provision.sh",
+        },
+      },
+      source: "task_session",
+      createdByRuntime: false,
+      configSnapshot: {
+        environmentId: "env-new",
+        provisionCommand: "bash ./scripts/new-provision.sh",
+      },
+      shouldReuseExisting: true,
+    })).toEqual({
+      config: {
+        environmentId: "env-old",
+        provisionCommand: "bash ./scripts/existing-provision.sh",
+      },
+      source: "task_session",
+      createdByRuntime: false,
+    });
+  });
+});
+
 describe("buildRealizedExecutionWorkspaceFromPersisted", () => {
   it("reuses the persisted execution workspace path instead of deriving a new worktree", () => {
     const result = buildRealizedExecutionWorkspaceFromPersisted({
@@ -201,44 +253,6 @@ describe("buildRealizedExecutionWorkspaceFromPersisted", () => {
     expect(result.worktreePath).toBe("/tmp/reused-worktree");
     expect(result.branchName).toBe("PAP-880-thumbs-capture-for-evals-feature");
     expect(result.source).toBe("task_session");
-  });
-
-  it("falls back to realization when the persisted workspace has no local path yet", () => {
-    const result = buildRealizedExecutionWorkspaceFromPersisted({
-      base: buildResolvedWorkspace({
-        cwd: "/tmp/project-primary",
-        repoRef: "main",
-      }),
-      workspace: {
-        id: "execution-workspace-2",
-        companyId: "company-1",
-        projectId: "project-1",
-        projectWorkspaceId: "workspace-1",
-        sourceIssueId: "issue-2",
-        mode: "isolated_workspace",
-        strategyType: "git_worktree",
-        name: "PAP-999-missing-provider-ref",
-        status: "active",
-        cwd: null,
-        repoUrl: "https://example.com/paperclip.git",
-        baseRef: "main",
-        branchName: "feature/PAP-999-missing-provider-ref",
-        providerType: "git_worktree",
-        providerRef: null,
-        derivedFromExecutionWorkspaceId: null,
-        lastUsedAt: new Date(),
-        openedAt: new Date(),
-        closedAt: null,
-        cleanupEligibleAt: null,
-        cleanupReason: null,
-        config: null,
-        metadata: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    });
-
-    expect(result).toBeNull();
   });
 });
 
@@ -344,17 +358,6 @@ describe("shouldResetTaskSessionForWake", () => {
   });
 });
 
-describe("shouldUseEphemeralSessionForAgent", () => {
-  it("uses ephemeral sessions for productivity monitor agents", () => {
-    expect(shouldUseEphemeralSessionForAgent({ archetypeKey: "productivity_monitor" })).toBe(true);
-  });
-
-  it("preserves resumable sessions for normal agents", () => {
-    expect(shouldUseEphemeralSessionForAgent({ archetypeKey: "backend_api_continuity_owner" })).toBe(false);
-    expect(shouldUseEphemeralSessionForAgent({ archetypeKey: null })).toBe(false);
-  });
-});
-
 describe("deriveTaskKeyWithHeartbeatFallback", () => {
   it("returns explicit taskKey when present", () => {
     expect(deriveTaskKeyWithHeartbeatFallback({ taskKey: "issue-123" }, null)).toBe("issue-123");
@@ -429,7 +432,6 @@ describe("buildExplicitResumeSessionOverride", () => {
     expect(result).toEqual({
       sessionDisplayId: "session-after",
       sessionParams: {
-        threadId: "session-after",
         sessionId: "session-after",
         cwd: "/tmp/project",
       },

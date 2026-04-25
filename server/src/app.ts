@@ -225,7 +225,7 @@ export async function createApp(
   }));
   api.use(issueTreeControlRoutes(db));
   api.use(routineRoutes(db));
-  api.use(environmentRoutes(db));
+  api.use(environmentRoutes(db, { pluginWorkerManager: workerManager }));
   api.use(executionWorkspaceRoutes(db));
   api.use(goalRoutes(db));
   api.use(approvalRoutes(db));
