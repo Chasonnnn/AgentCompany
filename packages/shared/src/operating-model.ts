@@ -31,6 +31,15 @@ export const PAPERCLIP_PACKET_KINDS = [
   "paperclip/escalation.v1",
 ] as const;
 
+/**
+ * Document kind for the issue `progress` document.
+ *
+ * Concurrent-write semantics for the underlying PUT endpoint
+ * (`PUT /api/issues/:id/documents/:key`) are documented in
+ * `docs/api/document-concurrency.md`: optimistic concurrency via
+ * `baseRevisionId`, 409 response shape with `details.currentRevisionId`,
+ * and the row-lock mechanism that serializes concurrent writers.
+ */
 export const ISSUE_PROGRESS_DOCUMENT_KIND = "paperclip/issue-progress.v1" as const;
 export const ISSUE_HANDOFF_DOCUMENT_KIND = "paperclip/issue-handoff.v1" as const;
 export const ISSUE_BRANCH_CHARTER_KIND = "paperclip/issue-branch-charter.v1" as const;

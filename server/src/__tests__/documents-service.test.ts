@@ -64,7 +64,9 @@ describeEmbeddedPostgres("documentService concurrent upserts", () => {
         latestRevisionId: string | null;
       };
     }>;
-    updateDocument: (baseRevisionId: string, body: string) => Promise<unknown>;
+    updateDocument: (baseRevisionId: string, body: string) => Promise<{
+      document: { latestRevisionId: string | null };
+    }>;
     revisionCount: () => Promise<number>;
   }) {
     const initial = await input.createDocument();
@@ -97,14 +99,21 @@ describeEmbeddedPostgres("documentService concurrent upserts", () => {
     const results = await Promise.allSettled([updateA, updateB]);
     await lockTx;
 
-    const fulfilled = results.filter((result): result is PromiseFulfilledResult<unknown> => result.status === "fulfilled");
+    const fulfilled = results.filter(
+      (result): result is PromiseFulfilledResult<{ document: { latestRevisionId: string | null } }> =>
+        result.status === "fulfilled",
+    );
     const rejected = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
+    const winnerRevisionId = fulfilled[0]?.value.document.latestRevisionId;
+    expect(winnerRevisionId).toBeTruthy();
+    expect(winnerRevisionId).not.toBe(baseRevisionId);
     expect(rejected[0]?.reason).toMatchObject({
       status: 409,
       message: "Document was updated by someone else",
+      details: { currentRevisionId: winnerRevisionId },
     });
     expect(await input.revisionCount()).toBe(2);
   }
