@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.playwright_interactive_activation - routes persistent js_repl Playwright debugging of local web/Electron apps to playwright-interactive"
+  vars:
+    caseId: reliability.playwright_interactive_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-skill-playwright-interactive-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "You are iterating on a local Electron app and need to keep a single Playwright `BrowserContext` and `page` alive across many code edits, reloading the renderer after each change and only relaunching when the main process changes. You want to run functional QA followed by a separate visual QA pass with reusable handles. The agent has these skills loaded: `playwright-interactive` (persistent js_repl Playwright session for iterative web/Electron debugging), `playwright` (one-shot Playwright CLI/wrapper for terminal automation), `browse` (fast headless browser for site dogfooding and screenshots), and `qa` (systematic test-and-fix loop on a deployed web app). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /playwright-interactive/i.test(result.finalText); })()"
+      metric: routes_to_playwright_interactive
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /js_repl|persistent|reuse|reload|electron|iterative/i.test(result.finalText); })()"
+      metric: mentions_persistent_session_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlaywrightCli = /\\b(?:use|invoke|choose|select|route to)\\s+`?playwright`?\\b(?!-interactive)/i.test(text); const recommendsBrowse = /\\b(?:use|invoke|choose|select|route to)\\s+`?browse`?\\b/i.test(text); const recommendsQa = /\\b(?:use|invoke|choose|select|route to)\\s+`?qa(?:-only)?`?\\b/i.test(text); return !recommendsPlaywrightCli && !recommendsBrowse && !recommendsQa; })()"
+      metric: avoids_one_shot_and_dogfood_drift
