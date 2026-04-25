@@ -1,5 +1,5 @@
 import { buildTranscript, type RunLogChunk, type TranscriptBuildOptions } from "./transcript";
-import type { StatefulStdoutParser, StdoutLineParser, StdoutParserFactory } from "./types";
+import type { StatefulStdoutParser, StdoutLineParser, StdoutParserFactory, TranscriptEntry } from "./types";
 
 type DynamicParserModule = {
   parseStdoutLine: StdoutLineParser;
@@ -14,7 +14,7 @@ type WorkerRequest =
 type WorkerResponse =
   | { id: number; kind: "load"; ok: true }
   | { id: number; kind: "load"; ok: false; error: string }
-  | { id: number; kind: "buildTranscript"; ok: true; entries: import("@paperclipai/adapter-utils").TranscriptEntry[] }
+  | { id: number; kind: "buildTranscript"; ok: true; entries: TranscriptEntry[] }
   | { id: number; kind: "buildTranscript"; ok: false; error: string }
   | { id: number; kind: "invalidate"; ok: true }
   | { id: number; kind: "invalidate"; ok: false; error: string };

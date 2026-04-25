@@ -1,12 +1,12 @@
 import type { ComponentType } from "react";
-import type { CreateConfigValues } from "@paperclipai/adapter-utils";
+import type { CreateConfigValues, TranscriptEntry } from "@paperclipai/adapter-utils";
 import type { RunLogChunk, TranscriptBuildOptions } from "./transcript";
 
 // Re-export shared types so local consumers don't need to change imports
 export type { TranscriptEntry, StdoutLineParser, CreateConfigValues } from "@paperclipai/adapter-utils";
 
 export interface StatefulStdoutParser {
-  parseLine: (line: string, ts: string) => import("@paperclipai/adapter-utils").TranscriptEntry[];
+  parseLine: (line: string, ts: string) => TranscriptEntry[];
   reset: () => void;
 }
 
@@ -14,10 +14,10 @@ export type StdoutParserFactory = () => StatefulStdoutParser;
 export type TranscriptBuilder = (
   chunks: RunLogChunk[],
   opts?: TranscriptBuildOptions,
-) => Promise<import("@paperclipai/adapter-utils").TranscriptEntry[]>;
+) => Promise<TranscriptEntry[]>;
 
 export interface TranscriptParserSource {
-  parseStdoutLine: (line: string, ts: string) => import("@paperclipai/adapter-utils").TranscriptEntry[];
+  parseStdoutLine: (line: string, ts: string) => TranscriptEntry[];
   createStdoutParser?: StdoutParserFactory;
   buildTranscriptAsync?: TranscriptBuilder;
 }

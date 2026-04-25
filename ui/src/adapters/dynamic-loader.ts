@@ -11,7 +11,13 @@
 
 import { parseProcessStdoutLine } from "./process/parse-stdout";
 import { buildTranscript, type RunLogChunk, type TranscriptBuildOptions } from "./transcript";
-import type { StatefulStdoutParser, StdoutLineParser, StdoutParserFactory, TranscriptBuilder } from "./types";
+import type {
+  StatefulStdoutParser,
+  StdoutLineParser,
+  StdoutParserFactory,
+  TranscriptBuilder,
+  TranscriptEntry,
+} from "./types";
 
 interface DynamicParserModule {
   parseStdoutLine: StdoutLineParser;
@@ -20,7 +26,7 @@ interface DynamicParserModule {
 }
 
 type WorkerLoadResponse = { ok: true } | { ok: false; error: string };
-type WorkerTranscriptResponse = { ok: true; entries: import("@paperclipai/adapter-utils").TranscriptEntry[] } | { ok: false; error: string };
+type WorkerTranscriptResponse = { ok: true; entries: TranscriptEntry[] } | { ok: false; error: string };
 type WorkerInvalidateResponse = { ok: true } | { ok: false; error: string };
 
 type WorkerMessage =
