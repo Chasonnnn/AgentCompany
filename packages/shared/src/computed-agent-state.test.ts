@@ -10,6 +10,7 @@ import {
 describe("groupOperatorState", () => {
   const expected: Record<IssueOperatorState, ComputedAgentState> = {
     ready: "queued",
+    idle_active: "idle",
     queued_followup: "queued",
     running: "running",
     dependency_blocked: "dependency_blocked",

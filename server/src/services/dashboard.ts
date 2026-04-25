@@ -1,4 +1,4 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, heartbeatRuns, issueDecisionQuestions, issues } from "@paperclipai/db";
 import {
@@ -164,6 +164,32 @@ export function dashboardService(db: Db) {
             ),
           ),
       ]);
+      const activeRunByIssueId = new Map<string, { id: string; status: string }>();
+      const continuityIssueIds = continuityRows.map((row) => row.id);
+      if (continuityIssueIds.length > 0) {
+        const activeRows = await db
+          .select({
+            id: heartbeatRuns.id,
+            status: heartbeatRuns.status,
+            issueId: sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`,
+          })
+          .from(heartbeatRuns)
+          .where(
+            and(
+              eq(heartbeatRuns.companyId, companyId),
+              inArray(heartbeatRuns.status, ["running", "queued", "scheduled_retry"]),
+              inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, continuityIssueIds),
+            ),
+          )
+          .orderBy(
+            sql`case when ${heartbeatRuns.status} = 'running' then 0 when ${heartbeatRuns.status} = 'queued' then 1 else 2 end`,
+            asc(heartbeatRuns.createdAt),
+          );
+        for (const row of activeRows) {
+          if (!row.issueId || activeRunByIssueId.has(row.issueId)) continue;
+          activeRunByIssueId.set(row.issueId, { id: row.id, status: row.status });
+        }
+      }
 
       const agentCounts: DashboardSummary["agents"] = {
         active: 0,
@@ -236,9 +262,11 @@ export function dashboardService(db: Db) {
           executionState: row.executionState,
         });
         const operator = buildIssueOperatorState({
-          issueId: "",
+          issueId: row.id,
           status: row.status as any,
+          assigneeAgentId: row.assigneeAgentId ?? null,
           continuitySummary: summary,
+          activeRun: activeRunByIssueId.get(row.id) ?? null,
         });
         operatorStateCounts.set(operator.operatorState, (operatorStateCounts.get(operator.operatorState) ?? 0) + 1);
         operatorStateReasons.set(

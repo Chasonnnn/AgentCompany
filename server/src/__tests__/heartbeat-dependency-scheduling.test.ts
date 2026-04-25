@@ -84,6 +84,44 @@ async function waitForCondition(fn: () => Promise<boolean>, timeoutMs = 3_000) {
   return fn();
 }
 
+async function insertCompanyProjectAgent(
+  db: ReturnType<typeof createDb>,
+  input?: { agentStatus?: "active" | "paused"; maxConcurrentRuns?: number },
+) {
+  const companyId = randomUUID();
+  const projectId = randomUUID();
+  const agentId = randomUUID();
+  await db.insert(companies).values({
+    id: companyId,
+    name: "Paperclip",
+    issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    requireBoardApprovalForNewAgents: false,
+  });
+  await db.insert(projects).values({
+    id: projectId,
+    companyId,
+    name: "Idle active reconcile",
+    status: "in_progress",
+  });
+  await db.insert(agents).values({
+    id: agentId,
+    companyId,
+    name: "CodexCoder",
+    role: "engineer",
+    status: input?.agentStatus ?? "active",
+    adapterType: "codex_local",
+    adapterConfig: {},
+    runtimeConfig: {
+      heartbeat: {
+        wakeOnDemand: true,
+        maxConcurrentRuns: input?.maxConcurrentRuns ?? 1,
+      },
+    },
+    permissions: {},
+  });
+  return { companyId, projectId, agentId };
+}
+
 describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () => {
   let db!: ReturnType<typeof createDb>;
   let heartbeat!: ReturnType<typeof heartbeatService>;
@@ -487,5 +525,231 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
         interaction: true,
       },
     });
+  });
+
+  it("reconciles assigned idle todo and in-progress issues after the idle threshold", async () => {
+    const { companyId, projectId, agentId } = await insertCompanyProjectAgent(db, { maxConcurrentRuns: 2 });
+    const todoIssueId = randomUUID();
+    const inProgressIssueId = randomUUID();
+    const oldUpdatedAt = new Date("2026-04-24T09:00:00.000Z");
+    const now = new Date("2026-04-24T09:20:00.000Z");
+
+    await db.insert(issues).values([
+      {
+        id: todoIssueId,
+        companyId,
+        projectId,
+        title: "Idle todo",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        updatedAt: oldUpdatedAt,
+      },
+      {
+        id: inProgressIssueId,
+        companyId,
+        projectId,
+        title: "Idle in progress",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        updatedAt: oldUpdatedAt,
+      },
+    ]);
+
+    const result = await heartbeat.reconcileIdleActiveIssues({
+      now,
+      idleThresholdMs: 10 * 60 * 1000,
+      maxPerAgentPerTick: 2,
+    });
+
+    expect(result.enqueued).toBe(2);
+    expect(result.issueIds.sort()).toEqual([inProgressIssueId, todoIssueId].sort());
+    const wakeRows = await db
+      .select({
+        reason: agentWakeupRequests.reason,
+        source: agentWakeupRequests.source,
+        triggerDetail: agentWakeupRequests.triggerDetail,
+        issueId: sql<string>`${agentWakeupRequests.payload} ->> 'issueId'`,
+      })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.reason, "idle_active_issue_reconcile"));
+    expect(wakeRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueId: todoIssueId,
+          source: "automation",
+          triggerDetail: "system",
+        }),
+        expect.objectContaining({
+          issueId: inProgressIssueId,
+          source: "automation",
+          triggerDetail: "system",
+        }),
+      ]),
+    );
+  });
+
+  it("skips idle candidates that are unassigned, blocked, dependency-blocked, tree-held, recent, or already queued", async () => {
+    const { companyId, projectId, agentId } = await insertCompanyProjectAgent(db);
+    const blockerId = randomUUID();
+    const dependencyBlockedId = randomUUID();
+    const treeHeldRootId = randomUUID();
+    const treeHeldChildId = randomUUID();
+    const unassignedIssueId = randomUUID();
+    const statusBlockedIssueId = randomUUID();
+    const recentIssueId = randomUUID();
+    const alreadyQueuedIssueId = randomUUID();
+    const oldUpdatedAt = new Date("2026-04-24T09:00:00.000Z");
+    const recentUpdatedAt = new Date("2026-04-24T09:18:00.000Z");
+    const now = new Date("2026-04-24T09:20:00.000Z");
+
+    await db.insert(issues).values([
+      {
+        id: blockerId,
+        companyId,
+        projectId,
+        title: "Dependency blocker",
+        status: "todo",
+        priority: "medium",
+        updatedAt: oldUpdatedAt,
+      },
+      {
+        id: dependencyBlockedId,
+        companyId,
+        projectId,
+        title: "Dependency blocked candidate",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        updatedAt: oldUpdatedAt,
+      },
+      {
+        id: treeHeldRootId,
+        companyId,
+        projectId,
+        title: "Tree held root",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        updatedAt: oldUpdatedAt,
+      },
+      {
+        id: treeHeldChildId,
+        companyId,
+        projectId,
+        parentId: treeHeldRootId,
+        title: "Tree held child",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        updatedAt: oldUpdatedAt,
+      },
+      {
+        id: unassignedIssueId,
+        companyId,
+        projectId,
+        title: "Unassigned",
+        status: "todo",
+        priority: "medium",
+        updatedAt: oldUpdatedAt,
+      },
+      {
+        id: statusBlockedIssueId,
+        companyId,
+        projectId,
+        title: "Blocked status",
+        status: "blocked",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        updatedAt: oldUpdatedAt,
+      },
+      {
+        id: recentIssueId,
+        companyId,
+        projectId,
+        title: "Too recent",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        updatedAt: recentUpdatedAt,
+      },
+      {
+        id: alreadyQueuedIssueId,
+        companyId,
+        projectId,
+        title: "Already queued",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        updatedAt: oldUpdatedAt,
+      },
+    ]);
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId: blockerId,
+      relatedIssueId: dependencyBlockedId,
+      type: "blocks",
+    });
+    await db.insert(issueTreeHolds).values({
+      companyId,
+      rootIssueId: treeHeldRootId,
+      mode: "pause",
+      status: "active",
+      reason: "pause",
+      releasePolicy: { strategy: "manual" },
+    });
+    await db.insert(heartbeatRuns).values({
+      id: randomUUID(),
+      companyId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "queued",
+      contextSnapshot: { issueId: alreadyQueuedIssueId },
+    });
+
+    const result = await heartbeat.reconcileIdleActiveIssues({
+      now,
+      idleThresholdMs: 10 * 60 * 1000,
+      maxPerTick: 10,
+    });
+
+    expect(result.enqueued).toBe(0);
+    const idleWakeCount = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.reason, "idle_active_issue_reconcile"))
+      .then((rows) => rows[0]?.count ?? 0);
+    expect(idleWakeCount).toBe(0);
+  });
+
+  it("enforces idle active reconciler caps", async () => {
+    const { companyId, projectId, agentId } = await insertCompanyProjectAgent(db, { maxConcurrentRuns: 10 });
+    const issueIds = Array.from({ length: 3 }, () => randomUUID());
+    const oldUpdatedAt = new Date("2026-04-24T09:00:00.000Z");
+
+    await db.insert(issues).values(
+      issueIds.map((id, index) => ({
+        id,
+        companyId,
+        projectId,
+        title: `Idle issue ${index + 1}`,
+        status: "todo" as const,
+        priority: "medium" as const,
+        assigneeAgentId: agentId,
+        updatedAt: oldUpdatedAt,
+      })),
+    );
+
+    const result = await heartbeat.reconcileIdleActiveIssues({
+      now: new Date("2026-04-24T09:20:00.000Z"),
+      idleThresholdMs: 10 * 60 * 1000,
+      maxPerTick: 10,
+      maxPerAgentPerTick: 1,
+    });
+
+    expect(result.enqueued).toBe(1);
+    expect(result.issueIds).toHaveLength(1);
   });
 });

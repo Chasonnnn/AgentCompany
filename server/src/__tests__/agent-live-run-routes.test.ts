@@ -173,9 +173,9 @@ describe("agent live run routes", () => {
         dependencyReady: true,
         unresolvedBlockerCount: 0,
         unresolvedBlockerIssueIds: [],
-        operatorState: "running",
-        operatorReason: "Issue is in active execution",
-        computedAgentState: "running",
+        operatorState: "idle_active",
+        operatorReason: "Issue is active but no agent run is queued or running.",
+        computedAgentState: "idle",
         waitingOn: null,
       },
     ]);

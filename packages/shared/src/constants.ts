@@ -224,6 +224,7 @@ export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 
 export const ISSUE_OPERATOR_STATES = [
   "ready",
+  "idle_active",
   "running",
   "queued_followup",
   "decision_blocked",

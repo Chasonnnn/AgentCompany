@@ -26,6 +26,7 @@ export const issueTrailingColumns: InboxIssueColumn[] = ["assignee", "project", 
 
 const operatorStateBadgeClassName: Record<IssueOperatorState, string> = {
   ready: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  idle_active: "bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
   running: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
   queued_followup: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
   decision_blocked: "bg-amber-500/10 text-amber-700 dark:text-amber-300",

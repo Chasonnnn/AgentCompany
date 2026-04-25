@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { and, asc, desc, eq, gt, inArray, isNull, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
@@ -100,6 +100,8 @@ import {
   buildHeartbeatRunStopMetadata,
   mergeHeartbeatRunStopMetadata,
 } from "./heartbeat-stop-metadata.js";
+import { buildIssueContinuitySummary } from "./issue-continuity-summary.js";
+import { buildIssueOperatorState } from "./issue-operator-state.js";
 import { isProcessGroupAlive, terminateLocalService } from "./local-service-supervisor.js";
 import { classifyRunLiveness } from "./run-liveness.js";
 import {
@@ -159,6 +161,12 @@ const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_r
 const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
 const PRODUCTIVITY_MONITOR_ARCHETYPE_KEY = "productivity_monitor";
+const IDLE_ACTIVE_ISSUE_WAKE_REASON = "idle_active_issue_reconcile";
+const IDLE_ACTIVE_ISSUE_RECONCILE_IDLE_MS = 10 * 60 * 1000;
+const IDLE_ACTIVE_ISSUE_RECONCILE_WAKE_COOLDOWN_MS = 30 * 60 * 1000;
+const IDLE_ACTIVE_ISSUE_RECONCILE_MAX_PER_TICK = 10;
+const IDLE_ACTIVE_ISSUE_RECONCILE_MAX_PER_AGENT_PER_TICK = 1;
+const IDLE_ACTIVE_ISSUE_RECONCILE_CANDIDATE_LIMIT = 100;
 export const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS = [
   2 * 60 * 1000,
   10 * 60 * 1000,
@@ -4283,6 +4291,231 @@ export function heartbeatService(db: Db) {
     }
   }
 
+  async function reconcileIdleActiveIssues(opts?: {
+    now?: Date;
+    idleThresholdMs?: number;
+    wakeCooldownMs?: number;
+    maxPerTick?: number;
+    maxPerAgentPerTick?: number;
+    candidateLimit?: number;
+  }) {
+    const now = opts?.now ?? new Date();
+    const idleBefore = new Date(now.getTime() - (opts?.idleThresholdMs ?? IDLE_ACTIVE_ISSUE_RECONCILE_IDLE_MS));
+    const cooldownAfter = new Date(now.getTime() - (opts?.wakeCooldownMs ?? IDLE_ACTIVE_ISSUE_RECONCILE_WAKE_COOLDOWN_MS));
+    const maxPerTick = opts?.maxPerTick ?? IDLE_ACTIVE_ISSUE_RECONCILE_MAX_PER_TICK;
+    const maxPerAgentPerTick = opts?.maxPerAgentPerTick ?? IDLE_ACTIVE_ISSUE_RECONCILE_MAX_PER_AGENT_PER_TICK;
+    const candidateLimit = opts?.candidateLimit ?? IDLE_ACTIVE_ISSUE_RECONCILE_CANDIDATE_LIMIT;
+    const result = {
+      checked: 0,
+      enqueued: 0,
+      skipped: 0,
+      issueIds: [] as string[],
+    };
+    if (maxPerTick <= 0 || maxPerAgentPerTick <= 0) return result;
+
+    const candidateRows = await db
+      .select({
+        id: issues.id,
+        companyId: issues.companyId,
+        projectId: issues.projectId,
+        identifier: issues.identifier,
+        title: issues.title,
+        status: issues.status,
+        assigneeAgentId: issues.assigneeAgentId,
+        assigneeUserId: issues.assigneeUserId,
+        executionRunId: issues.executionRunId,
+        continuityState: issues.continuityState,
+        executionState: issues.executionState,
+        updatedAt: issues.updatedAt,
+      })
+      .from(issues)
+      .innerJoin(agents, eq(issues.assigneeAgentId, agents.id))
+      .where(
+        and(
+          isNull(issues.hiddenAt),
+          inArray(issues.status, ["todo", "in_progress"]),
+          lte(issues.updatedAt, idleBefore),
+          notInArray(agents.status, ["paused", "terminated", "pending_approval"]),
+        ),
+      )
+      .orderBy(asc(issues.updatedAt))
+      .limit(candidateLimit);
+
+    if (candidateRows.length === 0) return result;
+    result.checked = candidateRows.length;
+
+    const candidateIssueIds = candidateRows.map((row) => row.id);
+    const executionRunIdToIssueId = new Map(
+      candidateRows
+        .filter((row): row is typeof candidateRows[number] & { executionRunId: string } => Boolean(row.executionRunId))
+        .map((row) => [row.executionRunId, row.id]),
+    );
+    const activeIssueIds = new Set<string>();
+    const activeRunRows = await db
+      .select({
+        id: heartbeatRuns.id,
+        issueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`,
+      })
+      .from(heartbeatRuns)
+      .where(
+        and(
+          inArray(heartbeatRuns.status, [...EXECUTION_PATH_HEARTBEAT_RUN_STATUSES]),
+          or(
+            inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, candidateIssueIds),
+            executionRunIdToIssueId.size > 0
+              ? inArray(heartbeatRuns.id, [...executionRunIdToIssueId.keys()])
+              : sql`false`,
+          ),
+        ),
+      );
+    for (const row of activeRunRows) {
+      if (row.issueId) activeIssueIds.add(row.issueId);
+      const issueIdFromExecutionRun = executionRunIdToIssueId.get(row.id);
+      if (issueIdFromExecutionRun) activeIssueIds.add(issueIdFromExecutionRun);
+    }
+
+    const recentIdleWakeIssueIds = new Set<string>();
+    const recentWakeRows = await db
+      .select({
+        issueId: sql<string | null>`${agentWakeupRequests.payload} ->> 'issueId'`,
+      })
+      .from(agentWakeupRequests)
+      .where(
+        and(
+          eq(agentWakeupRequests.reason, IDLE_ACTIVE_ISSUE_WAKE_REASON),
+          gte(agentWakeupRequests.requestedAt, cooldownAfter),
+          inArray(sql<string>`${agentWakeupRequests.payload} ->> 'issueId'`, candidateIssueIds),
+        ),
+      );
+    for (const row of recentWakeRows) {
+      if (row.issueId) recentIdleWakeIssueIds.add(row.issueId);
+    }
+
+    const latestTerminalRunByIssueId = new Map<string, Date>();
+    const terminalRows = await db
+      .select({
+        issueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`,
+        occurredAt: sql<Date>`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.createdAt})`,
+      })
+      .from(heartbeatRuns)
+      .where(
+        and(
+          inArray(heartbeatRuns.status, [...HEARTBEAT_RUN_TERMINAL_STATUSES]),
+          inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, candidateIssueIds),
+        ),
+      )
+      .orderBy(sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.createdAt}) desc`);
+    for (const row of terminalRows) {
+      if (!row.issueId || latestTerminalRunByIssueId.has(row.issueId)) continue;
+      latestTerminalRunByIssueId.set(row.issueId, row.occurredAt);
+    }
+
+    const readinessByCompany = new Map<string, Awaited<ReturnType<typeof issuesSvc.listDependencyReadiness>>>();
+    for (const companyId of [...new Set(candidateRows.map((row) => row.companyId))]) {
+      const companyIssueIds = candidateRows.filter((row) => row.companyId === companyId).map((row) => row.id);
+      readinessByCompany.set(companyId, await issuesSvc.listDependencyReadiness(companyId, companyIssueIds));
+    }
+
+    const enqueuedByAgentId = new Map<string, number>();
+    for (const issue of candidateRows) {
+      if (result.enqueued >= maxPerTick) break;
+      if (!issue.assigneeAgentId) {
+        result.skipped += 1;
+        continue;
+      }
+      if (activeIssueIds.has(issue.id) || recentIdleWakeIssueIds.has(issue.id)) {
+        result.skipped += 1;
+        continue;
+      }
+      const latestTerminalRunAt = latestTerminalRunByIssueId.get(issue.id);
+      if (latestTerminalRunAt && latestTerminalRunAt > idleBefore) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const continuitySummary = buildIssueContinuitySummary(issue);
+      const operator = buildIssueOperatorState({
+        issueId: issue.id,
+        status: issue.status as any,
+        assigneeAgentId: issue.assigneeAgentId,
+        assigneeUserId: issue.assigneeUserId,
+        continuitySummary,
+        activeRun: null,
+      });
+      if (operator.operatorState !== "idle_active") {
+        result.skipped += 1;
+        continue;
+      }
+
+      const readiness = readinessByCompany.get(issue.companyId)?.get(issue.id);
+      if (readiness && !readiness.isDependencyReady) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const activePauseHold = await treeControlSvc.getActivePauseHoldGate(issue.companyId, issue.id);
+      if (activePauseHold) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const agentEnqueued = enqueuedByAgentId.get(issue.assigneeAgentId) ?? 0;
+      if (agentEnqueued >= maxPerAgentPerTick) {
+        result.skipped += 1;
+        continue;
+      }
+
+      try {
+        const run = await enqueueWakeup(issue.assigneeAgentId, {
+          source: "automation",
+          triggerDetail: "system",
+          reason: IDLE_ACTIVE_ISSUE_WAKE_REASON,
+          payload: { issueId: issue.id },
+          requestedByActorType: "system",
+          requestedByActorId: "idle_active_reconciler",
+          contextSnapshot: {
+            issueId: issue.id,
+            taskId: issue.id,
+            taskKey: issue.id,
+            projectId: issue.projectId,
+            issueStatus: issue.status,
+            issueIdentifier: issue.identifier,
+            wakeReason: IDLE_ACTIVE_ISSUE_WAKE_REASON,
+            wakeSource: "automation",
+            wakeTriggerDetail: "system",
+            now: now.toISOString(),
+          },
+        });
+        if (run) {
+          result.enqueued += 1;
+          result.issueIds.push(issue.id);
+          enqueuedByAgentId.set(issue.assigneeAgentId, agentEnqueued + 1);
+        } else {
+          result.skipped += 1;
+        }
+      } catch (err) {
+        result.skipped += 1;
+        logger.warn(
+          {
+            err,
+            issueId: issue.id,
+            agentId: issue.assigneeAgentId,
+            event: "idle_active_issue_reconcile.enqueue_failed",
+          },
+          "failed to enqueue idle active issue wake",
+        );
+      }
+    }
+
+    if (result.enqueued > 0) {
+      logger.info(
+        { enqueued: result.enqueued, checked: result.checked, issueIds: result.issueIds },
+        "idle active issue reconciler enqueued wakes",
+      );
+    }
+    return result;
+  }
+
   async function updateRuntimeState(
     agent: typeof agents.$inferSelect,
     run: typeof heartbeatRuns.$inferSelect,
@@ -6972,6 +7205,8 @@ export function heartbeatService(db: Db) {
     promoteDueScheduledRetries,
 
     resumeQueuedRuns,
+
+    reconcileIdleActiveIssues,
 
     scheduleBoundedRetry: async (
       runId: string,
