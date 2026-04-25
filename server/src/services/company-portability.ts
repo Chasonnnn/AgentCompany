@@ -4484,6 +4484,18 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           ? manifestIssue.status as typeof ISSUE_STATUSES[number]
           : "backlog";
         const importedIssueIsContinuityActive = CONTINUITY_ACTIVE_IMPORT_STATUSES.has(resolvedIssueStatus);
+        // Validate gated docs before persisting the issue so a rejected import is side-effect free.
+        if (importedIssueIsContinuityActive && !input.allowPlanOverride) {
+          for (const key of ISSUE_RESERVED_DOCUMENT_KEYS) {
+            if (!EXECUTION_APPROVAL_GATED_IMPORT_DOCUMENT_KEYS.has(key)) continue;
+            const documentPath = buildPortableReservedDocPath(manifestIssue.path, key);
+            const markdown = readPortableTextFile(plan.source.files, documentPath);
+            if (typeof markdown !== "string") continue;
+            throw unprocessable(
+              `Importing ${key} for task ${manifestIssue.slug} during active execution requires an approved linked approval; pass allowPlanOverride: true on the import request to acknowledge the disaster-recovery override.`,
+            );
+          }
+        }
         const createdIssue = await issues.create(targetCompany.id, {
           projectId,
           projectWorkspaceId,
@@ -4503,15 +4515,6 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           const documentPath = buildPortableReservedDocPath(manifestIssue.path, key);
           const markdown = readPortableTextFile(plan.source.files, documentPath);
           if (typeof markdown !== "string") continue;
-          if (
-            importedIssueIsContinuityActive &&
-            EXECUTION_APPROVAL_GATED_IMPORT_DOCUMENT_KEYS.has(key) &&
-            !input.allowPlanOverride
-          ) {
-            throw unprocessable(
-              `Importing ${key} for task ${manifestIssue.slug} during active execution requires an approved linked approval; pass allowPlanOverride: true on the import request to acknowledge the disaster-recovery override.`,
-            );
-          }
           await documents.upsertIssueDocument({
             issueId: createdIssue.id,
             key,

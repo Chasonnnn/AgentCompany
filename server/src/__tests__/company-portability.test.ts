@@ -2800,6 +2800,7 @@ describe("company portability", () => {
       }, "user-1"),
     ).rejects.toThrow(/Importing plan for task write-rollout-plan during active execution/);
 
+    expect(issueSvc.create).not.toHaveBeenCalled();
     expect(documentSvc.upsertIssueDocument).not.toHaveBeenCalledWith(
       expect.objectContaining({ key: "plan" }),
     );
