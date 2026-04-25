@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.frontend_slides_activation - routes presentation/slide-deck requests to the frontend-slides skill instead of generic page or document skills"
+  vars:
+    caseId: reliability.frontend_slides_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-skill-frontend-slides-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says: 'I have a slides.pptx I need to convert into an animated HTML pitch deck I can run in the browser for a keynote next week.' The agent has these skills loaded: `frontend-slides` (zero-dependency animation-rich HTML presentations from scratch or by converting PowerPoint, with viewport-fitting 100vh slides and scroll-snap), `frontend-design` (production-grade web interfaces and components, not slide decks), `design-html` (Pretext-native HTML/CSS pages built from approved design plans, not presentations), and `make-pdf` (markdown to publication-quality PDF). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /frontend-slides/i.test(result.finalText); })()"
+      metric: routes_to_frontend_slides
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /slide|presentation|pitch deck|keynote|pptx?|powerpoint|scroll-?snap|100vh|viewport[- ]fit/i.test(result.finalText); })()"
+      metric: mentions_slide_deck_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsFrontendDesign = /\\b(?:use|invoke|choose|select|route to)\\s+`?frontend-design`?\\b/i.test(text); const recommendsDesignHtml = /\\b(?:use|invoke|choose|select|route to)\\s+`?design-html`?\\b/i.test(text); const recommendsMakePdf = /\\b(?:use|invoke|choose|select|route to)\\s+`?make-pdf`?\\b/i.test(text); return !recommendsFrontendDesign && !recommendsDesignHtml && !recommendsMakePdf; })()"
+      metric: avoids_page_or_pdf_drift
