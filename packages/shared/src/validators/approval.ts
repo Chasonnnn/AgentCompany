@@ -2,6 +2,7 @@ import { z } from "zod";
 import { APPROVAL_TYPES } from "../constants.js";
 import type { RequestBoardApprovalPayload } from "../types/approval.js";
 import { conferenceContextSchema } from "./conference-context.js";
+import { multilineTextSchema } from "./text.js";
 
 function normalizeOptionalText(value: string | null | undefined): string | undefined {
   if (value == null) return undefined;
@@ -153,14 +154,14 @@ export const createApprovalSchema = z.object({
 export type CreateApproval = z.infer<typeof createApprovalSchema>;
 
 export const resolveApprovalSchema = z.object({
-  decisionNote: z.string().optional().nullable(),
+  decisionNote: multilineTextSchema.optional().nullable(),
   decidedByUserId: z.string().optional().default("board"),
 });
 
 export type ResolveApproval = z.infer<typeof resolveApprovalSchema>;
 
 export const requestApprovalRevisionSchema = z.object({
-  decisionNote: z.string().optional().nullable(),
+  decisionNote: multilineTextSchema.optional().nullable(),
   decidedByUserId: z.string().optional().default("board"),
 });
 
@@ -173,7 +174,7 @@ export const resubmitApprovalSchema = z.object({
 export type ResubmitApproval = z.infer<typeof resubmitApprovalSchema>;
 
 export const addApprovalCommentSchema = z.object({
-  body: z.string().min(1),
+  body: multilineTextSchema.pipe(z.string().min(1)),
 });
 
 export type AddApprovalComment = z.infer<typeof addApprovalCommentSchema>;
