@@ -150,5 +150,5 @@
       value: "(() => { const result = JSON.parse(output); return /npx skills( find)?|skills\\.sh|open agent skills|skills cli/i.test(result.finalText); })()"
       metric: mentions_skills_cli_signal
     - type: javascript
-      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsCreatePlugin = /\\b(?:use|invoke|choose|select|route to)\\s+`?paperclip-create-plugin`?\\b/i.test(text); const writesItDirectly = /\\b(?:i'?ll just|let me just|i can write)\\b.{0,40}\\bchangelog\\b/i.test(text); return !recommendsCreatePlugin && !writesItDirectly; })()"
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const disambiguatesAway = /\\b(?:not|instead of|rather than|don'?t use|skip|reject)\\s+(?:[\\w\\s,/-]*?\\s+)?`?paperclip-create-plugin`?\\b/i.test(text); const recommendsCreatePlugin = /\\b(?:use|invoke|choose|select|route to|recommend|try|either)\\b[^.!?\\n]*?`?paperclip-create-plugin`?\\b/i.test(text); const writesItDirectly = /\\b(?:i'?ll just|let me just|i can write)\\b.{0,40}\\bchangelog\\b/i.test(text); return disambiguatesAway || (!recommendsCreatePlugin && !writesItDirectly); })()"
       metric: avoids_create_or_direct_write_drift
