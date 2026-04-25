@@ -343,6 +343,39 @@ describe("IssuesList", () => {
     });
   });
 
+  it("renders assigned active issues without a live run as idle", async () => {
+    const idleIssue = createIssue({
+      id: "issue-idle",
+      identifier: "PAP-78",
+      title: "Idle issue",
+      status: "in_progress",
+      assigneeAgentId: "agent-1",
+      operatorState: "idle_active",
+      operatorReason: "Issue is active but no agent run is queued or running.",
+    });
+
+    const { root } = renderWithQueryClient(
+      <IssuesList
+        issues={[idleIssue]}
+        agents={[]}
+        projects={[]}
+        viewStateKey="paperclip:test-issues"
+        onUpdateIssue={() => undefined}
+      />,
+      container,
+    );
+
+    await waitForAssertion(() => {
+      expect(container.querySelector('[data-operator-state="idle_active"]')).not.toBeNull();
+      expect(container.textContent).toContain("Idle");
+      expect(container.textContent).not.toContain("Live");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("filters the list to a single workspace when a workspace name is clicked", async () => {
     localStorage.setItem("paperclip:inbox:issue-columns", JSON.stringify(["id", "workspace"]));
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: true });

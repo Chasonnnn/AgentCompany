@@ -3,6 +3,7 @@ import { timeAgo } from "./timeAgo";
 
 const ISSUE_OPERATOR_STATE_LABELS: Record<IssueOperatorState, string> = {
   ready: "Ready",
+  idle_active: "Idle",
   running: "Live",
   queued_followup: "Queued",
   decision_blocked: "Needs decision",
@@ -38,6 +39,10 @@ export function describeIssueActivity(
 
   if (operatorState === "running") {
     return "Live · work is actively running";
+  }
+
+  if (operatorState === "idle_active") {
+    return "Idle · issue is active but no agent run is queued or running";
   }
 
   return `${formatIssueOperatorStateLabel(operatorState)} · ${updatedText}`;

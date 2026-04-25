@@ -375,6 +375,8 @@ function withIssueContinuitySummary<T extends { continuityState?: unknown; execu
     issueId: (issue as { id?: string }).id ?? "",
     status: ((issue as { status?: string }).status ?? "todo") as any,
     hiddenAt: (issue as { hiddenAt?: Date | null }).hiddenAt ?? null,
+    assigneeAgentId: (issue as { assigneeAgentId?: string | null }).assigneeAgentId ?? null,
+    assigneeUserId: (issue as { assigneeUserId?: string | null }).assigneeUserId ?? null,
     continuitySummary,
     activeRun: (issue as { activeRun?: { id: string; status: string } | null }).activeRun ?? null,
   });

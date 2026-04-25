@@ -9,6 +9,8 @@ type IssueOperatorStateInput = {
   issueId: string;
   status: IssueStatus;
   hiddenAt?: Date | null;
+  assigneeAgentId?: string | null;
+  assigneeUserId?: string | null;
   continuitySummary?: IssueContinuitySummary | null;
   activeRun?: ActiveRunLike;
 };
@@ -86,10 +88,11 @@ export function buildIssueOperatorState(
     };
   }
 
-  if (input.status === "in_progress") {
+  const hasAssignee = Boolean(input.assigneeAgentId || input.assigneeUserId);
+  if (hasAssignee && (input.status === "todo" || input.status === "in_progress")) {
     return {
-      operatorState: "running",
-      operatorReason: "Issue is in active execution",
+      operatorState: "idle_active",
+      operatorReason: "Issue is active but no agent run is queued or running.",
       operatorWaitTargets: [],
     };
   }

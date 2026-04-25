@@ -703,10 +703,10 @@ async function activeRunMapForIssues(
   issueRows: IssueWithLabels[],
 ): Promise<Map<string, IssueActiveRunRow>> {
   const map = new Map<string, IssueActiveRunRow>();
+  const issueIds = issueRows.map((row) => row.id);
   const runIds = issueRows
     .map((row) => row.executionRunId)
     .filter((id): id is string => id != null);
-  if (runIds.length === 0) return map;
 
   for (const runIdChunk of chunkList([...new Set(runIds)], ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
     const rows = await dbOrTx
@@ -732,6 +732,36 @@ async function activeRunMapForIssues(
       map.set(row.id, row);
     }
   }
+  for (const issueIdChunk of chunkList(issueIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const rows = await dbOrTx
+      .select({
+        id: heartbeatRuns.id,
+        status: heartbeatRuns.status,
+        agentId: heartbeatRuns.agentId,
+        invocationSource: heartbeatRuns.invocationSource,
+        triggerDetail: heartbeatRuns.triggerDetail,
+        startedAt: heartbeatRuns.startedAt,
+        finishedAt: heartbeatRuns.finishedAt,
+        createdAt: heartbeatRuns.createdAt,
+        issueId: sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`,
+      })
+      .from(heartbeatRuns)
+      .where(
+        and(
+          inArray(heartbeatRuns.status, ACTIVE_RUN_STATUSES),
+          inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, issueIdChunk),
+        ),
+      )
+      .orderBy(
+        sql`case when ${heartbeatRuns.status} = 'running' then 0 when ${heartbeatRuns.status} = 'queued' then 1 else 2 end`,
+        asc(heartbeatRuns.createdAt),
+      );
+
+    for (const row of rows) {
+      if (!row.issueId || map.has(row.issueId)) continue;
+      map.set(row.issueId, row);
+    }
+  }
   return map;
 }
 
@@ -741,7 +771,7 @@ function withActiveRuns(
 ): IssueWithLabelsAndRun[] {
   return issueRows.map((row) => ({
     ...row,
-    activeRun: row.executionRunId ? (runMap.get(row.executionRunId) ?? null) : null,
+    activeRun: (row.executionRunId ? (runMap.get(row.executionRunId) ?? null) : null) ?? runMap.get(row.id) ?? null,
   }));
 }
 

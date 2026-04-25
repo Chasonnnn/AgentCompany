@@ -1468,6 +1468,8 @@ export function agentRoutes(
           issueId: issue.id,
           status: issue.status as any,
           hiddenAt: issue.hiddenAt ?? null,
+          assigneeAgentId: issue.assigneeAgentId ?? req.actor.agentId,
+          assigneeUserId: issue.assigneeUserId ?? null,
           continuitySummary,
           activeRun: issue.activeRun ?? null,
         });

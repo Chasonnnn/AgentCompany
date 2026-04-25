@@ -209,6 +209,31 @@ describe("InboxIssueMetaLeading", () => {
       root.unmount();
     });
   });
+
+  it("renders idle active state without the live pulse", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <InboxIssueMetaLeading
+          issue={createIssue({
+            operatorState: "idle_active",
+            operatorReason: "Issue is active but no agent run is queued or running.",
+          })}
+          isLive={false}
+        />,
+      );
+    });
+
+    const idleBadge = container.querySelector('[data-operator-state="idle_active"]');
+    expect(idleBadge).not.toBeNull();
+    expect(idleBadge?.textContent).toContain("Idle");
+    expect(container.querySelector(".animate-pulse")).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
 });
 
 describe("InboxIssueTrailingColumns", () => {
