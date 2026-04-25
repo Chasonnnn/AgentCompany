@@ -357,4 +357,41 @@ describe("issue comment mention — terminated agents", () => {
     expect(wakeAgentIds).not.toContain(ASSIGNEE_AGENT_ID);
     expect(wakeAgentIds).not.toContain(TERMINATED_AGENT_ID);
   });
+
+  it("POST background task fails open when getAgentStatusById throws — assignee + mention wakes still fire", async () => {
+    const unhandledRejections: unknown[] = [];
+    const onRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+
+    try {
+      mockIssueService.resolveMentionedAgents.mockResolvedValue({
+        agentIds: [LIVE_MENTION_AGENT_ID],
+        ambiguousTokens: [],
+        droppedMentions: { terminated: [] },
+      });
+      mockIssueService.getAgentStatusById.mockRejectedValue(
+        new Error("simulated transient DB read failure"),
+      );
+
+      const res = await request(await installActor(createApp()))
+        .post(`/api/issues/${ISSUE_ID}/comments`)
+        .send({ body: "ping @live-charlie" });
+
+      expect(res.status).toBe(201);
+
+      // Drain the fire-and-forget IIFE.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Fail-open: assignee wake still fires (treated as non-terminated).
+      const wakeAgentIds = mockHeartbeatService.wakeup.mock.calls.map((call) => call[0]);
+      expect(wakeAgentIds).toContain(ASSIGNEE_AGENT_ID);
+      // Live mention wake is not skipped by the upstream throw.
+      expect(wakeAgentIds).toContain(LIVE_MENTION_AGENT_ID);
+      // No process-level unhandled rejection from the background task.
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
 });

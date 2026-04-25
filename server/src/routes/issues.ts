@@ -4496,7 +4496,17 @@ export function issueRoutes(
       const selfComment = actorIsAgent && actor.actorId === assigneeId;
       const skipWake = selfComment || isClosed;
       if (assigneeId && (reopened || !skipWake)) {
-        const assigneeStatus = await svc.getAgentStatusById(assigneeId);
+        let assigneeStatus: string | null = null;
+        try {
+          assigneeStatus = await svc.getAgentStatusById(assigneeId);
+        } catch (err) {
+          // Fail open: a transient DB read failure must not block mention wakes
+          // or surface as an unhandled rejection from this fire-and-forget task.
+          logger.warn(
+            { err, issueId: currentIssue.id, agentId: assigneeId },
+            "failed to read assignee status before comment wake; treating as live",
+          );
+        }
         if (assigneeStatus === "terminated") {
           logger.info(
             { issueId: currentIssue.id, agentId: assigneeId },
