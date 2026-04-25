@@ -537,6 +537,11 @@ type GitWorktreeListEntry = {
   branch: string | null;
 };
 
+type GitWorktreeLeakState = {
+  leakedPath: string | null;
+  leakedRef: string | null;
+};
+
 function parseGitWorktreeListPorcelain(raw: string): GitWorktreeListEntry[] {
   const entries: GitWorktreeListEntry[] = [];
   let current: Partial<GitWorktreeListEntry> = {};
@@ -587,6 +592,60 @@ async function findRegisteredGitWorktreeByBranch(repoRoot: string, branchName: s
   }
 
   return null;
+}
+
+async function findRegisteredGitWorktreeByPath(repoRoot: string, worktreePath: string): Promise<string | null> {
+  const raw = await runGit(["worktree", "list", "--porcelain"], repoRoot).catch(() => null);
+  if (!raw) return null;
+
+  const normalizedWorktreePath = path.resolve(worktreePath);
+  for (const entry of parseGitWorktreeListPorcelain(raw)) {
+    if (path.resolve(entry.worktree) === normalizedWorktreePath) {
+      return path.resolve(entry.worktree);
+    }
+  }
+
+  return null;
+}
+
+async function findGitWorktreeAdminDirByPath(repoRoot: string, worktreePath: string): Promise<string | null> {
+  const worktreesDir = path.join(repoRoot, ".git", "worktrees");
+  const entries = await fs.readdir(worktreesDir, { withFileTypes: true }).catch(() => []);
+  const normalizedGitDirPath = path.resolve(worktreePath, ".git");
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const adminDir = path.join(worktreesDir, entry.name);
+    const gitdirContents = await fs.readFile(path.join(adminDir, "gitdir"), "utf8").catch(() => null);
+    if (!gitdirContents) continue;
+
+    const resolvedGitDirPath = path.resolve(adminDir, gitdirContents.trim());
+    if (resolvedGitDirPath === normalizedGitDirPath) {
+      return adminDir;
+    }
+  }
+
+  return null;
+}
+
+async function inspectGitWorktreeLeakState(repoRoot: string, worktreePath: string): Promise<GitWorktreeLeakState | null> {
+  const [registeredPath, adminDir] = await Promise.all([
+    findRegisteredGitWorktreeByPath(repoRoot, worktreePath),
+    findGitWorktreeAdminDirByPath(repoRoot, worktreePath),
+  ]);
+
+  if (!registeredPath && !adminDir) return null;
+  return {
+    leakedPath: registeredPath ? path.resolve(registeredPath) : null,
+    leakedRef: adminDir ? path.resolve(adminDir) : null,
+  };
+}
+
+function formatGitWorktreeLeakWarning(leak: GitWorktreeLeakState, workspacePath: string) {
+  return `Dangling git worktree metadata remains after cleanup ${JSON.stringify({
+    leakedRef: leak.leakedRef,
+    leakedPath: leak.leakedPath ?? path.resolve(workspacePath),
+  })}`;
 }
 
 async function isGitCheckout(cwd: string): Promise<boolean> {
@@ -722,7 +781,7 @@ async function runWorkspaceCommand(input: {
 async function recordGitOperation(
   recorder: WorkspaceOperationRecorder | null | undefined,
   input: {
-    phase: "worktree_prepare" | "worktree_cleanup";
+    phase: "worktree_prepare" | "worktree_prune" | "worktree_cleanup";
     args: string[];
     cwd: string;
     metadata?: Record<string, unknown> | null;
@@ -1176,11 +1235,31 @@ export async function cleanupExecutionWorkspaceArtifacts(input: {
   }
 
   if (input.workspace.providerType === "git_worktree" && workspacePath) {
-    const worktreeExists = await directoryExists(workspacePath);
-    if (worktreeExists) {
-      if (!repoRoot) {
-        warnings.push(`Could not resolve git repo root for "${workspacePath}".`);
-      } else {
+    if (!repoRoot) {
+      warnings.push(`Could not resolve git repo root for "${workspacePath}".`);
+    } else {
+      // `git worktree prune` is repo-wide but only removes metadata whose
+      // worktree directory is already gone, so live siblings remain intact.
+      try {
+        await recordGitOperation(input.recorder, {
+          phase: "worktree_prune",
+          args: ["worktree", "prune"],
+          cwd: repoRoot,
+          metadata: {
+            workspaceId: input.workspace.id,
+            workspacePath,
+            branchName: input.workspace.branchName,
+            cleanupAction: "worktree_prune",
+          },
+          successMessage: `Pruned dangling git worktree metadata for ${repoRoot}\n`,
+          failureLabel: `git worktree prune`,
+        });
+      } catch (err) {
+        warnings.push(err instanceof Error ? err.message : String(err));
+      }
+
+      const worktreeExists = await directoryExists(workspacePath);
+      if (worktreeExists) {
         try {
           await recordGitOperation(input.recorder, {
             phase: "worktree_cleanup",
@@ -1199,7 +1278,33 @@ export async function cleanupExecutionWorkspaceArtifacts(input: {
           warnings.push(err instanceof Error ? err.message : String(err));
         }
       }
+
+      let leak = await inspectGitWorktreeLeakState(repoRoot, workspacePath);
+      if (leak) {
+        try {
+          await recordGitOperation(input.recorder, {
+            phase: "worktree_prune",
+            args: ["worktree", "prune"],
+            cwd: repoRoot,
+            metadata: {
+              workspaceId: input.workspace.id,
+              workspacePath,
+              branchName: input.workspace.branchName,
+              cleanupAction: "worktree_prune_retry",
+            },
+            successMessage: `Retried pruning dangling git worktree metadata for ${repoRoot}\n`,
+            failureLabel: `git worktree prune`,
+          });
+        } catch (err) {
+          warnings.push(err instanceof Error ? err.message : String(err));
+        }
+        leak = await inspectGitWorktreeLeakState(repoRoot, workspacePath);
+      }
+      if (leak) {
+        warnings.push(formatGitWorktreeLeakWarning(leak, workspacePath));
+      }
     }
+
     if (createdByRuntime && input.workspace.branchName) {
       if (!repoRoot) {
         warnings.push(`Could not resolve git repo root to delete branch "${input.workspace.branchName}".`);
@@ -2314,6 +2419,77 @@ export async function reconcilePersistedRuntimeServicesOnStartup(db: Db) {
   }
 
   return { reconciled: rows.length, adopted, stopped };
+}
+
+const TERMINAL_EXECUTION_WORKSPACE_STATUSES = new Set([
+  "archived",
+  "cleanup_failed",
+  "failed",
+  "cancelled",
+]);
+
+export async function reconcileDanglingWorktreesOnStartup(db: Db) {
+  const rows = await db
+    .select({
+      id: executionWorkspaces.id,
+      cwd: executionWorkspaces.cwd,
+      providerRef: executionWorkspaces.providerRef,
+      status: executionWorkspaces.status,
+      closedAt: executionWorkspaces.closedAt,
+      projectWorkspaceCwd: projectWorkspaces.cwd,
+    })
+    .from(executionWorkspaces)
+    .leftJoin(projectWorkspaces, eq(projectWorkspaces.id, executionWorkspaces.projectWorkspaceId))
+    .where(eq(executionWorkspaces.providerType, "git_worktree"));
+
+  if (rows.length === 0) {
+    return { scanned: 0, repoRoots: 0, pruned: 0, skipped: 0, failed: 0 };
+  }
+
+  const repoRoots = new Set<string>();
+  let skipped = 0;
+  for (const row of rows) {
+    if (!row.closedAt && !TERMINAL_EXECUTION_WORKSPACE_STATUSES.has(row.status)) {
+      continue;
+    }
+    const workspacePath = row.providerRef ?? row.cwd;
+    if (!workspacePath) {
+      skipped += 1;
+      continue;
+    }
+    const repoRoot = await resolveGitRepoRootForWorkspaceCleanup(
+      workspacePath,
+      row.projectWorkspaceCwd ?? null,
+    );
+    if (!repoRoot) {
+      skipped += 1;
+      continue;
+    }
+    repoRoots.add(repoRoot);
+  }
+
+  if (repoRoots.size === 0) {
+    return { scanned: rows.length, repoRoots: 0, pruned: 0, skipped, failed: 0 };
+  }
+
+  let pruned = 0;
+  let failed = 0;
+  for (const repoRoot of repoRoots) {
+    try {
+      await runGit(["worktree", "prune"], repoRoot);
+      pruned += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  return {
+    scanned: rows.length,
+    repoRoots: repoRoots.size,
+    pruned,
+    skipped,
+    failed,
+  };
 }
 
 export async function restartDesiredRuntimeServicesOnStartup(db: Db) {

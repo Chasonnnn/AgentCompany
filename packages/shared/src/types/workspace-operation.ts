@@ -2,6 +2,7 @@ export type WorkspaceOperationPhase =
   | "worktree_prepare"
   | "workspace_provision"
   | "workspace_teardown"
+  | "worktree_prune"
   | "worktree_cleanup";
 
 export type WorkspaceOperationStatus = "running" | "succeeded" | "failed" | "skipped";
