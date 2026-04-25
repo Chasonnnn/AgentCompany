@@ -856,8 +856,8 @@ describe("IssueDetail", () => {
     };
 
     mockIssuesApi.get.mockResolvedValue(createIssue());
-    mockIssuesApi.list.mockImplementation((_companyId, filters?: { parentId?: string }) =>
-      Promise.resolve(filters?.parentId === "issue-1" ? [childIssue] : []),
+    mockIssuesApi.list.mockImplementation((_companyId, filters?: { descendantOf?: string }) =>
+      Promise.resolve(filters?.descendantOf === "issue-1" ? [childIssue] : []),
     );
     mockIssuesApi.getTreeControlState.mockImplementation(() =>
       Promise.resolve({ activePauseHold: activePauseHoldState }),
@@ -943,8 +943,8 @@ describe("IssueDetail", () => {
     });
 
     mockIssuesApi.get.mockResolvedValue(createIssue());
-    mockIssuesApi.list.mockImplementation((_companyId, filters?: { parentId?: string }) =>
-      Promise.resolve(filters?.parentId === "issue-1" ? [childIssue] : []),
+    mockIssuesApi.list.mockImplementation((_companyId, filters?: { descendantOf?: string }) =>
+      Promise.resolve(filters?.descendantOf === "issue-1" ? [childIssue] : []),
     );
     mockIssuesApi.previewTreeControl.mockResolvedValue(pausePreview);
     mockIssuesApi.createTreeHold.mockResolvedValue({ hold: pauseHold, preview: pausePreview });
@@ -1037,8 +1037,8 @@ describe("IssueDetail", () => {
     });
 
     mockIssuesApi.get.mockResolvedValue(createIssue());
-    mockIssuesApi.list.mockImplementation((_companyId, filters?: { parentId?: string }) =>
-      Promise.resolve(filters?.parentId === "issue-1" ? [childIssue] : []),
+    mockIssuesApi.list.mockImplementation((_companyId, filters?: { descendantOf?: string }) =>
+      Promise.resolve(filters?.descendantOf === "issue-1" ? [childIssue] : []),
     );
     mockIssuesApi.listTreeHolds.mockImplementation((_issueId, filters?: { mode?: string }) =>
       Promise.resolve(filters?.mode === "cancel" ? [cancelHold] : []),
@@ -1112,8 +1112,8 @@ describe("IssueDetail", () => {
     });
 
     mockIssuesApi.get.mockResolvedValue(createIssue());
-    mockIssuesApi.list.mockImplementation((_companyId, filters?: { parentId?: string }) =>
-      Promise.resolve(filters?.parentId === "issue-1" ? [childIssue] : []),
+    mockIssuesApi.list.mockImplementation((_companyId, filters?: { descendantOf?: string }) =>
+      Promise.resolve(filters?.descendantOf === "issue-1" ? [childIssue] : []),
     );
     mockIssuesApi.previewTreeControl.mockResolvedValue(createCancelPreview(24));
     mockAuthApi.getSession.mockResolvedValue({

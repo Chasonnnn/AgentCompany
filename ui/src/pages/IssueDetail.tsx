@@ -91,6 +91,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { formatIssueActivityAction } from "@/lib/activity-format";
 import { resolveIssueChatTranscriptRuns } from "../lib/issueChatTranscriptRuns";
+import { filterIssueDescendants } from "../lib/issue-tree";
 import {
   Activity as ActivityIcon,
   Check,
@@ -598,9 +599,9 @@ export function IssueDetail() {
   const { data: rawChildIssues = [], isLoading: childIssuesLoading } = useQuery({
     queryKey:
       issue?.id && resolvedCompanyId
-        ? queryKeys.issues.listByParent(resolvedCompanyId, issue.id)
+        ? queryKeys.issues.listByDescendantRoot(resolvedCompanyId, issue.id)
         : ["issues", "parent", "pending"],
-    queryFn: () => issuesApi.list(resolvedCompanyId!, { parentId: issue!.id }),
+    queryFn: () => issuesApi.list(resolvedCompanyId!, { descendantOf: issue!.id }),
     enabled: !!resolvedCompanyId && !!issue?.id,
     placeholderData: keepPreviousData,
   });
@@ -768,8 +769,11 @@ export function IssueDetail() {
     [issue?.project, issue?.projectId, orderedProjects],
   );
   const childIssues = useMemo(
-    () => [...rawChildIssues].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
-    [rawChildIssues],
+    () => {
+      const descendants = issue?.id ? filterIssueDescendants(issue.id, rawChildIssues) : rawChildIssues;
+      return [...descendants].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    },
+    [issue?.id, rawChildIssues],
   );
   const childIssuesPanelKey = useMemo(
     () => childIssues.map((child) => `${child.id}:${String(child.updatedAt)}`).join("|"),

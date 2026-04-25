@@ -456,6 +456,9 @@ type PaperclipWakeExecutionStage = {
   stageType: string | null;
   currentParticipant: PaperclipWakeExecutionPrincipal | null;
   returnAssignee: PaperclipWakeExecutionPrincipal | null;
+  reviewRequest: {
+    instructions: string;
+  } | null;
   lastDecisionOutcome: string | null;
   allowedActions: string[];
 };
@@ -1332,11 +1335,14 @@ function normalizePaperclipWakeExecutionStage(value: unknown): PaperclipWakeExec
     : [];
   const currentParticipant = normalizePaperclipWakeExecutionPrincipal(stage.currentParticipant);
   const returnAssignee = normalizePaperclipWakeExecutionPrincipal(stage.returnAssignee);
+  const reviewRequestRaw = parseObject(stage.reviewRequest);
+  const reviewInstructions = asString(reviewRequestRaw.instructions, "").trim();
+  const reviewRequest = reviewInstructions ? { instructions: reviewInstructions } : null;
   const stageId = asString(stage.stageId, "").trim() || null;
   const stageType = asString(stage.stageType, "").trim() || null;
   const lastDecisionOutcome = asString(stage.lastDecisionOutcome, "").trim() || null;
 
-  if (!wakeRole && !stageId && !stageType && !currentParticipant && !returnAssignee && !lastDecisionOutcome && allowedActions.length === 0) {
+  if (!wakeRole && !stageId && !stageType && !currentParticipant && !returnAssignee && !reviewRequest && !lastDecisionOutcome && allowedActions.length === 0) {
     return null;
   }
 
@@ -1346,6 +1352,7 @@ function normalizePaperclipWakeExecutionStage(value: unknown): PaperclipWakeExec
     stageType,
     currentParticipant,
     returnAssignee,
+    reviewRequest,
     lastDecisionOutcome,
     allowedActions,
   };
@@ -2044,6 +2051,13 @@ export function renderPaperclipWakePrompt(
     );
     if (executionStage.allowedActions.length > 0) {
       lines.push(`- allowed actions: ${executionStage.allowedActions.join(", ")}`);
+    }
+    if (executionStage.reviewRequest) {
+      lines.push(
+        "",
+        "Review request instructions:",
+        executionStage.reviewRequest.instructions,
+      );
     }
     lines.push("");
     if (executionStage.wakeRole === "reviewer" || executionStage.wakeRole === "approver") {

@@ -689,6 +689,9 @@ describe("issue comment reopen routes", () => {
           docsUpdated: true,
           worktreeClean: true,
         },
+        reviewRequest: {
+          instructions: "Please verify the fix against the reproduction steps and note any residual risk.",
+        },
       });
 
     expect(res.status).toBe(200);
@@ -709,9 +712,29 @@ describe("issue comment reopen routes", () => {
             type: "agent",
             agentId: "22222222-2222-4222-8222-222222222222",
           }),
+          reviewRequest: {
+            instructions: "Please verify the fix against the reproduction steps and note any residual risk.",
+          },
         }),
       }),
     );
+    expect(res.body.assigneeAgentId).toBe("22222222-2222-4222-8222-222222222222");
+    expect(res.body.assigneeUserId).toBeNull();
+    expect(res.body.executionState).toMatchObject({
+      status: "pending",
+      currentStageType: "review",
+      currentParticipant: {
+        type: "agent",
+        agentId: "33333333-3333-4333-8333-333333333333",
+      },
+      returnAssignee: {
+        type: "agent",
+        agentId: "22222222-2222-4222-8222-222222222222",
+      },
+      reviewRequest: {
+        instructions: "Please verify the fix against the reproduction steps and note any residual risk.",
+      },
+    });
     expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
       "33333333-3333-4333-8333-333333333333",
       expect.objectContaining({
@@ -721,6 +744,9 @@ describe("issue comment reopen routes", () => {
           executionStage: expect.objectContaining({
             wakeRole: "reviewer",
             stageType: "review",
+            reviewRequest: {
+              instructions: "Please verify the fix against the reproduction steps and note any residual risk.",
+            },
             allowedActions: ["approve", "request_changes"],
           }),
         }),

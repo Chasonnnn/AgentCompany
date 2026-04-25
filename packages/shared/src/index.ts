@@ -944,6 +944,7 @@ export {
   inReviewSelfAttestSchema,
   issueExecutionPolicySchema,
   issueExecutionStateSchema,
+  issueReviewRequestSchema,
   issueContinuityTierSchema,
   issueContinuityStatusSchema,
   issueSpecStateSchema,
