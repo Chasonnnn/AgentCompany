@@ -344,6 +344,34 @@ describe("renderPaperclipWakePrompt", () => {
             totalTokens: 80_000,
             nextAction: "Reduce QA ceremony.",
           },
+          {
+            runId: "run-2",
+            agentName: "Project Lead",
+            issueIdentifier: null,
+            issueTitle: null,
+            livenessState: "needs_followup",
+            totalTokens: 918_000,
+            nextAction: JSON.stringify({
+              type: "assistant",
+              message: {
+                model: "claude-opus-4-7",
+                id: "msg_123",
+                type: "message",
+                role: "assistant",
+                content: [
+                  {
+                    type: "text",
+                    text: "Let me check the source run for context and the in-progress proposals that are stuck in revision_requested.",
+                  },
+                ],
+                usage: {
+                  input_tokens: 1,
+                  cache_creation_input_tokens: 960,
+                  cache_read_input_tokens: 52855,
+                },
+              },
+            }),
+          },
         ],
       },
     });
@@ -355,8 +383,15 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("Check low-yield agents first.");
     expect(prompt).toContain("QA: watch");
     expect(prompt).toContain("PAP-10 Overplanned fix");
+    expect(prompt).toContain("next action: Reduce QA ceremony.");
+    expect(prompt).toContain("Project Lead, needs_followup, 918K tokens");
+    expect(prompt).toContain("next action: Let me check the source run for context");
     expect(prompt).toContain("Fetch a specific agent productivity summary only when you need detail");
     expect(prompt).toContain("do not mutate target issues");
+    expect(prompt).not.toContain("\"usage\"");
+    expect(prompt).not.toContain("cache_creation_input_tokens");
+    expect(prompt).not.toContain("claude-opus-4-7");
+    expect(prompt).not.toContain("\"type\":\"assistant\"");
     expect(prompt).not.toContain("Before generic repo exploration");
   });
 });

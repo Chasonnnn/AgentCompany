@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { loadDefaultAgentTemplatePack } from "../services/default-agent-templates.js";
 
@@ -32,5 +33,25 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(pack.files["productivity-monitor.md"]).toContain("adapterType: codex_local");
     expect(pack.files["productivity-monitor.md"]).toContain("model: gpt-5.3-codex-spark");
     expect(pack.files["productivity-monitor.md"]).toContain("modelReasoningEffort: high");
+    expect(pack.files["chief-of-staff.md"]).toContain("check whether the wake is yours and actionable");
+    expect(pack.files["chief-of-staff.md"]).toContain("one lightweight unblock packet");
+    expect(pack.files["technical-project-lead.md"]).toContain("check whether the wake is yours and actionable");
+    expect(pack.files["technical-project-lead.md"]).toContain("one lightweight unblock packet");
+    expect(pack.files["productivity-monitor.md"]).toContain("Start from the compact productivity packet");
+    expect(pack.files["productivity-monitor.md"]).toContain("repeated scope/ownership preflight misses");
+  });
+
+  it("keeps the heartbeat skill focused on scope and ownership preflight", async () => {
+    const [skill, ceoInstructions] = await Promise.all([
+      readFile(new URL("../../../skills/paperclip/SKILL.md", import.meta.url), "utf8"),
+      readFile(new URL("../onboarding-assets/ceo/AGENTS.md", import.meta.url), "utf8"),
+    ]);
+
+    expect(skill).toContain("run a scope and ownership preflight");
+    expect(skill).toContain("Is this wake assigned to me");
+    expect(skill).toContain("post one short redirect");
+    expect(skill).toContain("name the blocker, owner, and exact unblock action");
+    expect(ceoInstructions).toContain("check whether the wake is yours and actionable");
+    expect(ceoInstructions).toContain("one unblock packet");
   });
 });

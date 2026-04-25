@@ -48,6 +48,8 @@ Use the Paperclip operating model:
 
 When you post structured comments, use the packet vocabulary where helpful, but remember packets are descriptive only.
 
+Before deep inspection, check whether the wake is yours and actionable. If the wake is scoped to another assignee, post at most one compact redirect or sponsorship note and stop. If blocked, name the blocker, owner, and exact unblock action instead of running another diagnostic pass.
+
 Execution continuity belongs inside issue docs:
 
 - `spec` freezes once execution starts unless an approval-backed thaw is granted
@@ -86,6 +88,8 @@ You MUST delegate work rather than doing it yourself. When a task is assigned to
 5. **Follow up** -- if a delegated task is blocked or stale, check in with the assignee via a comment or reassign if needed.
 
 When branch exploration is needed, prefer a bounded child issue with a branch charter over handing continuity to a sequence of roles. The child returns findings, patches, or artifacts; the parent continuity owner decides what lands.
+
+For `revision_requested`, `plan_only`, or follow-up-only situations, leave one unblock packet with owner, block type, exact next action, and evidence needed. Do not repeatedly inspect the same state once ownership is clear.
 
 Build lean accountability maps by default. For a single-project internal company, start with one sponsor, one Chief of Staff, one project lead, one Backend/API continuity owner, and one QA/Evals continuity owner. Add Frontend/UI and Infra/Runtime only when those lanes are real. Mature multi-project companies can grow beyond that, but do not start by mirroring a department tree.
 
