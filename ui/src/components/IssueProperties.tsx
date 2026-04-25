@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link } from "@/lib/router";
-import type { Issue } from "@paperclipai/shared";
+import type { Issue, IssueLabel, Project, WorkspaceRuntimeService } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -887,6 +887,16 @@ export function IssueProperties({
       </div>
     </>
   );
+  const renderAddBlockedByButton = (onClick?: () => void) => (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+      onClick={onClick}
+    >
+      <Plus className="h-3 w-3" />
+      Add blocker
+    </button>
+  );
 
   return (
     <div className="space-y-4">
@@ -985,32 +995,47 @@ export function IssueProperties({
           {parentContent}
         </PropertyPicker>
 
-        <PropertyPicker
-          inline={inline}
-          label="Blocked by"
-          open={blockedByOpen}
-          onOpenChange={(open) => {
-            setBlockedByOpen(open);
-            if (!open) setBlockedBySearch("");
-          }}
-          triggerContent={blockedByTrigger}
-          triggerClassName="min-w-0 max-w-full"
-          popoverClassName="w-72"
-        >
-          {blockedByContent}
-        </PropertyPicker>
+        {inline ? (
+          <div>
+            <PropertyRow label="Blocked by">
+              {(issue.blockedBy ?? []).map((relation) => (
+                <IssueReferencePill key={relation.id} issue={relation} />
+              ))}
+              {renderAddBlockedByButton(() => setBlockedByOpen((open) => !open))}
+            </PropertyRow>
+            {blockedByOpen && (
+              <div className="rounded-md border border-border bg-popover p-1 mb-2">
+                {blockedByContent}
+              </div>
+            )}
+          </div>
+        ) : (
+          <PropertyRow label="Blocked by">
+            {(issue.blockedBy ?? []).map((relation) => (
+              <IssueReferencePill key={relation.id} issue={relation} />
+            ))}
+            <Popover
+              open={blockedByOpen}
+              onOpenChange={(open) => {
+                setBlockedByOpen(open);
+                if (!open) setBlockedBySearch("");
+              }}
+            >
+              <PopoverTrigger asChild>
+                {renderAddBlockedByButton()}
+              </PopoverTrigger>
+              <PopoverContent className="w-72 p-1" align="end" collisionPadding={16}>
+                {blockedByContent}
+              </PopoverContent>
+            </Popover>
+          </PropertyRow>
+        )}
 
         <PropertyRow label="Blocking">
           {blockingIssues.length > 0 ? (
             <div className="flex flex-wrap gap-1">
               {blockingIssues.map((relation) => (
-                <Link
-                  key={relation.id}
-                  to={`/issues/${relation.identifier ?? relation.id}`}
-                  className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs hover:bg-accent/50"
-                >
-                  {relation.identifier ?? relation.title}
-                </Link>
+                <IssueReferencePill key={relation.id} issue={relation} />
               ))}
             </div>
           ) : null}
@@ -1020,13 +1045,7 @@ export function IssueProperties({
           <div className="flex flex-wrap items-center gap-1.5">
             {childIssues.length > 0
               ? childIssues.map((child) => (
-                <Link
-                  key={child.id}
-                  to={`/issues/${child.identifier ?? child.id}`}
-                  className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs hover:bg-accent/50"
-                >
-                  {child.identifier ?? child.title}
-                </Link>
+                <IssueReferencePill key={child.id} issue={child} />
               ))
               : null}
             {onAddSubIssue ? (
