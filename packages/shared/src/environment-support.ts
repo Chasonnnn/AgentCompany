@@ -45,7 +45,7 @@ export function adapterSupportsRemoteManagedEnvironments(adapterType: string): b
 
 export function supportedEnvironmentDriversForAdapter(adapterType: string): EnvironmentDriver[] {
   return adapterSupportsRemoteManagedEnvironments(adapterType)
-    ? ["local", "ssh", "sandbox"]
+    ? ["local", "ssh", "sandbox", "plugin"]
     : ["local"];
 }
 
@@ -141,7 +141,7 @@ export function getEnvironmentCapabilities(
       local: "supported",
       ssh: "supported",
       sandbox: "supported",
-      plugin: "unsupported",
+      plugin: "supported",
     },
     sandboxProviders,
   };

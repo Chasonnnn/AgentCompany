@@ -52,8 +52,10 @@
 export { definePlugin } from "./define-plugin.js";
 export {
   assertEnvironmentEventOrder,
+  assertEnvironmentError,
   assertExecutionLifecycle,
   assertLeaseLifecycle,
+  assertWorkspaceRealizationLifecycle,
   createEnvironmentTestHarness,
   createFakeEnvironmentDriver,
   createTestHarness,

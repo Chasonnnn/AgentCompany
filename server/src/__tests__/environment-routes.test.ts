@@ -163,7 +163,10 @@ describe("environment routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.drivers.ssh).toBe("supported");
     expect(res.body.drivers.local).toBe("supported");
-    expect(res.body.sandboxProviders).toBeUndefined();
+    expect(res.body.sandboxProviders.fake).toEqual(expect.objectContaining({
+      status: "unsupported",
+      source: "builtin",
+    }));
   });
 
   it("redacts config and metadata for unprivileged agent list reads", async () => {
@@ -1114,7 +1117,9 @@ describe("environment routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(mockProbeEnvironment).toHaveBeenCalledWith(expect.anything(), environment);
+    expect(mockProbeEnvironment).toHaveBeenCalledWith(expect.anything(), environment, expect.objectContaining({
+      pluginWorkerManager: undefined,
+    }));
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

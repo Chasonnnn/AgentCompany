@@ -181,6 +181,19 @@ export function assertLeaseLifecycle(
   return { acquire, release };
 }
 
+export function assertWorkspaceRealizationLifecycle(
+  events: EnvironmentEventRecord[],
+  environmentId: string,
+): EnvironmentEventRecord {
+  const lifecycle = assertLeaseLifecycle(events, environmentId);
+  const realize = events.find((event) => event.type === "realizeWorkspace" && event.environmentId === environmentId);
+  if (!realize) throw new Error(`No realizeWorkspace event found for environment ${environmentId}`);
+  if (realize.timestamp < lifecycle.acquire.timestamp || realize.timestamp > lifecycle.release.timestamp) {
+    throw new Error(`realizeWorkspace event occurred outside lease lifecycle for environment ${environmentId}`);
+  }
+  return realize;
+}
+
 export function assertExecutionLifecycle(
   events: EnvironmentEventRecord[],
   environmentId: string,
@@ -196,6 +209,15 @@ export function assertExecutionLifecycle(
     }
   }
   return execEvents;
+}
+
+export function assertEnvironmentError(
+  events: EnvironmentEventRecord[],
+  type: EnvironmentEventRecord["type"],
+): EnvironmentEventRecord {
+  const event = events.find((entry) => entry.type === type && typeof entry.error === "string" && entry.error.length > 0);
+  if (!event) throw new Error(`No ${type} error event found`);
+  return event;
 }
 
 export interface FakeEnvironmentDriverOptions {

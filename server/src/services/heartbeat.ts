@@ -97,6 +97,7 @@ import {
 } from "./issue-tree-control.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { environmentService } from "./environments.js";
+import { environmentRuntimeService } from "./environment-runtime.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import {
   buildHeartbeatRunStopMetadata,
@@ -135,6 +136,7 @@ import {
   writePaperclipSkillSyncPreference,
 } from "@paperclipai/adapter-utils/server-utils";
 import { extractSkillMentionIds } from "@paperclipai/shared";
+import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const MAX_RUN_EVENT_PAYLOAD_STRING_CHARS = 16 * 1024;
@@ -971,6 +973,40 @@ export function buildExplicitResumeSessionOverride(input: {
     sessionDisplayId,
     sessionParams,
   };
+}
+
+export function mergeExecutionWorkspaceMetadataForPersistence(input: {
+  existingMetadata: Record<string, unknown> | null;
+  source: string;
+  createdByRuntime: boolean;
+  configSnapshot: (Partial<ExecutionWorkspaceConfig> & { serviceStates?: unknown }) | null;
+  shouldReuseExisting: boolean;
+}) {
+  const base = {
+    ...(input.existingMetadata ?? {}),
+    source: input.source,
+    createdByRuntime: input.createdByRuntime,
+  } as Record<string, unknown>;
+  if (input.shouldReuseExisting) return base;
+  if (!input.configSnapshot) return base;
+  const metadata = mergeExecutionWorkspaceConfig(base, {
+    environmentId: input.configSnapshot.environmentId ?? null,
+    provisionCommand: input.configSnapshot.provisionCommand ?? null,
+    teardownCommand: input.configSnapshot.teardownCommand ?? null,
+    cleanupCommand: input.configSnapshot.cleanupCommand ?? null,
+    desiredState: input.configSnapshot.desiredState ?? null,
+    workspaceRuntime: input.configSnapshot.workspaceRuntime ?? null,
+  });
+  if (metadata && typeof metadata.config === "object" && metadata.config !== null && !Array.isArray(metadata.config)) {
+    return {
+      ...metadata,
+      config: {
+        ...(metadata.config as Record<string, unknown>),
+        serviceStates: input.configSnapshot.serviceStates ?? null,
+      },
+    };
+  }
+  return metadata;
 }
 
 function normalizeUsageTotals(usage: UsageSummary | null | undefined): UsageTotals | null {
@@ -2204,7 +2240,11 @@ function resolveNextSessionState(input: {
   };
 }
 
-export function heartbeatService(db: Db) {
+export interface HeartbeatServiceOptions {
+  pluginWorkerManager?: PluginWorkerManager;
+}
+
+export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) {
   const instanceSettings = instanceSettingsService(db);
   const getCurrentUserRedactionOptions = async () => ({
     enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
@@ -2221,6 +2261,9 @@ export function heartbeatService(db: Db) {
   const treeControlSvc = issueTreeControlService(db);
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const environmentsSvc = environmentService(db);
+  const environmentRuntimeSvc = environmentRuntimeService(db, {
+    pluginWorkerManager: options.pluginWorkerManager,
+  });
   const workspaceOperationsSvc = workspaceOperationService(db);
   const activeRunExecutions = new Set<string>();
   const budgetHooks = {
@@ -5751,17 +5794,33 @@ export function heartbeatService(db: Db) {
       };
     }
 
-    const environmentLease = await environmentsSvc.acquireLease({
-      companyId: agent.companyId,
-      environmentId: selectedEnvironment.id,
-      executionWorkspaceId: persistedExecutionWorkspace?.id ?? null,
-      issueId: issueId ?? null,
-      heartbeatRunId: run.id,
-      leasePolicy: "ephemeral",
-      provider: environmentProvider,
-      providerLeaseId: environmentProviderLeaseId,
-      metadata: environmentLeaseMetadata,
-    });
+    const environmentLease =
+      selectedEnvironment.driver === "plugin" || selectedEnvironment.driver === "sandbox"
+        ? (
+            await environmentRuntimeSvc.acquireRunLease({
+              companyId: agent.companyId,
+              environment: selectedEnvironment,
+              issueId: issueId ?? null,
+              heartbeatRunId: run.id,
+              persistedExecutionWorkspace: persistedExecutionWorkspace
+                ? {
+                    id: persistedExecutionWorkspace.id,
+                    mode: persistedExecutionWorkspace.mode,
+                  }
+                : null,
+            })
+          ).lease
+        : await environmentsSvc.acquireLease({
+            companyId: agent.companyId,
+            environmentId: selectedEnvironment.id,
+            executionWorkspaceId: persistedExecutionWorkspace?.id ?? null,
+            issueId: issueId ?? null,
+            heartbeatRunId: run.id,
+            leasePolicy: "ephemeral",
+            provider: environmentProvider,
+            providerLeaseId: environmentProviderLeaseId,
+            metadata: environmentLeaseMetadata,
+          });
     if (remoteExecution) {
       executionTarget = {
         kind: "remote",
@@ -6566,13 +6625,14 @@ export function heartbeatService(db: Db) {
           await finalizeAgentStatus(run.agentId, "failed").catch(() => undefined);
         } finally {
           const latestRun = await getRun(run.id).catch(() => null);
-          const releasedLeases = await environmentsSvc
-            .releaseLeasesForRun(run.id, leaseReleaseStatusForRunStatus(latestRun?.status))
+          const releasedLeases = await environmentRuntimeSvc
+            .releaseRunLeases(run.id, leaseReleaseStatusForRunStatus(latestRun?.status))
             .catch((err) => {
               logger.warn({ err, runId: run.id }, "failed to release environment leases for heartbeat run");
               return [];
             });
-          for (const lease of releasedLeases) {
+          for (const releasedLease of releasedLeases) {
+            const lease = releasedLease.lease;
             await logActivity(db, {
               companyId: run.companyId,
               actorType: "agent",

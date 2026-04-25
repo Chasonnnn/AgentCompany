@@ -433,6 +433,7 @@ describe("buildExplicitResumeSessionOverride", () => {
       sessionDisplayId: "session-after",
       sessionParams: {
         sessionId: "session-after",
+        threadId: "session-after",
         cwd: "/tmp/project",
       },
     });
