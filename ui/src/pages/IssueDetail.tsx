@@ -2704,6 +2704,7 @@ export function IssueDetail() {
             <>
               <div className="mb-3">
                 <IssueRunLedger
+                  companyId={issue.companyId}
                   issueId={issue.id}
                   issueStatus={issue.status}
                   childIssues={childIssues}

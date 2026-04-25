@@ -547,6 +547,13 @@
       "when": 1776959400000,
       "tag": "0077_environment_local_driver_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1777050000000,
+      "tag": "0078_runtime_lifecycle_recovery",
+      "breakpoints": true
     }
   ]
 }

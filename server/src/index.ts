@@ -814,6 +814,7 @@ export async function startServer(): Promise<StartedServer> {
       .reapOrphanedRuns()
       .then(() => heartbeat.resumeQueuedRuns())
       .then(() => heartbeat.reconcileIdleActiveIssues())
+      .then(() => heartbeat.scanSilentActiveRuns())
       .catch((err) => {
         logger.error({ err }, "startup heartbeat recovery failed");
       });
@@ -846,6 +847,7 @@ export async function startServer(): Promise<StartedServer> {
         .reapOrphanedRuns({ staleThresholdMs: 5 * 60 * 1000 })
         .then(() => heartbeat.resumeQueuedRuns())
         .then(() => heartbeat.reconcileIdleActiveIssues())
+        .then(() => heartbeat.scanSilentActiveRuns())
         .catch((err) => {
           logger.error({ err }, "periodic heartbeat recovery failed");
         });

@@ -2656,6 +2656,7 @@ export function accessRoutes(
       userId: req.actor.userId,
       isInstanceAdmin: accessSnapshot.isInstanceAdmin,
       companyIds: accessSnapshot.companyIds,
+      memberships: accessSnapshot.memberships,
       source: req.actor.source ?? "none",
       keyId: req.actor.source === "board_key" ? req.actor.keyId ?? null : null,
     });

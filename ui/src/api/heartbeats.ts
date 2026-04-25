@@ -26,6 +26,7 @@ export interface ActiveRunForIssue {
   continuationAttempt?: number;
   lastUsefulActionAt?: string | Date | null;
   nextAction?: string | null;
+  outputSilence?: HeartbeatRun["outputSilence"];
 }
 
 export interface LiveRunForIssue {
@@ -45,6 +46,7 @@ export interface LiveRunForIssue {
   continuationAttempt?: number;
   lastUsefulActionAt?: string | null;
   nextAction?: string | null;
+  outputSilence?: HeartbeatRun["outputSilence"];
 }
 
 export const heartbeatsApi = {
@@ -71,6 +73,15 @@ export const heartbeatsApi = {
       `/workspace-operations/${operationId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
     ),
   cancel: (runId: string) => api.post<void>(`/heartbeat-runs/${runId}/cancel`, {}),
+  recordWatchdogDecision: (
+    runId: string,
+    input: {
+      decision: "snooze" | "continue" | "dismissed_false_positive";
+      evaluationIssueId?: string | null;
+      reason?: string | null;
+      snoozedUntil?: string | null;
+    },
+  ) => api.post(`/heartbeat-runs/${runId}/watchdog-decisions`, input),
   liveRunsForIssue: (issueId: string) =>
     api.get<LiveRunForIssue[]>(`/issues/${issueId}/live-runs`),
   activeRunForIssue: (issueId: string) =>

@@ -1,7 +1,8 @@
-import { useMemo } from "react";
-import type { Agent, Issue } from "@paperclipai/shared";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import type { Agent, HeartbeatRun, Issue } from "@paperclipai/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@/lib/router";
+import { accessApi } from "../api/access";
 import { activityApi, type RunForIssue, type RunLivenessState } from "../api/activity";
 import { heartbeatsApi, type ActiveRunForIssue, type LiveRunForIssue } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
@@ -9,6 +10,7 @@ import { describeRunRetryState } from "../lib/runRetryState";
 import { cn, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
 
 type IssueRunLedgerProps = {
+  companyId: string;
   issueId: string;
   issueStatus: Issue["status"];
   childIssues: Issue[];
@@ -19,6 +21,7 @@ type IssueRunLedgerProps = {
 type LedgerRun = RunForIssue & {
   isLive?: boolean;
   agentName?: string;
+  outputSilence?: HeartbeatRun["outputSilence"];
 };
 
 type LivenessCopy = {
@@ -138,6 +141,7 @@ function liveRunToLedgerRun(run: LiveRunForIssue | ActiveRunForIssue): LedgerRun
     continuationAttempt: run.continuationAttempt ?? 0,
     lastUsefulActionAt: typeof run.lastUsefulActionAt === "string" ? run.lastUsefulActionAt : toIsoString(run.lastUsefulActionAt),
     nextAction: run.nextAction ?? null,
+    outputSilence: run.outputSilence,
   };
 }
 
@@ -215,6 +219,13 @@ function continuationLabel(run: LedgerRun) {
   return `Continuation attempt ${run.continuationAttempt}`;
 }
 
+function outputSilenceLabel(outputSilence: HeartbeatRun["outputSilence"]) {
+  if (!outputSilence || outputSilence.level === "ok" || outputSilence.level === "not_applicable") return null;
+  if (outputSilence.level === "snoozed") return "Output quiet (snoozed)";
+  const age = outputSilence.silenceAgeMs != null ? formatDuration(new Date(Date.now() - outputSilence.silenceAgeMs), new Date()) : null;
+  return `${outputSilence.level === "critical" ? "Critical" : "Suspicious"} output silence${age ? ` (${age})` : ""}`;
+}
+
 function hasExhaustedContinuation(run: RunForIssue) {
   return /continuation attempts exhausted/i.test(run.livenessReason ?? "");
 }
@@ -269,12 +280,58 @@ function summarizeCost(runs: LedgerRun[]) {
 }
 
 export function IssueRunLedger({
+  companyId,
   issueId,
   issueStatus,
   childIssues,
   agentMap,
   hasLiveRuns,
 }: IssueRunLedgerProps) {
+  const queryClient = useQueryClient();
+  const [watchdogError, setWatchdogError] = useState<string | null>(null);
+  const { data: boardAccess } = useQuery({
+    queryKey: queryKeys.access.currentBoardAccess,
+    queryFn: () => accessApi.getCurrentBoardAccess(),
+    retry: false,
+  });
+  const canRecordWatchdogDecision = Boolean(
+    boardAccess?.isInstanceAdmin ||
+    boardAccess?.memberships?.some(
+      (membership) =>
+        membership.companyId === companyId &&
+        membership.status === "active" &&
+        membership.membershipRole !== "viewer",
+    ) ||
+    (
+      boardAccess?.memberships === undefined &&
+      boardAccess?.companyIds?.includes(companyId)
+    ),
+  );
+  const watchdogDecision = useMutation({
+    mutationFn: (input: {
+      runId: string;
+      decision: "continue" | "snooze" | "dismissed_false_positive";
+      evaluationIssueId?: string | null;
+      snoozedUntil?: string | null;
+    }) =>
+      heartbeatsApi.recordWatchdogDecision(input.runId, {
+        decision: input.decision,
+        evaluationIssueId: input.evaluationIssueId,
+        snoozedUntil: input.snoozedUntil,
+      }),
+    onSuccess: async () => {
+      setWatchdogError(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId) }),
+      ]);
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Watchdog decision failed";
+      setWatchdogError(message);
+    },
+  });
   const { data: runs = [] } = useQuery({
     queryKey: queryKeys.issues.runs(issueId),
     queryFn: () => activityApi.runsForIssue(issueId),
@@ -387,6 +444,7 @@ export function IssueRunLedger({
             const exhausted = hasExhaustedContinuation(run);
             const continuation = continuationLabel(run);
             const retryState = describeRunRetryState(run);
+            const silenceLabel = outputSilenceLabel(run.outputSilence);
             return (
               <article key={run.runId} className="space-y-2 px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -420,6 +478,52 @@ export function IssueRunLedger({
                   ) : null}
                   {continuation ? <span className="text-[11px] text-muted-foreground">{continuation}</span> : null}
                 </div>
+
+                {silenceLabel ? (
+                  <div className="min-w-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{silenceLabel}</span>
+                      {run.outputSilence?.evaluationIssueIdentifier ? (
+                        <Link
+                          to={`/issues/${run.outputSilence.evaluationIssueIdentifier}`}
+                          className="font-mono hover:underline"
+                        >
+                          {run.outputSilence.evaluationIssueIdentifier}
+                        </Link>
+                      ) : null}
+                      {canRecordWatchdogDecision ? (
+                        <>
+                          <button
+                            type="button"
+                            className="rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] hover:bg-amber-500/10 disabled:opacity-50"
+                            disabled={watchdogDecision.isPending}
+                            onClick={() => watchdogDecision.mutate({
+                              runId: run.runId,
+                              decision: "continue",
+                              evaluationIssueId: run.outputSilence?.evaluationIssueId ?? null,
+                            })}
+                          >
+                            Continue
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] hover:bg-amber-500/10 disabled:opacity-50"
+                            disabled={watchdogDecision.isPending}
+                            onClick={() => watchdogDecision.mutate({
+                              runId: run.runId,
+                              decision: "snooze",
+                              evaluationIssueId: run.outputSilence?.evaluationIssueId ?? null,
+                              snoozedUntil: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+                            })}
+                          >
+                            Snooze 1h
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                    {watchdogError ? <p className="mt-1 text-red-700 dark:text-red-300">{watchdogError}</p> : null}
+                  </div>
+                ) : null}
 
                 <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
                   <div>

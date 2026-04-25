@@ -204,6 +204,10 @@ export function agentRoutes(
     opts?.services?.workspaceOperationService ?? workspaceOperationService(db);
   const instanceSettings =
     opts?.services?.instanceSettingsService ?? instanceSettingsService(db);
+  const buildOutputSilence = async (run: any) =>
+    typeof heartbeat.buildRunOutputSilence === "function"
+      ? heartbeat.buildRunOutputSilence(run)
+      : undefined;
   const runtimeConfig = loadConfig();
   const logActivity = opts?.services?.logActivity ?? baseLogActivity;
   const getTelemetryClientFn =
@@ -3234,6 +3238,10 @@ export function agentRoutes(
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
       createdAt: heartbeatRuns.createdAt,
+      lastOutputAt: heartbeatRuns.lastOutputAt,
+      lastOutputSeq: heartbeatRuns.lastOutputSeq,
+      lastOutputStream: heartbeatRuns.lastOutputStream,
+      processStartedAt: heartbeatRuns.processStartedAt,
       agentId: heartbeatRuns.agentId,
       agentName: agentsTable.name,
       adapterType: agentsTable.adapterType,
@@ -3268,11 +3276,17 @@ export function agentRoutes(
         .orderBy(desc(heartbeatRuns.createdAt))
         .limit(minCount - liveRuns.length);
 
-      res.json([...liveRuns, ...recentRuns]);
+      res.json(await Promise.all([...liveRuns, ...recentRuns].map(async (run) => ({
+        ...run,
+        outputSilence: await buildOutputSilence({ ...run, companyId }),
+      }))));
       return;
     }
 
-    res.json(liveRuns);
+    res.json(await Promise.all(liveRuns.map(async (run) => ({
+      ...run,
+      outputSilence: await buildOutputSilence({ ...run, companyId }),
+    }))));
   });
 
   router.get("/heartbeat-runs/:runId", async (req, res) => {
@@ -3283,7 +3297,10 @@ export function agentRoutes(
       return;
     }
     assertCompanyAccess(req, run.companyId);
-    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
+    res.json(redactCurrentUserValue(
+      { ...run, outputSilence: await buildOutputSilence(run) },
+      await getCurrentUserRedactionOptions(),
+    ));
   });
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
@@ -3308,6 +3325,43 @@ export function agentRoutes(
     }
 
     res.json(run);
+  });
+
+  router.post("/heartbeat-runs/:runId/watchdog-decisions", async (req, res) => {
+    assertBoard(req);
+    const runId = req.params.runId as string;
+    const existing = await heartbeat.getRun(runId);
+    if (!existing) {
+      res.status(404).json({ error: "Heartbeat run not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+    const decision = typeof req.body?.decision === "string" ? req.body.decision : "";
+    if (!["snooze", "continue", "dismissed_false_positive"].includes(decision)) {
+      res.status(400).json({ error: "Unsupported watchdog decision" });
+      return;
+    }
+    const evaluationIssueId = typeof req.body?.evaluationIssueId === "string" ? req.body.evaluationIssueId : null;
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 4000) : null;
+    const snoozedUntil = decision === "snooze"
+      ? new Date(String(req.body?.snoozedUntil ?? ""))
+      : null;
+    if (decision === "snooze" && (!snoozedUntil || Number.isNaN(snoozedUntil.getTime()) || snoozedUntil <= new Date())) {
+      res.status(400).json({ error: "snoozedUntil must be a future ISO datetime" });
+      return;
+    }
+
+    const row = await heartbeat.recordWatchdogDecision({
+      runId: existing.id,
+      actor: { type: "board", userId: req.actor.userId ?? null, runId: req.actor.runId ?? null },
+      decision: decision as "snooze" | "continue" | "dismissed_false_positive",
+      evaluationIssueId,
+      reason,
+      snoozedUntil,
+      createdByRunId: req.actor.runId ?? null,
+    });
+
+    res.json(row);
   });
 
   router.get("/heartbeat-runs/:runId/events", async (req, res) => {
@@ -3406,6 +3460,10 @@ export function agentRoutes(
         startedAt: heartbeatRuns.startedAt,
         finishedAt: heartbeatRuns.finishedAt,
         createdAt: heartbeatRuns.createdAt,
+        lastOutputAt: heartbeatRuns.lastOutputAt,
+        lastOutputSeq: heartbeatRuns.lastOutputSeq,
+        lastOutputStream: heartbeatRuns.lastOutputStream,
+        processStartedAt: heartbeatRuns.processStartedAt,
         agentId: heartbeatRuns.agentId,
         agentName: agentsTable.name,
         adapterType: agentsTable.adapterType,
@@ -3421,7 +3479,10 @@ export function agentRoutes(
       )
       .orderBy(desc(heartbeatRuns.createdAt));
 
-    res.json(liveRuns);
+    res.json(await Promise.all(liveRuns.map(async (run) => ({
+      ...run,
+      outputSilence: await buildOutputSilence({ ...run, companyId: issue.companyId }),
+    }))));
   });
 
   router.get("/issues/:issueId/active-run", async (req, res) => {
@@ -3462,6 +3523,7 @@ export function agentRoutes(
       agentId: agent.id,
       agentName: agent.name,
       adapterType: agent.adapterType,
+      outputSilence: await buildOutputSilence({ ...run, companyId: issue.companyId }),
     });
   });
 
