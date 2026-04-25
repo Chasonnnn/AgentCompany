@@ -6,6 +6,8 @@ export default defineConfig({
     globalSetup: "../scripts/vitest-process-guard.mjs",
     isolate: true,
     maxConcurrency: 1,
+    maxWorkers: 1,
+    minWorkers: 1,
     pool: "forks",
     poolOptions: {
       forks: {
