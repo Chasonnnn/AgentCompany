@@ -2269,6 +2269,7 @@ export function IssueDetail() {
           className="text-[15px] leading-7 text-foreground"
           placeholder="Add a description..."
           multiline
+          foldable
           mentions={mentionOptions}
           imageUploadHandler={async (file) => {
             const attachment = await uploadAttachment.mutateAsync(file);
@@ -2674,7 +2675,7 @@ export function IssueDetail() {
                   return attachment.contentPath;
                 }}
                 onAttachImage={async (file) => {
-                  await uploadAttachment.mutateAsync(file);
+                  return uploadAttachment.mutateAsync(file);
                 }}
                 onInterruptQueued={async (runId) => {
                   await interruptQueuedComment.mutateAsync(runId);

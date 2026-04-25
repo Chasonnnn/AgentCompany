@@ -64,6 +64,8 @@ interface MarkdownEditorProps {
   imageUploadHandler?: (file: File) => Promise<string>;
   /** Called when a non-image file is dropped onto the editor (e.g. .zip). */
   onDropFile?: (file: File) => Promise<void>;
+  /** When set to `parent`, a wrapper owns drag/drop behavior and visuals. */
+  fileDropTarget?: "editor" | "parent";
   bordered?: boolean;
   /** List of mentionable entities. Enables @-mention autocomplete. */
   mentions?: MentionOption[];
@@ -413,6 +415,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   onBlur,
   imageUploadHandler,
   onDropFile,
+  fileDropTarget = "editor",
   bordered = true,
   mentions,
   onSubmit,
@@ -737,8 +740,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     return Array.from(evt.dataTransfer?.types ?? []).includes("Files");
   }
 
-  const canDropImage = Boolean(imageUploadHandler);
-  const canDropFile = Boolean(imageUploadHandler || onDropFile);
+  const canDropFile = fileDropTarget === "editor" && Boolean(imageUploadHandler || onDropFile);
   const handlePasteCapture = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
     const clipboard = event.clipboardData;
     if (!clipboard || !ref.current) return;
@@ -869,6 +871,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       <MDXEditor
         ref={setEditorRef}
         markdown={value}
+        suppressHtmlProcessing
         placeholder={placeholder}
         onChange={(next) => {
           const echo = echoIgnoreMarkdownRef.current;
