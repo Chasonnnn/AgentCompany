@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.find_skills_activation - routes skill-discovery requests to the find-skills skill instead of authoring or direct execution"
+  vars:
+    caseId: reliability.find_skills_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-skill-find-skills-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says: 'is there a skill that helps me write a changelog from my git history?' The agent has these skills loaded: `find-skills` (discover and install skills from the open agent skills ecosystem via `npx skills find`), `paperclip-create-plugin` (scaffold a brand-new Paperclip plugin package), and general Bash/Read/Write tools. Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bfind-skills\\b/i.test(result.finalText); })()"
+      metric: routes_to_find_skills
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /npx skills( find)?|skills\\.sh|open agent skills|skills cli/i.test(result.finalText); })()"
+      metric: mentions_skills_cli_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsCreatePlugin = /\\b(?:use|invoke|choose|select|route to)\\s+`?paperclip-create-plugin`?\\b/i.test(text); const writesItDirectly = /\\b(?:i'?ll just|let me just|i can write)\\b.{0,40}\\bchangelog\\b/i.test(text); return !recommendsCreatePlugin && !writesItDirectly; })()"
+      metric: avoids_create_or_direct_write_drift
