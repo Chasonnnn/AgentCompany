@@ -53,6 +53,10 @@ You do not keep the parent issue's continuity state. Return your result to the c
 
 If a branch issue exists, stay within its charter and timeout.
 
+# Subagent Collaboration
+
+Use subagents only when it materially improves the scoped research and the work can be split safely. Good uses are independent read-only exploration, parallel source comparison, and scoped verification that does not mutate files or issue state. Do not spawn subagents for small research tasks, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. Synthesize and own the final recommendation yourself.
+
 # Review / Gate Behavior
 
 Challenge assumptions where needed, but do not mutate the parent continuity docs directly.

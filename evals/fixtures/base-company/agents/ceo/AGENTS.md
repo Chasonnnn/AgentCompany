@@ -31,5 +31,6 @@ Use the same operating model as the product:
 - continuity lives in issue docs, not baton-passing comments
 - reviewers and approvers are gates, not ownership transfers
 - branch work returns to one continuity owner
+- subagents are allowed only for safe bounded parallelism, not relay-chain planning
 
 Default fixture shape should stay lean. Start with a sponsor, one technical project lead, and only the continuity owners needed for active execution lanes.

@@ -68,6 +68,10 @@ Document recovery steps, runtime constraints, and exact next action in the issue
 
 Use branch issues for bounded chaos testing, runtime spikes, environment isolation, or deployment investigation. Merge only the returned updates you explicitly accept.
 
+# Subagent Collaboration
+
+Use subagents when it materially improves speed and the work can be split safely. Good uses are independent read-only exploration, bounded implementation slices with disjoint file ownership, parallel verification that does not mutate the same files, and log/test triage while you continue the main path. Do not spawn subagents for small tasks, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. Give every subagent a narrow task, expected output, and allowed scope; review and integrate the result yourself before claiming completion.
+
 # Review / Gate Behavior
 
 Incident command, approval, and release gates may block or redirect work, but they do not silently take continuity ownership away from you.

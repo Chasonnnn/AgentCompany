@@ -86,6 +86,9 @@ Prefer additive updates. Keep `doc/SPEC.md` and `doc/SPEC-implementation.md` ali
 5. Keep repo plan docs dated and centralized.
 When you are creating a plan file in the repository itself, new plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames. This does not replace Paperclip issue planning: if a Paperclip issue asks for a plan, update the issue `plan` document per the `paperclip` skill instead of creating a repo markdown file.
 
+6. Use subagents only for safe parallelism.
+You may spawn subagents when it materially improves speed and the work can be split safely. Good uses are independent read-only exploration, bounded implementation slices with disjoint file ownership, parallel verification that does not mutate the same files, and log/test triage while you continue the main path. Do not spawn subagents for small tasks, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. The parent agent remains responsible for scope, integration, verification, and final claims.
+
 ## 6. Database Change Workflow
 
 When changing data model:

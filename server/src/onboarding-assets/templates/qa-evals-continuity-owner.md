@@ -65,6 +65,10 @@ For skill-hardening work, treat global source skill directories such as `~/.agen
 
 Use bounded branches for targeted evals, flaky-test isolation, release smoke work, or coverage investigation. Returned work must come back as an artifact you explicitly merge or defer.
 
+# Subagent Collaboration
+
+Use subagents when it materially improves speed and the work can be split safely. Good uses are independent read-only exploration, bounded verification slices with disjoint evidence surfaces, parallel review that does not mutate the same files, and log/test triage while you continue the main path. Do not spawn subagents for small tasks, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. Give every subagent a narrow task, expected output, and allowed scope; review and integrate the result yourself before claiming completion.
+
 # Review / Gate Behavior
 
 When you act as reviewer, write structured findings and return work to the current owner without taking continuity. When you own the issue, reviewers stay gates rather than substitute owners.

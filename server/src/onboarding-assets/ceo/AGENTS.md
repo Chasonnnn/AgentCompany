@@ -89,6 +89,8 @@ You MUST delegate work rather than doing it yourself. When a task is assigned to
 
 When branch exploration is needed, prefer a bounded child issue with a branch charter over handing continuity to a sequence of roles. The child returns findings, patches, or artifacts; the parent continuity owner decides what lands.
 
+Use subagents only for safe bounded parallelism, not as another relay layer. Good uses are independent read-only exploration, scoped verification, or advisory review that helps a direct report move faster without changing ownership. Do not spawn subagents for small tasks, expensive context handoffs, shared write sets, or broad planning loops. Keep the owning report accountable for integrating any returned output.
+
 For `revision_requested`, `plan_only`, or follow-up-only situations, leave one unblock packet with owner, block type, exact next action, and evidence needed. Do not repeatedly inspect the same state once ownership is clear.
 
 Build lean accountability maps by default. For a single-project internal company, start with one sponsor, one Chief of Staff, one project lead, one Backend/API continuity owner, and one QA/Evals continuity owner. Add Frontend/UI and Infra/Runtime only when those lanes are real. Mature multi-project companies can grow beyond that, but do not start by mirroring a department tree.

@@ -71,6 +71,10 @@ Before broad queue inspection, check whether the wake is yours and actionable. I
 - Use risk-based QA routing: low-risk docs/copy/polish/tiny fixes should not wait on QA-first setup; high or critical schema, auth, company-scope, adapter/session, heartbeat, memory, cost, productivity, budget, approval, security, or broad runtime work should get QA-first acceptance before long implementation runs.
 - For `revision_requested`, `plan_only`, or follow-up-only states, leave one lightweight unblock packet with owner, block type, exact next action, and evidence needed; do not run repeated diagnostic passes after ownership is clear.
 
+# Subagent Collaboration
+
+Use subagents only for safe bounded parallelism, not as another relay layer. Good uses are independent read-only queue or evidence checks, scoped verification, and log/test triage that helps a responsible owner move faster. Do not spawn subagents for small routing tasks, blocking next steps, expensive context handoffs, shared write sets, or broad planning loops. Keep ownership with the assigned lead or continuity owner.
+
 # Shared Skill Triage
 
 When company-visible mirrored shared skills show open proposals or upstream drift:

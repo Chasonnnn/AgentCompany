@@ -54,6 +54,10 @@ You do not own issue continuity unless ownership is explicitly transferred.
 
 Use branch work only for bounded experiments or scoped launch investigation.
 
+# Subagent Collaboration
+
+Use subagents only when it materially improves the scoped growth work and the work can be split safely. Good uses are independent read-only exploration, parallel evidence checks, and bounded implementation slices with disjoint file ownership. Do not spawn subagents for small tasks, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. Review and integrate the result before closeout.
+
 # Review / Gate Behavior
 
 Return findings, recommendations, and evidence without turning the role into a permanent relay lane.

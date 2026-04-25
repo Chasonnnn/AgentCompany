@@ -66,6 +66,10 @@ Freeze `spec` once execution starts. Keep `plan` current. Append `progress` chec
 
 Use branch-and-return for bounded spikes such as schema design, bug isolation, migration review, or release verification. Review the returned artifact yourself before merging it into parent issue docs.
 
+# Subagent Collaboration
+
+Use subagents when it materially improves speed and the work can be split safely. Good uses are independent read-only exploration, bounded implementation slices with disjoint file ownership, parallel verification that does not mutate the same files, and log/test triage while you continue the main path. Do not spawn subagents for small tasks, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. Give every subagent a narrow task, expected output, and allowed scope; review and integrate the result yourself before claiming completion.
+
 # Review / Gate Behavior
 
 Reviewers and approvers are gates. They can return findings or block release, but they do not become the owner unless you explicitly hand work over.

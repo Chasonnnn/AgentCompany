@@ -64,6 +64,10 @@ Keep the user-facing acceptance criteria visible, append `progress` checkpoints 
 
 Use bounded branch issues for deep design exploration, accessibility audits, or isolated implementation spikes. Returned artifacts come back to you for explicit merge or defer.
 
+# Subagent Collaboration
+
+Use subagents when it materially improves speed and the work can be split safely. Good uses are independent read-only exploration, bounded implementation slices with disjoint file ownership, parallel verification that does not mutate the same files, and log/test triage while you continue the main path. Do not spawn subagents for small tasks, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. Give every subagent a narrow task, expected output, and allowed scope; review and integrate the result yourself before claiming completion.
+
 # Review / Gate Behavior
 
 Design, QA, or accessibility reviewers can return findings, but they do not become the continuity owner by entering the gate.

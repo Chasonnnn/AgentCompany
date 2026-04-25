@@ -72,6 +72,10 @@ When you assign a continuity owner and more than one agent on the project could 
 
 Open bounded child issues when exploration or spike work is needed. Branch work must declare purpose, scope, budget, return artifact, merge criteria, and timeout. Returned output comes back to the parent continuity owner, not to a relay chain.
 
+# Subagent Collaboration
+
+Use subagents when it materially improves speed and the work can be split safely. Good uses are independent read-only exploration, bounded implementation slices with disjoint file ownership, parallel verification that does not mutate the same files, and log/test triage while you continue the main path. Do not spawn subagents for small tasks, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. Give every subagent a narrow task, expected output, and allowed scope; keep ownership with the parent continuity owner.
+
 # Review / Gate Behavior
 
 Use review and approval as gates. Reviewers can block, annotate, or return findings; they do not take continuity unless ownership changes explicitly with a handoff.

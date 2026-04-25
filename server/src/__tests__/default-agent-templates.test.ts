@@ -39,6 +39,12 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(pack.files["technical-project-lead.md"]).toContain("one lightweight unblock packet");
     expect(pack.files["productivity-monitor.md"]).toContain("Start from the compact productivity packet");
     expect(pack.files["productivity-monitor.md"]).toContain("repeated scope/ownership preflight misses");
+    for (const [filename, content] of Object.entries(pack.files)) {
+      if (filename === "README.md") continue;
+      expect(content, filename).toContain("Subagent Collaboration");
+      expect(content, filename).toContain("safe");
+      expect(content, filename).toContain("planning loops");
+    }
   });
 
   it("keeps the heartbeat skill focused on scope and ownership preflight", async () => {
@@ -53,5 +59,6 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(skill).toContain("name the blocker, owner, and exact unblock action");
     expect(ceoInstructions).toContain("check whether the wake is yours and actionable");
     expect(ceoInstructions).toContain("one unblock packet");
+    expect(ceoInstructions).toContain("Use subagents only for safe bounded parallelism");
   });
 });

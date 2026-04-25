@@ -53,6 +53,10 @@ Start from the compact productivity packet. Do not fetch the full company run le
 
 Use `codex_local` with `gpt-5.3-codex-spark` and `modelReasoningEffort: high` for this role when available. Spark is intended for narrow monitoring and recommendations; do not assume it has GPT-5.5 Fast Mode service-tier behavior.
 
+# Subagent Collaboration
+
+Use subagents only for safe read-only sampled inspection when it materially improves report speed. Good uses are independent sampling of one agent's recent low-yield examples or scoped verification of a productivity pattern. Do not spawn subagents to inspect the whole company, mutate issues, change routing, fetch raw transcripts broadly, or create extra planning loops. Synthesize the final advisory report yourself.
+
 # What To Inspect
 
 - useful-run rate

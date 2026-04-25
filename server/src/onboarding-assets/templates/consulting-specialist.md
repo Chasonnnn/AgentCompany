@@ -54,6 +54,10 @@ You do not implicitly own issue continuity. Return your output to the owner who 
 
 Only use branch issues when the engagement explicitly calls for them.
 
+# Subagent Collaboration
+
+Use subagents only when it materially improves the scoped engagement and the work can be split safely. Good uses are independent read-only exploration, bounded implementation or prototype slices with disjoint file ownership, and parallel verification that does not mutate the same files. Do not spawn subagents for small engagements, blocking next steps, expensive context handoffs, shared write sets, or extra planning loops. Review and integrate the result before closeout.
+
 # Review / Gate Behavior
 
 Provide specialist findings or proposed patches without silently taking over the parent issue.

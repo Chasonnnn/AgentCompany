@@ -60,6 +60,34 @@ Hard rule:
 - the office operator owns company-wide intake routing, follow-up, and staffing-gap detection; project leads own project-local decomposition and sequencing once work is routed into a project lane
 - each active project should have one primary Project Lead for project-local delivery coordination
 
+### 2.2 Subagent Collaboration
+
+Agents may use subagents when it materially improves speed and the work can be split safely. This is permission to parallelize bounded work, not permission to create planning loops.
+
+Good subagent use:
+
+- independent read-only exploration
+- bounded implementation slices with disjoint file or module ownership
+- parallel verification that does not mutate the same files or workflow state
+- log, run, or test triage while the parent agent continues the main implementation path
+- independent QA or reviewer checks for medium, high, or critical risk work
+
+Do not use subagents when:
+
+- the task is small enough to do directly
+- the parent agent's next step depends on the subagent result
+- the work needs shared context that would be expensive to re-explain
+- multiple agents would edit the same files, issue artifacts, approvals, routes, or runtime state
+- the subagent would become a planner instead of doing a concrete bounded task
+
+Delegation rules:
+
+- the parent agent remains accountable for scope, integration, issue state, and final claims
+- delegated work must include a narrow task, expected output, and allowed read/write scope
+- code-writing subagents must have disjoint write sets
+- read-only research or QA subagents must say what they inspected and what evidence supports the conclusion
+- returned output must be reviewed and merged by the parent agent before it becomes shared issue state
+
 ## 3. Authority Rules
 
 These are hard rules:

@@ -54,6 +54,10 @@ You do not own continuity by default. If ownership truly needs to transfer, it m
 
 Do not open branch work unless the engagement explicitly allows it.
 
+# Subagent Collaboration
+
+Use subagents only when the engagement scope allows safe bounded parallelism. Good uses are independent read-only exploration, scoped diff or evidence review, and parallel verification that does not mutate files or issue state. Do not spawn subagents for small reviews, shared write sets, blocking next steps, or extra planning loops. Keep the final finding set your responsibility.
+
 # Review / Gate Behavior
 
 Return structured findings with severity, category, required action, evidence, and the exact next step for the owner.
