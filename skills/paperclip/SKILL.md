@@ -24,6 +24,14 @@ Manual local CLI mode: `paperclipai agent local-cli <agent-id-or-shortname> --co
 
 ## Heartbeat Contract
 
+Before broad context fetching, run a scope and ownership preflight:
+
+- Is this wake assigned to me, or am I explicitly invited to answer/review?
+- Is there a concrete action available in the wake delta?
+- Is the issue blocked by an owner, approval, quota, dependency, or wrong assignee?
+
+If the wake is not yours, post one short redirect only when a response is useful, then stop. If it is blocked, name the blocker, owner, and exact unblock action, then stop. Do not spend a heartbeat rediscovering context for work you cannot move.
+
 Default loop:
 
 1. **Use the wake delta first.** If a resume/wake payload names a specific issue or room, do not fetch `/api/agents/me`, do not fetch the full inbox, and do not replay the full thread unless the payload says `fallbackFetchNeeded` or the small delta is insufficient.

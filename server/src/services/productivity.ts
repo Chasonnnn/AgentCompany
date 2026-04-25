@@ -249,6 +249,12 @@ function recommendationsFor(summary: {
   if (summary.totals.planOnlyRunCount > 0) {
     recommendations.push("Review plan-only runs for issues that could skip formal planning, avoid unnecessary QA ceremony, or need QA-first acceptance before implementation.");
   }
+  if (summary.totals.planOnlyRunCount > 0 || summary.totals.needsFollowupRunCount > 0) {
+    recommendations.push("For plan-only or follow-up-only runs, require either a concrete action posted or a named blocker with owner and exact unblock step.");
+  }
+  if (summary.totals.usefulRunCount > 0 && summary.totals.completedIssueCount === 0) {
+    recommendations.push("Useful runs are not becoming completed issues; inspect definition-of-done, review handoff, and closeout flow before optimizing token cost.");
+  }
   if (summary.totals.continuationExhaustionCount > 0) {
     recommendations.push("Inspect continuation-exhausted runs; they usually need smaller task scope, clearer acceptance criteria, or a tighter risk-based QA mode.");
   }

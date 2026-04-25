@@ -707,6 +707,23 @@ type PaperclipWakeProductivityReport = {
   recommendations: string[];
 };
 
+const PRODUCTIVITY_NEXT_ACTION_PREVIEW_MAX = 180;
+const PRODUCTIVITY_JSON_TEXT_KEYS = new Set(["text", "nextAction", "summary", "reason"]);
+const PRODUCTIVITY_JSON_SKIP_KEYS = new Set([
+  "usage",
+  "cache_creation",
+  "cache_read_input_tokens",
+  "cache_creation_input_tokens",
+  "input_tokens",
+  "output_tokens",
+  "stop_details",
+  "stop_sequence",
+  "id",
+  "model",
+  "role",
+  "type",
+]);
+
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
@@ -741,6 +758,59 @@ type PaperclipWakePayload = {
   conferenceRoomThread: PaperclipWakeConferenceRoomMessage[];
   conferenceRoomPendingResponses: PaperclipWakeConferenceRoomPendingResponse[];
 };
+
+function compactProductivityPreviewText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function collectProductivityJsonText(value: unknown, depth = 0): string[] {
+  if (depth > 5 || value == null) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectProductivityJsonText(entry, depth + 1));
+  }
+  if (typeof value !== "object") return [];
+
+  const record = value as Record<string, unknown>;
+  const results: string[] = [];
+  for (const [key, entry] of Object.entries(record)) {
+    if (PRODUCTIVITY_JSON_SKIP_KEYS.has(key)) continue;
+    if (PRODUCTIVITY_JSON_TEXT_KEYS.has(key) && typeof entry === "string") {
+      results.push(entry);
+      continue;
+    }
+    if (key === "message" || key === "content" || key === "payload" || key === "result") {
+      results.push(...collectProductivityJsonText(entry, depth + 1));
+    }
+  }
+  return results;
+}
+
+function formatProductivityNextActionPreview(raw: string | null) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  let text = trimmed;
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      text = collectProductivityJsonText(parsed)
+        .map(compactProductivityPreviewText)
+        .filter(Boolean)
+        .join(" ");
+    } catch {
+      text = "";
+    }
+  }
+
+  const compact = compactProductivityPreviewText(text);
+  if (!compact) return null;
+  if ((compact.startsWith("{") || compact.startsWith("[")) && /"usage"|"model"|"content"/.test(compact)) return null;
+  return compact.length <= PRODUCTIVITY_NEXT_ACTION_PREVIEW_MAX
+    ? compact
+    : `${compact.slice(0, PRODUCTIVITY_NEXT_ACTION_PREVIEW_MAX - 3)}...`;
+}
 
 function normalizePaperclipWakeSharedSkill(value: unknown): PaperclipWakeSharedSkill | null {
   const skill = parseObject(value);
@@ -1691,7 +1761,8 @@ export function renderPaperclipWakePrompt(
         lines.push(
           `  - ${run.issueIdentifier ?? "unlinked"}${run.issueTitle ? ` ${run.issueTitle}` : ""}: ${run.agentName ?? "unknown agent"}, ${run.livenessState ?? "unknown"}, ${formatWakeTokens(run.totalTokens)} tokens`,
         );
-        if (run.nextAction) lines.push(`    next: ${run.nextAction}`);
+        const nextActionPreview = formatProductivityNextActionPreview(run.nextAction);
+        if (nextActionPreview) lines.push(`    next action: ${nextActionPreview}`);
       }
     }
 
