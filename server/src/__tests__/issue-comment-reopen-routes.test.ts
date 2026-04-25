@@ -356,6 +356,97 @@ describe("issue comment reopen routes", () => {
     );
   });
 
+  it("does not enqueue a mention wake when a POST comment mentions only the author agent", async () => {
+    const SELF_ID = "77777777-7777-4777-8777-777777777777";
+    const openIssue = {
+      ...makeIssue("todo"),
+      assigneeAgentId: null,
+      assigneeUserId: null,
+    };
+    mockIssueService.getById.mockResolvedValue(openIssue);
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({
+      agentIds: [SELF_ID],
+      ambiguousTokens: [],
+    });
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-self-only",
+      issueId: openIssue.id,
+      companyId: "company-1",
+      body: `[@Self](agent://${SELF_ID})`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: SELF_ID,
+      authorUserId: null,
+    });
+
+    const res = await request(
+      await installActor(createApp(), {
+        type: "agent",
+        agentId: SELF_ID,
+        companyId: "company-1",
+        source: "agent_api_key",
+      }),
+    )
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: `[@Self](agent://${SELF_ID})` });
+
+    expect(res.status).toBe(201);
+    // The wake enqueue is fire-and-forget; give the microtask queue time to drain.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("wakes only the other mentioned agent when a POST comment names self + another", async () => {
+    const SELF_ID = "77777777-7777-4777-8777-777777777777";
+    const OTHER_ID = "88888888-8888-4888-8888-888888888888";
+    const openIssue = {
+      ...makeIssue("todo"),
+      assigneeAgentId: null,
+      assigneeUserId: null,
+    };
+    mockIssueService.getById.mockResolvedValue(openIssue);
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({
+      agentIds: [SELF_ID, OTHER_ID],
+      ambiguousTokens: [],
+    });
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-self-plus-other",
+      issueId: openIssue.id,
+      companyId: "company-1",
+      body: `[@Self](agent://${SELF_ID}) cc [@Other](agent://${OTHER_ID})`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: SELF_ID,
+      authorUserId: null,
+    });
+
+    const res = await request(
+      await installActor(createApp(), {
+        type: "agent",
+        agentId: SELF_ID,
+        companyId: "company-1",
+        source: "agent_api_key",
+      }),
+    )
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: `[@Self](agent://${SELF_ID}) cc [@Other](agent://${OTHER_ID})` });
+
+    expect(res.status).toBe(201);
+    await vi.waitFor(() => {
+      expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+        OTHER_ID,
+        expect.objectContaining({
+          reason: "issue_comment_mentioned",
+          contextSnapshot: expect.objectContaining({ source: "comment.mention" }),
+        }),
+      );
+    });
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
+      SELF_ID,
+      expect.anything(),
+    );
+  });
+
   it("interrupts an active run before a combined comment update", async () => {
     const issue = {
       ...makeIssue("todo"),
