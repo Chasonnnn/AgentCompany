@@ -1,5 +1,6 @@
 node_modules/
 dist/
+ui/storybook-static/
 .env
 *.tsbuildinfo
 drizzle/meta/
