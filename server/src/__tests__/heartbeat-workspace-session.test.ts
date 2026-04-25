@@ -15,6 +15,7 @@ import {
   resolveRuntimeSessionParamsForWorkspace,
   stripWorkspaceRuntimeFromExecutionRunConfig,
   shouldResetTaskSessionForWake,
+  shouldUseEphemeralSessionForAgent,
   type ResolvedWorkspaceForRun,
 } from "../services/heartbeat.ts";
 
@@ -340,6 +341,17 @@ describe("shouldResetTaskSessionForWake", () => {
         wakeTriggerDetail: "callback",
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldUseEphemeralSessionForAgent", () => {
+  it("uses ephemeral sessions for productivity monitor agents", () => {
+    expect(shouldUseEphemeralSessionForAgent({ archetypeKey: "productivity_monitor" })).toBe(true);
+  });
+
+  it("preserves resumable sessions for normal agents", () => {
+    expect(shouldUseEphemeralSessionForAgent({ archetypeKey: "backend_api_continuity_owner" })).toBe(false);
+    expect(shouldUseEphemeralSessionForAgent({ archetypeKey: null })).toBe(false);
   });
 });
 

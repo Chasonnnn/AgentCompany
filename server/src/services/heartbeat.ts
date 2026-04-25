@@ -159,6 +159,11 @@ const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_r
 const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
 const PRODUCTIVITY_MONITOR_ARCHETYPE_KEY = "productivity_monitor";
+
+export function shouldUseEphemeralSessionForAgent(agent: { archetypeKey?: string | null }) {
+  return agent.archetypeKey === PRODUCTIVITY_MONITOR_ARCHETYPE_KEY;
+}
+
 export const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS = [
   2 * 60 * 1000,
   10 * 60 * 1000,
@@ -4570,19 +4575,22 @@ export function heartbeatService(db: Db) {
       parseProjectExecutionWorkspacePolicy(projectContext?.executionWorkspacePolicy),
       isolatedWorkspacesEnabled,
     );
+    const useEphemeralSession = shouldUseEphemeralSessionForAgent(agent);
     const taskSession = taskKey
       ? await getTaskSession(agent.companyId, agent.id, agent.adapterType, taskKey)
       : null;
     const resetTaskSession = shouldResetTaskSessionForWake(context);
     const sessionResetReason = describeSessionResetReason(context);
-    const taskSessionForRun = resetTaskSession ? null : taskSession;
+    const taskSessionForRun = resetTaskSession || useEphemeralSession ? null : taskSession;
     const explicitResumeSessionParams = normalizeSessionParams(
-      sessionCodec.deserialize(parseObject(context.resumeSessionParams)),
+      useEphemeralSession ? null : sessionCodec.deserialize(parseObject(context.resumeSessionParams)),
     );
     const explicitResumeSessionDisplayId = truncateDisplayId(
-      readNonEmptyString(context.resumeSessionDisplayId) ??
-        (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(explicitResumeSessionParams) : null) ??
-        readNonEmptyString(explicitResumeSessionParams?.sessionId),
+      useEphemeralSession
+        ? null
+        : readNonEmptyString(context.resumeSessionDisplayId) ??
+          (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(explicitResumeSessionParams) : null) ??
+          readNonEmptyString(explicitResumeSessionParams?.sessionId),
     );
     const previousSessionParams =
       explicitResumeSessionParams ??
@@ -4614,7 +4622,7 @@ export function heartbeatService(db: Db) {
           continuityState: issueContext.continuityState,
         }
       : null;
-    const isProductivityMonitor = agent.archetypeKey === PRODUCTIVITY_MONITOR_ARCHETYPE_KEY;
+    const isProductivityMonitor = useEphemeralSession;
     const runtimeSkillEntries = isProductivityMonitor
       ? []
       : await companySkills.listRuntimeSkillEntries(agent.companyId);
@@ -5092,15 +5100,23 @@ export function heartbeatService(db: Db) {
       .where(eq(heartbeatRuns.id, run.id));
     const runtimeSessionFallback = taskKey || resetTaskSession ? null : runtime.sessionId;
     let previousSessionDisplayId = truncateDisplayId(
-      explicitResumeSessionDisplayId ??
-        taskSessionForRun?.sessionDisplayId ??
-        (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(runtimeSessionParams) : null) ??
-        readNonEmptyString(runtimeSessionParams?.sessionId) ??
-        runtimeSessionFallback,
+      useEphemeralSession
+        ? null
+        : explicitResumeSessionDisplayId ??
+          taskSessionForRun?.sessionDisplayId ??
+          (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(runtimeSessionParams) : null) ??
+          readNonEmptyString(runtimeSessionParams?.sessionId) ??
+          runtimeSessionFallback,
     );
     let runtimeSessionIdForAdapter =
-      readNonEmptyString(runtimeSessionParams?.sessionId) ?? runtimeSessionFallback;
-    let runtimeSessionParamsForAdapter = runtimeSessionParams;
+      useEphemeralSession ? null : readNonEmptyString(runtimeSessionParams?.sessionId) ?? runtimeSessionFallback;
+    let runtimeSessionParamsForAdapter = useEphemeralSession ? null : runtimeSessionParams;
+
+    if (useEphemeralSession) {
+      runtimeWorkspaceWarnings.push(
+        "Starting a fresh ephemeral session for this productivity monitor run; saved sessions are intentionally not resumed.",
+      );
+    }
 
     const sessionCompaction = await evaluateSessionCompaction({
       agent,
@@ -5440,13 +5456,19 @@ export function heartbeatService(db: Db) {
           `[paperclip] Captured ${normalizedAdapterQuestions.length} blocking decision question${normalizedAdapterQuestions.length === 1 ? "" : "s"} for board review.\n`,
         );
       }
-      const nextSessionState = resolveNextSessionState({
-        codec: sessionCodec,
-        adapterResult,
-        previousParams: previousSessionParams,
-        previousDisplayId: runtimeForAdapter.sessionDisplayId,
-        previousLegacySessionId: runtimeForAdapter.sessionId,
-      });
+      const nextSessionState = useEphemeralSession
+        ? {
+            params: null as Record<string, unknown> | null,
+            displayId: null as string | null,
+            legacySessionId: null as string | null,
+          }
+        : resolveNextSessionState({
+            codec: sessionCodec,
+            adapterResult,
+            previousParams: previousSessionParams,
+            previousDisplayId: runtimeForAdapter.sessionDisplayId,
+            previousLegacySessionId: runtimeForAdapter.sessionId,
+          });
       const rawUsage = normalizeUsageTotals(adapterResult.usage);
       const sessionUsageResolution = await resolveNormalizedUsageForSession({
         agentId: agent.id,
@@ -5610,7 +5632,11 @@ export function heartbeatService(db: Db) {
         await updateRuntimeState(agent, finalizedRun, adapterResult, {
           legacySessionId: nextSessionState.legacySessionId,
         }, normalizedUsage);
-        if (taskKey) {
+        if (useEphemeralSession) {
+          await clearTaskSessions(agent.companyId, agent.id, {
+            adapterType: agent.adapterType,
+          });
+        } else if (taskKey) {
           if (adapterResult.clearSession || (!nextSessionState.params && !nextSessionState.displayId)) {
             await clearTaskSessions(agent.companyId, agent.id, {
               taskKey,
@@ -5704,7 +5730,7 @@ export function heartbeatService(db: Db) {
           legacySessionId: runtimeForAdapter.sessionId,
         });
 
-        if (taskKey && (previousSessionParams || previousSessionDisplayId || taskSession)) {
+        if (!useEphemeralSession && taskKey && (previousSessionParams || previousSessionDisplayId || taskSession)) {
           await upsertTaskSession({
             companyId: agent.companyId,
             agentId: agent.id,
