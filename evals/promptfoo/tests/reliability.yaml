@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.agent_browser_activation - routes live web-page interaction work to the agent-browser skill"
+  vars:
+    caseId: reliability.agent_browser_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-skill-agent-browser-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "A teammate just started a Next.js dev server on http://localhost:3000 and asks you to verify the signup form actually submits and lands on /dashboard. The agent has these skills loaded: `agent-browser` (browser automation CLI: navigate, snapshot, fill, click, screenshot a real headless browser), `playwright` (direct Playwright API automation), `playwright-interactive` (persistent Electron/browser interaction via js_repl), `browse` (gstack browse daemon for QA/canary skills), and `open-gstack-browser` (launch the GStack-branded Chromium with the sidebar extension). Which skill do you invoke to drive the live form, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bagent-browser\\b/i.test(result.finalText); })()"
+      metric: routes_to_agent_browser
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /snapshot|@e\\d+|fill|click|navigate|networkidle|localhost/i.test(result.finalText); })()"
+      metric: mentions_agent_browser_workflow_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlaywrightDirect = /\\b(?:use|invoke|choose|select|route to)\\s+`?playwright(?:-interactive)?`?\\b/i.test(text); const recommendsBrowseOrGstack = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:browse|open-gstack-browser)`?\\b/i.test(text); return !recommendsPlaywrightDirect && !recommendsBrowseOrGstack; })()"
+      metric: avoids_playwright_and_browse_drift
