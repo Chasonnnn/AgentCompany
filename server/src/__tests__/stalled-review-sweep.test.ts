@@ -543,6 +543,114 @@ describeEmbeddedPostgres("runStalledReviewSweep", () => {
     expect(heartbeat.calls).toHaveLength(0);
   });
 
+  it("rewake — wakes the reviewer before posting the comment so a wake failure leaves the issue stale", async () => {
+    const companyId = await seedCompany();
+    const projectId = await seedProject(companyId);
+    const reviewerId = await seedAgent(companyId, { name: "Reviewer" });
+    await seedProjectLead(companyId, projectId);
+
+    const now = new Date("2026-05-01T12:00:00Z");
+    const issueId = await seedStaleInReviewIssue({
+      companyId,
+      projectId,
+      assigneeAgentId: reviewerId,
+      now,
+      idleHours: 25,
+    });
+
+    const beforeRow = (await db.select().from(issues).where(eq(issues.id, issueId)))[0];
+    const beforeUpdatedAt = beforeRow.updatedAt.getTime();
+
+    // Wake throws — the comment + audit row must not have landed, and the
+    // issue must still be considered stale on the next sweep tick.
+    const failingHeartbeat = {
+      calls: [] as WakeCall[],
+      wakeup: async () => {
+        throw new Error("boom — heartbeat unavailable");
+      },
+    };
+    const result = await runStalledReviewSweep(
+      db,
+      { heartbeat: failingHeartbeat as never, issueService: issueService(db) },
+      { now, force: true },
+    );
+
+    expect(result.scanned).toBe(1);
+    expect(result.acted).toBe(0);
+    expect(result.rewokenAssignee).toBe(0);
+
+    const comments = await db
+      .select()
+      .from(issueComments)
+      .where(eq(issueComments.issueId, issueId));
+    expect(comments).toHaveLength(0);
+
+    const logs = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityId, issueId));
+    expect(logs).toHaveLength(0);
+
+    const afterRow = (await db.select().from(issues).where(eq(issues.id, issueId)))[0];
+    expect(afterRow.updatedAt.getTime()).toBe(beforeUpdatedAt);
+  });
+
+  it("rate cap — ignores prior skipped_rate_cap audit rows when counting the daily cap", async () => {
+    const companyId = await seedCompany();
+    const projectId = await seedProject(companyId);
+    const reviewerId = await seedAgent(companyId, { name: "Reviewer" });
+    await seedProjectLead(companyId, projectId);
+
+    const now = new Date("2026-05-01T12:00:00Z");
+    const issueId = await seedStaleInReviewIssue({
+      companyId,
+      projectId,
+      assigneeAgentId: reviewerId,
+      now,
+      idleHours: 25,
+    });
+
+    // Pre-insert five prior `skipped_rate_cap` rows within the 24h window —
+    // none of them represent a delivered wake, so the cap must not latch.
+    for (let i = 0; i < 5; i += 1) {
+      await db.insert(activityLog).values({
+        companyId,
+        actorType: "system",
+        actorId: "stalled-review-sweep",
+        action: "issue.stalled_review_swept",
+        entityType: "issue",
+        entityId: issueId,
+        details: { decision: "skipped_rate_cap", previous: i },
+        createdAt: new Date(now.getTime() - (i + 1) * 1_800_000),
+      });
+    }
+
+    const heartbeat = createFakeHeartbeat();
+    const result = await runStalledReviewSweep(db, buildDeps(heartbeat), {
+      now,
+      force: true,
+      maxWakesPerDay: 2,
+    });
+
+    expect(result.scanned).toBe(1);
+    expect(result.acted).toBe(1);
+    expect(result.rewokenAssignee).toBe(1);
+    expect(result.skippedRateCap).toBe(0);
+    expect(heartbeat.calls).toHaveLength(1);
+
+    const acted = await db
+      .select()
+      .from(activityLog)
+      .where(
+        and(
+          eq(activityLog.entityId, issueId),
+          eq(activityLog.action, "issue.stalled_review_swept"),
+        ),
+      );
+    const actedDecisions = acted.map((row) => (row.details as Record<string, unknown>).decision);
+    expect(actedDecisions).toContain("rewake_assignee");
+  });
+
   it("respects the enabled flag and the intra-run throttle", async () => {
     const companyId = await seedCompany();
     const projectId = await seedProject(companyId);

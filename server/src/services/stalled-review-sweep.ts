@@ -250,8 +250,11 @@ export async function runStalledReviewSweep(
       }
 
       // Action A / Action B — re-wake the existing reviewer.
-      await postSweepComment(deps, issue.id, buildRewakeCommentBody(idleHours));
+      // Wake first, then comment. addComment() touches issues.updatedAt; if the
+      // wake throws after the comment lands, the issue would no longer be stale
+      // and the next sweep tick would skip it for the full thresholdHours.
       await fireWake(deps, decision.targetAgentId, issue.id, issue.status);
+      await postSweepComment(deps, issue.id, buildRewakeCommentBody(idleHours));
       await logActivity(db, {
         companyId: issue.companyId,
         actorType: "system",
@@ -444,6 +447,10 @@ async function loadRecentSweepCounts(
   cutoff: Date,
 ): Promise<Map<string, number>> {
   if (issueIds.length === 0) return new Map();
+  // Count only acted-upon decisions. The rate-cap branch writes audit rows under
+  // the same SWEEP_ACTION with `details.decision = "skipped_rate_cap"`; if those
+  // were counted, every subsequent sweep would add another skip row and the cap
+  // would latch into a permanent block once it was hit.
   const rows = await db
     .select({ entityId: activityLog.entityId, count: sql<number>`cast(count(*) as int)` })
     .from(activityLog)
@@ -453,6 +460,7 @@ async function loadRecentSweepCounts(
         eq(activityLog.action, SWEEP_ACTION),
         inArray(activityLog.entityId, issueIds),
         gt(activityLog.createdAt, cutoff),
+        sql`(${activityLog.details} ->> 'decision') is distinct from 'skipped_rate_cap'`,
       ),
     )
     .groupBy(activityLog.entityId);
