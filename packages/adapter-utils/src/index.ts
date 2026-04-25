@@ -54,3 +54,24 @@ export {
   redactTranscriptEntryPaths,
 } from "./log-redaction.js";
 export { inferOpenAiCompatibleBiller } from "./billing.js";
+
+export type {
+  SandboxRemoteExecutionSpec,
+  SandboxManagedRuntimeAsset,
+  SandboxManagedRuntimeClient,
+  PreparedSandboxManagedRuntime,
+} from "./sandbox-managed-runtime.js";
+export {
+  parseSandboxRemoteExecutionSpec,
+  buildSandboxExecutionSessionIdentity,
+  sandboxExecutionSessionMatches,
+  mirrorDirectory,
+  prepareSandboxManagedRuntime,
+} from "./sandbox-managed-runtime.js";
+
+export type {
+  CommandManagedRuntimeRunner,
+  CommandManagedRuntimeSpec,
+  CommandManagedRuntimeAsset,
+} from "./command-managed-runtime.js";
+export { prepareCommandManagedRuntime } from "./command-managed-runtime.js";

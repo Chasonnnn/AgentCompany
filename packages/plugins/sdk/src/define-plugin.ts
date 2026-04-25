@@ -48,6 +48,21 @@
  */
 
 import type { PluginContext } from "./types.js";
+import type {
+  PluginEnvironmentAcquireLeaseParams,
+  PluginEnvironmentDestroyLeaseParams,
+  PluginEnvironmentExecuteParams,
+  PluginEnvironmentExecuteResult,
+  PluginEnvironmentLease,
+  PluginEnvironmentProbeParams,
+  PluginEnvironmentProbeResult,
+  PluginEnvironmentRealizeWorkspaceParams,
+  PluginEnvironmentRealizeWorkspaceResult,
+  PluginEnvironmentReleaseLeaseParams,
+  PluginEnvironmentResumeLeaseParams,
+  PluginEnvironmentValidateConfigParams,
+  PluginEnvironmentValidationResult,
+} from "./protocol.js";
 
 // ---------------------------------------------------------------------------
 // Health check result
@@ -228,6 +243,38 @@ export interface PluginDefinition {
    * access, capabilities, and checkout policy.
    */
   onApiRequest?(input: PluginApiRequestInput): Promise<PluginApiResponse>;
+
+  onEnvironmentValidateConfig?(
+    params: PluginEnvironmentValidateConfigParams,
+  ): Promise<PluginEnvironmentValidationResult>;
+
+  onEnvironmentProbe?(
+    params: PluginEnvironmentProbeParams,
+  ): Promise<PluginEnvironmentProbeResult>;
+
+  onEnvironmentAcquireLease?(
+    params: PluginEnvironmentAcquireLeaseParams,
+  ): Promise<PluginEnvironmentLease>;
+
+  onEnvironmentResumeLease?(
+    params: PluginEnvironmentResumeLeaseParams,
+  ): Promise<PluginEnvironmentLease>;
+
+  onEnvironmentReleaseLease?(
+    params: PluginEnvironmentReleaseLeaseParams,
+  ): Promise<void>;
+
+  onEnvironmentDestroyLease?(
+    params: PluginEnvironmentDestroyLeaseParams,
+  ): Promise<void>;
+
+  onEnvironmentRealizeWorkspace?(
+    params: PluginEnvironmentRealizeWorkspaceParams,
+  ): Promise<PluginEnvironmentRealizeWorkspaceResult>;
+
+  onEnvironmentExecute?(
+    params: PluginEnvironmentExecuteParams,
+  ): Promise<PluginEnvironmentExecuteResult>;
 }
 
 // ---------------------------------------------------------------------------

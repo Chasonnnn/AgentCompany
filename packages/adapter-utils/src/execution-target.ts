@@ -1,6 +1,10 @@
 import path from "node:path";
 import type { SshRemoteExecutionSpec } from "./ssh.js";
 import {
+  prepareCommandManagedRuntime,
+  type CommandManagedRuntimeRunner,
+} from "./command-managed-runtime.js";
+import {
   buildRemoteExecutionSessionIdentity,
   prepareRemoteManagedRuntime,
   remoteExecutionSessionMatches,
@@ -32,9 +36,22 @@ export interface AdapterSshExecutionTarget {
   spec: SshRemoteExecutionSpec;
 }
 
+export interface AdapterSandboxExecutionTarget {
+  kind: "remote";
+  transport: "sandbox";
+  providerKey?: string | null;
+  environmentId?: string | null;
+  leaseId?: string | null;
+  remoteCwd: string;
+  paperclipApiUrl?: string | null;
+  timeoutMs?: number | null;
+  runner?: CommandManagedRuntimeRunner;
+}
+
 export type AdapterExecutionTarget =
   | AdapterLocalExecutionTarget
-  | AdapterSshExecutionTarget;
+  | AdapterSshExecutionTarget
+  | AdapterSandboxExecutionTarget;
 
 export type AdapterRemoteExecutionSpec = SshRemoteExecutionSpec;
 
@@ -87,7 +104,15 @@ function isAdapterExecutionTargetInstance(value: unknown): value is AdapterExecu
   if (parsed.kind === "local") return true;
   if (parsed.kind !== "remote") return false;
   if (parsed.transport === "ssh") return parseSshRemoteExecutionSpec(parseObject(parsed.spec)) !== null;
+  if (parsed.transport === "sandbox") return readStringMeta(parsed, "remoteCwd") !== null;
   return false;
+}
+
+function requireSandboxRunner(target: AdapterSandboxExecutionTarget): CommandManagedRuntimeRunner {
+  if (target.runner) return target.runner;
+  throw new Error(
+    "Sandbox execution target is missing its provider runtime runner. Sandbox commands must execute through the environment runtime.",
+  );
 }
 
 export function adapterExecutionTargetToRemoteSpec(
@@ -105,10 +130,7 @@ export function adapterExecutionTargetIsRemote(
 export function adapterExecutionTargetUsesManagedHome(
   target: AdapterExecutionTarget | null | undefined,
 ): boolean {
-  // SSH execution targets sync the runtime assets they need into the remote cwd today,
-  // so neither local nor remote targets provision a separate managed adapter home.
-  void target;
-  return false;
+  return target?.kind === "remote" && target.transport === "sandbox";
 }
 
 export function adapterExecutionTargetRemoteCwd(
@@ -122,14 +144,18 @@ export function adapterExecutionTargetPaperclipApiUrl(
   target: AdapterExecutionTarget | null | undefined,
 ): string | null {
   if (target?.kind !== "remote") return null;
-  return target.paperclipApiUrl ?? target.spec.paperclipApiUrl ?? null;
+  if (target.transport === "ssh") return target.paperclipApiUrl ?? target.spec.paperclipApiUrl ?? null;
+  return target.paperclipApiUrl ?? null;
 }
 
 export function describeAdapterExecutionTarget(
   target: AdapterExecutionTarget | null | undefined,
 ): string {
   if (!target || target.kind === "local") return "local environment";
-  return `SSH environment ${target.spec.username}@${target.spec.host}:${target.spec.port}`;
+  if (target.transport === "ssh") {
+    return `SSH environment ${target.spec.username}@${target.spec.host}:${target.spec.port}`;
+  }
+  return `sandbox environment${target.providerKey ? ` (${target.providerKey})` : ""}`;
 }
 
 export async function ensureAdapterExecutionTargetCommandResolvable(
@@ -138,6 +164,9 @@ export async function ensureAdapterExecutionTargetCommandResolvable(
   cwd: string,
   env: NodeJS.ProcessEnv,
 ) {
+  if (target?.kind === "remote" && target.transport === "sandbox") {
+    return;
+  }
   await ensureCommandResolvable(command, cwd, env, {
     remoteExecution: adapterExecutionTargetToRemoteSpec(target),
   });
@@ -149,6 +178,9 @@ export async function resolveAdapterExecutionTargetCommandForLogs(
   cwd: string,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
+  if (target?.kind === "remote" && target.transport === "sandbox") {
+    return `sandbox://${target.providerKey ?? "provider"}/${target.leaseId ?? "lease"}/${target.remoteCwd} :: ${command}`;
+  }
   return await resolveCommandForLogs(command, cwd, env, {
     remoteExecution: adapterExecutionTargetToRemoteSpec(target),
   });
@@ -161,6 +193,22 @@ export async function runAdapterExecutionTargetProcess(
   args: string[],
   options: AdapterExecutionTargetProcessOptions,
 ): Promise<RunProcessResult> {
+  if (target?.kind === "remote" && target.transport === "sandbox") {
+    const runner = requireSandboxRunner(target);
+    return await runner.execute({
+      command,
+      args,
+      cwd: target.remoteCwd,
+      env: options.env,
+      stdin: options.stdin,
+      timeoutMs: options.timeoutSec > 0 ? options.timeoutSec * 1000 : target.timeoutMs ?? undefined,
+      onLog: options.onLog,
+      onSpawn: options.onSpawn
+        ? async (meta) => options.onSpawn?.({ ...meta, processGroupId: null })
+        : undefined,
+    });
+  }
+
   return await runChildProcess(runId, command, args, {
     cwd: options.cwd,
     env: options.env,
@@ -185,6 +233,16 @@ export async function runAdapterExecutionTargetShellCommand(
   const onLog = options.onLog ?? (async () => {});
   if (target?.kind === "remote") {
     const startedAt = new Date().toISOString();
+    if (target.transport === "sandbox") {
+      return await requireSandboxRunner(target).execute({
+        command: "sh",
+        args: ["-lc", command],
+        cwd: target.remoteCwd,
+        env: options.env,
+        timeoutMs: (options.timeoutSec ?? 15) * 1000,
+        onLog,
+      });
+    }
     try {
       const result = await runSshCommand(target.spec, `sh -lc ${shellQuote(command)}`, {
         timeoutMs: (options.timeoutSec ?? 15) * 1000,
@@ -286,7 +344,15 @@ export function adapterExecutionTargetSessionIdentity(
   target: AdapterExecutionTarget | null | undefined,
 ): Record<string, unknown> | null {
   if (!target || target.kind === "local") return null;
-  return buildRemoteExecutionSessionIdentity(target.spec);
+  if (target.transport === "ssh") return buildRemoteExecutionSessionIdentity(target.spec);
+  return {
+    transport: "sandbox",
+    providerKey: target.providerKey ?? null,
+    environmentId: target.environmentId ?? null,
+    leaseId: target.leaseId ?? null,
+    remoteCwd: target.remoteCwd,
+    ...(target.paperclipApiUrl ? { paperclipApiUrl: target.paperclipApiUrl } : {}),
+  };
 }
 
 export function adapterExecutionTargetSessionMatches(
@@ -296,7 +362,17 @@ export function adapterExecutionTargetSessionMatches(
   if (!target || target.kind === "local") {
     return Object.keys(parseObject(saved)).length === 0;
   }
-  return remoteExecutionSessionMatches(saved, target.spec);
+  if (target.transport === "ssh") return remoteExecutionSessionMatches(saved, target.spec);
+  const current = adapterExecutionTargetSessionIdentity(target);
+  const parsedSaved = parseObject(saved);
+  return (
+    readStringMeta(parsedSaved, "transport") === current?.transport &&
+    readStringMeta(parsedSaved, "providerKey") === current?.providerKey &&
+    readStringMeta(parsedSaved, "environmentId") === current?.environmentId &&
+    readStringMeta(parsedSaved, "leaseId") === current?.leaseId &&
+    readStringMeta(parsedSaved, "remoteCwd") === current?.remoteCwd &&
+    readStringMeta(parsedSaved, "paperclipApiUrl") === (current?.paperclipApiUrl ?? null)
+  );
 }
 
 export function parseAdapterExecutionTarget(value: unknown): AdapterExecutionTarget | null {
@@ -322,6 +398,21 @@ export function parseAdapterExecutionTarget(value: unknown): AdapterExecutionTar
       remoteCwd: spec.remoteCwd,
       paperclipApiUrl: readStringMeta(parsed, "paperclipApiUrl") ?? spec.paperclipApiUrl ?? null,
       spec,
+    };
+  }
+
+  if (kind === "remote" && readStringMeta(parsed, "transport") === "sandbox") {
+    const remoteCwd = readStringMeta(parsed, "remoteCwd");
+    if (!remoteCwd) return null;
+    return {
+      kind: "remote",
+      transport: "sandbox",
+      providerKey: readStringMeta(parsed, "providerKey"),
+      environmentId: readStringMeta(parsed, "environmentId"),
+      leaseId: readStringMeta(parsed, "leaseId"),
+      remoteCwd,
+      paperclipApiUrl: readStringMeta(parsed, "paperclipApiUrl"),
+      timeoutMs: typeof parsed.timeoutMs === "number" ? parsed.timeoutMs : null,
     };
   }
 
@@ -381,11 +472,36 @@ export async function prepareAdapterExecutionTargetRuntime(input: {
     };
   }
 
-  const prepared = await prepareRemoteManagedRuntime({
-    spec: target.spec,
+  if (target.transport === "ssh") {
+    const prepared = await prepareRemoteManagedRuntime({
+      spec: target.spec,
+      adapterKey: input.adapterKey,
+      workspaceLocalDir: input.workspaceLocalDir,
+      assets: input.assets,
+    });
+    return {
+      target,
+      runtimeRootDir: prepared.runtimeRootDir,
+      assetDirs: prepared.assetDirs,
+      restoreWorkspace: prepared.restoreWorkspace,
+    };
+  }
+
+  const prepared = await prepareCommandManagedRuntime({
+    runner: requireSandboxRunner(target),
+    spec: {
+      providerKey: target.providerKey,
+      leaseId: target.leaseId,
+      remoteCwd: target.remoteCwd,
+      timeoutMs: target.timeoutMs,
+      paperclipApiUrl: target.paperclipApiUrl,
+    },
     adapterKey: input.adapterKey,
     workspaceLocalDir: input.workspaceLocalDir,
+    workspaceExclude: input.workspaceExclude,
+    preserveAbsentOnRestore: input.preserveAbsentOnRestore,
     assets: input.assets,
+    installCommand: input.installCommand,
   });
   return {
     target,
