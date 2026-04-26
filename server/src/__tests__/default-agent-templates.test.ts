@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { loadDefaultAgentInstructionsBundle } from "../services/default-agent-instructions.js";
 import { loadDefaultAgentTemplatePack } from "../services/default-agent-templates.js";
 
 describe("loadDefaultAgentTemplatePack", () => {
@@ -82,5 +83,13 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(qaTemplate).toMatch(/Block on missing context[\s\S]+Apply the same return-assignee rules as step 4/);
     expect(qaTemplate).toMatch(/Block on missing context[\s\S]+auto-route path/);
     expect(qaTemplate).toMatch(/Block on missing context[\s\S]+executionStage\.executorAgentId/);
+  });
+
+  it("loads default instruction bundles with the canonical managed-memory contract", async () => {
+    const bundle = await loadDefaultAgentInstructionsBundle("default");
+
+    expect(bundle["AGENTS.md"]).toContain("## Paperclip Managed Memory");
+    expect(bundle["AGENTS.md"]).toContain("PAPERCLIP_AGENT_MEMORY_API_PATH");
+    expect(bundle["MEMORY.md"]).toContain("# MEMORY.md");
   });
 });

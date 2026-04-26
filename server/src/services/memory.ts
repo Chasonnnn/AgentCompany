@@ -118,6 +118,7 @@ function defaultAgentIndex(agent: AgentLike) {
     "# Agent memory",
     "",
     "Use this directory for durable memory that should survive sessions without bloating the prompt.",
+    "Paperclip-managed memory is canonical; workspace-root MEMORY.md files are legacy compatibility only.",
     "",
     "- `hot/MEMORY.md`: compact facts needed in every fresh session.",
     "- `daily/YYYY-MM-DD.md`: append-only daily continuity notes.",
@@ -145,7 +146,8 @@ function defaultHotMemory(agent: AgentLike) {
     "Compact hot memory for this agent. Keep this under 8 KB.",
     "",
     "- Store only always-relevant operating notes, preferences, tool quirks, and recurring lessons.",
-    "- Move details to `memory/daily/` or `memory/operations/`.",
+    "- Write updates through the Paperclip memory API instead of editing workspace-root MEMORY.md files.",
+    "- Move details to `daily/YYYY-MM-DD.md` or `operations/*.md`.",
     `- Agent: ${agent.name}`,
     "",
   ].join("\n");

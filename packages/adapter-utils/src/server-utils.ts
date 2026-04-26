@@ -2143,6 +2143,8 @@ export function buildPaperclipEnv(agent: { id: string; companyId: string }): Rec
   const vars: Record<string, string> = {
     PAPERCLIP_AGENT_ID: agent.id,
     PAPERCLIP_COMPANY_ID: agent.companyId,
+    PAPERCLIP_AGENT_MEMORY_HOT_PATH: "hot/MEMORY.md",
+    PAPERCLIP_AGENT_MEMORY_API_PATH: `/api/agents/${agent.id}/memory/file`,
   };
   const runtimeHost = resolveHostForUrl(
     process.env.PAPERCLIP_LISTEN_HOST ?? process.env.HOST ?? "localhost",

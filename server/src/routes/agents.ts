@@ -88,6 +88,7 @@ import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@paperclipai/adapter-opencode-local/server";
 import {
+  withCanonicalAgentMemoryContract,
   loadDefaultAgentInstructionsBundle,
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
@@ -436,6 +437,20 @@ export function agentRoutes(
     }
   }
 
+  async function assertCanWriteAgentMemory(req: Request, targetAgent: { id: string; companyId: string }) {
+    assertCompanyAccess(req, targetAgent.companyId);
+    if (req.actor.type === "board") return;
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+
+    const actorAgent = await svc.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== targetAgent.companyId) {
+      throw forbidden("Agent key cannot access another company");
+    }
+    if (actorAgent.id !== targetAgent.id) {
+      throw forbidden("Agents may only write their own memory");
+    }
+  }
+
   function assertKnownAdapterType(type: string | null | undefined): string {
     const adapterType = typeof type === "string" ? type.trim() : "";
     if (!adapterType) {
@@ -781,13 +796,13 @@ export function agentRoutes(
     const files = templateInstructionsBody.length > 0
       ? {
           ...defaultBundle,
-          "AGENTS.md": options!.instructionsBody!,
+          "AGENTS.md": withCanonicalAgentMemoryContract(options!.instructionsBody!),
         }
       : promptTemplate.trim().length === 0
       ? defaultBundle
       : {
           ...defaultBundle,
-          "AGENTS.md": promptTemplate,
+          "AGENTS.md": withCanonicalAgentMemoryContract(promptTemplate),
         };
     const materialized = await instructions.materializeManagedBundle(
       agent,
@@ -2484,8 +2499,7 @@ export function agentRoutes(
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    assertBoard(req);
-    assertCompanyAccess(req, existing.companyId);
+    await assertCanWriteAgentMemory(req, existing);
     const actor = getActorInfo(req);
     const result = await memory.writeAgentMemoryFile(existing, req.body.path, req.body.content);
     if (result.adapterConfig) {
@@ -2531,8 +2545,7 @@ export function agentRoutes(
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    assertBoard(req);
-    assertCompanyAccess(req, existing.companyId);
+    await assertCanWriteAgentMemory(req, existing);
     const actor = getActorInfo(req);
     const { result, adapterConfig } = await memory.migrateAgentHotMemory(existing);
     if (adapterConfig) {
