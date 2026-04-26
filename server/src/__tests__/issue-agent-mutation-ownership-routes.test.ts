@@ -24,6 +24,7 @@ const mockIssueService = vi.hoisted(() => ({
   update: vi.fn(),
   resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
+  getAgentStatusById: vi.fn(async () => "idle"),
 }));
 
 const mockAccessService = vi.hoisted(() => ({
@@ -252,8 +253,9 @@ describe("agent issue mutation checkout ownership", () => {
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
-    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [], droppedMentions: { terminated: [] } });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
+    mockIssueService.getAgentStatusById.mockResolvedValue("idle");
     mockIssueContinuityService.recomputeIssueContinuityState.mockResolvedValue({
       status: "ready",
       health: "healthy",

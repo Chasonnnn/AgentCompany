@@ -11,6 +11,7 @@ const mockIssueService = vi.hoisted(() => ({
   removeComment: vi.fn(),
   resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
+  getAgentStatusById: vi.fn(async () => "idle"),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
 }));
@@ -180,6 +181,8 @@ describe("issue comment reopen routes", () => {
     mockIssueService.removeComment.mockReset();
     mockIssueService.resolveMentionedAgents.mockReset();
     mockIssueService.findMentionedAgents.mockReset();
+    mockIssueService.getAgentStatusById.mockReset();
+    mockIssueService.getAgentStatusById.mockResolvedValue("idle");
     mockIssueService.listWakeableBlockedDependents.mockReset();
     mockIssueService.getWakeableParentAfterChildCompletion.mockReset();
     mockAccessService.canUser.mockReset();
@@ -233,7 +236,7 @@ describe("issue comment reopen routes", () => {
       authorAgentId: null,
       authorUserId: "local-board",
     });
-    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [], droppedMentions: { terminated: [] } });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
@@ -270,6 +273,7 @@ describe("issue comment reopen routes", () => {
     mockIssueService.resolveMentionedAgents.mockResolvedValue({
       agentIds: [],
       ambiguousTokens: ["ceo"],
+      droppedMentions: { terminated: [] },
     });
 
     const res = await request(await installActor(createApp()))

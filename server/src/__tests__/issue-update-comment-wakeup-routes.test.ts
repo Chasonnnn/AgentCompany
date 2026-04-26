@@ -10,6 +10,7 @@ const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
   resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
+  getAgentStatusById: vi.fn(async () => "idle"),
   getRelationSummaries: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
@@ -154,8 +155,9 @@ describe("issue update comment wakeups", () => {
       lastPreparedAt: null,
       lastBundleHash: null,
     });
-    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [], droppedMentions: { terminated: [] } });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
+    mockIssueService.getAgentStatusById.mockResolvedValue("idle");
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
@@ -385,5 +387,58 @@ describe("issue update comment wakeups", () => {
 
     expect(res.status).toBe(200);
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("PATCH background task fails open when getAgentStatusById throws — assignee + mention wakes still fire", async () => {
+    const LIVE_MENTION_AGENT_ID = "22222222-2222-4222-8222-222222222222";
+    const existing = makeIssue({
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      assigneeUserId: null,
+      status: "in_progress",
+    });
+    const updated = { ...existing };
+    mockIssueService.getById.mockResolvedValue(existing);
+    mockIssueService.update.mockResolvedValue(updated);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-fail-open",
+      issueId: existing.id,
+      companyId: existing.companyId,
+      body: "ping @live-charlie",
+    });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({
+      agentIds: [LIVE_MENTION_AGENT_ID],
+      ambiguousTokens: [],
+      droppedMentions: { terminated: [] },
+    });
+    mockIssueService.getAgentStatusById.mockRejectedValue(
+      new Error("simulated transient DB read failure"),
+    );
+
+    const unhandledRejections: unknown[] = [];
+    const onRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+
+    try {
+      const app = await createApp();
+      const res = await request(app)
+        .patch(`/api/issues/${existing.id}`)
+        .send({ comment: "ping @live-charlie" });
+
+      expect(res.status).toBe(200);
+
+      // Drain the fire-and-forget IIFE.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const wakeAgentIds = mockHeartbeatService.wakeup.mock.calls.map((call) => call[0]);
+      // Fail-open: assignee wake still fires (treated as non-terminated).
+      expect(wakeAgentIds).toContain(ASSIGNEE_AGENT_ID);
+      // Mention loop is not skipped by the upstream throw.
+      expect(wakeAgentIds).toContain(LIVE_MENTION_AGENT_ID);
+      // No process-level unhandled rejection from the background task.
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
   });
 });

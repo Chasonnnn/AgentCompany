@@ -17,6 +17,7 @@ const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
   resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
+  getAgentStatusById: vi.fn(async () => "idle"),
 }));
 
 const mockFeedbackExportService = vi.hoisted(() => ({

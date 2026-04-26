@@ -11,6 +11,7 @@ const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
   resolveMentionedAgents: vi.fn(),
   findMentionedAgents: vi.fn(),
+  getAgentStatusById: vi.fn(async () => "idle"),
   getRelationSummaries: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
@@ -134,8 +135,9 @@ describe("issue activity event routes", () => {
     vi.resetModules();
     vi.clearAllMocks();
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
-    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [] });
+    mockIssueService.resolveMentionedAgents.mockResolvedValue({ agentIds: [], ambiguousTokens: [], droppedMentions: { terminated: [] } });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
+    mockIssueService.getAgentStatusById.mockResolvedValue("idle");
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
