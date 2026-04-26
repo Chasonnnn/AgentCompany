@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.vercel_react_best_practices_activation - routes Next.js / React web performance work to vercel-react-best-practices, not React Native or composition skills"
+  vars:
+    caseId: reliability.vercel_react_best_practices_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-vercel-react-best-practices-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'our Next.js App Router page is slow — there's an async waterfall between fetch calls and the bundle keeps pulling in barrel imports we don't need'. Three skills are loaded: `vercel-react-best-practices` (React and Next.js web performance rules — async-, bundle-, server-, rerender- prefixes), `vercel-react-native-skills` (React Native and Expo mobile performance), and `vercel-composition-patterns` (compound components, render props, render-API design — not performance). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /vercel.react.best.practices/i.test(result.finalText); })()"
+      metric: routes_to_vercel_react_best_practices
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /async.parallel|bundle.barrel|waterfall|next\\.js|app router|server component|rsc|performance|bundle/i.test(result.finalText); })()"
+      metric: mentions_web_performance_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsRN = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.react.native.skills`?\\b/i.test(text) && !/vercel.react.best.practices/i.test(text); const recommendsComposition = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.composition.patterns`?\\b/i.test(text) && !/vercel.react.best.practices/i.test(text); return !recommendsRN && !recommendsComposition; })()"
+      metric: avoids_react_native_or_composition_drift
