@@ -80,6 +80,15 @@ describe("memory service", () => {
     ).rejects.toThrow(/hard limit/);
   });
 
+  it("rejects archived agent memory writes", async () => {
+    await setupHome();
+    const svc = memoryService();
+
+    await expect(
+      svc.writeAgentMemoryFile(makeAgent(), "archive/old.md", "nope"),
+    ).rejects.toThrow(/immutable/);
+  });
+
   it("mirrors hot memory writes to the legacy instructions bundle", async () => {
     const paperclipHome = await setupHome();
     const svc = memoryService();

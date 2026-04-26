@@ -800,14 +800,15 @@ export function agentInstructionsService() {
       content,
     ] as const);
     for (const [relativePath, content] of normalizedEntries) {
+      const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
       if (
         isProtectedMemoryFile(relativePath)
         && (options?.memoryOwnership ?? "agent_authored") === "agent_authored"
         && options?.resetMemory !== true
       ) {
-        continue;
+        const existing = await statIfExists(absolutePath);
+        if (existing?.isFile()) continue;
       }
-      const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, content, "utf8");
     }
@@ -853,13 +854,6 @@ export function agentInstructionsService() {
       const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
       const existing = await statIfExists(absolutePath);
       if (existing?.isFile()) continue;
-      if (
-        isProtectedMemoryFile(normalizedPath)
-        && prepared.state.memoryOwnership === "agent_authored"
-        && options?.resetMemory !== true
-      ) {
-        continue;
-      }
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, content, "utf8");
       createdFiles.push(normalizedPath);

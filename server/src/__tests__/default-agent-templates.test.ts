@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { loadDefaultAgentInstructionsBundle } from "../services/default-agent-instructions.js";
 import { loadDefaultAgentTemplatePack } from "../services/default-agent-templates.js";
 
 describe("loadDefaultAgentTemplatePack", () => {
@@ -53,5 +54,13 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(skill).toContain("name the blocker, owner, and exact unblock action");
     expect(ceoInstructions).toContain("check whether the wake is yours and actionable");
     expect(ceoInstructions).toContain("one unblock packet");
+  });
+
+  it("loads default instruction bundles with the canonical managed-memory contract", async () => {
+    const bundle = await loadDefaultAgentInstructionsBundle("default");
+
+    expect(bundle["AGENTS.md"]).toContain("## Paperclip Managed Memory");
+    expect(bundle["AGENTS.md"]).toContain("PAPERCLIP_AGENT_MEMORY_API_PATH");
+    expect(bundle["MEMORY.md"]).toContain("# MEMORY.md");
   });
 });

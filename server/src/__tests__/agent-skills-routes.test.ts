@@ -613,6 +613,9 @@ describe("agent skill routes", () => {
         "playwright-interactive",
       ]),
     );
+    const materializedFiles = mockAgentInstructionsService.materializeManagedBundle.mock.calls.at(-1)?.[1] as Record<string, string>;
+    expect(materializedFiles["AGENTS.md"]).toContain("Template instructions");
+    expect(materializedFiles["AGENTS.md"]).toContain("## Paperclip Managed Memory");
   });
 
   it("materializes a managed AGENTS.md for directly created local agents", async () => {
@@ -634,7 +637,7 @@ describe("agent skill routes", () => {
         adapterType: "claude_local",
       }),
       expect.objectContaining({
-        "AGENTS.md": "You are QA.",
+        "AGENTS.md": expect.stringContaining("You are QA."),
         "MEMORY.md": expect.stringContaining("# MEMORY.md"),
       }),
       expect.objectContaining({
@@ -660,6 +663,8 @@ describe("agent skill routes", () => {
         promptTemplate: expect.anything(),
       }),
     });
+    const materializedFiles = mockAgentInstructionsService.materializeManagedBundle.mock.calls.at(-1)?.[1] as Record<string, string>;
+    expect(materializedFiles["AGENTS.md"]).toContain("## Paperclip Managed Memory");
   });
 
   it("materializes the bundled CEO instruction set for default CEO agents", async () => {
@@ -680,7 +685,7 @@ describe("agent skill routes", () => {
         adapterType: "claude_local",
       }),
       expect.objectContaining({
-        "AGENTS.md": expect.stringContaining("You are the CEO."),
+        "AGENTS.md": expect.stringMatching(/You are the CEO\.[\s\S]*## Paperclip Managed Memory/),
         "MEMORY.md": expect.stringContaining("# MEMORY.md"),
         "HEARTBEAT.md": expect.stringContaining("CEO Delta"),
         "SOUL.md": expect.stringContaining("CEO Persona"),
@@ -714,7 +719,7 @@ describe("agent skill routes", () => {
         adapterType: "claude_local",
       }),
       expect.objectContaining({
-        "AGENTS.md": expect.stringContaining("Keep the work moving until it's done."),
+        "AGENTS.md": expect.stringMatching(/Keep the work moving until it's done\.[\s\S]*## Paperclip Managed Memory/),
         "MEMORY.md": expect.stringContaining("# MEMORY.md"),
       }),
       expect.objectContaining({

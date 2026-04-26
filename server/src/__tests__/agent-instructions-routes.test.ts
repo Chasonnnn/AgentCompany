@@ -88,11 +88,11 @@ vi.mock("../adapters/index.js", () => ({
   requireServerAdapter: vi.fn((type: string) => ({ type })),
 }));
 
-function createApp() {
+function createApp(actor?: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
+    (req as any).actor = actor ?? {
       type: "board",
       userId: "local-board",
       companyIds: ["company-1"],
@@ -122,6 +122,15 @@ function makeAgent() {
     defaultEnvironmentId: null,
     permissions: null,
     updatedAt: new Date(),
+  };
+}
+
+function makeAgentActor(agentId = "11111111-1111-4111-8111-111111111111") {
+  return {
+    type: "agent",
+    agentId,
+    companyId: "company-1",
+    runId: "run-1",
   };
 }
 
@@ -356,6 +365,50 @@ describe("agent instructions bundle routes", () => {
     );
   });
 
+  it("allows an agent to write its own memory file", async () => {
+    const res = await request(createApp(makeAgentActor()))
+      .put("/api/agents/11111111-1111-4111-8111-111111111111/memory/file?companyId=company-1")
+      .send({
+        path: "hot/MEMORY.md",
+        content: "# Agent memory\n",
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockMemoryService.writeAgentMemoryFile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "11111111-1111-4111-8111-111111111111" }),
+      "hot/MEMORY.md",
+      "# Agent memory\n",
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: "agent",
+        actorId: "11111111-1111-4111-8111-111111111111",
+        agentId: "11111111-1111-4111-8111-111111111111",
+        runId: "run-1",
+        action: "agent.memory_hot_updated",
+      }),
+    );
+  });
+
+  it("rejects peer-agent memory writes", async () => {
+    mockAgentService.getById.mockImplementation(async (id: string) => (
+      id === "22222222-2222-4222-8222-222222222222"
+        ? { ...makeAgent(), id, name: "Peer Agent" }
+        : makeAgent()
+    ));
+
+    const res = await request(createApp(makeAgentActor("22222222-2222-4222-8222-222222222222")))
+      .put("/api/agents/11111111-1111-4111-8111-111111111111/memory/file?companyId=company-1")
+      .send({
+        path: "hot/MEMORY.md",
+        content: "# Peer write\n",
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(mockMemoryService.writeAgentMemoryFile).not.toHaveBeenCalled();
+  });
+
   it("migrates hot memory and logs archive details", async () => {
     const res = await request(createApp())
       .post("/api/agents/11111111-1111-4111-8111-111111111111/memory/migrate-hot?companyId=company-1")
@@ -375,6 +428,39 @@ describe("agent instructions bundle routes", () => {
         }),
       }),
     );
+  });
+
+  it("allows an agent to migrate its own hot memory", async () => {
+    const res = await request(createApp(makeAgentActor()))
+      .post("/api/agents/11111111-1111-4111-8111-111111111111/memory/migrate-hot?companyId=company-1")
+      .send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockMemoryService.migrateAgentHotMemory).toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: "agent",
+        actorId: "11111111-1111-4111-8111-111111111111",
+        runId: "run-1",
+        action: "agent.memory_hot_migrated",
+      }),
+    );
+  });
+
+  it("rejects peer-agent hot memory migration", async () => {
+    mockAgentService.getById.mockImplementation(async (id: string) => (
+      id === "22222222-2222-4222-8222-222222222222"
+        ? { ...makeAgent(), id, name: "Peer Agent" }
+        : makeAgent()
+    ));
+
+    const res = await request(createApp(makeAgentActor("22222222-2222-4222-8222-222222222222")))
+      .post("/api/agents/11111111-1111-4111-8111-111111111111/memory/migrate-hot?companyId=company-1")
+      .send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(mockMemoryService.migrateAgentHotMemory).not.toHaveBeenCalled();
   });
 
   it("preserves managed instructions config when switching adapters", async () => {

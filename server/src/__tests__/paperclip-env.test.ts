@@ -38,6 +38,8 @@ describe("buildPaperclipEnv", () => {
     const env = buildPaperclipEnv({ id: "agent-1", companyId: "company-1" });
 
     expect(env.PAPERCLIP_API_URL).toBe("http://100.104.161.29:3102");
+    expect(env.PAPERCLIP_AGENT_MEMORY_HOT_PATH).toBe("hot/MEMORY.md");
+    expect(env.PAPERCLIP_AGENT_MEMORY_API_PATH).toBe("/api/agents/agent-1/memory/file");
   });
 
   it("falls back to PAPERCLIP_API_URL when no runtime URL is configured", () => {
