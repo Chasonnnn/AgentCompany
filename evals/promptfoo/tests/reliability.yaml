@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.harden_activation - routes resilience/i18n/edge-case work to the harden skill, not polish"
+  vars:
+    caseId: reliability.harden_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-harden-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says the settings page breaks with long German translations, the empty-state shows nothing when there are zero items, and the API-error path silently fails. Two skills are loaded: `harden` (resilience under edge cases, i18n, error states, overflow) and `polish` (final visual finish: alignment, spacing, micro-detail). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bharden\\b/i.test(result.finalText); })()"
+      metric: routes_to_harden
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /i18n|internationali[sz]ation|overflow|empty state|edge case|error state|RTL|long text|translation/i.test(result.finalText); })()"
+      metric: mentions_resilience_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPolishOnly = /\\b(?:use|invoke|choose|select|route to)\\s+`?polish`?\\b/i.test(text) && !/harden/i.test(text); return !recommendsPolishOnly; })()"
+      metric: avoids_polish_only_route
