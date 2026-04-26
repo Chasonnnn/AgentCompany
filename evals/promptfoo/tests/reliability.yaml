@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.polish_activation - routes pre-ship final-quality-pass requests to polish, not design-review or delight"
+  vars:
+    caseId: reliability.polish_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-polish-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'this feature is functionally complete and ships tomorrow — do one final quality pass for alignment, spacing, micro-detail issues, and any inconsistencies that separate good work from great work.' Three skills are loaded: `polish` (final pre-ship quality pass across alignment/spacing/typography/states/copy/transitions/edge cases), `design-review` (visual QA on an already-deployed live site that fixes issues iteratively with screenshots), and `delight` (adds joy/personality/whimsy/micro-interactions). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bpolish\\b/i.test(result.finalText); })()"
+      metric: routes_to_polish
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /final.*pass|pre-?ship|pre-?launch|alignment|spacing|micro-?detail|consistency|good to great|finishing touches/i.test(result.finalText); })()"
+      metric: mentions_pre_ship_polish_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsDesignReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?design-review`?\\b/i.test(text) && !/\\bpolish\\b/i.test(text); const recommendsDelight = /\\b(?:use|invoke|choose|select|route to)\\s+`?delight`?\\b/i.test(text) && !/\\bpolish\\b/i.test(text); return !recommendsDesignReview && !recommendsDelight; })()"
+      metric: avoids_design_review_and_delight_drift
