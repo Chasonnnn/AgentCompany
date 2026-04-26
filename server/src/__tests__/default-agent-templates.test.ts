@@ -61,4 +61,23 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(ceoInstructions).toContain("one unblock packet");
     expect(ceoInstructions).toContain("Use subagents only for safe bounded parallelism");
   });
+
+  it("ships the QA/Evals in_review wake branch in the continuity owner template", async () => {
+    const pack = await loadDefaultAgentTemplatePack();
+    const qaTemplate = pack.files["qa-evals-continuity-owner.md"];
+    expect(qaTemplate).toBeTruthy();
+    expect(qaTemplate).toContain("# Handling in_review wakes");
+    expect(qaTemplate).toContain("execution_review_requested");
+    expect(qaTemplate).toContain("returnAssignee");
+    expect(qaTemplate).toContain("executionStage.executorAgentId");
+  });
+
+  it("tells reviewers to reassign the executor when blocking on missing context", async () => {
+    const pack = await loadDefaultAgentTemplatePack();
+    const qaTemplate = pack.files["qa-evals-continuity-owner.md"];
+    expect(qaTemplate).toBeTruthy();
+    expect(qaTemplate).toMatch(/Block on missing context[\s\S]+Apply the same return-assignee rules as step 4/);
+    expect(qaTemplate).toMatch(/Block on missing context[\s\S]+auto-route path/);
+    expect(qaTemplate).toMatch(/Block on missing context[\s\S]+executionStage\.executorAgentId/);
+  });
 });

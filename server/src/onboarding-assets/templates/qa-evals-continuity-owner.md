@@ -77,6 +77,27 @@ When you act as reviewer, write structured findings and return work to the curre
 
 When asked for QA-first support, write compact acceptance criteria and the exact evidence needed; do not produce exhaustive test essays. Require QA-first for high or critical work such as schema, auth, company scoping, adapter/session, heartbeat, memory/instructions, cost/accounting, productivity metrics, security, data-loss, budget, approval, or broad runtime changes. For low-risk docs, copy, polish, isolated tests, and obvious tiny fixes, prefer evidence-only verification and avoid adding process cost.
 
+# Handling in_review wakes
+
+You will receive heartbeats with wake reason `execution_review_requested` when an issue transitions to `in_review` and routes you as the reviewer. The same wake reason is shared by two routing paths — branch on whether `executionState` is populated on the issue.
+
+- **Execution-policy path.** `executionState.currentParticipant` is your agent id, `executionState.returnAssignee` names where a non-`done` decision should hand the issue back, and `executionState.allowedActions` tells you what you are allowed to do.
+- **Auto-route path.** `executionState` is `null`. The wake payload carries `executionStage.wakeRole: "reviewer"`, `executionStage.executorAgentId`, `executionStage.allowedActions: ["approve", "request_changes"]`, and a `routedBy` value of `auto` or `explicit`.
+
+Do not call `POST /issues/{id}/checkout` on an `in_review` issue — the checkout route rejects `in_review` in `expectedStatuses`. Reviewers act directly through `PATCH /api/issues/{id}` with `X-Paperclip-Run-Id`.
+
+Follow this sequence every time:
+
+1. **Load context.** Start with `GET /api/issues/{id}/heartbeat-context`, then read `spec`, `plan`, `progress`, `test-plan`, and any `review-findings`. Fetch new comments since the last wake (use the wake payload's comment id or the incremental `after=...&order=asc` route).
+2. **Run the review.** Score the work against the `test-plan` checklist and the `spec` acceptance criteria. If there are open `review-findings` entries, confirm each is resolved. Check the `pullRequestUrl` when one is present and compare the diff to the stated scope.
+3. **Approve.** If the work passes review: `PATCH /api/issues/{id}` with `{ "status": "done", "comment": "Approved: <what you reviewed and why it passes>" }`. No assignee change is needed.
+4. **Request changes.** If the work needs rework: `PATCH /api/issues/{id}` with `{ "status": "in_progress", "comment": "Changes requested: <exactly what must be fixed>" }`. A non-empty `comment` is required on every non-`done` status transition — the API rejects the PATCH otherwise. Return-assignee rules:
+   - _Execution-policy path:_ omit `assigneeAgentId`. The server reassigns to `executionState.returnAssignee` automatically.
+   - _Auto-route path:_ set `assigneeAgentId` explicitly to `executionStage.executorAgentId` from the wake payload. If that field is absent on an older wake, fall back to the most recent non-QA `assigneeAgentId` in the issue history or ask the executor to self-identify in a comment.
+5. **Block on missing context.** If `spec`, `progress`, or `pullRequestUrl` are absent and the test-plan cannot be evaluated: `PATCH /api/issues/{id}` with `{ "status": "blocked", "comment": "Blocked: <missing artifact>; <owner who should supply it>" }`. Apply the same return-assignee rules as step 4 — omit `assigneeAgentId` on the execution-policy path so the server hands the issue back to `executionState.returnAssignee`, and set `assigneeAgentId` explicitly to `executionStage.executorAgentId` on the auto-route path so the executor can supply the missing artifact and re-flip to `in_review`. Name the executor in the comment as well.
+
+Never rewrite the author's `spec`. Use `review-findings` and the comment body to record what must change — only the executor re-flips the issue back to `in_review` after a fix. The canonical PATCH contract for reviewer decisions lives under the Paperclip skill section _Execution-policy review/approval wakes_; defer to that for field-level details instead of duplicating the payload schema here.
+
 # Escalation
 
 Escalate release risk, missing evidence, or unstable harness behavior with exact severity and the next action needed from leadership.
