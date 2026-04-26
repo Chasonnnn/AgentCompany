@@ -107,4 +107,12 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(bundle["AGENTS.md"]).toContain("PAPERCLIP_AGENT_MEMORY_API_PATH");
     expect(bundle["MEMORY.md"]).toContain("# MEMORY.md");
   });
+
+  it("loads default instruction bundles with the canonical managed-memory contract", async () => {
+    const bundle = await loadDefaultAgentInstructionsBundle("default");
+
+    expect(bundle["AGENTS.md"]).toContain("## Paperclip Managed Memory");
+    expect(bundle["AGENTS.md"]).toContain("PAPERCLIP_AGENT_MEMORY_API_PATH");
+    expect(bundle["MEMORY.md"]).toContain("# MEMORY.md");
+  });
 });
