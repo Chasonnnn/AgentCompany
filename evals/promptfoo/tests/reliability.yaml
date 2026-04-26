@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.react_doctor_activation - routes React-specific codebase health scoring to react-doctor"
+  vars:
+    caseId: reliability.react_doctor_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-react-doctor-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user just finished a React feature and asks you to scan the codebase for React-specific security, performance, correctness, and architecture issues, returning a 0-100 score with actionable diagnostics. Four skills are loaded: `react-doctor` (post-change React codebase scan with a 0-100 score), `review` (pre-landing PR diff review for SQL/trust-boundary/side-effect issues), `health` (cross-language code-quality composite from existing project tools), and `audit` (technical-quality report across accessibility/performance/theming). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /react-doctor/i.test(result.finalText); })()"
+      metric: routes_to_react_doctor
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /\\breact\\b|0-?100|score|diagnostic|after .*react change|finishing a feature/i.test(result.finalText); })()"
+      metric: mentions_react_score_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?review`?\\b/i.test(text) && !/react-doctor/i.test(text); const recommendsHealth = /\\b(?:use|invoke|choose|select|route to)\\s+`?health`?\\b/i.test(text) && !/react-doctor/i.test(text); const recommendsAudit = /\\b(?:use|invoke|choose|select|route to)\\s+`?audit`?\\b/i.test(text) && !/react-doctor/i.test(text); return !recommendsReview && !recommendsHealth && !recommendsAudit; })()"
+      metric: avoids_review_health_audit_drift
