@@ -23,6 +23,7 @@ import {
   ensureServerWorkspaceLinksCurrent,
   ensureRuntimeServicesForRun,
   normalizeAdapterManagedRuntimeServices,
+  reconcileDanglingWorktreesOnStartup,
   reconcilePersistedRuntimeServicesOnStartup,
   realizeExecutionWorkspace,
   releaseRuntimeServicesForRun,
@@ -59,6 +60,28 @@ async function runGit(cwd: string, args: string[]) {
 
 async function runPnpm(cwd: string, args: string[]) {
   await execFileAsync("pnpm", args, { cwd });
+}
+
+async function readGitWorktreeList(cwd: string) {
+  return execFileAsync("git", ["worktree", "list", "--porcelain"], { cwd }).then((result) => result.stdout);
+}
+
+async function findGitWorktreeAdminDir(repoRoot: string, worktreePath: string) {
+  const worktreesDir = path.join(repoRoot, ".git", "worktrees");
+  const entries = await fs.readdir(worktreesDir, { withFileTypes: true }).catch(() => []);
+  const expectedGitDir = path.resolve(worktreePath, ".git");
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const adminDir = path.join(worktreesDir, entry.name);
+    const gitdirContents = await fs.readFile(path.join(adminDir, "gitdir"), "utf8").catch(() => null);
+    if (!gitdirContents) continue;
+    if (path.resolve(adminDir, gitdirContents.trim()) === expectedGitDir) {
+      return adminDir;
+    }
+  }
+
+  return null;
 }
 
 async function createTempRepo(defaultBranch = "main") {
@@ -1577,15 +1600,238 @@ describe("realizeExecutionWorkspace", () => {
 
     expect(operations.map((operation) => operation.phase)).toEqual([
       "workspace_teardown",
+      "worktree_prune",
       "worktree_cleanup",
       "worktree_cleanup",
     ]);
     expect(operations[0]?.command).toBe("printf 'cleanup ok\\n'");
     expect(operations[1]?.metadata).toMatchObject({
-      cleanupAction: "worktree_remove",
+      cleanupAction: "worktree_prune",
     });
     expect(operations[2]?.metadata).toMatchObject({
+      cleanupAction: "worktree_remove",
+    });
+    expect(operations[3]?.metadata).toMatchObject({
       cleanupAction: "branch_delete",
+    });
+  });
+
+  it("prunes dangling metadata when the worktree directory was deleted before cleanup", async () => {
+    const repoRoot = await createTempRepo();
+    const { recorder, operations } = createWorkspaceOperationRecorderDouble();
+
+    const workspace = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-640",
+        title: "Prune deleted worktree metadata",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    await fs.rm(workspace.cwd, { recursive: true, force: true });
+    const adminDirBeforeCleanup = await findGitWorktreeAdminDir(repoRoot, workspace.cwd);
+    expect(adminDirBeforeCleanup).not.toBeNull();
+
+    const cleanup = await cleanupExecutionWorkspaceArtifacts({
+      workspace: {
+        id: "execution-workspace-1",
+        cwd: workspace.cwd,
+        providerType: "git_worktree",
+        providerRef: workspace.worktreePath,
+        branchName: workspace.branchName,
+        repoUrl: workspace.repoUrl,
+        baseRef: workspace.repoRef,
+        projectId: workspace.projectId,
+        projectWorkspaceId: workspace.workspaceId,
+        sourceIssueId: "issue-1",
+        metadata: {
+          createdByRuntime: true,
+        },
+      },
+      projectWorkspace: {
+        cwd: repoRoot,
+        cleanupCommand: null,
+      },
+      recorder,
+    });
+
+    expect(cleanup.cleaned).toBe(true);
+    expect(cleanup.warnings).toEqual([]);
+    await expect(fs.stat(workspace.cwd)).rejects.toThrow();
+    await expect(findGitWorktreeAdminDir(repoRoot, workspace.cwd)).resolves.toBeNull();
+    await expect(readGitWorktreeList(repoRoot)).resolves.not.toContain(workspace.cwd);
+    expect(operations.some((operation) => operation.phase === "worktree_prune")).toBe(true);
+    expect(operations.some((operation) => operation.metadata?.cleanupAction === "worktree_remove")).toBe(false);
+  });
+
+  it("can realize the same branch again after cleanup prunes a deleted worktree ref", async () => {
+    const repoRoot = await createTempRepo();
+    const workspaceInput = {
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary" as const,
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-641",
+        title: "Recreate cleaned worktree",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    };
+
+    const first = await realizeExecutionWorkspace(workspaceInput);
+    await fs.rm(first.cwd, { recursive: true, force: true });
+    const cleanup = await cleanupExecutionWorkspaceArtifacts({
+      workspace: {
+        id: "execution-workspace-1",
+        cwd: first.cwd,
+        providerType: "git_worktree",
+        providerRef: first.worktreePath,
+        branchName: first.branchName,
+        repoUrl: first.repoUrl,
+        baseRef: first.repoRef,
+        projectId: first.projectId,
+        projectWorkspaceId: first.workspaceId,
+        sourceIssueId: "issue-1",
+        metadata: {
+          createdByRuntime: true,
+        },
+      },
+      projectWorkspace: {
+        cwd: repoRoot,
+        cleanupCommand: null,
+      },
+    });
+
+    expect(cleanup.warnings).toEqual([]);
+
+    const recreated = await realizeExecutionWorkspace(workspaceInput);
+    expect(recreated.created).toBe(true);
+    expect(recreated.branchName).toBe(first.branchName);
+    expect(recreated.cwd).toBe(first.cwd);
+    await expect(fs.stat(recreated.cwd)).resolves.toBeDefined();
+    await expect(readGitWorktreeList(repoRoot)).resolves.toContain(recreated.cwd);
+  });
+
+  it("does not prune a live sibling worktree during cleanup", async () => {
+    const repoRoot = await createTempRepo();
+
+    const first = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-642",
+        title: "Cleanup first sibling",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    const sibling = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-2",
+        identifier: "PAP-643",
+        title: "Keep sibling worktree",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    const cleanup = await cleanupExecutionWorkspaceArtifacts({
+      workspace: {
+        id: "execution-workspace-1",
+        cwd: first.cwd,
+        providerType: "git_worktree",
+        providerRef: first.worktreePath,
+        branchName: first.branchName,
+        repoUrl: first.repoUrl,
+        baseRef: first.repoRef,
+        projectId: first.projectId,
+        projectWorkspaceId: first.workspaceId,
+        sourceIssueId: "issue-1",
+        metadata: {
+          createdByRuntime: true,
+        },
+      },
+      projectWorkspace: {
+        cwd: repoRoot,
+        cleanupCommand: null,
+      },
+    });
+
+    expect(cleanup.warnings).toEqual([]);
+    await expect(fs.stat(sibling.cwd)).resolves.toBeDefined();
+    await expect(readGitWorktreeList(repoRoot)).resolves.toContain(sibling.cwd);
+    await expect(
+      execFileAsync("git", ["branch", "--show-current"], { cwd: sibling.cwd }),
+    ).resolves.toMatchObject({
+      stdout: `${sibling.branchName}\n`,
     });
   });
 });
@@ -2302,6 +2548,131 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
       .then((rows) => rows[0] ?? null);
     expect(persisted?.status).toBe("stopped");
     expect(persisted?.stoppedAt).not.toBeNull();
+  });
+
+  it("prunes dangling git worktree metadata for archived execution workspaces on startup", async () => {
+    const repoRoot = await createTempRepo();
+    const projectId = randomUUID();
+    const projectWorkspaceId = randomUUID();
+    const executionWorkspaceId = randomUUID();
+    const companyId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Runtime reconcile test",
+      status: "in_progress",
+    });
+    await db.insert(projectWorkspaces).values({
+      id: projectWorkspaceId,
+      companyId,
+      projectId,
+      name: "Primary",
+      sourceType: "local_path",
+      cwd: repoRoot,
+      isPrimary: true,
+    });
+
+    const archivedWorkspace = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId,
+        workspaceId: projectWorkspaceId,
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-650",
+        title: "Archived dangling worktree",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId,
+      },
+    });
+
+    const siblingWorkspace = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId,
+        workspaceId: projectWorkspaceId,
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-2",
+        identifier: "PAP-651",
+        title: "Live sibling worktree",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId,
+      },
+    });
+
+    await fs.rm(archivedWorkspace.cwd, { recursive: true, force: true });
+    expect(await findGitWorktreeAdminDir(repoRoot, archivedWorkspace.cwd)).not.toBeNull();
+
+    await db.insert(executionWorkspaces).values({
+      id: executionWorkspaceId,
+      companyId,
+      projectId,
+      projectWorkspaceId,
+      sourceIssueId: null,
+      mode: "isolated_workspace",
+      strategyType: "git_worktree",
+      name: archivedWorkspace.branchName ?? "dangling-worktree",
+      status: "archived",
+      cwd: archivedWorkspace.cwd,
+      repoUrl: null,
+      baseRef: "HEAD",
+      branchName: archivedWorkspace.branchName,
+      providerType: "git_worktree",
+      providerRef: archivedWorkspace.worktreePath,
+      closedAt: new Date("2026-04-24T17:00:00.000Z"),
+      cleanupState: "completed",
+      reconcileState: "drift_detected",
+      lastUsedAt: new Date("2026-04-24T17:00:00.000Z"),
+      openedAt: new Date("2026-04-24T16:00:00.000Z"),
+      updatedAt: new Date("2026-04-24T17:00:00.000Z"),
+      metadata: { createdByRuntime: true },
+    });
+
+    const result = await reconcileDanglingWorktreesOnStartup(db);
+
+    expect(result).toMatchObject({
+      scanned: 1,
+      repoRoots: 1,
+      pruned: 1,
+      skipped: 0,
+      failed: 0,
+    });
+    await expect(findGitWorktreeAdminDir(repoRoot, archivedWorkspace.cwd)).resolves.toBeNull();
+    await expect(readGitWorktreeList(repoRoot)).resolves.not.toContain(archivedWorkspace.cwd);
+    await expect(readGitWorktreeList(repoRoot)).resolves.toContain(siblingWorkspace.cwd);
   });
 
   it("persists controlled execution workspace stops as stopped", async () => {

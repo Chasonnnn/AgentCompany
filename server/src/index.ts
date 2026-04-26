@@ -42,6 +42,7 @@ import {
   heartbeatService,
   instanceSettingsService,
   issueService,
+  reconcileDanglingWorktreesOnStartup,
   reconcilePersistedRuntimeServicesOnStartup,
   routineService,
   runStalledReviewSweep,
@@ -793,17 +794,26 @@ export async function startServer(): Promise<StartedServer> {
     resolveSessionFromHeaders,
   });
 
-  void reconcilePersistedRuntimeServicesOnStartup(db as any)
-    .then((result) => {
-      if (result.reconciled > 0) {
+  void Promise.all([
+    reconcilePersistedRuntimeServicesOnStartup(db as any),
+    reconcileDanglingWorktreesOnStartup(db as any),
+  ])
+    .then(([runtimeResult, worktreeResult]) => {
+      if (runtimeResult.reconciled > 0) {
         logger.warn(
-          { reconciled: result.reconciled },
+          { reconciled: runtimeResult.reconciled },
           "reconciled persisted runtime services from a previous server process",
+        );
+      }
+      if (worktreeResult.repoRoots > 0 || worktreeResult.failed > 0) {
+        logger.warn(
+          worktreeResult,
+          "reconciled dangling git worktree metadata from previous execution workspace cleanup",
         );
       }
     })
     .catch((err) => {
-      logger.error({ err }, "startup reconciliation of persisted runtime services failed");
+      logger.error({ err }, "startup reconciliation failed");
     });
   
   if (config.heartbeatSchedulerEnabled) {
