@@ -28,3 +28,9 @@ export type {
   AdapterRuntime,
 } from "@paperclipai/adapter-utils";
 export { runningProcesses } from "./utils.js";
+export {
+  ADAPTER_TRUST_MARKER,
+  assertAdapterTrusted,
+  isAdapterTrusted,
+  markAdapterTrusted,
+} from "./trust.js";
