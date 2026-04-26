@@ -138,6 +138,95 @@ import {
 import { extractSkillMentionIds } from "@paperclipai/shared";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
+const MAX_REAPER_TICK_HISTORY = 25;
+
+export type HeartbeatReaperRunMetric = {
+  runId: string;
+  timeSinceLockMs: number;
+};
+
+export type HeartbeatReaperDistribution = {
+  count: number;
+  minMs: number | null;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+};
+
+export type HeartbeatReaperTickStat = {
+  recordedAt: string;
+  staleThresholdMs: number;
+  scannedRunningCount: number;
+  inMemoryActiveCount: number;
+  skippedFreshCount: number;
+  detachedCount: number;
+  reapedCount: number;
+  runIds: string[];
+  reapedRuns: HeartbeatReaperRunMetric[];
+  timeSinceLockMs: HeartbeatReaperDistribution;
+};
+
+const recentReaperTickStats: HeartbeatReaperTickStat[] = [];
+
+function percentileNearestRank(sortedValues: number[], percentile: number) {
+  if (sortedValues.length === 0) return null;
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil(percentile * sortedValues.length) - 1),
+  );
+  return sortedValues[index] ?? null;
+}
+
+function summarizeReaperDistribution(values: number[]): HeartbeatReaperDistribution {
+  if (values.length === 0) {
+    return {
+      count: 0,
+      minMs: null,
+      p50Ms: null,
+      p95Ms: null,
+      maxMs: null,
+    };
+  }
+
+  const sortedValues = [...values].sort((a, b) => a - b);
+  return {
+    count: sortedValues.length,
+    minMs: sortedValues[0] ?? null,
+    p50Ms: percentileNearestRank(sortedValues, 0.5),
+    p95Ms: percentileNearestRank(sortedValues, 0.95),
+    maxMs: sortedValues[sortedValues.length - 1] ?? null,
+  };
+}
+
+function rememberReaperTickStat(stat: HeartbeatReaperTickStat) {
+  recentReaperTickStats.unshift(stat);
+  if (recentReaperTickStats.length > MAX_REAPER_TICK_HISTORY) {
+    recentReaperTickStats.length = MAX_REAPER_TICK_HISTORY;
+  }
+}
+
+export function listHeartbeatReaperTicks(limit = MAX_REAPER_TICK_HISTORY): HeartbeatReaperTickStat[] {
+  return recentReaperTickStats.slice(0, Math.max(0, limit)).map((stat) => ({
+    ...stat,
+    runIds: [...stat.runIds],
+    reapedRuns: stat.reapedRuns.map((run) => ({ ...run })),
+    timeSinceLockMs: { ...stat.timeSinceLockMs },
+  }));
+}
+
+export function pushHeartbeatReaperTickForTests(stat: HeartbeatReaperTickStat) {
+  rememberReaperTickStat({
+    ...stat,
+    runIds: [...stat.runIds],
+    reapedRuns: stat.reapedRuns.map((run) => ({ ...run })),
+    timeSinceLockMs: { ...stat.timeSinceLockMs },
+  });
+}
+
+export function resetHeartbeatReaperTicksForTests() {
+  recentReaperTickStats.length = 0;
+}
+
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const MAX_RUN_EVENT_PAYLOAD_STRING_CHARS = 16 * 1024;
 const MAX_RUN_EVENT_PAYLOAD_ARRAY_ITEMS = 50;
@@ -4738,20 +4827,33 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       .where(eq(heartbeatRuns.status, "running"));
 
     const reaped: string[] = [];
+    const reapedRuns: HeartbeatReaperRunMetric[] = [];
+    let inMemoryActiveCount = 0;
+    let skippedFreshCount = 0;
+    let detachedCount = 0;
 
     for (const { run, adapterType } of activeRuns) {
-      if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) continue;
+      if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) {
+        inMemoryActiveCount += 1;
+        continue;
+      }
+
+      const lockReferenceTime = new Date(run.updatedAt ?? run.createdAt ?? now).getTime();
+      const timeSinceLockMs = Math.max(0, now.getTime() - lockReferenceTime);
 
       // Apply staleness threshold to avoid false positives
       if (staleThresholdMs > 0) {
-        const refTime = run.updatedAt ? new Date(run.updatedAt).getTime() : 0;
-        if (now.getTime() - refTime < staleThresholdMs) continue;
+        if (timeSinceLockMs < staleThresholdMs) {
+          skippedFreshCount += 1;
+          continue;
+        }
       }
 
       const tracksLocalChild = isTrackedLocalChildProcessAdapter(adapterType);
       const processPidAlive = tracksLocalChild && run.processPid && isProcessAlive(run.processPid);
       const processGroupAlive = tracksLocalChild && run.processGroupId && isProcessGroupAlive(run.processGroupId);
       if (processPidAlive) {
+        detachedCount += 1;
         if (run.errorCode !== DETACHED_PROCESS_ERROR_CODE) {
           const detachedMessage = `Lost in-memory process handle, but child pid ${run.processPid} is still alive`;
           const detachedRun = await setRunStatus(run.id, "running", {
@@ -4826,12 +4928,25 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
       reaped.push(run.id);
+      reapedRuns.push({ runId: run.id, timeSinceLockMs });
     }
 
-    if (reaped.length > 0) {
-      logger.warn({ reapedCount: reaped.length, runIds: reaped }, "reaped orphaned heartbeat runs");
-    }
-    return { reaped: reaped.length, runIds: reaped };
+    const tick: HeartbeatReaperTickStat = {
+      recordedAt: now.toISOString(),
+      staleThresholdMs,
+      scannedRunningCount: activeRuns.length,
+      inMemoryActiveCount,
+      skippedFreshCount,
+      detachedCount,
+      reapedCount: reaped.length,
+      runIds: reaped,
+      reapedRuns,
+      timeSinceLockMs: summarizeReaperDistribution(reapedRuns.map((run) => run.timeSinceLockMs)),
+    };
+
+    rememberReaperTickStat(tick);
+    logger.info(tick, "heartbeat orphan reaper tick");
+    return { ...tick, reaped: reaped.length };
   }
 
   async function resumeQueuedRuns() {

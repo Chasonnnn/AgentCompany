@@ -89,6 +89,7 @@ export interface Config {
   stalledReviewMaxWakesPerDay: number;
   stalledReviewSweepIntervalMinutes: number;
   stalledReviewBatchSize: number;
+  reaperStalenessMs: number;
   companyDeletionEnabled: boolean;
   telemetryEnabled: boolean;
 }
@@ -123,6 +124,9 @@ export function loadConfig(): Config {
       : undefined;
   const fileDatabaseBackup = fileConfig?.database.backup;
   const fileSecrets = fileConfig?.secrets;
+  const reaperStalenessMsEnv = process.env.REAPER_STALENESS_MS;
+  const parsedReaperStalenessMs =
+    reaperStalenessMsEnv === undefined ? Number.NaN : Number(reaperStalenessMsEnv);
   const fileStorage = fileConfig?.storage;
   const strictModeFromEnv = process.env.PAPERCLIP_SECRETS_STRICT_MODE;
   const secretsStrictMode =
@@ -339,6 +343,10 @@ export function loadConfig(): Config {
     stalledReviewMaxWakesPerDay: Math.max(1, Number(process.env.STALLED_REVIEW_MAX_WAKES_PER_DAY) || 2),
     stalledReviewSweepIntervalMinutes: Math.max(1, Number(process.env.STALLED_REVIEW_SWEEP_INTERVAL_MINUTES) || 60),
     stalledReviewBatchSize: Math.max(1, Number(process.env.STALLED_REVIEW_BATCH_SIZE) || 200),
+    reaperStalenessMs:
+      Number.isFinite(parsedReaperStalenessMs)
+        ? Math.max(0, parsedReaperStalenessMs)
+        : 300_000,
     companyDeletionEnabled,
     telemetryEnabled: fileConfig?.telemetry?.enabled ?? true,
   };
