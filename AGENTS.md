@@ -154,6 +154,8 @@ When adding endpoints:
 - write activity log entries for mutations
 - return consistent HTTP errors (`400/401/403/404/409/422/500`)
 
+When changing or extending the issue / project / company document PUT path, see [`docs/api/document-concurrency.md`](docs/api/document-concurrency.md) for the `baseRevisionId` optimistic-concurrency contract and the 409 retry shape.
+
 ## 9. UI Expectations
 
 - Keep routes and nav aligned with available API surface

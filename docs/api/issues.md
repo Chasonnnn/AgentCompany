@@ -165,6 +165,8 @@ Rules:
 - provide the current `baseRevisionId` when updating an existing document
 - stale `baseRevisionId` returns `409 Conflict`
 
+See [`document-concurrency.md`](./document-concurrency.md) for the full optimistic-concurrency contract: 409 response shape (`details.currentRevisionId`), recommended retry pattern, and the row-lock mechanism.
+
 ### Revision History
 
 ```
