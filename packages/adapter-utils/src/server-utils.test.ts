@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  applyPaperclipWorkspaceEnv,
+  appendWithByteCap,
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   renderPaperclipWakePrompt,
   runningProcesses,
@@ -579,5 +581,59 @@ describe("renderPaperclipWakePrompt office coordination payloads", () => {
     expect(prompt).toContain("Project staffing gaps");
     expect(prompt).toContain("Shared skill coordination items");
     expect(prompt).toContain("Do not become the continuity owner by default");
+  });
+});
+
+describe("applyPaperclipWorkspaceEnv", () => {
+  it("adds shared workspace env vars including AGENT_HOME", () => {
+    const env = applyPaperclipWorkspaceEnv(
+      {},
+      {
+        workspaceCwd: "/tmp/workspace",
+        workspaceSource: "project_primary",
+        workspaceStrategy: "git_worktree",
+        workspaceId: "workspace-1",
+        workspaceRepoUrl: "https://github.com/paperclipai/paperclip.git",
+        workspaceRepoRef: "main",
+        workspaceBranch: "feature/test",
+        workspaceWorktreePath: "/tmp/worktree",
+        agentHome: "/tmp/agent-home",
+      },
+    );
+
+    expect(env).toEqual({
+      PAPERCLIP_WORKSPACE_CWD: "/tmp/workspace",
+      PAPERCLIP_WORKSPACE_SOURCE: "project_primary",
+      PAPERCLIP_WORKSPACE_STRATEGY: "git_worktree",
+      PAPERCLIP_WORKSPACE_ID: "workspace-1",
+      PAPERCLIP_WORKSPACE_REPO_URL: "https://github.com/paperclipai/paperclip.git",
+      PAPERCLIP_WORKSPACE_REPO_REF: "main",
+      PAPERCLIP_WORKSPACE_BRANCH: "feature/test",
+      PAPERCLIP_WORKSPACE_WORKTREE_PATH: "/tmp/worktree",
+      AGENT_HOME: "/tmp/agent-home",
+    });
+  });
+
+  it("skips empty workspace env values", () => {
+    const env = applyPaperclipWorkspaceEnv(
+      {},
+      {
+        workspaceCwd: "",
+        workspaceSource: null,
+        agentHome: "",
+      },
+    );
+
+    expect(env).toEqual({});
+  });
+});
+
+describe("appendWithByteCap", () => {
+  it("keeps valid UTF-8 when trimming through multibyte text", () => {
+    const output = appendWithByteCap("prefix ", "hello — world", 7);
+
+    expect(output).not.toContain("\uFFFD");
+    expect(Buffer.from(output, "utf8").toString("utf8")).toBe(output);
+    expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(7);
   });
 });
