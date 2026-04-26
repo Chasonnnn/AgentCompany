@@ -534,7 +534,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       systemPromptExtension =
         `${instructionsContents}\n\n` +
         `The above agent instructions were loaded from ${resolvedInstructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsFileDir}.\n\n` +
+        `Resolve any relative file references from ${instructionsFileDir}, including sibling files such as ./MEMORY.md.\n\n` +
         DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE;
     } catch (err) {
       instructionsReadFailed = true;
