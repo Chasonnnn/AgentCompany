@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, ne, not, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, not, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -2903,14 +2903,14 @@ export function issueService(db: Db) {
         if (!anchor) return [];
         conditions.push(
           order === "asc"
-            ? sql<boolean>`(
-                ${issueComments.createdAt} > ${anchor.createdAt}
-                OR (${issueComments.createdAt} = ${anchor.createdAt} AND ${issueComments.id} > ${anchor.id})
-              )`
-            : sql<boolean>`(
-                ${issueComments.createdAt} < ${anchor.createdAt}
-                OR (${issueComments.createdAt} = ${anchor.createdAt} AND ${issueComments.id} < ${anchor.id})
-              )`,
+            ? or(
+                gt(issueComments.createdAt, anchor.createdAt),
+                and(eq(issueComments.createdAt, anchor.createdAt), gt(issueComments.id, anchor.id)),
+              )!
+            : or(
+                lt(issueComments.createdAt, anchor.createdAt),
+                and(eq(issueComments.createdAt, anchor.createdAt), lt(issueComments.id, anchor.id)),
+              )!,
         );
       }
 
