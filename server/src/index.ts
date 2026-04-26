@@ -41,8 +41,10 @@ import {
   feedbackService,
   heartbeatService,
   instanceSettingsService,
+  issueService,
   reconcilePersistedRuntimeServicesOnStartup,
   routineService,
+  runStalledReviewSweep,
 } from "./services/index.js";
 import { cleanupExecutionWorkspaceArtifacts } from "./services/workspace-runtime.js";
 import { createFeedbackTraceShareClientFromConfig } from "./services/feedback-share-client.js";
@@ -871,6 +873,27 @@ export async function startServer(): Promise<StartedServer> {
         .catch((err) => {
           logger.error({ err }, "execution workspace maintenance failed");
         });
+
+      if (config.stalledReviewSweepEnabled) {
+        void runStalledReviewSweep(
+          db as any,
+          { heartbeat, issueService: issueService(db as any) },
+          {
+            thresholdHours: config.stalledReviewThresholdHours,
+            maxWakesPerDay: config.stalledReviewMaxWakesPerDay,
+            intervalMinutes: config.stalledReviewSweepIntervalMinutes,
+            batchSize: config.stalledReviewBatchSize,
+          },
+        )
+          .then((result) => {
+            if (result.acted > 0 || result.skippedRateCap > 0 || result.skippedNoTarget > 0) {
+              logger.info(result, "[stalled-review-sweep] tick summary");
+            }
+          })
+          .catch((err) => {
+            logger.error({ err }, "[stalled-review-sweep] tick failed");
+          });
+      }
     }, config.heartbeatSchedulerIntervalMs);
   }
   

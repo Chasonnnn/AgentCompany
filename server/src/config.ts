@@ -84,6 +84,11 @@ export interface Config {
   feedbackExportBackendToken: string | undefined;
   heartbeatSchedulerEnabled: boolean;
   heartbeatSchedulerIntervalMs: number;
+  stalledReviewSweepEnabled: boolean;
+  stalledReviewThresholdHours: number;
+  stalledReviewMaxWakesPerDay: number;
+  stalledReviewSweepIntervalMinutes: number;
+  stalledReviewBatchSize: number;
   companyDeletionEnabled: boolean;
   telemetryEnabled: boolean;
 }
@@ -329,6 +334,11 @@ export function loadConfig(): Config {
     feedbackExportBackendToken,
     heartbeatSchedulerEnabled: process.env.HEARTBEAT_SCHEDULER_ENABLED !== "false",
     heartbeatSchedulerIntervalMs: Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
+    stalledReviewSweepEnabled: process.env.STALLED_REVIEW_SWEEP_ENABLED !== "false",
+    stalledReviewThresholdHours: Math.max(1, Number(process.env.STALLED_REVIEW_THRESHOLD_HOURS) || 24),
+    stalledReviewMaxWakesPerDay: Math.max(1, Number(process.env.STALLED_REVIEW_MAX_WAKES_PER_DAY) || 2),
+    stalledReviewSweepIntervalMinutes: Math.max(1, Number(process.env.STALLED_REVIEW_SWEEP_INTERVAL_MINUTES) || 60),
+    stalledReviewBatchSize: Math.max(1, Number(process.env.STALLED_REVIEW_BATCH_SIZE) || 200),
     companyDeletionEnabled,
     telemetryEnabled: fileConfig?.telemetry?.enabled ?? true,
   };
