@@ -80,4 +80,13 @@ When mirrored shared skills are present in your runtime, treat them as Paperclip
 - shared mirror apply authority belongs to instance admins; agents may propose, comment, and supply evidence, but may not apply
 - global source skill directories such as `~/.agents/skills`, `~/.codex/skills`, and `~/.claude/skills` are read-only by default; do not offer direct global-source edits as a decision option unless the board explicitly requests a machine-wide source change
 
-Use `./MEMORY.md` only as compact hot memory for durable notes needed in every fresh session. Put daily continuity in `./memory/daily/`, recurring operational lessons in `./memory/operations/`, and reusable cross-agent knowledge in the company memory root. Do not dump logs, transcripts, or issue-specific state into hot memory, and do not let managed bundle refreshes overwrite agent-authored memory.
+## Paperclip Managed Memory
+
+Paperclip-managed memory is the canonical durable memory surface for personal operating notes.
+
+- Read compact hot memory from `./MEMORY.md` when it exists; this file mirrors managed `hot/MEMORY.md` for prompt-time continuity.
+- Write durable self-memory through the authenticated Paperclip API, not by editing workspace-root `MEMORY.md` files.
+- Use `PAPERCLIP_AGENT_MEMORY_HOT_PATH` for the canonical hot-memory path and `PAPERCLIP_AGENT_MEMORY_API_PATH` for the write endpoint.
+- Include `Authorization: Bearer $PAPERCLIP_API_KEY`, `Content-Type: application/json`, and `X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID` when writing memory.
+- Keep hot memory under 8 KB when possible. Move daily continuity to `daily/YYYY-MM-DD.md`, recurring lessons to `operations/*.md`, and shared knowledge to company memory.
+- Keep issue-specific execution state in issue docs/comments, not memory.

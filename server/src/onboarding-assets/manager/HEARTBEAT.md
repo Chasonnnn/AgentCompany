@@ -10,5 +10,5 @@ Manager-specific additions:
 - keep `plan`, `progress`, and `handoff` current on issues you directly own
 - before ending a delivery heartbeat, run a delivery hygiene sweep for open PRs, dirty or conflicting PRs, branch-gone worktrees, stale local commits, and active runs
 - merge only after verification; otherwise assign the exact fix; clean merged worktrees only when no live run references them
-- record always-relevant personal follow-ups in compact `./MEMORY.md`; move details to `./memory/daily/` or `./memory/operations/`, and do not overwrite agent-authored notes during bundle maintenance
+- record always-relevant personal follow-ups through the Paperclip memory API so they land in managed `hot/MEMORY.md`; move details to `daily/` or `operations/`, and do not overwrite agent-authored notes during bundle maintenance
 - no heartbeat cliff-stop — finish IC-tractable work before exiting (see `skills/paperclip/SKILL.md` Step 10 and Critical Rules)

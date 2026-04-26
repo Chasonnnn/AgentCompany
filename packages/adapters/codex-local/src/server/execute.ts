@@ -694,7 +694,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       instructionsPrefix =
         `${instructionsContents}\n\n` +
         `The above agent instructions were loaded from ${instructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsDir}.\n\n`;
+        `Resolve any relative file references from ${instructionsDir}, including sibling files such as ./MEMORY.md.\n\n`;
       instructionsChars = instructionsPrefix.length;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
