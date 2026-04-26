@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.guard_activation - routes full-safety destructive-guard requests to guard, not careful alone"
+  vars:
+    caseId: reliability.guard_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-guard-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'lock it down — I don't want any accidental deletions while we work on this migration'. Two skills are loaded: `guard` (full safety mode: destructive warnings + directory freeze) and `careful` (destructive command warnings only, no edit freeze). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bguard\\b/i.test(result.finalText); })()"
+      metric: routes_to_guard
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /freeze|lock.*director|edit.*restrict|director.*bound|directory/i.test(result.finalText); })()"
+      metric: mentions_freeze_or_directory_protection
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsCareful = /\\b(?:use|invoke|choose|select|route to)\\s+`?careful`?\\b/i.test(text); const recommendsGuard = /\\b(?:use|invoke|choose|select|route to)\\s+`?guard`?\\b/i.test(text); const recommendsCarefulOnly = recommendsCareful && !recommendsGuard; return !recommendsCarefulOnly; })()"
+      metric: avoids_careful_only_route
