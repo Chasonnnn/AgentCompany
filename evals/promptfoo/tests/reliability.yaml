@@ -132,3 +132,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlanReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?plan-(?:eng|design|devex|ceo)-review`?\\b/i.test(text); const recommendsLiveReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:design-review|devex-review|qa(?:-only)?)`?\\b/i.test(text); return !recommendsPlanReview && !recommendsLiveReview; })()"
       metric: avoids_plan_and_live_review_drift
+
+- description: "reliability.shape_activation - routes pre-build UX/UI discovery interviews to the shape skill"
+  vars:
+    caseId: reliability.shape_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-shape-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'we're about to build a notifications inbox — help me think through the UX before any code'. The agent has these skills loaded: `shape` (pre-build UX/UI discovery interview that produces a design brief, no code), `office-hours` (product idea exploration for whether to build at all), `plan-design-review` (review of an existing design plan, plan-mode), `design-consultation` (whole-product design system creates DESIGN.md), and `impeccable` (production-grade frontend code). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /\\bshape\\b/i.test(result.finalText); })()"
+      metric: routes_to_shape
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /design brief|discovery interview|ux|ui|before (?:any )?code/i.test(result.finalText); })()"
+      metric: mentions_shape_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const wrongRoute = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:office-hours|plan-design-review|design-consultation|impeccable)`?\\b/i.test(text); return !wrongRoute; })()"
+      metric: avoids_sibling_drift
