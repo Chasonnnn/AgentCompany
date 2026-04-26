@@ -73,6 +73,19 @@ X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID
 { "status": "done", "comment": "What was done and what evidence supports it." }
 ```
 
+Write hot memory:
+
+```http
+PUT /api/agents/$PAPERCLIP_AGENT_ID/memory/file
+Authorization: Bearer $PAPERCLIP_API_KEY
+Content-Type: application/json
+X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID
+
+{ "path": "$PAPERCLIP_AGENT_MEMORY_HOT_PATH", "content": "# MEMORY.md\n\n- Durable note.\n" }
+```
+
+Use `$PAPERCLIP_API_URL$PAPERCLIP_AGENT_MEMORY_API_PATH` as the full endpoint. Agents may write only their own memory. Keep `hot/MEMORY.md` compact, put daily notes under `daily/YYYY-MM-DD.md`, recurring lessons under `operations/`, and issue-specific state in issue docs/comments.
+
 Create follow-up issue:
 
 ```http

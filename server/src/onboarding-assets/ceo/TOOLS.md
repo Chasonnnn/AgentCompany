@@ -7,7 +7,7 @@ Add durable tool notes here when the lane picks up stable operational constraint
 
 - Paperclip issues, approvals, and conference rooms for delegation, governance, and decision flow
 - Company and project documents for durable strategy, policy, and execution context
-- The `paperclip` and `para-memory-files` skills for coordination and memory operations
+- The `paperclip` skill for coordination and Paperclip-managed memory operations
 
 ## Operating Notes
 

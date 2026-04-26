@@ -1,6 +1,6 @@
 # MEMORY.md
 
-Use this file as compact hot memory for CEO operating notes that should be present in every fresh run:
+This file mirrors Paperclip-managed `hot/MEMORY.md` for CEO operating notes that should be present in every fresh run. Write updates through the Paperclip memory API:
 
 - current strategic priorities
 - unresolved executive follow-ups
@@ -9,4 +9,4 @@ Use this file as compact hot memory for CEO operating notes that should be prese
 
 Do not treat this as a raw transcript archive. Durable company guidance belongs in company documents, and team alignment belongs in project context.
 
-Move details to `memory/daily/` or `memory/operations/` when they do not need to be prompt-injected every run.
+Move details to `daily/YYYY-MM-DD.md` or `operations/*.md` when they do not need to be prompt-injected every run.

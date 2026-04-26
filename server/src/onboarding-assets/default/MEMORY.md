@@ -1,6 +1,6 @@
 # MEMORY.md
 
-Use this file as compact hot memory for durable personal working notes that should be present in every fresh run for this agent.
+This file mirrors Paperclip-managed `hot/MEMORY.md` for durable personal working notes that should be present in every fresh run for this agent. Write updates through the Paperclip memory API.
 
 Keep it concise and operational:
 
@@ -11,4 +11,4 @@ Keep it concise and operational:
 
 Do not dump raw run transcripts here. Durable team alignment belongs in project context, and company policy belongs in company-level documents.
 
-Move details to `memory/daily/` or `memory/operations/` when they do not need to be prompt-injected every run.
+Move details to `daily/YYYY-MM-DD.md` or `operations/*.md` when they do not need to be prompt-injected every run.
