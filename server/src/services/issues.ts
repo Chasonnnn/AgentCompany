@@ -2658,7 +2658,7 @@ export function issueService(db: Db) {
         }
       }
 
-      throw conflict("Issue run ownership conflict", {
+      throw conflict("run_id_mismatch", {
         issueId: current.id,
         status: current.status,
         assigneeAgentId: current.assigneeAgentId,

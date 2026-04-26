@@ -1000,7 +1000,22 @@ export function issueRoutes(
     return false;
   }
 
-  async function assertAgentIssueMutationAllowed(
+  // AIW-27 D6-1b. Agent-mutating issue routes call this to validate X-Paperclip-Run-Id
+  // against the issue's active checkoutRunId. On mismatch: structured 4xx `run_id_mismatch`.
+  //
+  // Waived routes (do not call this helper; rationale attached):
+  // - POST /issues/:id/checkout — creates the checkoutRunId; has nothing to validate against yet.
+  // - /issues/:id/read, /issues/:id/inbox-archive — per-user markers; no runId audit claim.
+  // - POST /companies/:companyId/issues — issue does not yet exist at call time.
+  // - POST /issues/:id/feedback-votes — board-only endpoint (agents receive 403 before the gate).
+  // - POST /issues/:id/continuity/* — guarded by the stronger isContinuityOwnerActor identity gate.
+  // - POST /questions/:questionId/* — board-only question mutations, not an issue mutation route.
+  // - POST /companies/:companyId/labels, DELETE /labels/:labelId — company-scoped, not issue-scoped.
+  // - DELETE /issues/:id/documents/:key — board-only (agents receive 403 before the gate).
+  //
+  // /issues/:id/release DOES call this helper: the releaser must be the current checkout owner
+  // on the matching runId before the lock can be cleared.
+  async function assertRunIdOwnership(
     req: Request,
     res: Response,
     issue: { id: string; companyId: string; status: string; assigneeAgentId: string | null },
@@ -1458,6 +1473,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
     const actor = getActorInfo(req);
     const result = await decisionQuestionsSvc.create(issue.id, req.body, {
       agentId: actor.agentId ?? null,
@@ -2279,7 +2295,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
@@ -2414,7 +2430,7 @@ export function issueRoutes(
         return;
       }
       assertCompanyAccess(req, issue.companyId);
-      if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+      if (!(await assertRunIdOwnership(req, res, issue))) return;
       const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
       if (!keyParsed.success) {
         res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
@@ -2602,7 +2618,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
     const product = await workProductsSvc.createForIssue(issue.id, issue.companyId, {
       ...req.body,
       projectId: req.body.projectId ?? issue.projectId ?? null,
@@ -2639,7 +2655,7 @@ export function issueRoutes(
       res.status(404).json({ error: "Issue not found" });
       return;
     }
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
     const product = await workProductsSvc.update(id, req.body);
     if (!product) {
       res.status(404).json({ error: "Work product not found" });
@@ -2673,7 +2689,7 @@ export function issueRoutes(
       res.status(404).json({ error: "Issue not found" });
       return;
     }
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
     const removed = await workProductsSvc.remove(id);
     if (!removed) {
       res.status(404).json({ error: "Work product not found" });
@@ -2861,7 +2877,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
     if (!(await assertCanManageIssueApprovalLinks(req, res, issue.companyId))) return;
 
     const actor = getActorInfo(req);
@@ -2898,7 +2914,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
     if (!(await assertCanManageIssueApprovalLinks(req, res, issue.companyId))) return;
 
     await issueApprovalsSvc.unlink(id, approvalId);
@@ -3147,7 +3163,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, existing.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, existing))) return;
+    if (!(await assertRunIdOwnership(req, res, existing))) return;
 
     const reviewGateError = assertInReviewEntryGate(existing, req.body);
     if (reviewGateError) {
@@ -4122,7 +4138,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, existing.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, existing))) return;
+    if (!(await assertRunIdOwnership(req, res, existing))) return;
     const attachments = await svc.listAttachments(id);
 
     const issue = await svc.remove(id);
@@ -4245,7 +4261,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, existing.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, existing))) return;
+    if (!(await assertRunIdOwnership(req, res, existing))) return;
     const actorRunId = requireAgentRunId(req, res);
     if (req.actor.type === "agent" && !actorRunId) return;
 
@@ -4380,7 +4396,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
 
     const comment = await svc.getComment(commentId);
     if (!comment || comment.issueId !== id) {
@@ -4526,7 +4542,7 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
     const closedExecutionWorkspace = await getClosedIssueExecutionWorkspace(issue);
     if (closedExecutionWorkspace) {
       respondClosedIssueExecutionWorkspace(res, closedExecutionWorkspace);
@@ -4879,7 +4895,7 @@ export function issueRoutes(
       res.status(422).json({ error: "Issue does not belong to company" });
       return;
     }
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
 
     try {
       await runSingleFileUpload(req, res);
@@ -5010,7 +5026,7 @@ export function issueRoutes(
       res.status(404).json({ error: "Issue not found" });
       return;
     }
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    if (!(await assertRunIdOwnership(req, res, issue))) return;
 
     try {
       await storage.deleteObject(attachment.companyId, attachment.objectKey);
