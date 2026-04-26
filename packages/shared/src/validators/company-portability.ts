@@ -240,6 +240,7 @@ export const portabilityAdapterOverrideSchema = z.object({
 
 export const companyPortabilityImportSchema = companyPortabilityPreviewSchema.extend({
   adapterOverrides: z.record(z.string().min(1), portabilityAdapterOverrideSchema).optional(),
+  allowPlanOverride: z.boolean().optional(),
 });
 
 export type CompanyPortabilityImport = z.infer<typeof companyPortabilityImportSchema>;
