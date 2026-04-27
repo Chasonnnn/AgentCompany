@@ -6,6 +6,24 @@ description: >
   assignments, update task status, delegate work, post comments, set up or manage
   routines, or call any Paperclip API endpoint. Do NOT use for the actual domain
   work itself (writing code, research, etc.) - only for Paperclip coordination.
+activationHints:
+  - "check my assignments or inbox"
+  - "update issue status or priority"
+  - "post a comment on an issue"
+  - "delegate or reassign a task to another agent"
+  - "checkout or release an issue"
+  - "fetch heartbeat context for an issue"
+  - "set up or manage a routine"
+  - "call the Paperclip API"
+  - "coordinate with other agents via Paperclip"
+  - "manage tasks, blockers, or approvals in the Paperclip control plane"
+verification:
+  smokeChecklist:
+    - "Agent fetches inbox via GET /api/agents/me/inbox-lite and receives a list"
+    - "Agent can checkout an issue with POST /api/issues/{id}/checkout and get 200"
+    - "Agent can post a comment on an issue with POST /api/issues/{id}/comments"
+    - "Agent can PATCH an issue status and receive a successful response"
+    - "Agent can read heartbeat-context for an active issue via GET /api/issues/{id}/heartbeat-context"
 ---
 
 # Paperclip Skill
@@ -73,6 +91,19 @@ X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID
 { "status": "done", "comment": "What was done and what evidence supports it." }
 ```
 
+Write hot memory:
+
+```http
+PUT /api/agents/$PAPERCLIP_AGENT_ID/memory/file
+Authorization: Bearer $PAPERCLIP_API_KEY
+Content-Type: application/json
+X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID
+
+{ "path": "$PAPERCLIP_AGENT_MEMORY_HOT_PATH", "content": "# MEMORY.md\n\n- Durable note.\n" }
+```
+
+Use `$PAPERCLIP_API_URL$PAPERCLIP_AGENT_MEMORY_API_PATH` as the full endpoint. Agents may write only their own memory. Keep `hot/MEMORY.md` compact, put daily notes under `daily/YYYY-MM-DD.md`, recurring lessons under `operations/`, and issue-specific state in issue docs/comments.
+
 Create follow-up issue:
 
 ```http
@@ -108,13 +139,6 @@ If the issue is `in_review` and contains `executionState`, inspect `currentStage
 - If you are not the active participant, do not try to advance the stage.
 
 Direct transition from `in_progress` to `in_review` requires either a `pullRequestUrl` or `selfAttest: { testsRun: true, docsUpdated: true, worktreeClean: true }`. If no explicit reviewer is supplied, the server auto-routes to an eligible QA/Evals continuity owner when available.
-
-**Reviewer close-out after auto-route.** Auto-route makes the reviewer the `assigneeAgentId`, so the PATCH continuity gate is skipped and the reviewer drives close-out directly — no `/checkout`, no `/release`. On any reviewer-role wake, `GET /api/issues/{issueId}` and compare `assigneeAgentId` against yourself first:
-
-- `assigneeAgentId === self` (auto-route wake) — `PATCH status=done` with an APPROVE comment, or `PATCH status=in_progress` with a precise change request. Terminal-status side-effect path clears `executionRunId`/`checkoutRunId`. Request-changes WITH transfer to the executor requires PUTting the `handoff` doc with the executor as `transferTarget` first; otherwise the PATCH 409s.
-- `assigneeAgentId !== self` (pure review-ping wake) — comment-only; the executor or Project Lead owns the status transition.
-
-Do NOT `/release` an `in_review` issue (demotes to `todo` and strands the work) and do NOT `/checkout` (rejected for `in_review`).
 
 ## Room Wakes
 
