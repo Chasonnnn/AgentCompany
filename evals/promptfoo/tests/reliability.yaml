@@ -170,5 +170,5 @@
       value: "(() => { const result = JSON.parse(output); return /async.parallel|bundle.barrel|waterfall|next\\.js|app router|server component|rsc|performance|bundle/i.test(result.finalText); })()"
       metric: mentions_web_performance_signal
     - type: javascript
-      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsRN = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.react.native.skills`?\\b/i.test(text) && !/vercel.react.best.practices/i.test(text); const recommendsComposition = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.composition.patterns`?\\b/i.test(text) && !/vercel.react.best.practices/i.test(text); return !recommendsRN && !recommendsComposition; })()"
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsRN = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.react.native.skills`?\\b/i.test(text); const recommendsComposition = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.composition.patterns`?\\b/i.test(text); return !recommendsRN && !recommendsComposition; })()"
       metric: avoids_react_native_or_composition_drift
