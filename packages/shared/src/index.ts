@@ -1580,6 +1580,7 @@ export type {
   CompanySkillReliabilityAudit,
   CompanySkillReliabilityAuditSkill,
   CompanySkillReliabilityFinding,
+  CompanySkillReliabilityRepairIssueMode,
   CompanySkillReliabilityRepairApplyRequest,
   CompanySkillReliabilityRepairPreview,
   CompanySkillReliabilityRepairResult,

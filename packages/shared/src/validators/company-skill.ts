@@ -382,8 +382,11 @@ export const companySkillReliabilityRepairPreviewSchema = companySkillReliabilit
   selectionFingerprint: z.string().min(1),
 });
 
+export const companySkillReliabilityRepairIssueModeSchema = z.enum(["triage_packet", "per_skill"]);
+
 export const companySkillReliabilityRepairApplyRequestSchema = z.object({
   selectionFingerprint: z.string().min(1),
+  issueMode: companySkillReliabilityRepairIssueModeSchema.default("triage_packet"),
 });
 
 export const companySkillReliabilityRepairResultSchema = z.object({
@@ -399,6 +402,7 @@ export const companySkillReliabilitySweepModeSchema = z.enum(["report", "report_
 
 export const companySkillReliabilitySweepRequestSchema = z.object({
   mode: companySkillReliabilitySweepModeSchema.default("report"),
+  issueMode: companySkillReliabilityRepairIssueModeSchema.default("triage_packet"),
 });
 
 export const companySkillReliabilitySweepResultSchema = z.object({
@@ -477,6 +481,7 @@ export type BulkSkillGrantRequest = z.infer<typeof bulkSkillGrantRequestSchema>;
 export type BulkSkillGrantApplyRequest = z.infer<typeof bulkSkillGrantApplyRequestSchema>;
 export type CompanySkillCoverageRepairApplyRequest = z.infer<typeof companySkillCoverageRepairApplyRequestSchema>;
 export type CompanySkillReliabilityRepairApplyRequest = z.infer<typeof companySkillReliabilityRepairApplyRequestSchema>;
+export type CompanySkillReliabilityRepairIssueMode = z.infer<typeof companySkillReliabilityRepairIssueModeSchema>;
 export type CompanySkillProjectScan = z.infer<typeof companySkillProjectScanRequestSchema>;
 export type CompanySkillCreate = z.infer<typeof companySkillCreateSchema>;
 export type CompanySkillFileUpdate = z.infer<typeof companySkillFileUpdateSchema>;

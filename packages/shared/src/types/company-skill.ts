@@ -409,8 +409,11 @@ export interface CompanySkillReliabilityRepairPreview extends CompanySkillReliab
   selectionFingerprint: string;
 }
 
+export type CompanySkillReliabilityRepairIssueMode = "triage_packet" | "per_skill";
+
 export interface CompanySkillReliabilityRepairApplyRequest {
   selectionFingerprint: string;
+  issueMode?: CompanySkillReliabilityRepairIssueMode;
 }
 
 export interface CompanySkillReliabilityRepairResult {
@@ -426,6 +429,7 @@ export type CompanySkillReliabilitySweepMode = "report" | "report_and_refresh";
 
 export interface CompanySkillReliabilitySweepRequest {
   mode: CompanySkillReliabilitySweepMode;
+  issueMode?: CompanySkillReliabilityRepairIssueMode;
 }
 
 export interface CompanySkillReliabilitySweepResult {

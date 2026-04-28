@@ -558,7 +558,7 @@ describe("company skill mutation permissions", () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mocks.skillReliabilityService.applyRepair).toHaveBeenCalledWith(
       "company-1",
-      { selectionFingerprint: "reliability-fingerprint-1" },
+      { selectionFingerprint: "reliability-fingerprint-1", issueMode: "triage_packet" },
       {
         agentId: null,
         userId: "local-board",
@@ -587,7 +587,7 @@ describe("company skill mutation permissions", () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mocks.skillReliabilityService.sweep).toHaveBeenCalledWith(
       "company-1",
-      { mode: "report_and_refresh" },
+      { mode: "report_and_refresh", issueMode: "triage_packet" },
       {
         agentId: null,
         userId: "local-board",

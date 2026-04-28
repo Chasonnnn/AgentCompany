@@ -372,7 +372,21 @@ describe("shared skill routes", () => {
         baseMirrorDigest: "mirror-digest",
         baseSourceDigest: "source-digest",
         changes: [{ path: "SKILL.md", op: "replace_file", content: "# New" }],
-        evidence: {},
+        evidence: { issueId: "11111111-1111-4111-8111-111111111111" },
+        requiredVerification: {
+          unitCommands: ["pnpm -r typecheck"],
+          integrationCommands: [],
+          promptfooCaseIds: [],
+          architectureScenarioIds: [],
+          smokeChecklist: [],
+        },
+        verificationResults: {
+          passedUnitCommands: ["pnpm -r typecheck"],
+          passedIntegrationCommands: [],
+          passedPromptfooCaseIds: [],
+          passedArchitectureScenarioIds: [],
+          completedSmokeChecklist: [],
+        },
       });
 
     expect(res.status).toBe(422);

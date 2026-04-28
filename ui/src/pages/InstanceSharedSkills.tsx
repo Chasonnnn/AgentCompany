@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SharedSkillProposal, SharedSkillProposalStatus } from "@paperclipai/shared";
-import { CheckCircle2, GitPullRequest, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, GitPullRequest, Layers3, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Link, useNavigate, useParams } from "@/lib/router";
@@ -78,6 +78,30 @@ function proposalReadyForApproval(proposal: SharedSkillProposal) {
     && containsAll(required.architectureScenarioIds, results.passedArchitectureScenarioIds)
     && containsAll(required.smokeChecklist, results.completedSmokeChecklist)
   );
+}
+
+function proposalHasRequiredVerification(proposal: SharedSkillProposal) {
+  const required = proposal.payload.requiredVerification;
+  return Boolean(
+    required
+    && (
+      required.unitCommands.length > 0
+      || required.integrationCommands.length > 0
+      || required.promptfooCaseIds.length > 0
+      || required.architectureScenarioIds.length > 0
+      || required.smokeChecklist.length > 0
+    ),
+  );
+}
+
+function proposalMissingEvidence(proposal: SharedSkillProposal) {
+  return proposal.kind === "self_improvement"
+    && (!proposal.payload.evidence.issueId || !proposal.payload.evidence.runId);
+}
+
+function isLiteralTestProposal(proposal: SharedSkillProposal) {
+  const text = `${proposal.summary} ${proposal.rationale}`.toLowerCase();
+  return /\b(test|dummy|example)\b/.test(text) && proposal.payload.changes.length <= 1;
 }
 
 export function InstanceSharedSkills() {
@@ -206,6 +230,80 @@ export function InstanceSharedSkills() {
     }
   }, [navigate, proposalId, proposalsQuery.data]);
 
+  const proposal = detailQuery.data ?? null;
+  const readyForApproval = proposal ? proposalReadyForApproval(proposal) : false;
+  const proposals = proposalsQuery.data ?? [];
+  const duplicateOpenSharedSkillIds = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of proposals) {
+      if (entry.status !== "pending" && entry.status !== "revision_requested") continue;
+      counts.set(entry.sharedSkillId, (counts.get(entry.sharedSkillId) ?? 0) + 1);
+    }
+    return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([sharedSkillId]) => sharedSkillId));
+  }, [proposals]);
+  const actionSummary = useMemo(() => {
+    const open = proposals.filter((entry) => entry.status === "pending" || entry.status === "revision_requested");
+    return {
+      readyToApprove: open.filter((entry) => entry.status === "pending" && proposalReadyForApproval(entry) && proposalHasRequiredVerification(entry) && !proposalMissingEvidence(entry)),
+      missingVerification: open.filter((entry) => !proposalHasRequiredVerification(entry) || !proposalReadyForApproval(entry) || proposalMissingEvidence(entry)),
+      stalePatchBase: open.filter((entry) => (entry.decisionNote ?? "").toLowerCase().includes("mirror changed")),
+      duplicateOrSuperseded: open.filter((entry) => duplicateOpenSharedSkillIds.has(entry.sharedSkillId) || Boolean(entry.payload.supersedesProposalId)),
+      noLinkedIssue: open.filter((entry) => proposalMissingEvidence(entry)),
+      literalTests: open.filter((entry) => isLiteralTestProposal(entry)),
+    };
+  }, [duplicateOpenSharedSkillIds, proposals]);
+
+  const invalidateProposalLists = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.instance.sharedSkillProposals(statusFilter === "all" ? undefined : statusFilter) }),
+      selectedProposalId
+        ? queryClient.invalidateQueries({ queryKey: queryKeys.instance.sharedSkillProposal(selectedProposalId) })
+        : Promise.resolve(),
+    ]);
+  };
+
+  const batchApproveMutation = useMutation({
+    mutationFn: async () => {
+      await Promise.all(actionSummary.readyToApprove.map((entry) =>
+        sharedSkillsApi.approveProposal(entry.id, "Batch approved: required verification is complete.")));
+    },
+    onSuccess: async () => {
+      await invalidateProposalLists();
+      pushToast({ tone: "success", title: "Batch approval complete", body: `${actionSummary.readyToApprove.length} proposal${actionSummary.readyToApprove.length === 1 ? "" : "s"} approved.` });
+    },
+    onError: (error) => {
+      pushToast({ tone: "error", title: "Batch approval failed", body: error instanceof Error ? error.message : "Failed to approve verified proposals." });
+    },
+  });
+
+  const batchRevisionMutation = useMutation({
+    mutationFn: async () => {
+      await Promise.all(actionSummary.missingVerification.map((entry) =>
+        sharedSkillsApi.requestRevision(entry.id, "Batch revision requested: complete required verification and issue/run evidence before board review.")));
+    },
+    onSuccess: async () => {
+      await invalidateProposalLists();
+      pushToast({ tone: "success", title: "Batch revision requested", body: `${actionSummary.missingVerification.length} proposal${actionSummary.missingVerification.length === 1 ? "" : "s"} returned for evidence.` });
+    },
+    onError: (error) => {
+      pushToast({ tone: "error", title: "Batch revision failed", body: error instanceof Error ? error.message : "Failed to request revisions." });
+    },
+  });
+
+  const batchRejectTestsMutation = useMutation({
+    mutationFn: async () => {
+      await Promise.all(actionSummary.literalTests.map((entry) =>
+        sharedSkillsApi.rejectProposal(entry.id, "Batch rejected: literal test/dummy proposal.")));
+    },
+    onSuccess: async () => {
+      await invalidateProposalLists();
+      pushToast({ tone: "success", title: "Batch rejection complete", body: `${actionSummary.literalTests.length} test proposal${actionSummary.literalTests.length === 1 ? "" : "s"} rejected.` });
+    },
+    onError: (error) => {
+      pushToast({ tone: "error", title: "Batch rejection failed", body: error instanceof Error ? error.message : "Failed to reject test proposals." });
+    },
+  });
+
   if (proposalsQuery.isLoading || (selectedProposalId && detailQuery.isLoading)) {
     return <div className="text-sm text-muted-foreground">Loading shared-skill proposals...</div>;
   }
@@ -214,9 +312,6 @@ export function InstanceSharedSkills() {
     const error = proposalsQuery.error ?? detailQuery.error;
     return <div className="text-sm text-destructive">{error instanceof Error ? error.message : "Failed to load shared-skill proposals."}</div>;
   }
-
-  const proposal = detailQuery.data ?? null;
-  const readyForApproval = proposal ? proposalReadyForApproval(proposal) : false;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -272,6 +367,58 @@ export function InstanceSharedSkills() {
       </aside>
 
       <div className="min-w-0">
+        <section className="mb-6 rounded-xl border border-border bg-card px-5 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <Layers3 className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-base font-semibold">Needs action</h2>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Batch only safe catalog-maintenance decisions. Incomplete verification should return before board review.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                onClick={() => batchApproveMutation.mutate()}
+                disabled={actionSummary.readyToApprove.length === 0 || batchApproveMutation.isPending}
+              >
+                Approve ready ({actionSummary.readyToApprove.length})
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => batchRevisionMutation.mutate()}
+                disabled={actionSummary.missingVerification.length === 0 || batchRevisionMutation.isPending}
+              >
+                Request verification ({actionSummary.missingVerification.length})
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => batchRejectTestsMutation.mutate()}
+                disabled={actionSummary.literalTests.length === 0 || batchRejectTestsMutation.isPending}
+              >
+                Reject tests ({actionSummary.literalTests.length})
+              </Button>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-5">
+            {[
+              ["Ready", actionSummary.readyToApprove.length],
+              ["Missing verification", actionSummary.missingVerification.length],
+              ["Stale patch base", actionSummary.stalePatchBase.length],
+              ["Duplicate/superseded", actionSummary.duplicateOrSuperseded.length],
+              ["No linked issue", actionSummary.noLinkedIssue.length],
+            ].map(([label, count]) => (
+              <div key={label} className="rounded-md border border-border px-3 py-3">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+                <div className="mt-2 text-lg font-semibold">{count}</div>
+              </div>
+            ))}
+          </div>
+        </section>
         {!proposal ? (
           <div className="rounded-xl border border-border bg-card px-5 py-6 text-sm text-muted-foreground">
             Select a proposal to review its evidence and verification state.
@@ -310,8 +457,17 @@ export function InstanceSharedSkills() {
                 <div className="rounded-md border border-border px-3 py-3">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Next step</div>
                   <div className="mt-2 flex items-center gap-2 text-sm">
-                    <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-                    {readyForApproval ? "Verification is complete and approval can proceed." : "Verification is still incomplete."}
+                    {readyForApproval && proposalHasRequiredVerification(proposal) && !proposalMissingEvidence(proposal) ? (
+                      <>
+                        <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                        Verification is complete and approval can proceed.
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                        Verification or source evidence is incomplete.
+                      </>
+                    )}
                   </div>
                   <div className="mt-3 text-xs text-muted-foreground">
                     Mirror digest gate still applies on approval. Verification only clears the reliability requirement.
@@ -391,7 +547,7 @@ export function InstanceSharedSkills() {
                 className="mt-4 min-h-[96px]"
               />
               <div className="mt-4 flex flex-wrap gap-2">
-                <Button onClick={() => approveMutation.mutate()} disabled={approveMutation.isPending || !readyForApproval}>
+                <Button onClick={() => approveMutation.mutate()} disabled={approveMutation.isPending || !readyForApproval || !proposalHasRequiredVerification(proposal) || proposalMissingEvidence(proposal)}>
                   {approveMutation.isPending ? "Approving..." : "Approve"}
                 </Button>
                 <Button variant="outline" onClick={() => requestRevisionMutation.mutate()} disabled={requestRevisionMutation.isPending}>

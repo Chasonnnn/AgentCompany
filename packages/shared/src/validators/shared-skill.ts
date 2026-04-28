@@ -73,6 +73,7 @@ export const sharedSkillProposalPayloadSchema = z.object({
   requiredVerification: skillVerificationMetadataSchema.nullable().optional(),
   verificationResults: sharedSkillProposalVerificationResultsSchema.nullable().optional(),
   upstreamDecision: z.enum(["adopt_source", "preserve_local", "merge_required"]).optional(),
+  supersedesProposalId: z.string().uuid().optional(),
 });
 
 export const sharedSkillProposalSchema = z.object({
@@ -165,6 +166,7 @@ export const sharedSkillProposalCreateSchema = z.object({
   requiredVerification: skillVerificationMetadataSchema.nullable().optional(),
   verificationResults: sharedSkillProposalVerificationResultsSchema.nullable().optional(),
   upstreamDecision: z.enum(["adopt_source", "preserve_local", "merge_required"]).optional(),
+  supersedesProposalId: z.string().uuid().optional(),
 });
 
 export const sharedSkillProposalDecisionSchema = z.object({

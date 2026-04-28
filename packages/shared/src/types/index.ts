@@ -96,6 +96,7 @@ export type {
   CompanySkillCoverageRepairResult,
   CompanySkillReliabilityStatus,
   CompanySkillReliabilityFinding,
+  CompanySkillReliabilityRepairIssueMode,
   CompanySkillReliabilityAuditSkill,
   CompanySkillReliabilityAudit,
   CompanySkillReliabilityRepairPreview,

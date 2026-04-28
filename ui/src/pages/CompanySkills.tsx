@@ -816,6 +816,9 @@ function SkillReliabilityAuditPanel({
   const visibleSkills = skills.filter((skill) => skill.status !== "healthy");
   const changedSkillCount = activePreview?.changedSkillCount ?? 0;
   const canApply = Boolean(activePreview && changedSkillCount > 0 && !applyPending);
+  const zeroAttachedCount = visibleSkills.filter((skill) => skill.attachedAgentCount === 0).length;
+  const singleOwnerCount = visibleSkills.filter((skill) => skill.attachedAgentCount === 1).length;
+  const qaReviewCount = visibleSkills.filter((skill) => skill.attachedAgentCount > 1 || skill.findings.some((finding) => !finding.repairable)).length;
 
   return (
     <div className="rounded-md border border-border">
@@ -842,8 +845,8 @@ function SkillReliabilityAuditPanel({
               {applyPending
                 ? "Applying..."
                 : activePreview
-                  ? `Create or refresh ${changedSkillCount} issue${changedSkillCount === 1 ? "" : "s"}`
-                  : "Apply hardening"}
+                  ? `Create triage packet for ${changedSkillCount} skill${changedSkillCount === 1 ? "" : "s"}`
+                  : "Apply triage"}
             </Button>
           </div>
         </div>
@@ -947,12 +950,17 @@ function SkillReliabilityAuditPanel({
               Repair preview
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
-              Repair creates or refreshes tracked hardening issues. It does not edit skill files or auto-approve shared-skill changes.
+              Repair now creates one catalog triage packet by default. It does not edit skill files, create one QA issue per metadata gap, or auto-approve shared-skill changes.
             </p>
             {activePreview ? (
-              <p className="mt-3 text-xs text-muted-foreground">
-                Preview fingerprint: <span className="font-mono">{activePreview.selectionFingerprint.slice(0, 12)}</span>
-              </p>
+              <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+                <p>
+                  Preview fingerprint: <span className="font-mono">{activePreview.selectionFingerprint.slice(0, 12)}</span>
+                </p>
+                <p>
+                  Triage split: {singleOwnerCount} specialist-routable, {zeroAttachedCount} install/retire, {qaReviewCount} QA-review candidates.
+                </p>
+              </div>
             ) : null}
           </div>
         </div>
@@ -2349,7 +2357,7 @@ export function CompanySkills() {
 
   const applyReliabilityRepair = useMutation({
     mutationFn: (selectionFingerprint: string) =>
-      companySkillsApi.reliabilityRepairApply(selectedCompanyId!, { selectionFingerprint }),
+      companySkillsApi.reliabilityRepairApply(selectedCompanyId!, { selectionFingerprint, issueMode: "triage_packet" }),
     onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) }),
@@ -2358,11 +2366,11 @@ export function CompanySkills() {
       previewReliabilityRepair.reset();
       pushToast({
         tone: "success",
-        title: "Skill hardening issues refreshed",
+        title: "Skill reliability triage refreshed",
         body:
           result.changedSkillCount === 0
             ? "No skill hardening issues needed to change."
-            : `${result.changedSkillCount} skill${result.changedSkillCount === 1 ? "" : "s"} now have refreshed hardening work.`,
+            : `${result.changedSkillCount} skill${result.changedSkillCount === 1 ? "" : "s"} now route through a catalog triage packet.`,
       });
     },
     onError: (error) => {

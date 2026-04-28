@@ -498,6 +498,36 @@ function verificationResultsCover(
   );
 }
 
+function verificationRequiresWork(required: SkillVerificationMetadata | null | undefined) {
+  return Boolean(
+    (required?.unitCommands.length ?? 0) > 0
+    || (required?.integrationCommands.length ?? 0) > 0
+    || (required?.promptfooCaseIds.length ?? 0) > 0
+    || (required?.architectureScenarioIds.length ?? 0) > 0
+    || (required?.smokeChecklist.length ?? 0) > 0,
+  );
+}
+
+function assertSelfImprovementProposalReady(input: SharedSkillProposalCreateRequest) {
+  if (input.kind !== "self_improvement") return;
+  if (!input.evidence.issueId) {
+    throw unprocessable("Self-improvement shared-skill proposals require evidence.issueId.");
+  }
+  if (!input.evidence.runId) {
+    throw unprocessable("Self-improvement shared-skill proposals require evidence.runId.");
+  }
+  const requiredVerification = normalizeRequiredVerification(input.requiredVerification ?? null);
+  if (!verificationRequiresWork(requiredVerification)) {
+    throw unprocessable("Self-improvement shared-skill proposals require non-empty requiredVerification.");
+  }
+  const verificationResults = input.verificationResults
+    ? normalizeVerificationResults(input.verificationResults)
+    : null;
+  if (!verificationResultsCover(requiredVerification, verificationResults)) {
+    throw unprocessable("Self-improvement shared-skill proposals must include verificationResults that cover requiredVerification before board review.");
+  }
+}
+
 function mergeVerificationResults(
   current: SharedSkillProposalVerificationResults | null | undefined,
   update: SharedSkillProposalVerificationUpdateRequest,
@@ -1058,6 +1088,11 @@ export function sharedSkillService(db: Db) {
   ) {
     const sharedSkill = await detail(sharedSkillId);
     if (!sharedSkill) throw notFound("Shared skill not found.");
+    if (input.baseMirrorDigest && sharedSkill.mirrorDigest && input.baseMirrorDigest !== sharedSkill.mirrorDigest) {
+      throw conflict("Shared skill mirror changed since this proposal was prepared. Refresh and rebase the proposal before submitting.");
+    }
+
+    assertSelfImprovementProposalReady(input);
 
     const fingerprint = buildProposalFingerprint(sharedSkillId, input);
     const existing = await db
@@ -1071,6 +1106,29 @@ export function sharedSkillService(db: Db) {
       )
       .then((rows) => rows[0] ?? null);
     if (existing) return toProposal(existing);
+
+    const openProposals = await db
+      .select()
+      .from(sharedSkillProposals)
+      .where(
+        and(
+          eq(sharedSkillProposals.sharedSkillId, sharedSkillId),
+          inArray(sharedSkillProposals.status, [...OPEN_PROPOSAL_STATUSES]),
+        ),
+      )
+      .orderBy(desc(sharedSkillProposals.createdAt));
+    const supersedesProposalId = input.supersedesProposalId ?? null;
+    if (openProposals.length > 0) {
+      const superseded = supersedesProposalId
+        ? openProposals.find((proposal) => proposal.id === supersedesProposalId) ?? null
+        : null;
+      if (supersedesProposalId && !superseded) {
+        throw unprocessable("supersedesProposalId must reference an open proposal for the same shared skill.");
+      }
+      if (!supersedesProposalId) {
+        throw conflict("An open shared-skill proposal already exists for this skill. Supersede it explicitly before creating another proposal.");
+      }
+    }
 
     const inserted = await db
       .insert(sharedSkillProposals)
@@ -1098,6 +1156,7 @@ export function sharedSkillService(db: Db) {
             ? { verificationResults: normalizeVerificationResults(input.verificationResults) }
             : {}),
           ...(input.upstreamDecision ? { upstreamDecision: input.upstreamDecision } : {}),
+          ...(supersedesProposalId ? { supersedesProposalId } : {}),
         },
         updatedAt: new Date(),
       })

@@ -8,6 +8,7 @@ import {
   documents,
   issueDocuments,
   issues,
+  projects,
   projectWorkspaces,
   sharedSkillProposals,
   sharedSkills,
@@ -28,8 +29,7 @@ import type {
   SharedSkillProposalPayload,
   SkillReliabilityMetadata,
 } from "@paperclipai/shared";
-import { buildIssueDocumentTemplate } from "@paperclipai/shared";
-import { conflict, notFound } from "../errors.js";
+import { conflict } from "../errors.js";
 import { companySkillService } from "./company-skills.js";
 import { documentService } from "./documents.js";
 import { issueService } from "./issues.js";
@@ -51,6 +51,7 @@ import {
 const OPEN_PROPOSAL_STATUSES = new Set(["pending", "revision_requested"]);
 const REPAIRABLE_AUDIT_STATUSES = new Set<CompanySkillReliabilityStatus>(["repairable_gap", "proposal_stale"]);
 const STALE_PROPOSAL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const SKILL_RELIABILITY_TRIAGE_ORIGIN_ID = "__skill_reliability_triage__";
 
 type ReliabilityActor = {
   agentId?: string | null;
@@ -557,6 +558,28 @@ export function skillReliabilityService(db: Db) {
       .then((rows) => rows[0]?.id ?? null);
   }
 
+  async function findCatalogMaintenanceOwner(companyId: string) {
+    for (const archetypeKey of ["project_lead", "technical_project_lead", "chief_of_staff"]) {
+      const owner = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), eq(agents.archetypeKey, archetypeKey), notInArray(agents.status, ["terminated"])))
+        .orderBy(asc(agents.createdAt))
+        .then((rows) => rows[0]?.id ?? null);
+      if (owner) return owner;
+    }
+    return findQaOwner(companyId);
+  }
+
+  async function findCatalogMaintenanceProject(companyId: string) {
+    return db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.companyId, companyId), isNull(projects.archivedAt)))
+      .orderBy(asc(projects.createdAt))
+      .then((rows) => rows[0]?.id ?? null);
+  }
+
   async function upsertHardeningDocs(issueId: string, scaffolds: ReturnType<typeof buildSkillHardeningScaffolds>, actor: ReliabilityActor) {
     const docs: Record<HardeningDocumentKey, string> = {
       spec: scaffolds.spec,
@@ -595,6 +618,7 @@ export function skillReliabilityService(db: Db) {
       .then((rows) => rows[0] ?? null);
 
     const assigneeAgentId = await findQaOwner(companyId);
+    const projectId = await findCatalogMaintenanceProject(companyId);
     const title = `Skill reliability: ${skill.name}`;
     const description = `Reliability audit follow-up for ${skill.name}.`;
     const scaffolds = buildSkillHardeningScaffolds({
@@ -623,6 +647,7 @@ export function skillReliabilityService(db: Db) {
       description,
       status: "todo",
       priority: "medium",
+      projectId,
       assigneeAgentId,
       assigneeUserId: null,
       originKind: SKILL_RELIABILITY_AUDIT_ORIGIN_KIND,
@@ -632,6 +657,170 @@ export function skillReliabilityService(db: Db) {
       createdByUserId: actor.userId ?? null,
     });
     await upsertHardeningDocs(created.id, scaffolds, actor);
+    return { issueId: created.id, created: true };
+  }
+
+  function groupTriageTargets(targets: CompanySkillReliabilityAudit["skills"]) {
+    const slugCounts = new Map<string, number>();
+    for (const skill of targets) {
+      slugCounts.set(skill.slug, (slugCounts.get(skill.slug) ?? 0) + 1);
+    }
+    return {
+      approve_ready: targets.filter((skill) => skill.hardeningState === "ready_for_approval" && skill.linkedProposal?.status === "pending"),
+      needs_verification: targets.filter((skill) => skill.hardeningState === "verification_pending" || skill.linkedProposal?.status === "revision_requested"),
+      install_or_retire: targets.filter((skill) => skill.attachedAgentCount === 0),
+      duplicate_or_superseded: targets.filter((skill) => (slugCounts.get(skill.slug) ?? 0) > 1),
+      specialist_routable: targets.filter((skill) => skill.attachedAgentCount === 1),
+      qa_review: targets.filter((skill) => skill.attachedAgentCount > 1 || skill.findings.some((finding) => !finding.repairable)),
+    };
+  }
+
+  function triageLine(skill: CompanySkillReliabilityAudit["skills"][number]) {
+    const issue = skill.linkedHardeningIssue?.identifier ?? skill.linkedHardeningIssue?.id?.slice(0, 8) ?? "no issue";
+    const proposal = skill.linkedProposal ? `${skill.linkedProposal.status} proposal ${skill.linkedProposal.id.slice(0, 8)}` : "no proposal";
+    const findingCodes = skill.findings.map((finding) => finding.code).join(", ") || "none";
+    return `- ${skill.name} (${skill.key}) — ${skill.status}; ${skill.attachedAgentCount} attached; ${proposal}; ${issue}; findings: ${findingCodes}`;
+  }
+
+  function buildTriageScaffolds(targets: CompanySkillReliabilityAudit["skills"]) {
+    const groups = groupTriageTargets(targets);
+    const section = (title: string, skills: CompanySkillReliabilityAudit["skills"]) =>
+      [`## ${title}`, "", skills.length > 0 ? skills.map(triageLine).join("\n") : "- None", ""].join("\n");
+    const groupBody = [
+      section("approve_ready", groups.approve_ready),
+      section("needs_verification", groups.needs_verification),
+      section("install_or_retire", groups.install_or_retire),
+      section("duplicate_or_superseded", groups.duplicate_or_superseded),
+      section("specialist_routable", groups.specialist_routable),
+      section("qa_review", groups.qa_review),
+    ].join("\n");
+    const spec = [
+      "# Skill reliability triage",
+      "",
+      "This is a catalog-maintenance packet for skill reliability gaps. Do not turn every metadata gap into a normal QA issue.",
+      "",
+      "Use the groups below to batch safe board/catalog decisions, route single-owner skills to the specialist that uses them, and leave only cross-cutting or risky skills with QA.",
+      "",
+      groupBody,
+    ].join("\n");
+    const plan = [
+      "# Plan",
+      "",
+      "## Risk and QA Mode",
+      "",
+      "Risk: medium catalog-maintenance work. QA mode: independent_verify only for cross-cutting or behavior-risky skills.",
+      "",
+      "## Steps",
+      "",
+      "1. Batch approve proposals in approve_ready after board review.",
+      "2. Send one compact revision request for needs_verification with exact missing evidence.",
+      "3. Make board install/retire calls for install_or_retire skills.",
+      "4. Cancel or supersede duplicate_or_superseded items before more agents pick them up.",
+      "5. Route specialist_routable skills to their natural owner.",
+      "6. Keep qa_review with QA only when the skill is shared, ambiguous, or behavior-risky.",
+    ].join("\n");
+    const progress = [
+      "# Progress",
+      "",
+      "- [ ] Triage packet reviewed",
+      "- [ ] Safe batch proposal decisions applied",
+      "- [ ] Zero-attached skills marked install/retire/keep catalog-only",
+      "- [ ] Duplicate or superseded work cancelled or linked",
+      "- [ ] Specialist-routable skills assigned to owners",
+      "- [ ] QA retains only cross-cutting or risky skills",
+    ].join("\n");
+    const testPlan = [
+      "# Test Plan",
+      "",
+      "## Evidence Required",
+      "",
+      "- Proposal approvals must show complete automated verification.",
+      "- Revision requests must name the exact missing verification item.",
+      "- Install/retire decisions must identify the target owner or retirement reason.",
+      "- Duplicates must link the surviving skill/proposal/issue.",
+      "",
+      "Do not run broad QA for metadata-only repairs that already have complete automated verification.",
+    ].join("\n");
+    return { spec, plan, progress, testPlan };
+  }
+
+  async function upsertTriageDocs(issueId: string, scaffolds: ReturnType<typeof buildTriageScaffolds>, actor: ReliabilityActor) {
+    const docs: Record<HardeningDocumentKey, string> = {
+      spec: scaffolds.spec,
+      plan: scaffolds.plan,
+      progress: scaffolds.progress,
+      "test-plan": scaffolds.testPlan,
+    };
+    for (const key of HARDENING_DOC_KEYS) {
+      const existing = await docsSvc.getIssueDocumentByKey(issueId, key);
+      await docsSvc.upsertIssueDocument({
+        issueId,
+        key,
+        title: null,
+        format: "markdown",
+        body: docs[key],
+        changeSummary: existing ? "Refresh skill reliability triage packet" : "Create skill reliability triage packet",
+        baseRevisionId: existing?.latestRevisionId ?? null,
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.userId ?? null,
+        createdByRunId: actor.runId ?? null,
+      });
+    }
+  }
+
+  async function ensureTriageIssue(
+    companyId: string,
+    targets: CompanySkillReliabilityAudit["skills"],
+    actor: ReliabilityActor,
+  ) {
+    const existing = await db
+      .select()
+      .from(issues)
+      .where(
+        and(
+          eq(issues.companyId, companyId),
+          eq(issues.originKind, SKILL_RELIABILITY_AUDIT_ORIGIN_KIND),
+          eq(issues.originId, SKILL_RELIABILITY_TRIAGE_ORIGIN_ID),
+          isNull(issues.hiddenAt),
+        ),
+      )
+      .orderBy(desc(issues.updatedAt))
+      .then((rows) => rows[0] ?? null);
+
+    const assigneeAgentId = await findCatalogMaintenanceOwner(companyId);
+    const projectId = await findCatalogMaintenanceProject(companyId);
+    const title = "Skill reliability triage";
+    const description = "Catalog-maintenance triage packet for skill reliability gaps, proposal verification, zero-attached skills, duplicates, and specialist routing.";
+    const scaffolds = buildTriageScaffolds(targets);
+
+    if (existing) {
+      if (["done", "cancelled"].includes(existing.status)) {
+        await issuesSvc.update(existing.id, {
+          status: "todo",
+          assigneeAgentId,
+          actorAgentId: actor.agentId ?? null,
+          actorUserId: actor.userId ?? null,
+        });
+      }
+      await upsertTriageDocs(existing.id, scaffolds, actor);
+      return { issueId: existing.id, created: false };
+    }
+
+    const created = await issuesSvc.create(companyId, {
+      title,
+      description,
+      status: "todo",
+      priority: "medium",
+      projectId,
+      assigneeAgentId,
+      assigneeUserId: null,
+      originKind: SKILL_RELIABILITY_AUDIT_ORIGIN_KIND,
+      originId: SKILL_RELIABILITY_TRIAGE_ORIGIN_ID,
+      originFingerprint: "triage_packet",
+      createdByAgentId: actor.agentId ?? null,
+      createdByUserId: actor.userId ?? null,
+    });
+    await upsertTriageDocs(created.id, scaffolds, actor);
     return { issueId: created.id, created: true };
   }
 
@@ -648,10 +837,16 @@ export function skillReliabilityService(db: Db) {
     const targets = preview.skills.filter((skill) => REPAIRABLE_AUDIT_STATUSES.has(skill.status));
     const createdIssueIds: string[] = [];
     const refreshedIssueIds: string[] = [];
-    for (const skill of targets) {
-      const ensured = await ensureAuditHardeningIssue(companyId, skill, actor);
+    if (targets.length > 0 && (input.issueMode ?? "triage_packet") === "triage_packet") {
+      const ensured = await ensureTriageIssue(companyId, targets, actor);
       if (ensured.created) createdIssueIds.push(ensured.issueId);
       else refreshedIssueIds.push(ensured.issueId);
+    } else {
+      for (const skill of targets) {
+        const ensured = await ensureAuditHardeningIssue(companyId, skill, actor);
+        if (ensured.created) createdIssueIds.push(ensured.issueId);
+        else refreshedIssueIds.push(ensured.issueId);
+      }
     }
 
     return {
@@ -680,7 +875,10 @@ export function skillReliabilityService(db: Db) {
       };
     }
     const preview = await buildRepairPreview(companyId);
-    const result = await applyRepair(companyId, { selectionFingerprint: preview.selectionFingerprint }, actor);
+    const result = await applyRepair(companyId, {
+      selectionFingerprint: preview.selectionFingerprint,
+      issueMode: input.issueMode ?? "triage_packet",
+    }, actor);
     return {
       companyId,
       mode: input.mode,

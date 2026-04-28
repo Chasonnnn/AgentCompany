@@ -71,6 +71,7 @@ export interface SharedSkillProposalPayload {
   requiredVerification?: SkillVerificationMetadata | null;
   verificationResults?: SharedSkillProposalVerificationResults | null;
   upstreamDecision?: "adopt_source" | "preserve_local" | "merge_required";
+  supersedesProposalId?: string;
 }
 
 export interface SharedSkillProposal {
@@ -163,6 +164,7 @@ export interface SharedSkillProposalCreateRequest {
   requiredVerification?: SkillVerificationMetadata | null;
   verificationResults?: SharedSkillProposalVerificationResults | null;
   upstreamDecision?: "adopt_source" | "preserve_local" | "merge_required";
+  supersedesProposalId?: string;
 }
 
 export interface SharedSkillProposalDecisionRequest {
