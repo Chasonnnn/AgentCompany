@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agentRuntimeState,
@@ -18,6 +18,7 @@ import {
   issues,
   projects,
 } from "@paperclipai/db";
+import { ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY } from "@paperclipai/shared";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -203,6 +204,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(agentRuntimeState);
     await db.delete(agents);
     await db.delete(companySkills);
+    await db.delete(documentRevisions);
     await db.delete(companies);
   });
 
@@ -345,6 +347,21 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     });
     await seedContinuityDocs(fixture.companyId, fixture.issueId, fixture.agentId);
     return fixture;
+  }
+
+  async function waitForContinuationSummary(issueId: string) {
+    return await waitForValue(async () => {
+      const [row] = await db
+        .select()
+        .from(issueDocuments)
+        .where(
+          and(
+            eq(issueDocuments.issueId, issueId),
+            eq(issueDocuments.key, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
+          ),
+        );
+      return row ?? null;
+    });
   }
 
   it("keeps a local run active when the recorded pid is still alive", async () => {
@@ -576,6 +593,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(retryRun?.status).toBe("scheduled_retry");
     expect(retryRun?.scheduledRetryReason).toBe("transient_failure");
     expect((retryRun?.contextSnapshot as Record<string, unknown> | null)?.codexTransientFallbackMode).toBe("same_session");
+    await waitForContinuationSummary(issueId);
 
     const issue = await db
       .select()
