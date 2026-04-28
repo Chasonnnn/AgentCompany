@@ -306,7 +306,10 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
       return;
     }
     await assertBoardCanAssignTasks(req, routine.companyId);
-    const run = await svc.runRoutine(routine.id, req.body);
+    const run = await svc.runRoutine(routine.id, req.body, {
+      agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+      userId: req.actor.type === "board" ? req.actor.userId ?? null : null,
+    });
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: routine.companyId,
