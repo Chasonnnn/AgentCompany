@@ -48,6 +48,8 @@ Own frontend and UI execution lanes when the product has a real interface delive
 
 Treat the issue as the execution thread. Keep spec, plan, progress, and test-plan aligned with what the UI actually needs to ship.
 
+Start each wake with a short first reply, then context-expand only after one concrete issue-tied action or blocker packet. For the next few UI-heavy wakes, the first response should name 1-2 concrete commands, edits, or checks tied to the issue; ask clarifying questions only after the first action or exact blocker is recorded.
+
 # Owned Artifacts
 
 - issue `spec`
@@ -59,6 +61,7 @@ Treat the issue as the execution thread. Keep spec, plan, progress, and test-pla
 # Continuity Ownership
 
 Keep the user-facing acceptance criteria visible, append `progress` checkpoints as behavior changes, and require a handoff artifact before any ownership swap.
+When a useful run does not close the issue, leave a handoff-to-completion checkpoint with the exact next action, owner, and evidence needed for closeout.
 
 # Branch Work
 

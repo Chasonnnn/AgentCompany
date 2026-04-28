@@ -93,6 +93,8 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "",
   "Execution contract:",
   "- Start actionable work in this heartbeat; do not stop at a plan unless the issue asks for planning.",
+  "- Inspect the scoped wake delta before broad context. If no linked issue or explicit target exists, report the missing link, likely owner, and unblock step instead of exploring broadly.",
+  "- Make the first output useful: one concrete issue action, or a blocker/redirect/no-op verdict when no action is available.",
   "- Leave durable progress in comments, documents, or work products with a clear next action.",
   "- Prefer the smallest verification that proves the change; do not default to full workspace typecheck/build/test on every heartbeat unless the task scope warrants it.",
   "- Use child issues for parallel or long delegated work instead of polling agents, sessions, or processes.",
@@ -101,6 +103,7 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "- To ask for that input, create an interaction on the current issue with POST /api/issues/{issueId}/interactions using kind suggest_tasks, ask_user_questions, or request_confirmation. Use continuationPolicy wake_assignee when you need to resume after a response; for request_confirmation this resumes only after acceptance.",
   "- For plan approval, update the plan document first, then create request_confirmation targeting the latest plan revision with idempotencyKey confirmation:{issueId}:plan:{revisionId}. Wait for acceptance before creating implementation subtasks, and create a fresh confirmation after superseding board/user comments if approval is still needed.",
   "- If blocked, mark the issue blocked and name the unblock owner and action.",
+  "- Before stopping, say whether the issue can close now; if not, name the exact next action and owner.",
   "- Respect budget, pause/cancel, approval gates, and company boundaries.",
 ].join("\n");
 
@@ -1721,6 +1724,7 @@ export function renderPaperclipWakePrompt(
           "You are resuming an advisory-only Productivity Monitor session.",
           "Use the compact productivity report packet below before fetching any broader context.",
           "Do not load the full company run ledger or full issue list. Drill down one agent or one run at a time only when the packet shows a concrete reason.",
+          "For unlinked or needs-followup examples, recommend a blocker-owner-unblock packet before any broad exploration.",
           "",
           `- reason: ${normalized.reason ?? "unknown"}`,
           `- monitoring issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
@@ -1733,6 +1737,7 @@ export function renderPaperclipWakePrompt(
           "Treat this as an advisory-only Productivity Monitor wake.",
           "Use the compact productivity report packet below before fetching any broader context.",
           "Do not load the full company run ledger or full issue list. Drill down one agent or one run at a time only when the packet shows a concrete reason.",
+          "For unlinked or needs-followup examples, recommend a blocker-owner-unblock packet before any broad exploration.",
           "Write recommendations only on the assigned monitoring issue or requested report surface.",
           "",
           `- reason: ${normalized.reason ?? "unknown"}`,
@@ -1789,7 +1794,8 @@ export function renderPaperclipWakePrompt(
       "1. Start from the packet totals and the agents listed above.",
       "2. Fetch a specific agent productivity summary only when you need detail for that agent.",
       "3. Fetch a specific run only when you need evidence for a recommendation.",
-      "4. Post a compact advisory report; do not mutate target issues, approvals, routing, adapter configuration, or implementation artifacts.",
+      "4. For unlinked or needs-followup runs, recommend missing-link, owner, and unblock-step evidence instead of broad exploration.",
+      "5. Post a compact advisory report; do not mutate target issues, approvals, routing, adapter configuration, or implementation artifacts.",
     );
 
     return lines.join("\n");
@@ -1815,7 +1821,7 @@ export function renderPaperclipWakePrompt(
         "",
         "Treat this wake payload as the highest-priority change for the current heartbeat.",
         "This heartbeat is scoped to the issue below. Do not switch to another issue until you have handled this wake.",
-        "Before generic repo exploration or boilerplate heartbeat updates, acknowledge the latest comment and explain how it changes your next action.",
+        "Before generic repo exploration or boilerplate heartbeat updates, take one concrete issue action or name the blocker, owner, and unblock step.",
         "Use this inline wake data first before refetching the issue thread.",
         "Only fetch the API thread when `fallbackFetchNeeded` is true or you need broader history than this small delta.",
         "",

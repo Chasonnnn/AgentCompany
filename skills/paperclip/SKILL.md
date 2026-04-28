@@ -42,13 +42,16 @@ Manual local CLI mode: `paperclipai agent local-cli <agent-id-or-shortname> --co
 
 ## Heartbeat Contract
 
-Before broad context fetching, run a scope and ownership preflight:
+Before broad context fetching, run a scope and ownership preflight against only the wake delta:
 
+- Is a linked issue, room, approval, or explicit target present?
 - Is this wake assigned to me, or am I explicitly invited to answer/review?
 - Is there a concrete action available in the wake delta?
 - Is the issue blocked by an owner, approval, quota, dependency, or wrong assignee?
 
-If the wake is not yours, post one short redirect only when a response is useful, then stop. If it is blocked, name the blocker, owner, and exact unblock action, then stop. Do not spend a heartbeat rediscovering context for work you cannot move.
+If no linked issue or explicit target is available, do not fetch broad company context. Return or post one blocker packet with the missing link, likely owner, and exact unblock step, then stop. If the wake is not yours, post one short redirect only when a response is useful, then stop. If it is blocked, name the blocker, owner, and exact unblock action, then stop. Do not spend a heartbeat rediscovering context for work you cannot move.
+
+Your first output must be useful before it is expansive: either take one concrete issue-tied action, or leave the blocker/redirect/no-op verdict that prevents unscoped work.
 
 Default loop:
 
@@ -56,9 +59,9 @@ Default loop:
 2. **Resolve the target.** For issue wakes, use the named issue. For room wakes, fetch the room/thread and answer there if needed. For generic wakes, use `GET /api/agents/me/inbox-lite`.
 3. **Checkout before issue work.** `POST /api/issues/{issueId}/checkout` with `agentId` and expected statuses. If checkout returns `409`, stop or pick another issue. Never retry a `409`.
 4. **Fetch compact context.** Prefer `GET /api/issues/{issueId}/heartbeat-context`. Fetch exact or incremental comments before full comments: `GET /api/issues/{issueId}/comments/{commentId}` or `GET /api/issues/{issueId}/comments?after={lastSeenId}&order=asc`.
-5. **Do one concrete action.** Code, verify, update a doc, answer a room question, create a decision question, delegate a subtask, or move the issue state. Avoid plan/progress/test artifacts unless the current issue actually needs them.
+5. **Do one concrete action first.** Code, verify, update a doc, answer a room question, create a decision question, delegate a subtask, move the issue state, or post the blocker/redirect verdict when no action is available. Avoid plan/progress/test artifacts unless the current issue actually needs them.
 6. **Update Paperclip.** Use `PATCH /api/issues/{issueId}` or the relevant room/approval API. If blocked, set status `blocked` and name the blocker. If done, set status `done` and summarize evidence.
-7. **Stop cleanly.** Before exiting, check whether any in-scope action is self-gated. Do it now. Defer only when a named external gate remains.
+7. **Stop cleanly.** Before exiting, check whether any in-scope action is self-gated. Do it now. If the issue is not closed, leave a handoff-to-completion note: can this close now, and if not, who owns the exact next action?
 
 ## Routing Defaults
 

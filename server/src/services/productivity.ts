@@ -241,8 +241,20 @@ function recommendationsFor(summary: {
   totals: ProductivityTotals;
   ratios: ProductivityRatios;
   agents?: AgentProductivitySummary[];
+  lowYieldRuns?: LowYieldRunSummary[];
 }) {
   const recommendations: string[] = [];
+  const lowYieldRuns = summary.lowYieldRuns ?? [];
+  const hasUnlinkedNeedsFollowup = lowYieldRuns.some((run) =>
+    !run.issueId && run.livenessState === "needs_followup"
+  );
+  const hasHighTokenPlanOnly = lowYieldRuns.some((run) =>
+    run.livenessState === "plan_only" && run.totalTokens >= 100_000
+  );
+  const hasHighTokenNeedsFollowup = lowYieldRuns.some((run) =>
+    run.livenessState === "needs_followup" && run.totalTokens >= 100_000
+  );
+
   if (summary.totals.terminalRunCount >= 3 && summary.ratios.usefulRunRate < 0.5) {
     recommendations.push("Tighten default wake context and ask agents to do one concrete issue action before broad planning.");
   }
@@ -252,8 +264,14 @@ function recommendationsFor(summary: {
   if (summary.totals.planOnlyRunCount > 0 || summary.totals.needsFollowupRunCount > 0) {
     recommendations.push("For plan-only or follow-up-only runs, require either a concrete action posted or a named blocker with owner and exact unblock step.");
   }
+  if (hasUnlinkedNeedsFollowup) {
+    recommendations.push("For unlinked follow-up wakes, require a missing-link blocker with likely owner and exact unblock step before any broad exploration.");
+  }
+  if (hasHighTokenPlanOnly || hasHighTokenNeedsFollowup) {
+    recommendations.push("For high-token plan-only or needs-followup runs, require the first output to be a concrete issue action or blocker-owner-unblock packet.");
+  }
   if (summary.totals.usefulRunCount > 0 && summary.totals.completedIssueCount === 0) {
-    recommendations.push("Useful runs are not becoming completed issues; inspect definition-of-done, review handoff, and closeout flow before optimizing token cost.");
+    recommendations.push("Useful runs are not becoming completed issues; inspect closeout, definition-of-done, review handoff, and handoff-to-completion flow before optimizing token cost.");
   }
   if (summary.totals.continuationExhaustionCount > 0) {
     recommendations.push("Inspect continuation-exhausted runs; they usually need smaller task scope, clearer acceptance criteria, or a tighter risk-based QA mode.");
@@ -427,7 +445,7 @@ export function productivityService(db: Db) {
       ratios,
       agents: agentsSummary,
       lowYieldRuns: lowYieldRuns.slice(0, 10),
-      recommendations: recommendationsFor({ totals, ratios, agents: agentsSummary }),
+      recommendations: recommendationsFor({ totals, ratios, agents: agentsSummary, lowYieldRuns }),
     };
     return summary;
   }

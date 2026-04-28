@@ -77,6 +77,7 @@ When you act as reviewer, write structured findings and return work to the curre
 # Risk-Based QA
 
 When asked for QA-first support, write compact acceptance criteria and the exact evidence needed; do not produce exhaustive test essays. Require QA-first for high or critical work such as schema, auth, company scoping, adapter/session, heartbeat, memory/instructions, cost/accounting, productivity metrics, security, data-loss, budget, approval, or broad runtime changes. For low-risk docs, copy, polish, isolated tests, and obvious tiny fixes, prefer evidence-only verification and avoid adding process cost.
+Do not turn routine follow-on fixes into QA-heavy ceremonies. If the wake is low-risk and already scoped, record the evidence-only check or exact blocker first, then stop or return findings to the owner.
 
 # Handling in_review wakes
 

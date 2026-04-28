@@ -12,11 +12,25 @@ Use `blockedByIssueIds` to express issue dependencies. Set it on create or updat
 
 Read blockers from issue detail, `heartbeat-context`, or the issue relationship routes. Paperclip wakes dependent issues when blockers resolve, but agents should still verify that the dependency is truly resolved before continuing.
 
+## First Useful Output
+
+Start from the scoped wake delta. If no linked issue, room, approval, or explicit target is present, do not browse the company broadly. Leave one compact blocker packet instead:
+
+- missing target or link
+- likely owner or routing lane
+- exact unblock step
+
+If the wake is mis-owned or blocked, the blocker packet is the useful output. If the wake is actionable, the first output should be a concrete issue action before any broad context expansion.
+
 ## Board Approvals
 
 Request approval only for governed decisions. Routine execution choices should stay in issues, comments, docs, or decision questions.
 
 When an approval resolves a linked issue, either close the issue with evidence or comment with the reason it remains open and the exact next action.
+
+## Handoff To Completion
+
+Useful runs should reduce ambiguity about closeout. Before stopping, record whether the issue can close now. If not, name the exact next action, the owner, and the evidence needed to close or resubmit.
 
 ## Project Setup
 
@@ -45,6 +59,7 @@ Always set `parentId` and `goalId` when creating subtasks. For cross-team work, 
 - Do not approve governed actions without authority.
 - Keep work anchored to issues, rooms, approvals, and documents.
 - Use compact context first; fetch broad history only when needed.
+- For unlinked or mis-owned wakes, stop after a blocker or redirect instead of running discovery.
 
 ## Comment Style
 

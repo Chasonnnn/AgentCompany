@@ -261,6 +261,8 @@ describe("renderPaperclipWakePrompt", () => {
   it("keeps the default local-agent prompt action-oriented", () => {
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Start actionable work in this heartbeat");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("do not stop at a plan");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("If no linked issue or explicit target exists");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Make the first output useful");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Prefer the smallest verification that proves the change");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Use child issues");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("instead of polling agents, sessions, or processes");
@@ -286,6 +288,7 @@ describe("renderPaperclipWakePrompt", () => {
     });
 
     expect(prompt).toContain("Treat this wake payload as the highest-priority change");
+    expect(prompt).toContain("take one concrete issue action or name the blocker, owner, and unblock step");
     expect(prompt).toContain("issue: PAP-1580 Update prompts");
   });
 
@@ -386,6 +389,8 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("next action: Reduce QA ceremony.");
     expect(prompt).toContain("Project Lead, needs_followup, 918K tokens");
     expect(prompt).toContain("next action: Let me check the source run for context");
+    expect(prompt).toContain("recommend a blocker-owner-unblock packet");
+    expect(prompt).toContain("recommend missing-link, owner, and unblock-step evidence");
     expect(prompt).toContain("Fetch a specific agent productivity summary only when you need detail");
     expect(prompt).toContain("do not mutate target issues");
     expect(prompt).not.toContain("\"usage\"");

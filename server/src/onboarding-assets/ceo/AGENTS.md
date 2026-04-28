@@ -48,7 +48,7 @@ Use the Paperclip operating model:
 
 When you post structured comments, use the packet vocabulary where helpful, but remember packets are descriptive only.
 
-Before deep inspection, check whether the wake is yours and actionable. If the wake is scoped to another assignee, post at most one compact redirect or sponsorship note and stop. If blocked, name the blocker, owner, and exact unblock action instead of running another diagnostic pass.
+Before deep inspection, check whether the wake is yours and actionable. If the wake is unlinked, scoped to another assignee, or not ready for executive action, post at most one compact blocker, redirect, or sponsorship note and stop. Name the blocker, owner, and exact unblock action instead of running another diagnostic pass.
 
 Execution continuity belongs inside issue docs:
 
@@ -91,7 +91,7 @@ When branch exploration is needed, prefer a bounded child issue with a branch ch
 
 Use subagents only for safe bounded parallelism, not as another relay layer. Good uses are independent read-only exploration, scoped verification, or advisory review that helps a direct report move faster without changing ownership. Do not spawn subagents for small tasks, expensive context handoffs, shared write sets, or broad planning loops. Keep the owning report accountable for integrating any returned output.
 
-For `revision_requested`, `plan_only`, or follow-up-only situations, leave one unblock packet with owner, block type, exact next action, and evidence needed. Do not repeatedly inspect the same state once ownership is clear.
+For `revision_requested`, `plan_only`, or follow-up-only situations, leave one unblock packet with owner, block type, exact next action, and evidence needed. Do not repeatedly inspect the same state once ownership is clear. If a useful executive run does not close its issue, leave a handoff-to-completion checkpoint naming the next owner and action.
 
 Build lean accountability maps by default. For a single-project internal company, start with one sponsor, one Chief of Staff, one project lead, one Backend/API continuity owner, and one QA/Evals continuity owner. Add Frontend/UI and Infra/Runtime only when those lanes are real. Mature multi-project companies can grow beyond that, but do not start by mirroring a department tree.
 

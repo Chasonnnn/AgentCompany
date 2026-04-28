@@ -37,12 +37,19 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(pack.files["chief-of-staff.md"]).toContain("check whether the wake is yours and actionable");
     expect(pack.files["chief-of-staff.md"]).toContain("one lightweight unblock packet");
     expect(pack.files["chief-of-staff.md"]).toContain("prefer one triage packet");
+    expect(pack.files["chief-of-staff.md"]).toContain("short first reply, then context-expand");
+    expect(pack.files["chief-of-staff.md"]).toContain("handoff-to-completion checkpoint");
+    expect(pack.files["frontend-ui-continuity-owner.md"]).toContain("short first reply, then context-expand");
+    expect(pack.files["frontend-ui-continuity-owner.md"]).toContain("handoff-to-completion checkpoint");
+    expect(pack.files["qa-evals-continuity-owner.md"]).toContain("evidence-only verification");
     expect(pack.files["technical-project-lead.md"]).toContain("check whether the wake is yours and actionable");
     expect(pack.files["technical-project-lead.md"]).toContain("one lightweight unblock packet");
     expect(pack.files["technical-project-lead.md"]).toContain("Treat skill metadata repair as catalog maintenance");
+    expect(pack.files["technical-project-lead.md"]).toContain("handoff-to-completion checkpoint");
     expect(pack.files["qa-evals-continuity-owner.md"]).toContain("Do not submit a shared-skill proposal until it has issue/run evidence");
     expect(pack.files["productivity-monitor.md"]).toContain("Start from the compact productivity packet");
     expect(pack.files["productivity-monitor.md"]).toContain("repeated scope/ownership preflight misses");
+    expect(pack.files["productivity-monitor.md"]).toContain("Flag repeated first-output violations");
     for (const [filename, content] of Object.entries(pack.files)) {
       if (filename === "README.md") continue;
       expect(content, filename).toContain("Subagent Collaboration");
@@ -52,18 +59,26 @@ describe("loadDefaultAgentTemplatePack", () => {
   });
 
   it("keeps the heartbeat skill focused on scope and ownership preflight", async () => {
-    const [skill, ceoInstructions] = await Promise.all([
+    const [skill, heartbeatReference, ceoInstructions] = await Promise.all([
       readFile(new URL("../../../skills/paperclip/SKILL.md", import.meta.url), "utf8"),
+      readFile(new URL("../../../skills/paperclip/references/heartbeat-reference.md", import.meta.url), "utf8"),
       readFile(new URL("../onboarding-assets/ceo/AGENTS.md", import.meta.url), "utf8"),
     ]);
 
-    expect(skill).toContain("run a scope and ownership preflight");
+    expect(skill).toContain("run a scope and ownership preflight against only the wake delta");
+    expect(skill).toContain("Is a linked issue, room, approval, or explicit target present?");
     expect(skill).toContain("Is this wake assigned to me");
     expect(skill).toContain("post one short redirect");
     expect(skill).toContain("name the blocker, owner, and exact unblock action");
+    expect(skill).toContain("Do one concrete action first");
+    expect(skill).toContain("handoff-to-completion note");
+    expect(heartbeatReference).toContain("## First Useful Output");
+    expect(heartbeatReference).toContain("missing target or link");
+    expect(heartbeatReference).toContain("## Handoff To Completion");
     expect(ceoInstructions).toContain("check whether the wake is yours and actionable");
     expect(ceoInstructions).toContain("one unblock packet");
     expect(ceoInstructions).toContain("Use subagents only for safe bounded parallelism");
+    expect(ceoInstructions).toContain("handoff-to-completion checkpoint");
   });
 
   it("ships the QA/Evals in_review wake branch in the continuity owner template", async () => {

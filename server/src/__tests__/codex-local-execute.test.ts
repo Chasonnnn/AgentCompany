@@ -669,7 +669,7 @@ describe("codex execute", () => {
       expect(capture.prompt).toContain("Treat this wake payload as the highest-priority change for the current heartbeat.");
       expect(capture.prompt).toContain("Do not switch to another issue until you have handled this wake.");
       expect(capture.prompt).toContain(
-        "acknowledge the latest comment and explain how it changes your next action.",
+        "Before generic repo exploration or boilerplate heartbeat updates, take one concrete issue action or name the blocker, owner, and unblock step.",
       );
       expect(capture.prompt).toContain("First comment");
       expect(capture.prompt).toContain("Second comment");

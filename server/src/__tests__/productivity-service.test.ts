@@ -179,6 +179,7 @@ describeEmbeddedPostgres("productivityService", () => {
     const { companyId, agentId, projectId } = await seedBase(db);
     const usefulRunId = randomUUID();
     const planRunId = randomUUID();
+    const followupRunId = randomUUID();
     const started = new Date("2026-04-24T12:00:00.000Z");
 
     await db.insert(heartbeatRuns).values([
@@ -203,6 +204,17 @@ describeEmbeddedPostgres("productivityService", () => {
         startedAt: new Date("2026-04-24T13:00:00.000Z"),
         finishedAt: new Date("2026-04-24T13:02:00.000Z"),
         createdAt: new Date("2026-04-24T13:00:00.000Z"),
+      },
+      {
+        id: followupRunId,
+        companyId,
+        agentId,
+        status: "succeeded",
+        livenessState: "needs_followup",
+        nextAction: "No linked issue was available; need routing.",
+        startedAt: new Date("2026-04-24T14:00:00.000Z"),
+        finishedAt: new Date("2026-04-24T14:02:00.000Z"),
+        createdAt: new Date("2026-04-24T14:00:00.000Z"),
       },
     ]);
 
@@ -243,6 +255,24 @@ describeEmbeddedPostgres("productivityService", () => {
         estimatedApiCostCents: 0,
         occurredAt: new Date("2026-04-24T13:00:00.000Z"),
       },
+      {
+        companyId,
+        agentId,
+        projectId,
+        heartbeatRunId: followupRunId,
+        issueId: null,
+        provider: "openai",
+        biller: "chatgpt",
+        billingType: "subscription_included",
+        model: "gpt-5.5",
+        inputTokens: 220_000,
+        cachedInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        outputTokens: 5_000,
+        costCents: 0,
+        estimatedApiCostCents: 0,
+        occurredAt: new Date("2026-04-24T14:00:00.000Z"),
+      },
     ]);
 
     const summary = await productivityService(db).companySummary(companyId, { window: "all" });
@@ -252,7 +282,13 @@ describeEmbeddedPostgres("productivityService", () => {
       "For plan-only or follow-up-only runs, require either a concrete action posted or a named blocker with owner and exact unblock step.",
     );
     expect(summary.recommendations).toContain(
-      "Useful runs are not becoming completed issues; inspect definition-of-done, review handoff, and closeout flow before optimizing token cost.",
+      "For unlinked follow-up wakes, require a missing-link blocker with likely owner and exact unblock step before any broad exploration.",
+    );
+    expect(summary.recommendations).toContain(
+      "For high-token plan-only or needs-followup runs, require the first output to be a concrete issue action or blocker-owner-unblock packet.",
+    );
+    expect(summary.recommendations).toContain(
+      "Useful runs are not becoming completed issues; inspect closeout, definition-of-done, review handoff, and handoff-to-completion flow before optimizing token cost.",
     );
   });
 });
