@@ -172,3 +172,143 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsRN = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.react.native.skills`?\\b/i.test(text); const recommendsComposition = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.composition.patterns`?\\b/i.test(text); return !recommendsRN && !recommendsComposition; })()"
       metric: avoids_react_native_or_composition_drift
+
+- description: "reliability.find_skills_activation - routes skill-discovery requests to the find-skills skill instead of authoring or direct execution"
+  vars:
+    caseId: reliability.find_skills_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-skill-find-skills-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says: 'is there a skill that helps me write a changelog from my git history?' The agent has these skills loaded: `find-skills` (discover and install skills from the open agent skills ecosystem via `npx skills find`), `paperclip-create-plugin` (scaffold a brand-new Paperclip plugin package), and general Bash/Read/Write tools. Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bfind-skills\\b/i.test(result.finalText); })()"
+      metric: routes_to_find_skills
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /npx skills( find)?|skills\\.sh|open agent skills|skills cli/i.test(result.finalText); })()"
+      metric: mentions_skills_cli_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const disambiguatesAway = /\\b(?:not|instead of|rather than|don'?t use|skip|reject)\\s+(?:[\\w\\s,/-]*?\\s+)?`?paperclip-create-plugin`?\\b/i.test(text); const recommendsCreatePlugin = /\\b(?:use|invoke|choose|select|route to|recommend|try|either)\\b[^.!?\\n]*?`?paperclip-create-plugin`?\\b/i.test(text); const writesItDirectly = /\\b(?:i'?ll just|let me just|i can write)\\b.{0,40}\\bchangelog\\b/i.test(text); return disambiguatesAway || (!recommendsCreatePlugin && !writesItDirectly); })()"
+      metric: avoids_create_or_direct_write_drift
+
+- description: "reliability.agent_browser_activation - routes live web-page interaction work to the agent-browser skill"
+  vars:
+    caseId: reliability.agent_browser_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-skill-agent-browser-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "A teammate just started a Next.js dev server on http://localhost:3000 and asks you to verify the signup form actually submits and lands on /dashboard. The agent has these skills loaded: `agent-browser` (browser automation CLI: navigate, snapshot, fill, click, screenshot a real headless browser), `playwright` (direct Playwright API automation), `playwright-interactive` (persistent Electron/browser interaction via js_repl), `browse` (gstack browse daemon for QA/canary skills), and `open-gstack-browser` (launch the GStack-branded Chromium with the sidebar extension). Which skill do you invoke to drive the live form, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bagent-browser\\b/i.test(result.finalText); })()"
+      metric: routes_to_agent_browser
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /snapshot|@e\\d+|fill|click|navigate|networkidle|localhost/i.test(result.finalText); })()"
+      metric: mentions_agent_browser_workflow_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPlaywrightDirect = /\\b(?:use|invoke|choose|select|route to)\\s+`?playwright(?:-interactive)?`?\\b/i.test(text); const recommendsBrowseOrGstack = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:browse|open-gstack-browser)`?\\b/i.test(text); return !recommendsPlaywrightDirect && !recommendsBrowseOrGstack; })()"
+      metric: avoids_playwright_and_browse_drift
+
+- description: "reliability.frontend_slides_activation - routes presentation/slide-deck requests to the frontend-slides skill instead of generic page or document skills"
+  vars:
+    caseId: reliability.frontend_slides_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-skill-frontend-slides-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says: 'I have a slides.pptx I need to convert into an animated HTML pitch deck I can run in the browser for a keynote next week.' The agent has these skills loaded: `frontend-slides` (zero-dependency animation-rich HTML presentations from scratch or by converting PowerPoint, with viewport-fitting 100vh slides and scroll-snap), `frontend-design` (production-grade web interfaces and components, not slide decks), `design-html` (Pretext-native HTML/CSS pages built from approved design plans, not presentations), and `make-pdf` (markdown to publication-quality PDF). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /frontend-slides/i.test(result.finalText); })()"
+      metric: routes_to_frontend_slides
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /slide|presentation|pitch deck|keynote|pptx?|powerpoint|scroll-?snap|100vh|viewport[- ]fit/i.test(result.finalText); })()"
+      metric: mentions_slide_deck_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsFrontendDesign = /\\b(?:use|invoke|choose|select|route to)\\s+`?frontend-design`?\\b/i.test(text); const recommendsDesignHtml = /\\b(?:use|invoke|choose|select|route to)\\s+`?design-html`?\\b/i.test(text); const recommendsMakePdf = /\\b(?:use|invoke|choose|select|route to)\\s+`?make-pdf`?\\b/i.test(text); return !recommendsFrontendDesign && !recommendsDesignHtml && !recommendsMakePdf; })()"
+      metric: avoids_page_or_pdf_drift
+
+- description: "reliability.harden_activation - routes resilience/i18n/edge-case work to the harden skill, not polish"
+  vars:
+    caseId: reliability.harden_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-harden-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says the settings page breaks with long German translations, the empty-state shows nothing when there are zero items, and the API-error path silently fails. Two skills are loaded: `harden` (resilience under edge cases, i18n, error states, overflow) and `polish` (final visual finish: alignment, spacing, micro-detail). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\b(?:use|invoke|choose|select|route to|reach for|pick)\\s+`?harden`?\\b/i.test(text); })()"
+      metric: routes_to_harden
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /i18n|internationali[sz]ation|overflow|empty state|edge case|error state|RTL|long text|translation/i.test(result.finalText); })()"
+      metric: mentions_resilience_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPolishOnly = /\\b(?:use|invoke|choose|select|route to)\\s+`?polish`?\\b/i.test(text) && !/harden/i.test(text); return !recommendsPolishOnly; })()"
+      metric: avoids_polish_only_route
+
+- description: "reliability.shape_activation - routes pre-build UX/UI discovery interviews to the shape skill"
+  vars:
+    caseId: reliability.shape_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-shape-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'we're about to build a notifications inbox — help me think through the UX before any code'. The agent has these skills loaded: `shape` (pre-build UX/UI discovery interview that produces a design brief, no code), `office-hours` (product idea exploration for whether to build at all), `plan-design-review` (review of an existing design plan, plan-mode), `design-consultation` (whole-product design system creates DESIGN.md), and `impeccable` (production-grade frontend code). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\b(?:use|invoke|choose|select|route to|reach for|pick)\\s+`?shape`?\\b/i.test(text); })()"
+      metric: routes_to_shape
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /design brief|discovery interview|ux|ui|before (?:any )?code/i.test(result.finalText); })()"
+      metric: mentions_shape_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const wrongRoute = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:office-hours|plan-design-review|design-consultation|impeccable)`?\\b/i.test(text); return !wrongRoute; })()"
+      metric: avoids_sibling_drift
+
+- description: "reliability.react_doctor_activation - routes React-specific codebase health scoring to react-doctor"
+  vars:
+    caseId: reliability.react_doctor_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-react-doctor-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user just finished a React feature and asks you to scan the codebase for React-specific security, performance, correctness, and architecture issues, returning a 0-100 score with actionable diagnostics. Four skills are loaded: `react-doctor` (post-change React codebase scan with a 0-100 score), `review` (pre-landing PR diff review for SQL/trust-boundary/side-effect issues), `health` (cross-language code-quality composite from existing project tools), and `audit` (technical-quality report across accessibility/performance/theming). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /react-doctor/i.test(result.finalText); })()"
+      metric: routes_to_react_doctor
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /\\breact\\b|0-?100|score|diagnostic|after .*react change|finishing a feature/i.test(result.finalText); })()"
+      metric: mentions_react_score_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?review`?\\b/i.test(text) && !/react-doctor/i.test(text); const recommendsHealth = /\\b(?:use|invoke|choose|select|route to)\\s+`?health`?\\b/i.test(text) && !/react-doctor/i.test(text); const recommendsAudit = /\\b(?:use|invoke|choose|select|route to)\\s+`?audit`?\\b/i.test(text) && !/react-doctor/i.test(text); return !recommendsReview && !recommendsHealth && !recommendsAudit; })()"
+      metric: avoids_review_health_audit_drift
+
+- description: "reliability.polish_activation - routes pre-ship final-quality-pass requests to polish, not design-review or delight"
+  vars:
+    caseId: reliability.polish_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-polish-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'this feature is functionally complete and ships tomorrow — do one final quality pass for alignment, spacing, micro-detail issues, and any inconsistencies that separate good work from great work.' Three skills are loaded: `polish` (final pre-ship quality pass across alignment/spacing/typography/states/copy/transitions/edge cases), `design-review` (visual QA on an already-deployed live site that fixes issues iteratively with screenshots), and `delight` (adds joy/personality/whimsy/micro-interactions). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bpolish\\b/i.test(result.finalText); })()"
+      metric: routes_to_polish
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /final.*pass|pre-?ship|pre-?launch|alignment|spacing|micro-?detail|consistency|good to great|finishing touches/i.test(result.finalText); })()"
+      metric: mentions_pre_ship_polish_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsDesignReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?design-review`?\\b/i.test(text) && !/\\bpolish\\b/i.test(text); const recommendsDelight = /\\b(?:use|invoke|choose|select|route to)\\s+`?delight`?\\b/i.test(text) && !/\\bpolish\\b/i.test(text); return !recommendsDesignReview && !recommendsDelight; })()"
+      metric: avoids_design_review_and_delight_drift
