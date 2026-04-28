@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import {
   formatExitReason,
   resolveDesktopPaperclipHome,
@@ -31,6 +31,7 @@ import {
   type SavedWindowState,
 } from "./runtime/window-state.js";
 import { createApplicationMenuTemplate, readChosenDirectory } from "./runtime/application-menu.js";
+import { resolveDirectoryPickerDefaultPath } from "./runtime/directory-picker.js";
 import { renderSplashHtml, renderStartupErrorHtml, toDataUrl } from "./window-html.js";
 
 let mainWindow: BrowserWindow | null = null;
@@ -257,6 +258,19 @@ function getPaperclipHomeForActions(): string {
   return serverHandle?.paperclipHome ?? resolveDesktopPaperclipHome(app.getPath("userData"));
 }
 
+function getDirectoryPickerDefaultPath(): string {
+  const paperclipHome = getPaperclipHomeForActions();
+  const defaultPath = resolveDirectoryPickerDefaultPath(paperclipHome);
+  try {
+    mkdirSync(defaultPath, { recursive: true });
+    return defaultPath;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    desktopLogger?.warn(`Could not prepare directory picker default path: ${message}`);
+    return paperclipHome;
+  }
+}
+
 async function openLogs() {
   const target = getLogsPathForActions();
   if (existsSync(target)) {
@@ -272,6 +286,7 @@ async function openDataFolder() {
 
 async function chooseDirectory(): Promise<string | null> {
   const options: OpenDialogOptions = {
+    defaultPath: getDirectoryPickerDefaultPath(),
     properties: ["openDirectory", "createDirectory"],
   };
   const ownerWindow = mainWindow ?? splashWindow;
