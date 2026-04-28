@@ -312,3 +312,203 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsDesignReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?design-review`?\\b/i.test(text) && !/\\bpolish\\b/i.test(text); const recommendsDelight = /\\b(?:use|invoke|choose|select|route to)\\s+`?delight`?\\b/i.test(text) && !/\\bpolish\\b/i.test(text); return !recommendsDesignReview && !recommendsDelight; })()"
       metric: avoids_design_review_and_delight_drift
+
+- description: "reliability.security_threat_model_activation - routes repository-grounded threat modeling to security-threat-model"
+  vars:
+    caseId: reliability.security_threat_model_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-security-threat-model-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'Threat model the adapter plugin loading path in this repository. I need trust boundaries, assets, attacker capabilities, entry points, abuse paths, and concrete mitigations.' Three skills are loaded: `security-threat-model` (repository-grounded AppSec threat modeling), `review` (pre-landing PR diff review), and `security-best-practices` (general secure-coding guidance). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /security-threat-model/i.test(result.finalText); })()"
+      metric: routes_to_security_threat_model
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /threat model|trust boundar|assets?|attacker|entry points?|abuse paths?|mitigations?/i.test(result.finalText); })()"
+      metric: mentions_threat_modeling_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsReviewOnly = /\\b(?:use|invoke|choose|select|route to)\\s+`?review`?\\b/i.test(text) && !/security-threat-model/i.test(text); const recommendsBestPracticesOnly = /\\b(?:use|invoke|choose|select|route to)\\s+`?security-best-practices`?\\b/i.test(text) && !/security-threat-model/i.test(text); return !recommendsReviewOnly && !recommendsBestPracticesOnly; })()"
+      metric: avoids_review_or_general_security_drift
+
+- description: "reliability.arrange_activation - routes layout/spacing/visual-hierarchy work to the arrange skill"
+  vars:
+    caseId: reliability.arrange_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-arrange-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says the UI feels crowded and the spacing looks off — elements are misaligned and there's no visual rhythm. Two skills are loaded: `arrange` (layout, spacing, visual rhythm) and `colorize` (color palette and theming). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /arrange/i.test(result.finalText); })()"
+      metric: routes_to_arrange
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/colorize/i.test(result.finalText); })()"
+      metric: avoids_colorize_for_layout
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /impeccable|design context|layout|spacing|rhythm/i.test(result.finalText); })()"
+      metric: mentions_design_context_or_layout_terms
+
+- description: "reliability.careful_activation - routes destructive-command warning requests to careful when no edit freeze is requested"
+  vars:
+    caseId: reliability.careful_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-careful-001
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'be careful before running commands in this production debug session — warn me before rm -rf, DROP TABLE, force push, or reset --hard, but I do not need a directory freeze.' Two skills are loaded: `careful` (destructive command warnings only) and `guard` (destructive warnings plus directory-scoped edit freeze). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bcareful\\b/i.test(result.finalText); })()"
+      metric: routes_to_careful
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /rm -rf|DROP TABLE|force.?push|reset --hard|destructive command|warn/i.test(result.finalText); })()"
+      metric: mentions_destructive_command_warning_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsGuard = /\\b(?:use|invoke|choose|select|route to)\\s+`?guard`?\\b/i.test(text) && !/careful/i.test(text); return !recommendsGuard && !/directory freeze|edit freeze|directory-scoped/i.test(text); })()"
+      metric: avoids_guard_when_no_freeze_requested
+
+- description: "reliability.plan_ceo_review_activation - routes existing-plan scope/ambition reviews to plan-ceo-review, not office-hours"
+  vars:
+    caseId: reliability.plan_ceo_review_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-plan-ceo-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'I have a technical spec here for our new auth system — think bigger about the scope, is this ambitious enough?' Two skills are loaded: `plan-ceo-review` (CEO-mode plan review for scope expansion/reduction on existing plans) and `office-hours` (YC-style forcing questions for pre-plan product ideation). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /plan.ceo.review/i.test(result.finalText); })()"
+      metric: routes_to_plan_ceo_review
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/office.hours/i.test(result.finalText); })()"
+      metric: avoids_office_hours_for_existing_plan
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /think bigger|ambitious|scope|expansion|existing plan|spec|proposal/i.test(result.finalText); })()"
+      metric: mentions_scope_or_ambition
+
+- description: "reliability.office_hours_activation - routes product idea exploration and 'is this worth building' to office-hours"
+  vars:
+    caseId: reliability.office_hours_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-office-hours-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'I have a new product idea — help me think through whether it's worth building'. Two skills are loaded: `office-hours` (YC-style forcing questions for product ideation, feasibility, and demand reality) and `plan-ceo-review` (CEO-mode plan review for structured execution proposals). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /office.hours/i.test(result.finalText); })()"
+      metric: routes_to_office_hours
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/plan.ceo.review/i.test(result.finalText); })()"
+      metric: avoids_plan_ceo_review_for_ideation
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /idea|worth building|feasibility|demand|forcing question/i.test(result.finalText); })()"
+      metric: mentions_ideation_or_feasibility
+
+- description: "reliability.investigate_activation - routes bug reports and unexpected-behavior reports to the investigate skill"
+  vars:
+    caseId: reliability.investigate_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-investigate-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user reports: 'It was working yesterday and now the API is returning 500 errors with a stack trace I don't understand. Something broke.' Two skills are loaded: `investigate` (systematic root-cause debugging, four-phase: investigate/analyze/hypothesize/implement, Iron Law: no fix without root cause) and `review` (pre-landing PR diff safety checks). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\binvestigate\\b/i.test(result.finalText); })()"
+      metric: routes_to_investigate
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /root cause|500|stack trace|broken|debug/i.test(result.finalText); })()"
+      metric: mentions_debug_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsReview = /\\b(?:use|invoke|choose|select|route to)\\s+`?review`?\\b/i.test(text) && !/investigate/i.test(text); return !recommendsReview; })()"
+      metric: avoids_review_drift
+
+- description: "reliability.paperclip_create_plugin_activation - routes plugin scaffolding requests to paperclip-create-plugin, not paperclip-create-agent or paperclip"
+  vars:
+    caseId: reliability.paperclip_create_plugin_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-plugin-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'I need to scaffold a new Paperclip plugin package that adds a custom page slot to the app.' Three skills are loaded: `paperclip-create-plugin` (scaffold a new Paperclip plugin package using the create-paperclip-plugin CLI, covers worker/UI surface and verification), `paperclip-create-agent` (hire/create a new agent in Paperclip with governance-aware prompts), and `paperclip` (interact with the Paperclip control plane API to manage issues, agents, and company config). Which skill do you invoke and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /paperclip.create.plugin/i.test(result.finalText); })()"
+      metric: routes_to_create_plugin
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/paperclip.create.agent/i.test(result.finalText) || /plugin/i.test(result.finalText); })()"
+      metric: avoids_create_agent
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /scaffold|plugin package|worker|UI surface|create-paperclip-plugin/i.test(result.finalText); })()"
+      metric: mentions_scaffolding_context
+
+- description: "reliability.learn_activation - routes learnings management requests to the learn skill, not context-save or para-memory-files"
+  vars:
+    caseId: reliability.learn_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-learn-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user asks 'What have we learned about this codebase? Show me past patterns and any pitfalls we discovered.' Three skills are loaded: `learn` (manages gstack project learnings — review, search, prune, export), `context-save` (saves working session context for later restore), and `para-memory-files` (PARA-method file-based memory). Which skill do you invoke and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && /\\blearn\\b/i.test(result.finalText); })()"
+      metric: routes_to_learn
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return !/context.save|para.memory/i.test(result.finalText); })()"
+      metric: avoids_context_save_and_para_memory
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /learnings|past patterns|gstack|pitfall/i.test(result.finalText); })()"
+      metric: mentions_learnings_or_patterns
+
+- description: "reliability.canary_activation - routes post-deploy monitoring loops to canary, not one-off QA"
+  vars:
+    caseId: reliability.canary_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-canary-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "A deploy just went live and the user asks you to watch production for the next hour, checking console errors, page failures, performance regressions, and screenshots against the pre-deploy baseline. Three skills are loaded: `canary` (post-deploy canary monitoring), `gstack` (ad-hoc browser inspection and screenshots), and `qa` (test-and-fix loop). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bcanary\\b/i.test(result.finalText); })()"
+      metric: routes_to_canary
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /post.deploy|deploy.*live|watch|monitor|console|performance|baseline|production/i.test(result.finalText); })()"
+      metric: mentions_post_deploy_monitoring_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsOneOff = /\\b(?:use|invoke|choose|select|route to)\\s+`?(?:gstack|qa)`?\\b/i.test(text) && !/canary/i.test(text); return !recommendsOneOff; })()"
+      metric: avoids_one_off_qa_drift
+
+- description: "reliability.openai_docs_activation - routes OpenAI API documentation requests to openai-docs MCP skill, not general browse or arxiv"
+  vars:
+    caseId: reliability.openai_docs_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-openai-docs-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user asks: 'How do I use the OpenAI Responses API to build a stateful agentic workflow? I need the official docs with citations.' Three skills are loaded: `openai-docs` (authoritative OpenAI developer docs via MCP tools — Responses API, Chat Completions, Agents SDK, Realtime, Codex), `browse` (general headless web browsing for ad-hoc site inspection), and `arxiv` (search and retrieve academic papers from arXiv). Which skill do you invoke and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /openai.docs/i.test(result.finalText); })()"
+      metric: routes_to_openai_docs
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /MCP|mcp__openaiDeveloperDocs|official docs?|developers\\.openai\\.com|platform\\.openai\\.com|citation/i.test(result.finalText); })()"
+      metric: mentions_mcp_or_official_citation_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsBrowse = /\\b(?:use|invoke|choose|select|route to)\\s+`?browse`?\\b/i.test(text) && !/openai.docs/i.test(text); const recommendsArxiv = /\\b(?:use|invoke|choose|select|route to)\\s+`?arxiv`?\\b/i.test(text) && !/openai.docs/i.test(text); return !recommendsBrowse && !recommendsArxiv; })()"
+      metric: avoids_browse_or_arxiv_drift

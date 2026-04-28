@@ -8,6 +8,33 @@ description: >
   handles planning files, memory decay, weekly synthesis, and recall via qmd.
   Trigger on any memory operation: saving facts, writing daily notes, creating
   entities, running weekly synthesis, recalling past context, or managing plans.
+activationHints:
+  - "remember this"
+  - "save fact"
+  - "PARA method"
+  - "daily notes"
+  - "tacit knowledge"
+  - "knowledge graph"
+  - "weekly synthesis"
+  - "recall past context"
+  - "qmd query"
+  - "memory decay"
+  - "entity file"
+  - "items.yaml"
+  - "summary.md"
+overlapDomains:
+  - skill: context-save
+    disambiguationHint: "para-memory-files manages persistent cross-session PARA-structured memory; context-save captures a one-time snapshot of current working state for later restore"
+  - skill: context-restore
+    disambiguationHint: "para-memory-files provides ongoing structured memory management; context-restore retrieves a previously saved working context snapshot"
+  - skill: learn
+    disambiguationHint: "para-memory-files manages personal PARA-structured memory across all topics; learn manages searchable project-specific learnings and knowledge entries"
+verification:
+  smokeChecklist:
+    - "User asks to remember a fact, person, or event across sessions"
+    - "User references PARA folders, daily notes, tacit knowledge, or knowledge graph"
+    - "User asks to run weekly synthesis or recall past context via qmd"
+    - "User mentions entity files, items.yaml, or memory decay"
 ---
 
 # PARA Memory Files

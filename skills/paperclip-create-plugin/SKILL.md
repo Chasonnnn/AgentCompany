@@ -5,6 +5,24 @@ description: >
   scaffolding a plugin package, adding a new example plugin, or updating plugin
   authoring docs. Covers the supported worker/UI surface, route conventions,
   scaffold flow, and verification steps.
+activationHints:
+  - scaffold a Paperclip plugin
+  - create a new plugin package
+  - add an example plugin
+  - update plugin authoring docs
+  - paperclip plugin SDK
+  - create-paperclip-plugin
+  - plugin worker or UI surface
+verification:
+  unitCommands: []
+  integrationCommands: []
+  promptfooCaseIds:
+    - reliability.paperclip_create_plugin_activation
+  architectureScenarioIds: []
+  smokeChecklist:
+    - Scaffolded plugin passes typecheck
+    - Scaffolded plugin passes test suite
+    - Scaffolded plugin builds successfully
 ---
 
 # Create a Paperclip Plugin
