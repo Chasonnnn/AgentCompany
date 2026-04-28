@@ -300,21 +300,29 @@ describe("routine routes", () => {
   });
 
   it("passes the board actor through when manually running a routine", async () => {
-    mockAccessService.canUser.mockResolvedValue(true);
-    const app = await createApp({
+    const accessCanUser = vi.fn(async () => true);
+    const runRoutine = vi.fn(async () => ({
+      id: "run-1",
+      source: "manual",
+      status: "issue_created",
+    }));
+    const { app, routineService } = await createHarness({
       type: "board",
       userId: "board-user",
       source: "session",
       isInstanceAdmin: false,
       companyIds: [companyId],
+    }, {
+      accessCanUser,
     });
+    routineService.runRoutine = runRoutine;
 
     const res = await request(app)
       .post(`/api/routines/${routineId}/run`)
       .send({});
 
     expect(res.status).toBe(202);
-    expect(mockRoutineService.runRoutine).toHaveBeenCalledWith(routineId, {
+    expect(runRoutine).toHaveBeenCalledWith(routineId, {
       source: "manual",
     }, {
       agentId: null,
