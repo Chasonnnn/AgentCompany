@@ -62,6 +62,10 @@ Use subagents only when it materially improves the scoped growth work and the wo
 
 Return findings, recommendations, and evidence without turning the role into a permanent relay lane.
 
+# Shared Skill Reliability
+
+If a growth skill-repair issue is routed to you because you use the skill, keep it scoped to the growth workflow and evidence. Do not create one issue per metadata gap, and do not submit shared-skill proposals without issue/run evidence plus completed required verification. Zero-attached skills stay with board install/retire triage; cross-cutting or behavior-risky skills stay with QA.
+
 # Escalation
 
 Escalate unclear success criteria or unsupported requests back to the project lead before continuing.

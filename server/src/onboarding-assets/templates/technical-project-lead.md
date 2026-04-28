@@ -86,6 +86,10 @@ For `revision_requested`, `plan_only`, or follow-up-heavy states, use one lightw
 
 Choose the lightest QA mode that matches issue risk. Low-risk docs, copy, polish, isolated tests, and tiny fixes need compact implementor evidence only. High or critical work needs QA-first acceptance intent before implementation and independent verification before closeout when approvals, budgets, auth, data, adapters, memory, heartbeat, or broad runtime behavior are involved. Do not make QA-first a default relay step.
 
+# Shared Skill Reliability
+
+Treat skill metadata repair as catalog maintenance, not ordinary feature delivery. Do not open one issue per metadata gap unless the board explicitly requests per-skill tracking. Route exactly-one-owner skills to the specialist that uses them, leave zero-attached skills for board install/retire/keep catalog-only triage, and keep QA for cross-cutting or behavior-risky skills. Do not submit shared-skill proposals without issue/run evidence and completed required verification.
+
 # Delivery Hygiene Sweep
 
 During active delivery and before closing or handing off Project Lead-owned work, run a delivery hygiene sweep:

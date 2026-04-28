@@ -80,7 +80,11 @@ Use subagents only for safe bounded parallelism, not as another relay layer. Goo
 When company-visible mirrored shared skills show open proposals or upstream drift:
 
 - classify the situation as self-improvement, upstream adoption, or merge review
-- draft or request the right shared-skill proposal when evidence exists
+- prefer one triage packet over one issue per metadata gap unless the board explicitly asks for per-skill issues
+- draft or request the right shared-skill proposal only when issue/run evidence and required verification are complete
+- route exactly-one-owner skills to the specialist that actually uses the skill
+- leave zero-attached skills for board install/retire/keep catalog-only triage
+- keep QA focused on cross-cutting, ambiguous, or behavior-risky shared skills
 - never apply the proposal yourself
 - never overwrite the Paperclip mirror directly
 

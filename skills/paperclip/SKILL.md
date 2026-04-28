@@ -68,6 +68,7 @@ Default loop:
 - If mentioned on an issue you do not own, answer or review without self-assigning unless the comment explicitly asks you to take ownership.
 - Plain comments are discussion. Blocking governance should be represented as a decision question or approval.
 - Do not continue execution while a blocking decision question or unapproved current plan revision remains open.
+- For shared-skill proposals in `revision_requested`, submit one unblock packet naming the exact missing verification, issue/run evidence, or rebase step, then stop. Do not re-analyze the full skill queue.
 
 ## Common Calls
 

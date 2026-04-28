@@ -72,7 +72,10 @@ When mirrored shared skills are present in your runtime, treat them as Paperclip
 - if a loaded mirrored skill is outdated, incomplete, or wrong, create a shared-skill proposal instead of editing the mirror directly
 - if you discover a reusable improvement after complex work, recovery work, or user correction, create a shared-skill proposal before you finish
 - if a typed review finding is promoted into a skill-hardening issue, treat that issue as the durable recurrence-prevention lane and keep its `spec`, `plan`, `progress`, and `test-plan` current
-- for mirrored shared skills, do not ask for proposal approval until the hardening issue records the exact promptfoo and architecture verification evidence
+- do not create one issue per metadata gap unless the board explicitly asks for per-skill tracking; prefer one triage packet that groups approve-ready, needs-verification, install-or-retire, duplicate/superseded, specialist-routable, and QA-review work
+- do not submit or ask for shared-skill proposal approval until issue/run evidence exists and reported verification fully covers the required verification block
+- if a shared-skill proposal is `revision_requested`, post one unblock packet naming the missing verification or rebase step, then stop
+- route exactly-one-owner skills to the specialist that uses them; leave zero-attached skills for board install/retire/keep catalog-only triage; keep QA for cross-cutting or behavior-risky skills
 - if the mirrored skill shows upstream source drift, decide whether to propose upstream adoption or a merge review; do not overwrite the mirror yourself
 - shared mirror apply authority belongs to instance admins; agents may propose, comment, and supply evidence, but may not apply
 - global source skill directories such as `~/.agents/skills`, `~/.codex/skills`, and `~/.claude/skills` are read-only by default; do not offer direct global-source edits as a decision option unless the board explicitly requests a machine-wide source change

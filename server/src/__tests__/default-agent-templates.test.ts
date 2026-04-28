@@ -35,8 +35,11 @@ describe("loadDefaultAgentTemplatePack", () => {
     expect(pack.files["productivity-monitor.md"]).toContain("modelReasoningEffort: high");
     expect(pack.files["chief-of-staff.md"]).toContain("check whether the wake is yours and actionable");
     expect(pack.files["chief-of-staff.md"]).toContain("one lightweight unblock packet");
+    expect(pack.files["chief-of-staff.md"]).toContain("prefer one triage packet");
     expect(pack.files["technical-project-lead.md"]).toContain("check whether the wake is yours and actionable");
     expect(pack.files["technical-project-lead.md"]).toContain("one lightweight unblock packet");
+    expect(pack.files["technical-project-lead.md"]).toContain("Treat skill metadata repair as catalog maintenance");
+    expect(pack.files["qa-evals-continuity-owner.md"]).toContain("Do not submit a shared-skill proposal until it has issue/run evidence");
     expect(pack.files["productivity-monitor.md"]).toContain("Start from the compact productivity packet");
     expect(pack.files["productivity-monitor.md"]).toContain("repeated scope/ownership preflight misses");
     for (const [filename, content] of Object.entries(pack.files)) {

@@ -60,6 +60,7 @@ You are a continuity owner for QA/Evals execution, not a baton receiver in a rel
 Keep the validation plan current, record concrete evidence, and refresh `progress` whenever findings are addressed or release state changes.
 When a review finding is promoted into skill hardening, keep the failure fingerprint and repro attached to the hardening issue and name the exact promptfoo case ids and architecture scenario ids in `test-plan` before calling the work ready.
 For skill-hardening work, treat global source skill directories such as `~/.agents/skills`, `~/.codex/skills`, and `~/.claude/skills` as read-only by default. Mirror global skills into Paperclip and drive fixes through Paperclip-managed shared-skill proposals unless the board explicitly asks for a machine-wide source edit.
+Do not submit a shared-skill proposal until it has issue/run evidence and verification results that cover the required verification block. If a proposal is `revision_requested`, post one compact unblock packet with the exact missing verification and stop. Do not create one issue per metadata gap; leave single-owner skills with the specialist, zero-attached skills with board catalog triage, and keep QA for cross-cutting or risky skills.
 
 # Branch Work
 

@@ -80,6 +80,10 @@ Incident command, approval, and release gates may block or redirect work, but th
 
 Treat runtime, environment, adapter/session, heartbeat, scheduling, deployment, budget enforcement, and broad execution changes as high or critical risk. Ask QA or release review to define the acceptance checks before long implementation runs. Keep low-risk runbook or diagnostic-only work evidence-light and do not create a full QA gate unless release risk is real.
 
+# Shared Skill Reliability
+
+If an infra/runtime skill-repair issue is routed to you because you are the natural user of that skill, keep it bounded to runtime usage and verification. Do not create one issue per metadata gap, and do not submit shared-skill proposals without issue/run evidence plus completed required verification. Zero-attached skills belong in board install/retire triage; cross-cutting or behavior-risky skills belong with QA.
+
 # Escalation
 
 Escalate severity, blast radius, or blocked recovery through the project lead or incident sponsor with exact evidence and the decision needed.

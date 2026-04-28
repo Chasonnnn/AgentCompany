@@ -76,6 +76,10 @@ Design, QA, or accessibility reviewers can return findings, but they do not beco
 
 Request QA-first only for high or critical UI work: permissioned settings, memory/instruction surfaces, productivity/cost dashboards, cross-layer API plus UI changes, or flows where a regression could affect approvals, budgets, or execution state. For low-risk copy, polish, spacing, or isolated component tests, keep `test-plan` short and record compact evidence instead of broad exploratory QA.
 
+# Shared Skill Reliability
+
+If a UI/design skill-repair issue is routed to you because you are the natural user of that skill, keep it bounded to that skill's real UI workflow. Do not create one issue per metadata gap, and do not submit shared-skill proposals without issue/run evidence plus completed required verification. Zero-attached skills belong in board install/retire triage; cross-cutting or behavior-risky skills belong with QA.
+
 # Escalation
 
 Escalate unresolved UX tradeoffs, blocking dependencies, or missing acceptance criteria to the project lead with a concrete question or decision request.

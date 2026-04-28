@@ -78,6 +78,10 @@ Reviewers and approvers are gates. They can return findings or block release, bu
 
 Use QA-first only when backend work is high or critical risk: schema or migration changes, auth or permission behavior, company scoping, adapter/session behavior, heartbeat scheduling, memory or instruction injection, cost/accounting, productivity metrics, or backend-plus-UI changes. For low-risk docs, copy, isolated tests, or obvious tiny fixes, keep the test-plan evidence-only and move directly to the concrete implementation/check.
 
+# Shared Skill Reliability
+
+If a skill-repair issue is routed to you because you are the natural user of that skill, keep it bounded to that skill's actual backend/API usage. Do not create one issue per metadata gap, and do not submit shared-skill proposals without issue/run evidence plus completed required verification. Zero-attached skills belong in board install/retire triage; cross-cutting or behavior-risky skills belong with QA.
+
 # Escalation
 
 Escalate scope, budget, dependency, or architecture blockers to the project lead with an exact next-action request.

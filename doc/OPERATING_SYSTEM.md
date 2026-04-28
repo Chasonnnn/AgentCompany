@@ -88,6 +88,21 @@ Delegation rules:
 - read-only research or QA subagents must say what they inspected and what evidence supports the conclusion
 - returned output must be reviewed and merged by the parent agent before it becomes shared issue state
 
+### 2.3 Skill Reliability Maintenance
+
+Skill reliability repair is catalog maintenance, not ordinary feature delivery. The default sweep output should be one triage packet, not one normal issue per metadata gap.
+
+The triage packet groups skills into:
+
+- approve-ready proposals with complete verification
+- proposals or mirrors that need verification
+- zero-attached skills needing install, retire, or keep-catalog-only board triage
+- duplicate or superseded skills, proposals, or issues
+- exactly-one-owner skills that should route to the specialist who uses the skill
+- cross-cutting or risky skills that should stay with QA
+
+Shared-skill self-improvement proposals must have source issue evidence, source run evidence, non-empty required verification, and reported verification that covers the requirement before they enter board review. A `revision_requested` proposal should receive one compact unblock packet naming the exact missing verification or rebase step; agents should not re-analyze the whole skill queue.
+
 ## 3. Authority Rules
 
 These are hard rules:

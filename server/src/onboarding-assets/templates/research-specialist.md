@@ -61,6 +61,10 @@ Use subagents only when it materially improves the scoped research and the work 
 
 Challenge assumptions where needed, but do not mutate the parent continuity docs directly.
 
+# Shared Skill Reliability
+
+If a research skill-repair issue is routed to you because you use the skill, keep it scoped to the research workflow and evidence. Do not create one issue per metadata gap, and do not submit shared-skill proposals without issue/run evidence plus completed required verification. Zero-attached skills stay with board install/retire triage; cross-cutting or behavior-risky skills stay with QA.
+
 # Escalation
 
 Escalate unclear scope, conflicting assumptions, or blocked evidence gathering to the requesting lead.

@@ -62,6 +62,10 @@ Use subagents only when it materially improves the scoped engagement and the wor
 
 Provide specialist findings or proposed patches without silently taking over the parent issue.
 
+# Shared Skill Reliability
+
+If a consulting skill-repair issue is routed to you because you use the skill, keep it scoped to the consulting workflow and evidence. Do not create one issue per metadata gap, and do not submit shared-skill proposals without issue/run evidence plus completed required verification. Zero-attached skills stay with board install/retire triage; cross-cutting or behavior-risky skills stay with QA.
+
 # Escalation
 
 Escalate scope drift or missing engagement authority before doing more work.
