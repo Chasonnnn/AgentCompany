@@ -79,6 +79,7 @@ import {
   workProductService,
   environmentService,
 } from "../services/index.js";
+import { companyService } from "../services/companies.js";
 import { productivityService } from "../services/productivity.js";
 import { portfolioClusterService } from "../services/portfolio-clusters.js";
 import { buildIssueOperatorState } from "../services/issue-operator-state.js";
@@ -92,7 +93,7 @@ import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import {
   isInlineAttachmentContentType,
-  MAX_ATTACHMENT_BYTES,
+  normalizeIssueAttachmentMaxBytes,
   normalizeContentType,
   SVG_CONTENT_TYPE,
 } from "../attachment-types.js";
@@ -133,6 +134,7 @@ const updateIssueRouteSchema = updateIssueSchema.extend({
 type IssueRouteDeps = {
   accessService: ReturnType<typeof accessService>;
   agentService: ReturnType<typeof agentService>;
+  companyService: ReturnType<typeof companyService>;
   issueContinuityService: ReturnType<typeof createFallbackIssueContinuityService>;
   issueDecisionQuestionService: ReturnType<typeof issueDecisionQuestionService>;
   documentService: ReturnType<typeof documentService>;
@@ -665,6 +667,7 @@ export function issueRoutes(
   const access = opts?.services?.accessService ?? accessService(db);
   const heartbeat = opts?.services?.heartbeatService ?? heartbeatService(db);
   const feedback = opts?.services?.feedbackService ?? feedbackService(db);
+  const companiesSvc = opts?.services?.companyService ?? companyService(db);
   const instanceSettings = opts?.services?.instanceSettingsService ?? instanceSettingsService(db);
   const agentsSvc = opts?.services?.agentService ?? agentService(db);
   const officeCoordinationSvc =
@@ -699,11 +702,6 @@ export function issueRoutes(
     opts?.telemetry?.getTelemetryClient ?? getTelemetryClient;
   const trackAgentTaskCompletedFn =
     opts?.telemetry?.trackAgentTaskCompleted ?? trackAgentTaskCompleted;
-  const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
-  });
-
   // An executive actor is either the board, or an agent with org_level='executive'
   // in the same company whose role matches the project's sponsoring executive
   // agent id (when set). When no sponsoring executive is set on the project's
@@ -910,7 +908,11 @@ export function issueRoutes(
     return req.actor.type === "agent" ? "agent" : "board";
   }
 
-  async function runSingleFileUpload(req: Request, res: Response) {
+  async function runSingleFileUpload(req: Request, res: Response, fileSizeLimit: number) {
+    const upload = multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: fileSizeLimit, files: 1 },
+    });
     await new Promise<void>((resolve, reject) => {
       upload.single("file")(req, res, (err: unknown) => {
         if (err) reject(err);
@@ -1026,22 +1028,38 @@ export function issueRoutes(
       res.status(403).json({ error: "Agent authentication required" });
       return false;
     }
-    if (issue.status !== "in_progress" || issue.assigneeAgentId === null) {
+    if (issue.assigneeAgentId === null) {
       return true;
     }
     if (issue.assigneeAgentId !== actorAgentId) {
       if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)) {
         return true;
       }
-      res.status(409).json({
-        error: "Issue is checked out by another agent",
-        details: {
-          issueId: issue.id,
-          assigneeAgentId: issue.assigneeAgentId,
-          actorAgentId,
-        },
-      });
+      if (issue.status === "in_progress") {
+        res.status(409).json({
+          error: "Issue is checked out by another agent",
+          details: {
+            issueId: issue.id,
+            assigneeAgentId: issue.assigneeAgentId,
+            actorAgentId,
+          },
+        });
+      } else {
+        res.status(403).json({
+          error: "Agent cannot mutate another agent's issue",
+          details: {
+            issueId: issue.id,
+            assigneeAgentId: issue.assigneeAgentId,
+            actorAgentId,
+            status: issue.status,
+            securityPrinciples: ["Least Privilege", "Complete Mediation", "Fail Securely"],
+          },
+        });
+      }
       return false;
+    }
+    if (issue.status !== "in_progress") {
+      return true;
     }
     const runId = requireAgentRunId(req, res);
     if (!runId) return false;
@@ -1266,6 +1284,11 @@ export function issueRoutes(
       ? Number.parseInt(rawLimit, 10)
       : null;
     const limit = parsedLimit === null ? ISSUE_LIST_DEFAULT_LIMIT : clampIssueListLimit(parsedLimit);
+    const rawOffset = req.query.offset as string | undefined;
+    const parsedOffset = rawOffset !== undefined && /^\d+$/.test(rawOffset)
+      ? Number.parseInt(rawOffset, 10)
+      : null;
+    const offset = parsedOffset ?? 0;
 
     if (assigneeUserFilterRaw === "me" && (!assigneeUserId || req.actor.type !== "board")) {
       res.status(403).json({ error: "assigneeUserId=me requires board authentication" });
@@ -1285,6 +1308,10 @@ export function issueRoutes(
     }
     if (rawLimit !== undefined && (parsedLimit === null || !Number.isInteger(parsedLimit) || parsedLimit <= 0)) {
       res.status(400).json({ error: `limit must be a positive integer up to ${ISSUE_LIST_MAX_LIMIT}` });
+      return;
+    }
+    if (rawOffset !== undefined && (parsedOffset === null || !Number.isInteger(parsedOffset) || parsedOffset < 0)) {
+      res.status(400).json({ error: "offset must be a non-negative integer" });
       return;
     }
 
@@ -1307,6 +1334,7 @@ export function issueRoutes(
         req.query.includeRoutineExecutions === "true" || req.query.includeRoutineExecutions === "1",
       q: req.query.q as string | undefined,
       limit,
+      offset,
     });
     res.json(result.map((issue) => withIssueContinuitySummary(issue)));
   });
@@ -4978,12 +5006,15 @@ export function issueRoutes(
     }
     if (!(await assertRunIdOwnership(req, res, issue))) return;
 
+    const company = await companiesSvc.getById(companyId);
+    const attachmentMaxBytes = normalizeIssueAttachmentMaxBytes(company?.attachmentMaxBytes);
+
     try {
-      await runSingleFileUpload(req, res);
+      await runSingleFileUpload(req, res, attachmentMaxBytes);
     } catch (err) {
       if (err instanceof multer.MulterError) {
         if (err.code === "LIMIT_FILE_SIZE") {
-          res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+          res.status(422).json({ error: `Attachment exceeds ${attachmentMaxBytes} bytes` });
           return;
         }
         res.status(400).json({ error: err.message });

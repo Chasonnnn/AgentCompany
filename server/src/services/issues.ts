@@ -24,7 +24,7 @@ import {
   projects,
 } from "@paperclipai/db";
 import type { IssueRelationIssueSummary } from "@paperclipai/shared";
-import { extractAgentMentionIds, extractProjectMentionIds, isUuidLike } from "@paperclipai/shared";
+import { clampIssueRequestDepth, extractAgentMentionIds, extractProjectMentionIds, isUuidLike } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
@@ -147,6 +147,7 @@ export interface IssueFilters {
   includeRoutineExecutions?: boolean;
   q?: string;
   limit?: number;
+  offset?: number;
 }
 
 type IssueRow = typeof issues.$inferSelect;
@@ -1600,6 +1601,9 @@ export function issueService(db: Db) {
       const limit = typeof filters?.limit === "number" && Number.isFinite(filters.limit)
         ? clampIssueListLimit(filters.limit)
         : undefined;
+      const offset = typeof filters?.offset === "number" && Number.isFinite(filters.offset)
+        ? Math.max(0, Math.floor(filters.offset))
+        : 0;
       const touchedByUserId = filters?.touchedByUserId?.trim() || undefined;
       const inboxArchivedByUserId = filters?.inboxArchivedByUserId?.trim() || undefined;
       const unreadForUserId = filters?.unreadForUserId?.trim() || undefined;
@@ -1715,8 +1719,12 @@ export function issueService(db: Db) {
           asc(priorityOrder),
           desc(canonicalLastActivityAt),
           desc(issues.updatedAt),
+          desc(issues.id),
         );
-      const rows = limit === undefined ? await baseQuery : await baseQuery.limit(limit);
+      const pageQuery = offset > 0
+        ? (limit === undefined ? baseQuery.offset(offset) : baseQuery.limit(limit).offset(offset))
+        : (limit === undefined ? baseQuery : baseQuery.limit(limit));
+      const rows = await pageQuery;
       const withLabels = await withIssueLabels(db, rows);
       const runMap = await activeRunMapForIssues(db, withLabels);
       const withRuns = withActiveRuns(withLabels, runMap);
@@ -2075,7 +2083,9 @@ export function issueService(db: Db) {
         parentId: parent.id,
         projectId: issueData.projectId ?? parent.projectId,
         goalId: issueData.goalId ?? parent.goalId,
-        requestDepth: Math.max(parent.requestDepth + 1, issueData.requestDepth ?? 0),
+        requestDepth: clampIssueRequestDepth(
+          Math.max(clampIssueRequestDepth(parent.requestDepth) + 1, issueData.requestDepth ?? 0),
+        ),
         description: appendAcceptanceCriteriaToDescription(issueData.description, acceptanceCriteria),
         inheritExecutionWorkspaceFromIssueId: parent.id,
       });
@@ -2244,6 +2254,7 @@ export function issueService(db: Db) {
 
         const values = {
           ...issueData,
+          requestDepth: clampIssueRequestDepth(issueData.requestDepth),
           projectId,
           originKind: issueData.originKind ?? "manual",
           goalId: resolveIssueGoalId({
@@ -2329,6 +2340,9 @@ export function issueService(db: Db) {
         ...patchableIssueData,
         updatedAt: new Date(),
       };
+      if (patchableIssueData.requestDepth !== undefined) {
+        patch.requestDepth = clampIssueRequestDepth(patchableIssueData.requestDepth);
+      }
 
       const nextAssigneeAgentId =
         patchableIssueData.assigneeAgentId !== undefined ? patchableIssueData.assigneeAgentId : existing.assigneeAgentId;

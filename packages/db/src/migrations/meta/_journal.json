@@ -554,6 +554,13 @@
       "when": 1777050000000,
       "tag": "0078_runtime_lifecycle_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1777050001000,
+      "tag": "0079_company_attachment_limits",
+      "breakpoints": true
     }
   ]
 }

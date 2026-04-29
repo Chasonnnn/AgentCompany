@@ -1,5 +1,6 @@
 export const COMPANY_STATUSES = ["active", "paused", "archived"] as const;
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
+export const MAX_COMPANY_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
 
 export const DEPLOYMENT_MODES = ["local_trusted", "authenticated"] as const;
 export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
@@ -250,6 +251,12 @@ export const INBOX_MINE_ISSUE_STATUS_FILTER = INBOX_MINE_ISSUE_STATUSES.join(","
 
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
+export const MAX_ISSUE_REQUEST_DEPTH = 1024;
+
+export function clampIssueRequestDepth(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.min(MAX_ISSUE_REQUEST_DEPTH, Math.max(0, Math.floor(value)));
+}
 
 export const ISSUE_QA_RISK_TIERS = ["low", "medium", "high", "critical"] as const;
 export type IssueQaRiskTier = (typeof ISSUE_QA_RISK_TIERS)[number];
