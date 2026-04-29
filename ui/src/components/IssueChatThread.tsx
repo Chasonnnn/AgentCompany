@@ -8,19 +8,29 @@ import {
   useMessage,
 } from "@assistant-ui/react";
 import type { ToolCallMessagePart } from "@assistant-ui/react";
+import type {
+  ReasoningMessagePart,
+  TextMessagePart,
+  ThreadMessage,
+} from "@assistant-ui/react";
 import {
   createContext,
   Component,
   forwardRef,
+  memo,
+  useCallback,
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ChangeEvent,
   type DragEvent as ReactDragEvent,
   type ErrorInfo,
+  type Key,
+  type MutableRefObject,
   type Ref,
   type ReactNode,
 } from "react";
@@ -229,7 +239,7 @@ interface IssueChatThreadProps {
 
 type IssueChatErrorBoundaryProps = {
   resetKey: string;
-  messages: readonly import("@assistant-ui/react").ThreadMessage[];
+  messages: readonly ThreadMessage[];
   emptyMessage: string;
   variant: "full" | "embedded";
   children: ReactNode;
@@ -293,9 +303,7 @@ function IssueChatActiveRunStrip({
   );
 }
 
-function buildIssueChatErrorBoundaryResetKey(
-  messages: readonly import("@assistant-ui/react").ThreadMessage[],
-): string {
+function buildIssueChatErrorBoundaryResetKey(messages: readonly ThreadMessage[]): string {
   return messages
     .map((message) => `${message.id}:${message.role}:${message.content.length}:${message.status?.type ?? "none"}`)
     .join("|");
@@ -335,7 +343,7 @@ class IssueChatErrorBoundary extends Component<IssueChatErrorBoundaryProps, Issu
   }
 }
 
-function fallbackAuthorLabel(message: import("@assistant-ui/react").ThreadMessage) {
+function fallbackAuthorLabel(message: ThreadMessage) {
   const custom = message.metadata?.custom as Record<string, unknown> | undefined;
   if (typeof custom?.["authorName"] === "string") return custom["authorName"];
   if (typeof custom?.["runAgentName"] === "string") return custom["runAgentName"];
@@ -344,7 +352,7 @@ function fallbackAuthorLabel(message: import("@assistant-ui/react").ThreadMessag
   return "System";
 }
 
-function fallbackTextParts(message: import("@assistant-ui/react").ThreadMessage) {
+function fallbackTextParts(message: ThreadMessage) {
   const contentLines: string[] = [];
   for (const part of message.content) {
     if (part.type === "text" || part.type === "reasoning") {
@@ -371,7 +379,7 @@ function IssueChatFallbackThread({
   emptyMessage,
   variant,
 }: {
-  messages: readonly import("@assistant-ui/react").ThreadMessage[];
+  messages: readonly ThreadMessage[];
   emptyMessage: string;
   variant: "full" | "embedded";
 }) {
@@ -959,6 +967,225 @@ function IssueChatToolPart({
     </div>
   );
 }
+
+type IssueChatCoTPart = ReasoningMessagePart | ToolCallMessagePart;
+
+function getThreadMessageCopyText(message: ThreadMessage) {
+  return message.content
+    .filter((part): part is TextMessagePart => part.type === "text")
+    .map((part) => part.text)
+    .join("\n\n");
+}
+
+const IssueChatTextParts = memo(function IssueChatTextParts({
+  message,
+  recessed = false,
+}: {
+  message: ThreadMessage;
+  recessed?: boolean;
+}) {
+  return (
+    <>
+      {message.content
+        .filter((part): part is TextMessagePart => part.type === "text")
+        .map((part, index) => (
+          <IssueChatTextPart
+            key={`${message.id}:text:${index}`}
+            text={part.text}
+            recessed={recessed}
+          />
+        ))}
+    </>
+  );
+});
+
+function groupAssistantParts(
+  content: readonly ThreadMessage["content"][number][],
+): Array<
+  | { type: "text"; part: TextMessagePart; index: number }
+  | { type: "cot"; parts: IssueChatCoTPart[]; startIndex: number }
+> {
+  const groups: Array<
+    | { type: "text"; part: TextMessagePart; index: number }
+    | { type: "cot"; parts: IssueChatCoTPart[]; startIndex: number }
+  > = [];
+  let pendingCoT: IssueChatCoTPart[] = [];
+  let pendingStartIndex = -1;
+
+  const flushCoT = () => {
+    if (pendingCoT.length === 0) return;
+    groups.push({ type: "cot", parts: pendingCoT, startIndex: pendingStartIndex });
+    pendingCoT = [];
+    pendingStartIndex = -1;
+  };
+
+  content.forEach((part, index) => {
+    if (part.type === "reasoning" || part.type === "tool-call") {
+      if (pendingCoT.length === 0) pendingStartIndex = index;
+      pendingCoT.push(part);
+      return;
+    }
+    flushCoT();
+    if (part.type === "text") {
+      groups.push({ type: "text", part, index });
+    }
+  });
+  flushCoT();
+
+  return groups;
+}
+
+function IssueChatManualChainOfThought({
+  message,
+  cotParts,
+}: {
+  message: ThreadMessage;
+  cotParts: IssueChatCoTPart[];
+}) {
+  const { agentMap } = useContext(IssueChatCtx);
+  const custom = message.metadata.custom as Record<string, unknown>;
+  const runAgentId = typeof custom.runAgentId === "string" ? custom.runAgentId : null;
+  const authorAgentId = typeof custom.authorAgentId === "string" ? custom.authorAgentId : null;
+  const agentId = authorAgentId ?? runAgentId;
+  const agentIcon = agentId ? agentMap?.get(agentId)?.icon : undefined;
+  const isMessageRunning = message.role === "assistant" && message.status?.type === "running";
+
+  const myIndex = useMemo(
+    () => findCoTSegmentIndex(message.content, cotParts),
+    [message.content, cotParts],
+  );
+
+  const allReasoningText = cotParts
+    .filter((p): p is ReasoningMessagePart => p.type === "reasoning" && !!p.text)
+    .map((p) => p.text)
+    .join("\n");
+  const toolParts = cotParts.filter(
+    (p): p is ToolCallMessagePart => p.type === "tool-call",
+  );
+
+  const hasActiveTool = toolParts.some((t) => t.result === undefined);
+  const isActive = isMessageRunning && hasActiveTool;
+  const [expanded, setExpanded] = useState(isActive);
+
+  const rawSegments = Array.isArray(custom.chainOfThoughtSegments)
+    ? (custom.chainOfThoughtSegments as SegmentTiming[])
+    : [];
+  const segmentTiming = myIndex >= 0 ? rawSegments[myIndex] ?? null : null;
+  const liveElapsed = useLiveElapsed(segmentTiming?.startMs, isActive);
+
+  useEffect(() => {
+    if (isActive) setExpanded(true);
+  }, [isActive]);
+
+  let headerVerb: string;
+  let headerSuffix: string | null = null;
+  if (isActive) {
+    headerVerb = "Working";
+    if (liveElapsed) headerSuffix = `for ${liveElapsed}`;
+  } else if (segmentTiming) {
+    const durationMs = segmentTiming.endMs - segmentTiming.startMs;
+    const durationText = formatDurationWords(durationMs);
+    headerVerb = "Worked";
+    if (durationText) headerSuffix = `for ${durationText}`;
+  } else {
+    headerVerb = "Worked";
+  }
+
+  const toolSummary = toolCountSummary(toolParts);
+  const hasContent = allReasoningText.trim().length > 0 || toolParts.length > 0;
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="group flex w-full items-center gap-2.5 rounded-lg px-1 py-2 text-left transition-colors hover:bg-accent/5"
+        onClick={() => hasContent && setExpanded((v) => !v)}
+      >
+        <span className="inline-flex items-center gap-2 text-sm font-medium text-foreground/80">
+          {agentIcon ? (
+            <AgentIcon icon={agentIcon} className="h-4 w-4 shrink-0" />
+          ) : isActive ? (
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+          ) : (
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/70" />
+            </span>
+          )}
+          {isActive ? (
+            <span className="shimmer-text">{headerVerb}</span>
+          ) : (
+            headerVerb
+          )}
+        </span>
+        {headerSuffix ? (
+          <span className="text-xs text-muted-foreground/60">{headerSuffix}</span>
+        ) : null}
+        {toolSummary ? (
+          <span className="text-xs text-muted-foreground/40">· {toolSummary}</span>
+        ) : null}
+        {hasContent ? (
+          <ChevronDown className={cn("ml-auto h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform", expanded && "rotate-180")} />
+        ) : null}
+      </button>
+      {expanded && hasContent ? (
+        <div className="space-y-1 py-1">
+          {isActive ? (
+            <>
+              {allReasoningText ? <IssueChatReasoningPart text={allReasoningText} /> : null}
+              {toolParts.length > 0 ? <IssueChatRollingToolPart toolParts={toolParts} /> : null}
+            </>
+          ) : (
+            <>
+              {allReasoningText ? <IssueChatReasoningPart text={allReasoningText} /> : null}
+              {toolParts.map((tool) => (
+                <IssueChatToolPart
+                  key={tool.toolCallId}
+                  toolName={tool.toolName}
+                  args={tool.args}
+                  argsText={tool.argsText}
+                  result={tool.result}
+                  isError={false}
+                />
+              ))}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const IssueChatManualAssistantParts = memo(function IssueChatManualAssistantParts({
+  message,
+  hasCoT,
+}: {
+  message: ThreadMessage;
+  hasCoT: boolean;
+}) {
+  const groupedParts = useMemo(() => groupAssistantParts(message.content), [message.content]);
+  return (
+    <>
+      {groupedParts.map((group) => {
+        if (group.type === "text") {
+          return (
+            <IssueChatTextPart
+              key={`${message.id}:text:${group.index}`}
+              text={group.part.text}
+              recessed={hasCoT}
+            />
+          );
+        }
+        return (
+          <IssueChatManualChainOfThought
+            key={`${message.id}:cot:${group.startIndex}`}
+            message={message}
+            cotParts={group.parts}
+          />
+        );
+      })}
+    </>
+  );
+});
 
 function IssueChatUserMessage() {
   const { onInterruptQueued, interruptingQueuedRunId } = useContext(IssueChatCtx);
@@ -1632,6 +1859,926 @@ function IssueChatSystemMessage() {
   return null;
 }
 
+function IssueChatManualUserMessage({
+  message,
+  isInterruptingQueuedRun,
+}: {
+  message: ThreadMessage;
+  isInterruptingQueuedRun: boolean;
+}) {
+  const { onInterruptQueued } = useContext(IssueChatCtx);
+  const custom = message.metadata.custom as Record<string, unknown>;
+  const anchorId = typeof custom.anchorId === "string" ? custom.anchorId : undefined;
+  const queued = custom.queueState === "queued" || custom.clientStatus === "queued";
+  const queueReason = typeof custom.queueReason === "string" ? custom.queueReason : null;
+  const queueBadgeLabel = queueReason === "hold" ? "\u23f8 Deferred wake" : "Queued";
+  const pending = custom.clientStatus === "pending";
+  const queueTargetRunId = typeof custom.queueTargetRunId === "string" ? custom.queueTargetRunId : null;
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <div id={anchorId}>
+      <div className="group flex items-start justify-end gap-2.5">
+        <div className="flex min-w-0 max-w-[85%] flex-col items-end">
+          <div
+            className={cn(
+              "min-w-0 break-all rounded-2xl px-4 py-2.5",
+              queued
+                ? "bg-amber-50/80 dark:bg-amber-500/10"
+                : "bg-muted",
+              pending && "opacity-80",
+            )}
+          >
+            {queued ? (
+              <div className="mb-1.5 flex items-center gap-2">
+                <span className="inline-flex items-center rounded-full border border-amber-400/60 bg-amber-100/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-200">
+                  {queueBadgeLabel}
+                </span>
+                {queueTargetRunId && onInterruptQueued ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 border-red-300 px-2 text-[11px] text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/10"
+                    disabled={isInterruptingQueuedRun}
+                    onClick={() => void onInterruptQueued(queueTargetRunId)}
+                  >
+                    {isInterruptingQueuedRun ? "Interrupting..." : "Interrupt"}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="space-y-3">
+              <IssueChatTextParts message={message} />
+            </div>
+          </div>
+
+          {pending ? (
+            <div className="mt-1 flex justify-end px-1 text-[11px] text-muted-foreground">Sending...</div>
+          ) : (
+            <div className="mt-1 flex items-center justify-end gap-1.5 px-1 opacity-0 transition-opacity group-hover:opacity-100">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <a
+                    href={anchorId ? `#${anchorId}` : undefined}
+                    className="text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    {message.createdAt ? commentDateLabel(message.createdAt) : ""}
+                  </a>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  {message.createdAt ? formatDateTime(message.createdAt) : ""}
+                </TooltipContent>
+              </Tooltip>
+              <button
+                type="button"
+                className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                title="Copy message"
+                aria-label="Copy message"
+                onClick={() => {
+                  void navigator.clipboard.writeText(getThreadMessageCopyText(message)).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  });
+                }}
+              >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <Avatar size="sm" className="mt-1 shrink-0">
+          <AvatarFallback>You</AvatarFallback>
+        </Avatar>
+      </div>
+    </div>
+  );
+}
+
+function IssueChatManualAssistantMessage({
+  message,
+  activeVote,
+}: {
+  message: ThreadMessage;
+  activeVote: FeedbackVoteValue | null;
+}) {
+  const {
+    feedbackDataSharingPreference,
+    feedbackTermsUrl,
+    onVote,
+    agentMap,
+  } = useContext(IssueChatCtx);
+  const custom = message.metadata.custom as Record<string, unknown>;
+  const anchorId = typeof custom.anchorId === "string" ? custom.anchorId : undefined;
+  const authorName = typeof custom.authorName === "string"
+    ? custom.authorName
+    : typeof custom.runAgentName === "string"
+      ? custom.runAgentName
+      : "Agent";
+  const authorAgentId = typeof custom.authorAgentId === "string" ? custom.authorAgentId : null;
+  const runId = typeof custom.runId === "string" ? custom.runId : null;
+  const runAgentId = typeof custom.runAgentId === "string" ? custom.runAgentId : null;
+  const agentId = authorAgentId ?? runAgentId;
+  const agentIcon = agentId ? agentMap?.get(agentId)?.icon : undefined;
+  const commentId = typeof custom.commentId === "string" ? custom.commentId : null;
+  const notices = Array.isArray(custom.notices)
+    ? custom.notices.filter((notice): notice is string => typeof notice === "string" && notice.length > 0)
+    : [];
+  const waitingText = typeof custom.waitingText === "string" ? custom.waitingText : "";
+  const isRunning = message.role === "assistant" && message.status?.type === "running";
+  const runHref = runId && runAgentId ? `/agents/${runAgentId}/runs/${runId}` : null;
+  const chainOfThoughtLabel = typeof custom.chainOfThoughtLabel === "string" ? custom.chainOfThoughtLabel : null;
+  const hasCoT = message.content.some((p) => p.type === "reasoning" || p.type === "tool-call");
+  const isFoldable = !isRunning && !!chainOfThoughtLabel;
+  const [folded, setFolded] = useState(isFoldable);
+  const [prevFoldKey, setPrevFoldKey] = useState({ messageId: message.id, isFoldable });
+  const [copied, setCopied] = useState(false);
+  const copyText = getThreadMessageCopyText(message);
+
+  if (message.id !== prevFoldKey.messageId || isFoldable !== prevFoldKey.isFoldable) {
+    const nextFolded = resolveAssistantMessageFoldedState({
+      messageId: message.id,
+      currentFolded: folded,
+      isFoldable,
+      previousMessageId: prevFoldKey.messageId,
+      previousIsFoldable: prevFoldKey.isFoldable,
+    });
+    setPrevFoldKey({ messageId: message.id, isFoldable });
+    if (nextFolded !== folded) {
+      setFolded(nextFolded);
+    }
+  }
+
+  const handleVote = async (
+    vote: FeedbackVoteValue,
+    options?: { allowSharing?: boolean; reason?: string },
+  ) => {
+    if (!commentId || !onVote) return;
+    await onVote(commentId, vote, options);
+  };
+
+  return (
+    <div id={anchorId}>
+      <div className="flex items-start gap-2.5 py-1.5">
+        <Avatar size="sm" className="mt-0.5 shrink-0">
+          {agentIcon ? (
+            <AvatarFallback><AgentIcon icon={agentIcon} className="h-3.5 w-3.5" /></AvatarFallback>
+          ) : (
+            <AvatarFallback>{initialsForName(authorName)}</AvatarFallback>
+          )}
+        </Avatar>
+
+        <div className="min-w-0 flex-1">
+          {isFoldable ? (
+            <button
+              type="button"
+              className="group flex w-full items-center gap-2 py-0.5 text-left"
+              onClick={() => setFolded((v) => !v)}
+            >
+              <span className="text-sm font-medium text-foreground">{authorName}</span>
+              <span className="text-xs text-muted-foreground/60">{chainOfThoughtLabel?.toLowerCase()}</span>
+              <span className="ml-auto flex items-center gap-1.5">
+                {message.createdAt ? (
+                  <span className="text-[11px] text-muted-foreground/50">
+                    {commentDateLabel(message.createdAt)}
+                  </span>
+                ) : null}
+                <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground/40 transition-transform", !folded && "rotate-180")} />
+              </span>
+            </button>
+          ) : (
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className="text-sm font-medium text-foreground">{authorName}</span>
+              {isRunning ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-cyan-400/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-700 dark:text-cyan-200">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Running
+                </span>
+              ) : null}
+            </div>
+          )}
+
+          {!folded ? (
+            <>
+              <div className="space-y-3">
+                <IssueChatManualAssistantParts message={message} hasCoT={hasCoT} />
+                {message.content.length === 0 && waitingText ? (
+                  <div className="flex items-center gap-2.5 rounded-lg px-1 py-2">
+                    <span className="inline-flex items-center gap-2 text-sm font-medium text-foreground/80">
+                      {agentIcon ? (
+                        <AgentIcon icon={agentIcon} className="h-4 w-4 shrink-0" />
+                      ) : (
+                        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                      )}
+                      <span className="shimmer-text">{waitingText}</span>
+                    </span>
+                  </div>
+                ) : null}
+                {notices.length > 0 ? (
+                  <div className="space-y-2">
+                    {notices.map((notice, index) => (
+                      <div
+                        key={`${message.id}:notice:${index}`}
+                        className="rounded-sm border border-border/60 bg-accent/20 px-3 py-2 text-sm text-muted-foreground"
+                      >
+                        {notice}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="mt-2 flex items-center gap-1">
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  title="Copy message"
+                  aria-label="Copy message"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(copyText).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    });
+                  }}
+                >
+                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
+                {commentId && onVote ? (
+                  <IssueChatFeedbackButtons
+                    activeVote={activeVote}
+                    sharingPreference={feedbackDataSharingPreference}
+                    termsUrl={feedbackTermsUrl ?? null}
+                    onVote={handleVote}
+                  />
+                ) : null}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <a
+                      href={anchorId ? `#${anchorId}` : undefined}
+                      className="text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+                    >
+                      {message.createdAt ? commentDateLabel(message.createdAt) : ""}
+                    </a>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">
+                    {message.createdAt ? formatDateTime(message.createdAt) : ""}
+                  </TooltipContent>
+                </Tooltip>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="text-muted-foreground hover:text-foreground"
+                      title="More actions"
+                      aria-label="More actions"
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() => {
+                        void navigator.clipboard.writeText(copyText);
+                      }}
+                    >
+                      <Copy className="mr-2 h-3.5 w-3.5" />
+                      Copy message
+                    </DropdownMenuItem>
+                    {runHref ? (
+                      <DropdownMenuItem asChild>
+                        <Link to={runHref} target="_blank" rel="noreferrer noopener">
+                          <Search className="mr-2 h-3.5 w-3.5" />
+                          View run
+                        </Link>
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IssueChatManualSystemMessage({ message }: { message: ThreadMessage }) {
+  const { agentMap, currentUserId } = useContext(IssueChatCtx);
+  const custom = message.metadata.custom as Record<string, unknown>;
+  const anchorId = typeof custom.anchorId === "string" ? custom.anchorId : undefined;
+  const runId = typeof custom.runId === "string" ? custom.runId : null;
+  const runAgentId = typeof custom.runAgentId === "string" ? custom.runAgentId : null;
+  const runAgentName = typeof custom.runAgentName === "string" ? custom.runAgentName : null;
+  const runStatus = typeof custom.runStatus === "string" ? custom.runStatus : null;
+  const actorName = typeof custom.actorName === "string" ? custom.actorName : null;
+  const actorType = typeof custom.actorType === "string" ? custom.actorType : null;
+  const actorId = typeof custom.actorId === "string" ? custom.actorId : null;
+  const statusChange = typeof custom.statusChange === "object" && custom.statusChange
+    ? custom.statusChange as { from: string | null; to: string | null }
+    : null;
+  const assigneeChange = typeof custom.assigneeChange === "object" && custom.assigneeChange
+    ? custom.assigneeChange as {
+        from: IssueTimelineAssignee;
+        to: IssueTimelineAssignee;
+      }
+    : null;
+
+  if (custom.kind === "event" && actorName) {
+    const isCurrentUser = actorType === "user" && !!currentUserId && actorId === currentUserId;
+    const isAgent = actorType === "agent";
+    const agentIcon = isAgent && actorId ? agentMap?.get(actorId)?.icon : undefined;
+
+    const eventContent = (
+      <div className="min-w-0 space-y-1">
+        <div className={cn("flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs", isCurrentUser && "justify-end")}>
+          <span className="font-medium text-foreground">{actorName}</span>
+          <span className="text-muted-foreground">updated this task</span>
+          <a
+            href={anchorId ? `#${anchorId}` : undefined}
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground hover:underline"
+          >
+            {timeAgo(message.createdAt)}
+          </a>
+        </div>
+
+        {statusChange ? (
+          <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isCurrentUser && "justify-end")}>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Status
+            </span>
+            <span className="text-muted-foreground">{humanizeValue(statusChange.from)}</span>
+            <ArrowRight className="h-3 w-3 text-muted-foreground" />
+            <span className="font-medium text-foreground">{humanizeValue(statusChange.to)}</span>
+          </div>
+        ) : null}
+
+        {assigneeChange ? (
+          <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isCurrentUser && "justify-end")}>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Assignee
+            </span>
+            <span className="text-muted-foreground">
+              {formatTimelineAssigneeLabel(assigneeChange.from, agentMap, currentUserId)}
+            </span>
+            <ArrowRight className="h-3 w-3 text-muted-foreground" />
+            <span className="font-medium text-foreground">
+              {formatTimelineAssigneeLabel(assigneeChange.to, agentMap, currentUserId)}
+            </span>
+          </div>
+        ) : null}
+      </div>
+    );
+
+    if (isCurrentUser) {
+      return (
+        <div id={anchorId}>
+          <div className="flex items-start justify-end gap-2 py-1">
+            {eventContent}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div id={anchorId}>
+        <div className="flex items-start gap-2.5 py-1">
+          <Avatar size="sm" className="mt-0.5">
+            {agentIcon ? (
+              <AvatarFallback><AgentIcon icon={agentIcon} className="h-3.5 w-3.5" /></AvatarFallback>
+            ) : (
+              <AvatarFallback>{initialsForName(actorName)}</AvatarFallback>
+            )}
+          </Avatar>
+          <div className="flex-1">
+            {eventContent}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const displayedRunAgentName = runAgentName ?? (runAgentId ? agentMap?.get(runAgentId)?.name ?? runAgentId.slice(0, 8) : null);
+  const runAgentIcon = runAgentId ? agentMap?.get(runAgentId)?.icon : undefined;
+  if (custom.kind === "run" && runId && runAgentId && displayedRunAgentName && runStatus) {
+    return (
+      <div id={anchorId}>
+        <div className="flex items-center gap-2.5 py-1">
+          <Avatar size="sm">
+            {runAgentIcon ? (
+              <AvatarFallback><AgentIcon icon={runAgentIcon} className="h-3.5 w-3.5" /></AvatarFallback>
+            ) : (
+              <AvatarFallback>{initialsForName(displayedRunAgentName)}</AvatarFallback>
+            )}
+          </Avatar>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
+              <Link to={`/agents/${runAgentId}`} className="font-medium text-foreground transition-colors hover:underline">
+                {displayedRunAgentName}
+              </Link>
+              <span className="text-muted-foreground">run</span>
+              <Link
+                to={`/agents/${runAgentId}/runs/${runId}`}
+                className="inline-flex items-center rounded-md border border-border bg-accent/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+              >
+                {runId.slice(0, 8)}
+              </Link>
+              <span className={cn("font-medium", runStatusClass(runStatus))}>
+                {formatRunStatusLabel(runStatus)}
+              </span>
+              <a
+                href={anchorId ? `#${anchorId}` : undefined}
+                className="text-xs text-muted-foreground transition-colors hover:text-foreground hover:underline"
+              >
+                {timeAgo(message.createdAt)}
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function issueChatMessageCustom(message: ThreadMessage): Record<string, unknown> {
+  return (message.metadata?.custom ?? {}) as Record<string, unknown>;
+}
+
+function issueChatMessageKind(message: ThreadMessage): string {
+  const custom = issueChatMessageCustom(message);
+  return typeof custom.kind === "string" ? custom.kind : message.role;
+}
+
+function issueChatMessageCommentId(message: ThreadMessage): string | null {
+  const custom = issueChatMessageCustom(message);
+  return typeof custom.commentId === "string" ? custom.commentId : null;
+}
+
+function issueChatMessageQueueTargetRunId(message: ThreadMessage): string | null {
+  const custom = issueChatMessageCustom(message);
+  return typeof custom.queueTargetRunId === "string" ? custom.queueTargetRunId : null;
+}
+
+function issueChatMessageActiveVote(
+  message: ThreadMessage,
+  feedbackVoteByTargetId: ReadonlyMap<string, FeedbackVoteValue>,
+): FeedbackVoteValue | null {
+  const commentId = issueChatMessageCommentId(message);
+  return commentId ? feedbackVoteByTargetId.get(commentId) ?? null : null;
+}
+
+function issueChatMessageQueuedRunIsInterrupting(
+  message: ThreadMessage,
+  interruptingQueuedRunId: string | null | undefined,
+): boolean {
+  const queueTargetRunId = issueChatMessageQueueTargetRunId(message);
+  return Boolean(queueTargetRunId && interruptingQueuedRunId === queueTargetRunId);
+}
+
+export const VIRTUALIZED_THREAD_ROW_THRESHOLD = 150;
+const VIRTUALIZED_THREAD_OVERSCAN = 6;
+const VIRTUALIZED_THREAD_ROW_ESTIMATE_PX = 220;
+const VIRTUALIZED_THREAD_GAP_FULL_PX = 16;
+const VIRTUALIZED_THREAD_GAP_EMBEDDED_PX = 12;
+
+interface VirtualizedIssueChatThreadListProps {
+  messages: readonly ThreadMessage[];
+  feedbackVoteByTargetId: ReadonlyMap<string, FeedbackVoteValue>;
+  interruptingQueuedRunId?: string | null;
+  variant: "full" | "embedded";
+}
+
+interface VirtualizedIssueChatThreadListHandle {
+  scrollToIndex: (
+    index: number,
+    options?: { align?: "start" | "center" | "end" | "auto"; behavior?: ScrollBehavior },
+  ) => void;
+  scrollToLatest: (options?: { behavior?: ScrollBehavior }) => void;
+  measure: () => void;
+}
+
+function issueChatMessageAnchorId(message: ThreadMessage): string | null {
+  const custom = message.metadata.custom as { anchorId?: unknown } | undefined;
+  return typeof custom?.anchorId === "string" ? custom.anchorId : null;
+}
+
+type VirtualizedVisibleAnchorSnapshot = {
+  anchorId: string;
+  index: number;
+  viewportTop: number;
+};
+
+type VirtualizedScrollMode =
+  | { kind: "window" }
+  | { kind: "element"; element: HTMLElement };
+
+type SimpleVirtualItem = {
+  index: number;
+  key: Key;
+  start: number;
+  size: number;
+};
+
+function useIssueThreadVirtualizer({
+  count,
+  estimateSize,
+  overscan,
+  scrollMargin,
+  gap,
+  getItemKey,
+  mode,
+}: {
+  count: number;
+  estimateSize: () => number;
+  overscan: number;
+  scrollMargin: number;
+  gap: number;
+  getItemKey: (index: number) => Key;
+  mode: VirtualizedScrollMode;
+}) {
+  const measuredSizeByKeyRef = useRef(new Map<Key, number>());
+  const [, rerender] = useState(0);
+  const estimatedSize = estimateSize();
+
+  const itemStarts: number[] = [];
+  const itemSizes: number[] = [];
+  let nextStart = scrollMargin;
+  for (let index = 0; index < count; index += 1) {
+    const key = getItemKey(index);
+    const size = measuredSizeByKeyRef.current.get(key) ?? estimatedSize;
+    itemStarts.push(nextStart);
+    itemSizes.push(size);
+    nextStart += size + gap;
+  }
+  const totalSize = Math.max(0, nextStart - scrollMargin - gap);
+
+  const viewportHeight = () => (mode.kind === "window" ? window.innerHeight : mode.element.clientHeight);
+  const scrollOffset = () => (mode.kind === "window" ? window.scrollY : mode.element.scrollTop);
+  const maxScrollOffset = () => {
+    const targetScrollHeight = mode.kind === "window"
+      ? document.documentElement.scrollHeight
+      : mode.element.scrollHeight;
+    return Math.max(0, Math.max(targetScrollHeight, totalSize) - viewportHeight());
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const target: Window | HTMLElement = mode.kind === "window" ? window : mode.element;
+    const update = () => rerender((value) => value + 1);
+    target.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      target.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [mode]);
+
+  const rawStart = Math.max(scrollMargin, scrollOffset());
+  const rawEnd = rawStart + viewportHeight();
+  let visibleStartIndex = 0;
+  while (
+    visibleStartIndex < count - 1
+    && itemStarts[visibleStartIndex] + itemSizes[visibleStartIndex] < rawStart
+  ) {
+    visibleStartIndex += 1;
+  }
+  let visibleEndIndex = visibleStartIndex;
+  while (visibleEndIndex < count - 1 && itemStarts[visibleEndIndex] <= rawEnd) {
+    visibleEndIndex += 1;
+  }
+  const startIndex = Math.max(0, visibleStartIndex - overscan);
+  const endIndex = Math.min(count - 1, visibleEndIndex + overscan);
+  const virtualItems: SimpleVirtualItem[] = [];
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    virtualItems.push({
+      index,
+      key: getItemKey(index),
+      start: itemStarts[index] ?? scrollMargin,
+      size: itemSizes[index] ?? estimatedSize,
+    });
+  }
+
+  const scrollToIndex = (
+    index: number,
+    options?: { align?: "start" | "center" | "end" | "auto"; behavior?: ScrollBehavior },
+  ) => {
+    const clampedIndex = Math.max(0, Math.min(index, count - 1));
+    const targetMax = maxScrollOffset();
+    let top = itemStarts[clampedIndex] ?? scrollMargin;
+    if (options?.align === "center") {
+      top = top - viewportHeight() / 2 + (itemSizes[clampedIndex] ?? estimatedSize) / 2;
+    } else if (options?.align === "end") {
+      top = top + (itemSizes[clampedIndex] ?? estimatedSize) - viewportHeight();
+    }
+    top = Math.max(0, Math.min(top, targetMax));
+    if (mode.kind === "window") {
+      window.scrollTo({ top, behavior: options?.behavior });
+    } else {
+      mode.element.scrollTo({ top, behavior: options?.behavior });
+    }
+    rerender((value) => value + 1);
+  };
+
+  return {
+    getVirtualItems: () => virtualItems,
+    getTotalSize: () => totalSize,
+    scrollToIndex,
+    measure: () => undefined,
+    measureElement: (element?: HTMLElement | null) => {
+      if (!element) return;
+      const index = Number(element.dataset.index);
+      if (!Number.isInteger(index) || index < 0 || index >= count) return;
+      const measuredSize = element.getBoundingClientRect().height || element.offsetHeight;
+      if (!Number.isFinite(measuredSize) || measuredSize <= 0) return;
+      const key = getItemKey(index);
+      const previousSize = measuredSizeByKeyRef.current.get(key) ?? estimatedSize;
+      if (Math.abs(previousSize - measuredSize) < 1) return;
+      measuredSizeByKeyRef.current.set(key, measuredSize);
+      rerender((value) => value + 1);
+    },
+  };
+}
+
+function findScrollContainer(el: HTMLElement | null): HTMLElement | null {
+  if (!el || typeof window === "undefined") return null;
+  let current: HTMLElement | null = el.parentElement;
+  while (current && current !== document.body && current !== document.documentElement) {
+    const overflowY = window.getComputedStyle(current).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+const VirtualizedIssueChatThreadList = forwardRef<VirtualizedIssueChatThreadListHandle, VirtualizedIssueChatThreadListProps>(function VirtualizedIssueChatThreadList(props, ref) {
+  const probeRef = useRef<HTMLDivElement | null>(null);
+  const [mode, setMode] = useState<VirtualizedScrollMode>({ kind: "window" });
+
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return;
+    const detect = () => {
+      const probe = probeRef.current;
+      if (!probe) return;
+      const container = findScrollContainer(probe);
+      setMode((prev) => {
+        if (container === null) {
+          return prev.kind === "window" ? prev : { kind: "window" };
+        }
+        if (prev.kind === "element" && prev.element === container) return prev;
+        return { kind: "element", element: container };
+      });
+    };
+    detect();
+    window.addEventListener("resize", detect);
+    return () => {
+      window.removeEventListener("resize", detect);
+    };
+  }, []);
+
+  return (
+    <VirtualizedIssueChatThreadListInner
+      key={mode.kind === "window" ? "window" : "element"}
+      ref={ref}
+      probeRef={probeRef}
+      mode={mode}
+      {...props}
+    />
+  );
+});
+
+interface VirtualizedIssueChatThreadListInnerProps extends VirtualizedIssueChatThreadListProps {
+  mode: VirtualizedScrollMode;
+  probeRef: MutableRefObject<HTMLDivElement | null>;
+}
+
+const VirtualizedIssueChatThreadListInner = forwardRef<
+  VirtualizedIssueChatThreadListHandle,
+  VirtualizedIssueChatThreadListInnerProps
+>(function VirtualizedIssueChatThreadListInner({
+  messages,
+  feedbackVoteByTargetId,
+  interruptingQueuedRunId,
+  variant,
+  mode,
+  probeRef,
+}, ref) {
+  const parentRef = useRef<HTMLDivElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  const pendingPrependAnchorRef = useRef<VirtualizedVisibleAnchorSnapshot | null>(null);
+
+  const setRefs = useCallback((element: HTMLDivElement | null) => {
+    parentRef.current = element;
+    probeRef.current = element;
+  }, [probeRef]);
+
+  useLayoutEffect(() => {
+    const element = parentRef.current;
+    if (!element || typeof window === "undefined") return;
+    const update = () => {
+      if (!parentRef.current) return;
+      const rect = parentRef.current.getBoundingClientRect();
+      const offset = mode.kind === "window"
+        ? rect.top + window.scrollY
+        : rect.top - mode.element.getBoundingClientRect().top + mode.element.scrollTop;
+      setScrollMargin((previous) => (Math.abs(previous - offset) < 0.5 ? previous : offset));
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("resize", update);
+    };
+  }, [mode]);
+
+  const gap = variant === "embedded"
+    ? VIRTUALIZED_THREAD_GAP_EMBEDDED_PX
+    : VIRTUALIZED_THREAD_GAP_FULL_PX;
+
+  const virtualizer = useIssueThreadVirtualizer({
+    count: messages.length,
+    estimateSize: () => VIRTUALIZED_THREAD_ROW_ESTIMATE_PX,
+    overscan: VIRTUALIZED_THREAD_OVERSCAN,
+    scrollMargin,
+    gap,
+    getItemKey: (index) => messages[index]?.id ?? index,
+    mode,
+  });
+
+  useImperativeHandle(ref, () => ({
+    scrollToIndex: (index, options) => {
+      if (index < 0 || index >= messages.length) return;
+      virtualizer.scrollToIndex(index, {
+        align: options?.align ?? "center",
+        behavior: options?.behavior ?? "smooth",
+      });
+    },
+    scrollToLatest: (options) => {
+      if (messages.length === 0) return;
+      virtualizer.scrollToIndex(messages.length - 1, {
+        align: "end",
+        behavior: options?.behavior ?? "smooth",
+      });
+    },
+    measure: () => {
+      virtualizer.measure();
+    },
+  }), [messages.length, virtualizer]);
+
+  useLayoutEffect(() => {
+    return () => {
+      const element = parentRef.current;
+      if (!element || typeof window === "undefined") return;
+      const rows = Array.from(
+        element.querySelectorAll<HTMLElement>("[data-anchor-id][data-index]"),
+      );
+      const visibleRow = rows.find((row) => row.getBoundingClientRect().bottom >= 0);
+      if (!visibleRow) return;
+      const anchorId = visibleRow.dataset.anchorId;
+      const index = Number(visibleRow.dataset.index);
+      if (!anchorId || !Number.isFinite(index)) return;
+      pendingPrependAnchorRef.current = {
+        anchorId,
+        index,
+        viewportTop: visibleRow.getBoundingClientRect().top,
+      };
+    };
+  }, [messages]);
+
+  useLayoutEffect(() => {
+    const pendingAnchor = pendingPrependAnchorRef.current;
+    pendingPrependAnchorRef.current = null;
+    virtualizer.measure();
+    if (!pendingAnchor || typeof window === "undefined") return;
+    const nextIndex = messages.findIndex((message) => issueChatMessageAnchorId(message) === pendingAnchor.anchorId);
+    if (nextIndex <= pendingAnchor.index) return;
+
+    virtualizer.scrollToIndex(nextIndex, { align: "start", behavior: "auto" });
+    requestAnimationFrame(() => {
+      const element = document.getElementById(pendingAnchor.anchorId);
+      if (!element) return;
+      const delta = element.getBoundingClientRect().top - pendingAnchor.viewportTop;
+      if (Math.abs(delta) > 1) {
+        if (mode.kind === "window") {
+          window.scrollBy({ top: delta, behavior: "auto" });
+        } else {
+          mode.element.scrollBy({ top: delta, behavior: "auto" });
+        }
+      }
+      virtualizer.measure();
+    });
+  }, [messages, virtualizer, mode]);
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+
+  return (
+    <div
+      ref={setRefs}
+      data-testid="issue-chat-thread-virtualizer"
+      data-virtual-count={messages.length}
+      style={{ position: "relative", width: "100%", height: totalSize }}
+    >
+      {virtualItems.map((virtualItem) => {
+        const message = messages[virtualItem.index];
+        if (!message) return null;
+        const anchorId = issueChatMessageAnchorId(message);
+        return (
+          <div
+            key={virtualItem.key}
+            data-index={virtualItem.index}
+            data-anchor-id={anchorId ?? undefined}
+            data-testid="issue-chat-thread-virtual-row"
+            ref={(element) => {
+              if (element) virtualizer.measureElement(element);
+            }}
+            onLoadCapture={(event) => {
+              virtualizer.measureElement(event.currentTarget);
+            }}
+            onClickCapture={(event) => {
+              const row = event.currentTarget;
+              requestAnimationFrame(() => {
+                virtualizer.measureElement(row);
+              });
+            }}
+            onTransitionEndCapture={(event) => {
+              virtualizer.measureElement(event.currentTarget);
+            }}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              transform: `translateY(${virtualItem.start - scrollMargin}px)`,
+            }}
+          >
+            <IssueChatMessageRow
+              message={message}
+              feedbackVoteByTargetId={feedbackVoteByTargetId}
+              interruptingQueuedRunId={interruptingQueuedRunId}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+interface IssueChatMessageRowProps {
+  message: ThreadMessage;
+  feedbackVoteByTargetId: ReadonlyMap<string, FeedbackVoteValue>;
+  interruptingQueuedRunId?: string | null;
+}
+
+const IssueChatMessageRow = memo(function IssueChatMessageRow({
+  message,
+  feedbackVoteByTargetId,
+  interruptingQueuedRunId,
+}: IssueChatMessageRowProps) {
+  const kind = issueChatMessageKind(message);
+  const activeVote = issueChatMessageActiveVote(message, feedbackVoteByTargetId);
+  const isInterruptingQueuedRun = issueChatMessageQueuedRunIsInterrupting(message, interruptingQueuedRunId);
+  const renderedMessage = message.role === "user"
+    ? (
+      <IssueChatManualUserMessage
+        message={message}
+        isInterruptingQueuedRun={isInterruptingQueuedRun}
+      />
+    )
+    : message.role === "assistant"
+      ? (
+        <IssueChatManualAssistantMessage
+          message={message}
+          activeVote={activeVote}
+        />
+      )
+      : <IssueChatManualSystemMessage message={message} />;
+
+  return (
+    <div
+      data-testid="issue-chat-message-row"
+      data-message-role={message.role}
+      data-message-kind={kind}
+    >
+      {renderedMessage}
+    </div>
+  );
+}, areIssueChatMessageRowPropsEqual);
+
+function areIssueChatMessageRowPropsEqual(
+  prev: IssueChatMessageRowProps,
+  next: IssueChatMessageRowProps,
+) {
+  if (prev.message !== next.message) return false;
+  if (issueChatMessageActiveVote(prev.message, prev.feedbackVoteByTargetId) !== issueChatMessageActiveVote(next.message, next.feedbackVoteByTargetId)) return false;
+  if (issueChatMessageQueuedRunIsInterrupting(prev.message, prev.interruptingQueuedRunId) !== issueChatMessageQueuedRunIsInterrupting(next.message, next.interruptingQueuedRunId)) return false;
+  return true;
+}
+
 const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerProps>(function IssueChatComposer({
   onImageUpload,
   onAttachImage,
@@ -2078,7 +3225,8 @@ export function IssueChatThread({
   composerRef,
 }: IssueChatThreadProps) {
   const location = useLocation();
-  const hasScrolledRef = useRef(false);
+  const lastScrolledHashRef = useRef<string | null>(null);
+  const virtualizedThreadRef = useRef<VirtualizedIssueChatThreadListHandle | null>(null);
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const displayLiveRuns = useMemo(() => {
     const deduped = new Map<string, LiveRunForIssue>();
@@ -2164,6 +3312,42 @@ export function IssueChatThread({
     }
     return map;
   }, [feedbackVotes]);
+  const useVirtualizedThread = messages.length > VIRTUALIZED_THREAD_ROW_THRESHOLD;
+  const messageAnchorIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    messages.forEach((message, index) => {
+      const anchorId = issueChatMessageAnchorId(message);
+      if (anchorId) map.set(anchorId, index);
+    });
+    return map;
+  }, [messages]);
+
+  const scrollToThreadAnchor = useCallback((
+    anchorId: string,
+    options?: { align?: "start" | "center" | "end" | "auto"; behavior?: ScrollBehavior },
+  ) => {
+    const virtualIndex = messageAnchorIndex.get(anchorId);
+    if (useVirtualizedThread && virtualIndex !== undefined) {
+      if (!virtualizedThreadRef.current) return false;
+      virtualizedThreadRef.current.scrollToIndex(virtualIndex, {
+        align: options?.align ?? "center",
+        behavior: options?.behavior ?? "smooth",
+      });
+      return true;
+    }
+
+    const element = document.getElementById(anchorId);
+    if (!element) return false;
+    element.scrollIntoView({
+      behavior: options?.behavior ?? "smooth",
+      block: options?.align === "start"
+        ? "start"
+        : options?.align === "end"
+          ? "end"
+          : "center",
+    });
+    return true;
+  }, [messageAnchorIndex, useVirtualizedThread]);
 
   const runtime = usePaperclipIssueRuntime({
     messages,
@@ -2175,15 +3359,36 @@ export function IssueChatThread({
   useEffect(() => {
     const hash = location.hash;
     if (!(hash.startsWith("#comment-") || hash.startsWith("#activity-") || hash.startsWith("#run-"))) return;
-    if (messages.length === 0 || hasScrolledRef.current) return;
+    if (messages.length === 0 || lastScrolledHashRef.current === hash) return;
     const targetId = hash.slice(1);
-    const element = document.getElementById(targetId);
-    if (!element) return;
-    hasScrolledRef.current = true;
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [location.hash, messages]);
+    let cancelled = false;
+    const attemptScroll = (finalAttempt = false) => {
+      if (cancelled || lastScrolledHashRef.current === hash) return;
+      const didScroll = scrollToThreadAnchor(targetId, { align: "center", behavior: "smooth" });
+      if (!didScroll) return;
+      if (finalAttempt || !useVirtualizedThread || document.getElementById(targetId)) {
+        lastScrolledHashRef.current = hash;
+      }
+    };
+
+    attemptScroll();
+    const frame = requestAnimationFrame(() => attemptScroll());
+    const timeout = window.setTimeout(() => attemptScroll(true), 250);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
+  }, [location.hash, messages, scrollToThreadAnchor, useVirtualizedThread]);
 
   function handleJumpToLatest() {
+    if (useVirtualizedThread) {
+      virtualizedThreadRef.current?.scrollToLatest({ behavior: "smooth" });
+      requestAnimationFrame(() => {
+        bottomAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      });
+      return;
+    }
     bottomAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }
 
@@ -2278,7 +3483,17 @@ export function IssueChatThread({
                   {resolvedEmptyMessage}
                 </div>
               </ThreadPrimitive.Empty>
-              <ThreadPrimitive.Messages components={components} />
+              {useVirtualizedThread ? (
+                <VirtualizedIssueChatThreadList
+                  ref={virtualizedThreadRef}
+                  messages={messages}
+                  feedbackVoteByTargetId={feedbackVoteByTargetId}
+                  interruptingQueuedRunId={interruptingQueuedRunId}
+                  variant={variant}
+                />
+              ) : (
+                <ThreadPrimitive.Messages components={components} />
+              )}
               <div ref={bottomAnchorRef} />
             </ThreadPrimitive.Viewport>
           </ThreadPrimitive.Root>

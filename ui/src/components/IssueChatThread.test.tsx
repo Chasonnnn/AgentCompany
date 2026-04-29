@@ -5,7 +5,12 @@ import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { IssueChatThread, buildIssueChatRuntimeResetKey, resolveAssistantMessageFoldedState } from "./IssueChatThread";
+import {
+  IssueChatThread,
+  VIRTUALIZED_THREAD_ROW_THRESHOLD,
+  buildIssueChatRuntimeResetKey,
+  resolveAssistantMessageFoldedState,
+} from "./IssueChatThread";
 
 const { markdownEditorFocusMock } = vi.hoisted(() => ({
   markdownEditorFocusMock: vi.fn(),
@@ -120,6 +125,19 @@ vi.mock("../hooks/usePaperclipIssueRuntime", () => ({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+function createThreadComments(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `comment-${index + 1}`,
+    companyId: "company-1",
+    issueId: "issue-1",
+    authorAgentId: index % 2 === 0 ? null : "agent-1",
+    authorUserId: index % 2 === 0 ? "user-1" : null,
+    body: `Message ${index + 1}`,
+    createdAt: new Date(Date.UTC(2026, 3, 6, 12, index % 60, 0)),
+    updatedAt: new Date(Date.UTC(2026, 3, 6, 12, index % 60, 0)),
+  }));
+}
+
 describe("IssueChatThread", () => {
   let container: HTMLDivElement;
 
@@ -165,6 +183,141 @@ describe("IssueChatThread", () => {
     expect(viewport?.className).not.toContain("overflow-y-auto");
     expect(viewport?.className).not.toContain("max-h-[70vh]");
 
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("keeps the assistant-ui message renderer for threads at the virtualization threshold", () => {
+    const root = createRoot(container);
+    const comments = createThreadComments(VIRTUALIZED_THREAD_ROW_THRESHOLD);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={comments}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={async () => {}}
+            showComposer={false}
+            showJumpToLatest={false}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.querySelector('[data-testid="issue-chat-thread-virtualizer"]')).toBeNull();
+    expect(container.querySelector('[data-testid="thread-messages"]')).not.toBeNull();
+    expect(threadMessagesMock).toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("virtualizes long merged threads without mounting every chat row", () => {
+    const root = createRoot(container);
+    const comments = createThreadComments(VIRTUALIZED_THREAD_ROW_THRESHOLD + 1);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={comments}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={async () => {}}
+            showComposer={false}
+            showJumpToLatest={false}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const virtualizer = container.querySelector(
+      '[data-testid="issue-chat-thread-virtualizer"]',
+    ) as HTMLDivElement | null;
+    expect(virtualizer).not.toBeNull();
+    expect(virtualizer?.dataset.virtualCount).toBe(String(comments.length));
+    expect(container.querySelector('[data-testid="thread-messages"]')).toBeNull();
+
+    const rows = container.querySelectorAll('[data-testid="issue-chat-message-row"]');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(comments.length);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("uses the virtualized index for long-thread hash anchors", () => {
+    const root = createRoot(container);
+    const comments = createThreadComments(VIRTUALIZED_THREAD_ROW_THRESHOLD + 1);
+    const target = comments[comments.length - 1];
+    const scrollToMock = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={[`/issues/ISSUE-1#comment-${target.id}`]}>
+          <IssueChatThread
+            comments={comments}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={async () => {}}
+            showComposer={false}
+            showJumpToLatest={false}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(scrollToMock).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+
+    scrollToMock.mockRestore();
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("uses the virtualizer and bottom anchor path for jump to latest on long threads", () => {
+    const root = createRoot(container);
+    const comments = createThreadComments(VIRTUALIZED_THREAD_ROW_THRESHOLD + 1);
+    const scrollToMock = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={comments}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            onAdd={async () => {}}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const jump = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Jump to latest",
+    ) as HTMLButtonElement | undefined;
+    expect(jump).toBeDefined();
+
+    act(() => {
+      jump?.click();
+    });
+
+    expect(scrollToMock).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+
+    scrollToMock.mockRestore();
     act(() => {
       root.unmount();
     });
