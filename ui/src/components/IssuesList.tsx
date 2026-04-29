@@ -137,8 +137,11 @@ interface IssuesListProps {
     participantAgentId?: string;
   };
   enableRoutineVisibilityFilter?: boolean;
+  hasMoreIssues?: boolean;
+  isLoadingMoreIssues?: boolean;
   mutedIssueIds?: Set<string>;
   issueBadgeById?: Map<string, string>;
+  onLoadMoreIssues?: () => void;
   onSearchChange?: (search: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
 }
@@ -219,8 +222,11 @@ export function IssuesList({
   initialSearch,
   searchFilters,
   enableRoutineVisibilityFilter = false,
+  hasMoreIssues = false,
+  isLoadingMoreIssues = false,
   mutedIssueIds,
   issueBadgeById,
+  onLoadMoreIssues,
   onSearchChange,
   onUpdateIssue,
 }: IssuesListProps) {
@@ -253,6 +259,10 @@ export function IssuesList({
   const [visibleIssueColumns, setVisibleIssueColumns] = useState<InboxIssueColumn[]>(loadInboxIssueColumns);
   const deferredIssueSearch = useDeferredValue(issueSearch);
   const normalizedIssueSearch = deferredIssueSearch.trim().toLowerCase();
+  const canLoadMoreIssues = viewState.viewMode === "list"
+    && !isLoading
+    && normalizedIssueSearch.length === 0
+    && hasMoreIssues;
 
   useEffect(() => {
     setIssueSearch(initialSearch ?? "");
@@ -529,6 +539,30 @@ export function IssuesList({
     setAssigneePickerIssueId(null);
     setAssigneeSearch("");
   }, [onUpdateIssue]);
+
+  useEffect(() => {
+    if (!canLoadMoreIssues || isLoadingMoreIssues || !onLoadMoreIssues) return;
+
+    let frameId: number | null = null;
+    const maybeLoadMore = () => {
+      if (frameId !== null) return;
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        const scrollBottom = window.scrollY + window.innerHeight;
+        const threshold = document.documentElement.scrollHeight - 720;
+        if (scrollBottom >= threshold) onLoadMoreIssues();
+      });
+    };
+
+    window.addEventListener("scroll", maybeLoadMore, { passive: true });
+    window.addEventListener("resize", maybeLoadMore);
+    maybeLoadMore();
+    return () => {
+      window.removeEventListener("scroll", maybeLoadMore);
+      window.removeEventListener("resize", maybeLoadMore);
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+    };
+  }, [canLoadMoreIssues, isLoadingMoreIssues, onLoadMoreIssues]);
 
 
   return (
@@ -948,6 +982,19 @@ export function IssuesList({
           </Collapsible>
         ))
       )}
+      {!isLoading && viewState.viewMode === "list" && normalizedIssueSearch.length === 0 && (hasMoreIssues || isLoadingMoreIssues) ? (
+        <div className="flex justify-center py-3" data-testid="issues-load-more-sentinel">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={isLoadingMoreIssues || !hasMoreIssues}
+            onClick={() => onLoadMoreIssues?.()}
+          >
+            {isLoadingMoreIssues ? "Loading more issues..." : "Load more issues"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

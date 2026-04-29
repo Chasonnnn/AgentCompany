@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useCallback, useRef } from "react";
 import { useLocation, useSearchParams } from "@/lib/router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
@@ -12,6 +12,30 @@ import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
 import { CircleDot } from "lucide-react";
+import type { Issue } from "@paperclipai/shared";
+
+const ISSUES_PAGE_SIZE = 500;
+
+export function getNextIssuesPageOffset(
+  loadedPageSize: number,
+  currentOffset: number,
+  pageSize: number = ISSUES_PAGE_SIZE,
+): number | undefined {
+  return loadedPageSize >= pageSize ? currentOffset + pageSize : undefined;
+}
+
+export function mergeIssuePagesStable(pages: Issue[][]): Issue[] {
+  const seenIssueIds = new Set<string>();
+  const merged: Issue[] = [];
+  for (const page of pages) {
+    for (const issue of page) {
+      if (seenIssueIds.has(issue.id)) continue;
+      seenIssueIds.add(issue.id);
+      merged.push(issue);
+    }
+  }
+  return merged;
+}
 
 export function Issues() {
   const { selectedCompanyId } = useCompany();
@@ -22,6 +46,7 @@ export function Issues() {
 
   const initialSearch = searchParams.get("q") ?? "";
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
+  const fetchNextPageInFlightRef = useRef(false);
   const handleSearchChange = useCallback((search: string) => {
     const trimmedSearch = search.trim();
     const currentSearch = new URLSearchParams(window.location.search).get("q") ?? "";
@@ -79,16 +104,43 @@ export function Issues() {
     setBreadcrumbs([{ label: "Issues" }]);
   }, [setBreadcrumbs]);
 
-  const { data: issues, isLoading, error } = useQuery({
+  const {
+    data: issuePages,
+    isLoading,
+    isFetchingNextPage,
+    error,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
     queryKey: [
       ...queryKeys.issues.list(selectedCompanyId!),
       "participant-agent",
       participantAgentId ?? "__all__",
       "with-routine-executions",
+      "infinite",
+      ISSUES_PAGE_SIZE,
     ],
-    queryFn: () => issuesApi.list(selectedCompanyId!, { participantAgentId, includeRoutineExecutions: true }),
+    queryFn: ({ pageParam }) => issuesApi.list(selectedCompanyId!, {
+      participantAgentId,
+      includeRoutineExecutions: true,
+      limit: ISSUES_PAGE_SIZE,
+      offset: pageParam,
+    }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, _allPages, lastPageParam) =>
+      getNextIssuesPageOffset(lastPage.length, lastPageParam, ISSUES_PAGE_SIZE),
     enabled: !!selectedCompanyId,
+    placeholderData: (previousData) => previousData,
   });
+  const issues = useMemo(() => mergeIssuePagesStable(issuePages?.pages ?? []), [issuePages]);
+  const hasMoreServerIssues = initialSearch.trim().length === 0 && hasNextPage === true;
+  const loadMoreServerIssues = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage || fetchNextPageInFlightRef.current) return;
+    fetchNextPageInFlightRef.current = true;
+    void fetchNextPage({ cancelRefetch: false }).finally(() => {
+      fetchNextPageInFlightRef.current = false;
+    });
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   const updateIssue = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
@@ -116,6 +168,9 @@ export function Issues() {
       initialSearch={initialSearch}
       onSearchChange={handleSearchChange}
       enableRoutineVisibilityFilter
+      hasMoreIssues={hasMoreServerIssues}
+      isLoadingMoreIssues={isFetchingNextPage}
+      onLoadMoreIssues={loadMoreServerIssues}
       onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
       searchFilters={participantAgentId ? { participantAgentId } : undefined}
     />

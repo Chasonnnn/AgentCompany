@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, HelpCircle } from "lucide-react";
 import { syncRoutineVariablesWithTemplate, type RoutineVariable } from "@paperclipai/shared";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -226,9 +233,83 @@ export function RoutineVariablesEditor({
 }
 
 export function RoutineVariablesHint() {
+  const [helpOpen, setHelpOpen] = useState(false);
+
   return (
-    <div className="rounded-lg border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
-      Use `{"{{variable_name}}"}` placeholders in the instructions to prompt for inputs when the routine runs.
-    </div>
+    <>
+      <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
+        <span>
+          Use `{"{{variable_name}}"}` placeholders in the instructions to prompt for inputs when the routine runs.
+        </span>
+        <button
+          type="button"
+          onClick={() => setHelpOpen(true)}
+          className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Show variable help"
+        >
+          <HelpCircle className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Routine variables</DialogTitle>
+            <DialogDescription>
+              Configure run-time inputs and use built-in values that Paperclip fills automatically.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 text-sm">
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Custom inputs
+              </h3>
+              <p className="text-muted-foreground">
+                Add a placeholder like{" "}
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">
+                  {"{{repo_name}}"}
+                </code>{" "}
+                in the title or instructions. Paperclip detects it, adds it to the Variables panel,
+                and prompts for a value before each manual run.
+              </p>
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Built-ins
+              </h3>
+              <div className="overflow-hidden rounded-lg border border-border/70">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-muted/40 text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Placeholder</th>
+                      <th className="px-3 py-2 font-medium">Example</th>
+                      <th className="px-3 py-2 font-medium">Meaning</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/70">
+                    <tr>
+                      <td className="px-3 py-2">
+                        <Badge variant="outline" className="font-mono text-xs">{"{{date}}"}</Badge>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-muted-foreground">2026-04-28</td>
+                      <td className="px-3 py-2 text-muted-foreground">Current UTC date.</td>
+                    </tr>
+                    <tr>
+                      <td className="px-3 py-2">
+                        <Badge variant="outline" className="font-mono text-xs">{"{{timestamp}}"}</Badge>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-muted-foreground">April 28, 2026 at 12:17 PM UTC</td>
+                      <td className="px-3 py-2 text-muted-foreground">Current UTC date and time.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

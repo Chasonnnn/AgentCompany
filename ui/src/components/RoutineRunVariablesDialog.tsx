@@ -108,13 +108,6 @@ function isMissingRequiredValue(value: unknown) {
   return value == null || (typeof value === "string" && value.trim().length === 0);
 }
 
-function isAutoWorkspaceBranchVariable(
-  variable: RoutineVariable,
-  workspaceBranchName: string | null,
-) {
-  return variable.name === WORKSPACE_BRANCH_ROUTINE_VARIABLE && !!workspaceBranchName;
-}
-
 function supportsRoutineRunWorkspaceSelection(
   project: Project | null | undefined,
   isolatedWorkspacesEnabled: boolean,
@@ -221,14 +214,24 @@ export function RoutineRunVariablesDialog({
     setWorkspaceBranchName(null);
   }, [defaultAssigneeAgentId, defaultProjectId, open, projects, variables]);
 
+  const workspaceBranchAutoValue = workspaceSelectionEnabled && workspaceBranchName
+    ? workspaceBranchName
+    : null;
+
+  const isAutoWorkspaceBranchVariable = useCallback(
+    (variable: RoutineVariable) =>
+      variable.name === WORKSPACE_BRANCH_ROUTINE_VARIABLE && Boolean(workspaceBranchAutoValue),
+    [workspaceBranchAutoValue],
+  );
+
   const missingRequired = useMemo(
     () =>
       variables
         .filter((variable) => variable.required)
-        .filter((variable) => !isAutoWorkspaceBranchVariable(variable, workspaceBranchName))
+        .filter((variable) => !isAutoWorkspaceBranchVariable(variable))
         .filter((variable) => isMissingRequiredValue(values[variable.name]))
         .map((variable) => variable.label || variable.name),
-    [values, variables, workspaceBranchName],
+    [isAutoWorkspaceBranchVariable, values, variables],
   );
 
   const workspaceIssue = useMemo(
@@ -376,8 +379,8 @@ export function RoutineRunVariablesDialog({
                 {variable.label || variable.name}
                 {variable.required ? " *" : ""}
               </Label>
-              {isAutoWorkspaceBranchVariable(variable, workspaceBranchName) ? (
-                <Input value={workspaceBranchName ?? ""} readOnly disabled />
+              {isAutoWorkspaceBranchVariable(variable) ? (
+                <Input value={workspaceBranchAutoValue ?? ""} readOnly disabled />
               ) : variable.type === "textarea" ? (
                 <Textarea
                   rows={4}
@@ -463,8 +466,8 @@ export function RoutineRunVariablesDialog({
             onClick={() => {
               const nextVariables: Record<string, string | number | boolean> = {};
               for (const variable of variables) {
-                if (isAutoWorkspaceBranchVariable(variable, workspaceBranchName)) {
-                  nextVariables[variable.name] = workspaceBranchName!;
+                if (isAutoWorkspaceBranchVariable(variable)) {
+                  nextVariables[variable.name] = workspaceBranchAutoValue!;
                   continue;
                 }
                 const rawValue = values[variable.name];
