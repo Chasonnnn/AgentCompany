@@ -22,6 +22,8 @@ import { SidebarNavItem } from "./SidebarNavItem";
 import { SidebarProjects } from "./SidebarProjects";
 import { SidebarAgents } from "./SidebarAgents";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
+import { sidebarBadgesApi } from "../api/sidebarBadges";
+import { ApiError } from "../api/client";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -45,6 +47,24 @@ export function Sidebar() {
     queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
     enabled: !!selectedCompanyId,
     refetchInterval: 10_000,
+  });
+  const { data: sidebarBadges } = useQuery({
+    queryKey: selectedCompanyId
+      ? queryKeys.sidebarBadges(selectedCompanyId)
+      : ["sidebar-badges", "__disabled__"] as const,
+    queryFn: async () => {
+      try {
+        return await sidebarBadgesApi.get(selectedCompanyId!);
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    enabled: !!selectedCompanyId,
+    retry: false,
+    refetchInterval: 15_000,
   });
   const liveRunCount = uniqueRunsByAgent(liveRuns ?? []).length;
   const showWorkspacesLink = experimentalSettings?.enableIsolatedWorkspaces === true;
@@ -119,7 +139,13 @@ export function Sidebar() {
           <SidebarNavItem to="/conference-room" label="Conference Room" icon={ShieldCheck} />
           <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
           <SidebarNavItem to="/company/memory" label="Memory" icon={Brain} />
-          <SidebarNavItem to="/company/productivity" label="Productivity" icon={Gauge} />
+          <SidebarNavItem
+            to="/company/productivity"
+            label="Productivity"
+            icon={Gauge}
+            badge={sidebarBadges?.productivityReviews ?? 0}
+            badgeTone="danger"
+          />
           <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
           <SidebarNavItem to="/activity" label="Activity" icon={History} />
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />

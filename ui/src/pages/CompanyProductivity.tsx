@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
+import { formatDateTime } from "../lib/utils";
 
 type WindowKey = "7d" | "30d" | "all";
 
@@ -65,6 +66,32 @@ export function CompanyProductivity() {
       </div>
 
       <ProductivityMetricGrid totals={summary.totals} ratios={summary.ratios} />
+
+      <section className="border border-border p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-medium">Productivity Reviews</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Open review issues created for no-comment streaks, long active work, or high-churn agent loops.
+            </p>
+          </div>
+          <span className="rounded border border-border px-2 py-1 text-xs capitalize">
+            {(summary.review?.healthBadge ?? "ok").replace("_", " ")}
+          </span>
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Open Reviews</div>
+            <div className="mt-1 text-2xl font-semibold tabular-nums">{summary.review?.openReviewCount ?? 0}</div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Most Recent</div>
+            <div className="mt-2 text-sm text-muted-foreground">
+              {summary.review?.mostRecentReviewAt ? formatDateTime(summary.review.mostRecentReviewAt) : "No reviews yet"}
+            </div>
+          </div>
+        </div>
+      </section>
 
       {summary.recommendations.length > 0 && (
         <section className="border border-border p-4">
