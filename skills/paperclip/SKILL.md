@@ -119,6 +119,19 @@ Authorization: Bearer $PAPERCLIP_API_KEY
 
 For multiline comments, use `scripts/paperclip-issue-update.sh` or an equivalent JSON-safe `jq --arg` pattern so markdown newlines survive encoding.
 
+## Planning
+
+Plans belong in the issue document with key `plan`, not in the issue description or an ad hoc repo markdown file. Only create repo plan docs when a user explicitly asks for a repository artifact.
+
+When asked to draft or revise a plan:
+
+- write the plan to the issue `plan` document and update the same document for revisions
+- comment on the issue with a concise link or pointer to the current plan revision
+- leave the issue `in_progress` and reassign it to the requester, reviewer, or execution owner instead of marking it done
+- if approval is needed, create a `request_confirmation` issue-thread interaction tied to the current plan revision
+
+When asked to break an approved plan into executable work, use the `paperclip-converting-plans-to-tasks` skill and preserve explicit dependencies, owners, and acceptance evidence in the created child issues.
+
 ## Decision And Approval Wakes
 
 If `PAPERCLIP_APPROVAL_ID` is set, inspect the approval and linked issues first:
