@@ -13,7 +13,7 @@
   prompt: "You are handling an open typed review finding. The problem came from a mirrored shared skill that gave outdated instructions. Two overlapping skills are loaded: `release-smoke` handles one-off release validation, while `skill-hardening` owns reusable skill repair and proposal follow-through. The finding needs durable prevention, not a one-off patch. What do you do?"
   assert:
     - type: javascript
-      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /hardening issue|skill hardening|shared-skill proposal/i.test(result.finalText); })()"
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /hardening issue|skill.hardening|shared.skill proposal/i.test(result.finalText); })()"
       metric: routes_to_hardening_lane
     - type: javascript
       value: "(() => { const result = JSON.parse(output); return /do not edit|instead of editing|read-only|mirror/i.test(result.finalText); })()"
