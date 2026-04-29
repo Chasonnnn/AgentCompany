@@ -472,6 +472,8 @@ export type {
   ProductivityHealthStatus,
   ProductivityTotals,
   ProductivityRatios,
+  ProductivityReviewHealthBadgeState,
+  ProductivityReviewMetadata,
   LowYieldRunSummary,
   AgentProductivitySummary,
   ProductivitySummary,

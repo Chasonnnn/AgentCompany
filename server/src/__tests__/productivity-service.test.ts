@@ -114,6 +114,18 @@ describeEmbeddedPostgres("productivityService", () => {
       issueNumber: 1,
       identifier: "PAP-1",
     });
+    await db.insert(issues).values({
+      id: randomUUID(),
+      companyId,
+      projectId,
+      title: "Review productivity for PAP-1",
+      status: "todo",
+      originKind: "issue_productivity_review",
+      originId: "source-issue-1",
+      originFingerprint: "productivity-review:source-issue-1",
+      issueNumber: 2,
+      identifier: "PAP-2",
+    });
 
     await db.insert(costEvents).values([
       {
@@ -173,6 +185,10 @@ describeEmbeddedPostgres("productivityService", () => {
       totalTokens: 520,
     });
     expect(summary.agents[0]?.health).toBe("low_yield");
+    expect(summary.review).toMatchObject({
+      openReviewCount: 1,
+      healthBadge: "watch",
+    });
   });
 
   it("recommends unblock packets and closeout inspection when useful work is not completing issues", async () => {

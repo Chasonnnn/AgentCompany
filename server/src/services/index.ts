@@ -50,6 +50,8 @@ export { secretService } from "./secrets.js";
 export { routineService } from "./routines.js";
 export { costService } from "./costs.js";
 export { productivityService } from "./productivity.js";
+export { productivityReviewService } from "./productivity-review.js";
+export { recoveryService, listRecoverySweepTicks } from "./recovery/index.js";
 export { financeService } from "./finance.js";
 export { heartbeatService } from "./heartbeat.js";
 export { classifyRunLiveness } from "./run-liveness.js";

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { listHeartbeatReaperTicks } from "../services/heartbeat.js";
+import { listRecoverySweepTicks } from "../services/recovery/index.js";
 import { assertInstanceAdmin } from "./authz.js";
 
 const DEFAULT_REAPER_STATS_LIMIT = 20;
@@ -21,6 +22,15 @@ export function adminRoutes() {
     res.json({
       limit,
       ticks: listHeartbeatReaperTicks(limit),
+    });
+  });
+
+  router.get("/admin/recovery-stats", async (req, res) => {
+    assertInstanceAdmin(req);
+    const limit = parseLimit(Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit);
+    res.json({
+      limit,
+      ticks: listRecoverySweepTicks(limit),
     });
   });
 

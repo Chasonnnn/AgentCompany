@@ -112,6 +112,22 @@ describe("admin routes", () => {
     });
   });
 
+  it("returns recent recovery sweep ticks for instance admins", async () => {
+    const app = await createHarness({
+      type: "board",
+      userId: "admin-1",
+      source: "session",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app).get("/api/admin/recovery-stats?limit=1");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      limit: 1,
+      ticks: expect.any(Array),
+    });
+  });
+
   it("rejects non-admin board users", async () => {
     const app = await createHarness({
       type: "board",

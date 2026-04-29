@@ -42,6 +42,8 @@ import {
   heartbeatService,
   instanceSettingsService,
   issueService,
+  productivityReviewService,
+  recoveryService,
   reconcileDanglingWorktreesOnStartup,
   reconcilePersistedRuntimeServicesOnStartup,
   routineService,
@@ -819,6 +821,8 @@ export async function startServer(): Promise<StartedServer> {
   if (config.heartbeatSchedulerEnabled) {
     const heartbeat = heartbeatService(db as any);
     const routines = routineService(db as any);
+    const recovery = recoveryService(db as any, { enqueueWakeup: heartbeat.wakeup });
+    const productivityReviews = productivityReviewService(db as any, { enqueueWakeup: heartbeat.wakeup });
   
     // Reap orphaned running runs at startup while in-memory execution state is empty,
     // then resume any persisted queued runs that were waiting on the previous process.
@@ -827,6 +831,8 @@ export async function startServer(): Promise<StartedServer> {
       .then(() => heartbeat.resumeQueuedRuns())
       .then(() => heartbeat.reconcileIdleActiveIssues())
       .then(() => heartbeat.scanSilentActiveRuns())
+      .then(() => recovery.runGuardedRecoverySweep())
+      .then(() => productivityReviews.reconcileProductivityReviews())
       .catch((err) => {
         logger.error({ err }, "startup heartbeat recovery failed");
       });
@@ -860,6 +866,8 @@ export async function startServer(): Promise<StartedServer> {
         .then(() => heartbeat.resumeQueuedRuns())
         .then(() => heartbeat.reconcileIdleActiveIssues())
         .then(() => heartbeat.scanSilentActiveRuns())
+        .then(() => recovery.runGuardedRecoverySweep())
+        .then(() => productivityReviews.reconcileProductivityReviews())
         .catch((err) => {
           logger.error({ err }, "periodic heartbeat recovery failed");
         });

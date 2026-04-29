@@ -1,10 +1,11 @@
-import { and, desc, eq, gte, inArray, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, costEvents, heartbeatRuns, issues, projects } from "@paperclipai/db";
 import type {
   AgentProductivitySummary,
   LowYieldRunSummary,
   ProductivityHealthStatus,
+  ProductivityReviewMetadata,
   ProductivityRatios,
   ProductivitySummary,
   ProductivityTotals,
@@ -15,6 +16,7 @@ const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "time
 const USEFUL_LIVENESS_STATES = new Set(["advanced", "completed", "blocked"]);
 const LOW_YIELD_LIVENESS_STATES = new Set(["plan_only", "empty_response", "needs_followup"]);
 const MAX_RUNS_PER_SUMMARY = 1_000;
+const PRODUCTIVITY_REVIEW_ORIGIN_KIND = "issue_productivity_review";
 
 type ProductivityCostTotals = Pick<
   ProductivityTotals,
@@ -290,6 +292,36 @@ function parseWindow(input: ProductivityOptions | undefined): ProductivityWindow
 }
 
 export function productivityService(db: Db) {
+  async function loadReviewMetadata(companyId: string): Promise<ProductivityReviewMetadata> {
+    const [countRow, latest] = await Promise.all([
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            eq(issues.originKind, PRODUCTIVITY_REVIEW_ORIGIN_KIND),
+            isNull(issues.hiddenAt),
+            notInArray(issues.status, ["done", "cancelled"]),
+          ),
+        )
+        .then((rows) => rows[0] ?? { count: 0 }),
+      db
+        .select({ updatedAt: issues.updatedAt, createdAt: issues.createdAt })
+        .from(issues)
+        .where(and(eq(issues.companyId, companyId), eq(issues.originKind, PRODUCTIVITY_REVIEW_ORIGIN_KIND)))
+        .orderBy(desc(issues.updatedAt), desc(issues.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+    ]);
+    const openReviewCount = Number(countRow.count) || 0;
+    return {
+      openReviewCount,
+      mostRecentReviewAt: latest?.updatedAt?.toISOString() ?? latest?.createdAt?.toISOString() ?? null,
+      healthBadge: openReviewCount >= 3 ? "review" : openReviewCount > 0 ? "watch" : "ok",
+    };
+  }
+
   async function loadRuns(companyId: string, agentId: string | null, window: ProductivityWindow): Promise<RunRow[]> {
     const from = windowStart(window);
     const conditions = [eq(heartbeatRuns.companyId, companyId)];
@@ -395,9 +427,10 @@ export function productivityService(db: Db) {
     const window = parseWindow(options);
     const runs = await loadRuns(companyId, agentId, window);
     const runIds = runs.map((run) => run.runId);
-    const [issueMap, costMap] = await Promise.all([
+    const [issueMap, costMap, review] = await Promise.all([
       loadIssueMap(companyId, runIds),
       loadCostMap(companyId, runIds),
+      loadReviewMetadata(companyId),
     ]);
 
     const totals = emptyTotals();
@@ -446,6 +479,7 @@ export function productivityService(db: Db) {
       agents: agentsSummary,
       lowYieldRuns: lowYieldRuns.slice(0, 10),
       recommendations: recommendationsFor({ totals, ratios, agents: agentsSummary, lowYieldRuns }),
+      review,
     };
     return summary;
   }

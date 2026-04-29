@@ -69,6 +69,14 @@ export interface AgentProductivitySummary {
   lowYieldRuns: LowYieldRunSummary[];
 }
 
+export type ProductivityReviewHealthBadgeState = "ok" | "watch" | "review";
+
+export interface ProductivityReviewMetadata {
+  openReviewCount: number;
+  mostRecentReviewAt: string | null;
+  healthBadge: ProductivityReviewHealthBadgeState;
+}
+
 export interface ProductivitySummary {
   companyId: string;
   window: ProductivityWindow;
@@ -79,4 +87,5 @@ export interface ProductivitySummary {
   agents: AgentProductivitySummary[];
   lowYieldRuns: LowYieldRunSummary[];
   recommendations: string[];
+  review?: ProductivityReviewMetadata;
 }

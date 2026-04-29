@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, not } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, not, notInArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, approvals, heartbeatRuns } from "@paperclipai/db";
+import { agents, approvals, heartbeatRuns, issues } from "@paperclipai/db";
 import type { SidebarBadges } from "@paperclipai/shared";
 
 const ACTIONABLE_APPROVAL_STATUSES = ["pending", "revision_requested"];
@@ -75,11 +75,24 @@ export function sidebarBadgeService(db: Db) {
         )
       ).length;
       const unreadTouchedIssues = extra?.unreadTouchedIssues ?? 0;
+      const productivityReviews = await db
+        .select({ id: issues.id })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            eq(issues.originKind, "issue_productivity_review"),
+            isNull(issues.hiddenAt),
+            notInArray(issues.status, ["done", "cancelled"]),
+          ),
+        )
+        .then((rows) => rows.length);
       return {
         inbox: actionableApprovals + failedRuns + joinRequests + unreadTouchedIssues,
         approvals: actionableApprovals,
         failedRuns,
         joinRequests,
+        productivityReviews,
       };
     },
   };
