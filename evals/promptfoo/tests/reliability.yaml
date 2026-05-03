@@ -512,3 +512,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsBrowse = /\\b(?:use|invoke|choose|select|route to)\\s+`?browse`?\\b/i.test(text) && !/openai.docs/i.test(text); const recommendsArxiv = /\\b(?:use|invoke|choose|select|route to)\\s+`?arxiv`?\\b/i.test(text) && !/openai.docs/i.test(text); return !recommendsBrowse && !recommendsArxiv; })()"
       metric: avoids_browse_or_arxiv_drift
+
+- description: "reliability.vercel_composition_patterns_activation - routes component-architecture / render-API redesigns to vercel-composition-patterns, not web performance or React Native skills"
+  vars:
+    caseId: reliability.vercel_composition_patterns_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-vercel-composition-patterns-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'our Modal component has 12 boolean props now — withHeader, withFooter, isLoading, isDisabled, hasOverlay, dismissible, variant overrides — and every new feature adds another. Help me redesign the API.' Three skills are loaded: `vercel-composition-patterns` (compound components, render props vs children, context providers, React 19 use() — render-API design at the component-library level), `vercel-react-best-practices` (Next.js / React web performance — async-, bundle-, server-, rerender- prefixes, not API design), and `vercel-react-native-skills` (React Native and Expo mobile patterns). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsTarget = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.composition.patterns`?\\b/i.test(text); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && recommendsTarget; })()"
+      metric: routes_to_vercel_composition_patterns
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /compound component|boolean prop|render prop|architecture.avoid.boolean.props|architecture.compound.components|state.context.interface|patterns.children.over.render.props|composition|context provider/i.test(result.finalText); })()"
+      metric: mentions_composition_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPerf = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.react.best.practices`?\\b/i.test(text); const recommendsRN = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.react.native.skills`?\\b/i.test(text); return !recommendsPerf && !recommendsRN; })()"
+      metric: avoids_performance_or_react_native_drift
