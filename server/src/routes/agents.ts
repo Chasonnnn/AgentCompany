@@ -134,6 +134,13 @@ function readRunLogLimitBytes(value: unknown) {
   return Math.max(1, Math.min(RUN_LOG_MAX_LIMIT_BYTES, Math.trunc(parsed)));
 }
 
+function readLiveRunsQueryInt(value: unknown, max: number, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed <= 0) return fallback;
+  return Math.min(max, Math.trunc(parsed));
+}
+
 export function agentRoutes(
   db: Db,
   opts?: {
@@ -3372,14 +3379,21 @@ export function agentRoutes(
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
 
-    const minCountParam = req.query.minCount as string | undefined;
-    const minCount = minCountParam ? Math.max(0, Math.min(20, parseInt(minCountParam, 10) || 0)) : 0;
+    // `minCount` is a padding floor for callers that want a minimum number of
+    // recent runs to render (e.g. dashboard cards). It must default to 0 so
+    // callers asking for "live runs" get only actually-live runs — otherwise
+    // every caller with no minCount param gets up to 50 historical runs
+    // padded in and renders bogus "live" counts.
+    const minCount = readLiveRunsQueryInt(req.query.minCount, 50, 0);
+    const limit = readLiveRunsQueryInt(req.query.limit, 50, 50);
 
     const columns = {
       id: heartbeatRuns.id,
       status: heartbeatRuns.status,
       invocationSource: heartbeatRuns.invocationSource,
       triggerDetail: heartbeatRuns.triggerDetail,
+      contextCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'commentId'`.as("contextCommentId"),
+      contextWakeCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId'`.as("contextWakeCommentId"),
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
       createdAt: heartbeatRuns.createdAt,
@@ -3403,9 +3417,11 @@ export function agentRoutes(
           inArray(heartbeatRuns.status, ["queued", "running"]),
         ),
       )
-      .orderBy(desc(heartbeatRuns.createdAt));
+      .orderBy(desc(heartbeatRuns.createdAt))
+      .limit(limit);
 
-    if (minCount > 0 && liveRuns.length < minCount) {
+    const targetRunCount = Math.min(minCount, limit);
+    if (targetRunCount > 0 && liveRuns.length < targetRunCount) {
       const activeIds = liveRuns.map((r) => r.id);
       const recentRuns = await db
         .select(columns)
@@ -3419,7 +3435,7 @@ export function agentRoutes(
           ),
         )
         .orderBy(desc(heartbeatRuns.createdAt))
-        .limit(minCount - liveRuns.length);
+        .limit(targetRunCount - liveRuns.length);
 
       res.json(await Promise.all([...liveRuns, ...recentRuns].map(async (run) => ({
         ...run,
@@ -3602,6 +3618,8 @@ export function agentRoutes(
         status: heartbeatRuns.status,
         invocationSource: heartbeatRuns.invocationSource,
         triggerDetail: heartbeatRuns.triggerDetail,
+        contextCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'commentId'`.as("contextCommentId"),
+        contextWakeCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId'`.as("contextWakeCommentId"),
         startedAt: heartbeatRuns.startedAt,
         finishedAt: heartbeatRuns.finishedAt,
         createdAt: heartbeatRuns.createdAt,

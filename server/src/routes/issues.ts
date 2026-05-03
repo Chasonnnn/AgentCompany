@@ -6,7 +6,10 @@ import type { Db } from "@paperclipai/db";
 import { issueExecutionDecisions } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
+  acceptIssueThreadInteractionSchema,
   answerIssueDecisionQuestionSchema,
+  cancelIssueThreadInteractionSchema,
+  createIssueThreadInteractionSchema,
   createIssueDecisionQuestionSchema,
   createIssueContinuityBranchSchema,
   dismissIssueDecisionQuestionSchema,
@@ -34,9 +37,11 @@ import {
   prepareIssueContinuitySchema,
   requestIssueSpecThawSchema,
   requestIssueContinuityDocUnfreezeSchema,
+  rejectIssueThreadInteractionSchema,
   isIssueDocumentScaffoldBaseline,
   restoreIssueDocumentRevisionSchema,
   returnIssueContinuityBranchSchema,
+  respondIssueThreadInteractionSchema,
   reviewResubmitIssueContinuitySchema,
   reviewReturnIssueContinuitySchema,
   mergeIssueContinuityBranchSchema,
@@ -66,6 +71,7 @@ import {
   heartbeatService,
   instanceSettingsService,
   issueApprovalService,
+  issueThreadInteractionService,
   ISSUE_LIST_DEFAULT_LIMIT,
   ISSUE_LIST_MAX_LIMIT,
   issueContinuityService,
@@ -89,7 +95,7 @@ import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination
 import { issueDecisionQuestionService } from "../services/issue-decision-questions.js";
 import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import {
   isInlineAttachmentContentType,
@@ -4420,6 +4426,321 @@ export function issueRoutes(
     });
     res.json(comments);
   });
+
+  router.get("/issues/:id/interactions", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const interactions = await issueThreadInteractionService(db).listForIssue(id);
+    res.json(interactions);
+  });
+
+  router.post("/issues/:id/interactions", validate(createIssueThreadInteractionSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (req.actor.type === "agent") {
+      if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    } else {
+      assertBoard(req);
+    }
+
+    const actor = getActorInfo(req);
+    const agentSourceRunId = req.actor.type === "agent" ? requireAgentRunId(req, res) : null;
+    if (req.actor.type === "agent" && !agentSourceRunId) return;
+
+    const interaction = await issueThreadInteractionService(db).create(issue, {
+      ...req.body,
+      sourceRunId: req.actor.type === "agent" ? agentSourceRunId : req.body.sourceRunId ?? null,
+    }, {
+      agentId: actor.agentId,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+    });
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.thread_interaction_created",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        interactionId: interaction.id,
+        interactionKind: interaction.kind,
+        interactionStatus: interaction.status,
+        continuationPolicy: interaction.continuationPolicy,
+      },
+    });
+
+    res.status(201).json(interaction);
+  });
+
+  router.post(
+    "/issues/:id/interactions/:interactionId/accept",
+    validate(acceptIssueThreadInteractionSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const interactionId = req.params.interactionId as string;
+      const issue = await svc.getById(id);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, issue.companyId);
+      assertBoard(req);
+
+      const actor = getActorInfo(req);
+      const { interaction, createdIssues, continuationIssue } = await issueThreadInteractionService(db).acceptInteraction(issue, interactionId, req.body, {
+        agentId: actor.agentId,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      const continuationWakeIssue = continuationIssue ?? issue;
+
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: interaction.status === "expired"
+          ? "issue.thread_interaction_expired"
+          : "issue.thread_interaction_accepted",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          interactionId: interaction.id,
+          interactionKind: interaction.kind,
+          interactionStatus: interaction.status,
+          createdTaskCount:
+            interaction.kind === "suggest_tasks"
+              ? (interaction.result?.createdTasks?.length ?? 0)
+              : 0,
+          skippedTaskCount:
+            interaction.kind === "suggest_tasks"
+              ? (interaction.result?.skippedClientKeys?.length ?? 0)
+              : 0,
+        },
+      });
+
+      if (continuationIssue) {
+        await logActivity(db, {
+          companyId: issue.companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.updated",
+          entityType: "issue",
+          entityId: issue.id,
+          details: {
+            identifier: issue.identifier,
+            status: continuationIssue.status,
+            assigneeAgentId: continuationIssue.assigneeAgentId ?? null,
+            assigneeUserId: continuationIssue.assigneeUserId ?? null,
+            source: "request_confirmation_accept",
+            interactionId: interaction.id,
+            _previous: {
+              status: issue.status,
+              assigneeAgentId: issue.assigneeAgentId ?? null,
+              assigneeUserId: issue.assigneeUserId ?? null,
+            },
+          },
+        });
+      }
+
+      for (const createdIssue of createdIssues) {
+        void queueIssueAssignmentWakeup({
+          heartbeat,
+          issue: createdIssue,
+          reason: "issue_assigned",
+          mutation: "interaction_accept",
+          contextSource: "issue.interaction.accept",
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+        });
+      }
+
+      queueResolvedInteractionContinuationWakeup({
+        heartbeat,
+        issue: continuationWakeIssue,
+        interaction,
+        actor,
+        source: "issue.interaction.accept",
+      });
+
+      res.json(interaction);
+    },
+  );
+
+  router.post(
+    "/issues/:id/interactions/:interactionId/reject",
+    validate(rejectIssueThreadInteractionSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const interactionId = req.params.interactionId as string;
+      const issue = await svc.getById(id);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, issue.companyId);
+      assertBoard(req);
+
+      const actor = getActorInfo(req);
+      const interaction = await issueThreadInteractionService(db).rejectInteraction(issue, interactionId, req.body, {
+        agentId: actor.agentId,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      });
+
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: interaction.status === "expired"
+          ? "issue.thread_interaction_expired"
+          : "issue.thread_interaction_rejected",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          interactionId: interaction.id,
+          interactionKind: interaction.kind,
+          interactionStatus: interaction.status,
+          rejectionReason:
+            interaction.kind === "suggest_tasks"
+              ? (interaction.result?.rejectionReason ?? null)
+              : interaction.kind === "request_confirmation"
+                ? (interaction.result?.reason ?? null)
+              : null,
+        },
+      });
+
+      queueResolvedInteractionContinuationWakeup({
+        heartbeat,
+        issue,
+        interaction,
+        actor,
+        source: "issue.interaction.reject",
+      });
+
+      res.json(interaction);
+    },
+  );
+
+  router.post(
+    "/issues/:id/interactions/:interactionId/respond",
+    validate(respondIssueThreadInteractionSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const interactionId = req.params.interactionId as string;
+      const issue = await svc.getById(id);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, issue.companyId);
+      assertBoard(req);
+
+      const actor = getActorInfo(req);
+      const interaction = await issueThreadInteractionService(db).answerQuestions(issue, interactionId, req.body, {
+        agentId: actor.agentId,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      });
+
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.thread_interaction_answered",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          interactionId: interaction.id,
+          interactionKind: interaction.kind,
+          interactionStatus: interaction.status,
+          answeredQuestionCount:
+            interaction.kind === "ask_user_questions"
+              ? (interaction.result?.answers?.length ?? 0)
+              : 0,
+        },
+      });
+
+      queueResolvedInteractionContinuationWakeup({
+        heartbeat,
+        issue,
+        interaction,
+        actor,
+        source: "issue.interaction.respond",
+      });
+
+      res.json(interaction);
+    },
+  );
+
+  router.post(
+    "/issues/:id/interactions/:interactionId/cancel",
+    validate(cancelIssueThreadInteractionSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const interactionId = req.params.interactionId as string;
+      const issue = await svc.getById(id);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      assertCompanyAccess(req, issue.companyId);
+      assertBoard(req);
+
+      const actor = getActorInfo(req);
+      const interaction = await issueThreadInteractionService(db).cancelQuestions(issue, interactionId, req.body, {
+        agentId: actor.agentId,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      });
+
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.thread_interaction_cancelled",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          interactionId: interaction.id,
+          interactionKind: interaction.kind,
+          interactionStatus: interaction.status,
+          cancellationReason:
+            interaction.kind === "ask_user_questions"
+              ? (interaction.result?.cancellationReason ?? null)
+              : null,
+        },
+      });
+
+      queueResolvedInteractionContinuationWakeup({
+        heartbeat,
+        issue,
+        interaction,
+        actor,
+        source: "issue.interaction.cancel",
+      });
+
+      res.json(interaction);
+    },
+  );
 
   router.get("/issues/:id/comments/:commentId", async (req, res) => {
     const id = req.params.id as string;

@@ -15,8 +15,10 @@ import type {
   FeedbackVote,
   Issue,
   IssueAttachment,
+  AskUserQuestionsAnswer,
   IssueContinuityBundle,
   IssueContinuityState,
+  IssueCostSummary,
   IssueComment,
   IssueDocument,
   IssueExecutionStagePrincipal,
@@ -231,7 +233,30 @@ export const issuesApi = {
     const qs = params.toString();
     return api.get<IssueComment[]>(`/issues/${id}/comments${qs ? `?${qs}` : ""}`);
   },
+  listInteractions: (id: string) =>
+    api.get<IssueThreadInteraction[]>(`/issues/${id}/interactions`),
+  createInteraction: (id: string, data: Record<string, unknown>) =>
+    api.post<IssueThreadInteraction>(`/issues/${id}/interactions`, data),
+  acceptInteraction: (
+    id: string,
+    interactionId: string,
+    data?: { selectedClientKeys?: string[] },
+  ) =>
+    api.post<IssueThreadInteraction>(`/issues/${id}/interactions/${interactionId}/accept`, data ?? {}),
+  rejectInteraction: (id: string, interactionId: string, reason?: string) =>
+    api.post<IssueThreadInteraction>(`/issues/${id}/interactions/${interactionId}/reject`, reason ? { reason } : {}),
+  cancelInteraction: (id: string, interactionId: string, reason?: string) =>
+    api.post<IssueThreadInteraction>(`/issues/${id}/interactions/${interactionId}/cancel`, reason ? { reason } : {}),
+  respondToInteraction: (
+    id: string,
+    interactionId: string,
+    data: { answers: AskUserQuestionsAnswer[]; summaryMarkdown?: string | null },
+  ) =>
+    api.post<IssueThreadInteraction>(`/issues/${id}/interactions/${interactionId}/respond`, data),
+  getComment: (id: string, commentId: string) =>
+    api.get<IssueComment>(`/issues/${id}/comments/${commentId}`),
   listFeedbackVotes: (id: string) => api.get<FeedbackVote[]>(`/issues/${id}/feedback-votes`),
+  getCostSummary: (id: string) => api.get<IssueCostSummary>(`/issues/${id}/cost-summary`),
   listFeedbackTraces: (id: string, filters?: Record<string, string | boolean | undefined>) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(filters ?? {})) {

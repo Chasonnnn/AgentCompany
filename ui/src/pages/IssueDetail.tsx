@@ -915,6 +915,8 @@ export function IssueDetail() {
           comment: nextComment,
           activeRunStartedAt,
           activeRunAgentId: runningIssueRun?.agentId ?? null,
+          activeRunCommentId: runningIssueRun?.contextCommentId ?? null,
+          activeRunWakeCommentId: runningIssueRun?.contextWakeCommentId ?? null,
           runId: meta?.runId ?? nextComment.runId ?? null,
           interruptedRunId: meta?.interruptedRunId ?? nextComment.interruptedRunId ?? null,
         })
