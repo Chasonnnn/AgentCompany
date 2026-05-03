@@ -410,7 +410,7 @@
       value: "(() => { const result = JSON.parse(output); return /baseline|page load|Core Web Vitals|bundle size|performance regression|before.*after|compare/i.test(result.finalText); })()"
       metric: mentions_performance_regression_signal
     - type: javascript
-      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsCanary = /\\b(?:use|invoke|choose|select|route to)\\s+`?canary`?\\b/i.test(text) && !/benchmark/i.test(text); const recommendsQa = /\\b(?:use|invoke|choose|select|route to)\\s+`?qa(?:-only)?`?\\b/i.test(text) && !/benchmark/i.test(text); return !recommendsCanary && !recommendsQa; })()"
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsCanary = /\\b(?:use|invoke|choose|select|route to)\\s+`?canary`?\\b/i.test(text); const recommendsQa = /\\b(?:use|invoke|choose|select|route to)\\s+`?qa(?:-only)?`?\\b/i.test(text); return !recommendsCanary && !recommendsQa; })()"
       metric: avoids_canary_or_qa_drift
 
 - description: "reliability.office_hours_activation - routes product idea exploration and 'is this worth building' to office-hours"
