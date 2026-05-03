@@ -72,6 +72,7 @@ async function createHarness(
   actor: Record<string, unknown>,
   overrides?: {
     accessCanUser?: (companyId: string, userId: string, permission: string) => Promise<boolean> | boolean;
+    listRoutines?: (companyId: string, filters: Record<string, unknown>) => Promise<Array<typeof routine>> | Array<typeof routine>;
     getRoutine?: (routineId: string) => Promise<typeof routine | typeof pausedRoutine | null> | (typeof routine | typeof pausedRoutine | null);
     updateRoutine?: (routineId: string, input: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
   },
@@ -88,7 +89,12 @@ async function createHarness(
     vi.importActual<typeof import("../routes/routines.js")>("../routes/routines.js"),
   ]);
   const routineService = {
-    list: async () => [],
+    list: async (companyId: string, filters: Record<string, unknown>) => {
+      if (overrides?.listRoutines) {
+        return await overrides.listRoutines(companyId, filters);
+      }
+      return [];
+    },
     listAdvisorTemplates: () => advisorTemplates,
     get: async (routineId: string) => {
       if (overrides?.getRoutine) {
@@ -171,6 +177,26 @@ describe("routine routes", () => {
     vi.doUnmock("../middleware/validate.js");
     vi.doUnmock("../telemetry.js");
     vi.doUnmock("@paperclipai/shared/telemetry");
+  });
+
+  it("passes project filters to the routine list service", async () => {
+    const listRoutines = vi.fn(async () => [routine]);
+    const { app } = await createHarness({
+      type: "board",
+      userId: "board-user",
+      source: "session",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    }, {
+      listRoutines,
+    });
+
+    const res = await request(app)
+      .get(`/api/companies/${companyId}/routines`)
+      .query({ projectId });
+
+    expect(res.status).toBe(200);
+    expect(listRoutines).toHaveBeenCalledWith(companyId, { projectId });
   });
 
   it("requires tasks:assign permission for non-admin board routine creation", async () => {

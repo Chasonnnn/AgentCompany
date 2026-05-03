@@ -77,7 +77,8 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
   router.get("/companies/:companyId/routines", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const result = await svc.list(companyId);
+    const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+    const result = await svc.list(companyId, { projectId });
     res.json(result);
   });
 
