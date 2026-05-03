@@ -620,6 +620,7 @@ export function AdapterManager() {
                     requiresMaterializedRuntimeSkills: false,
                     nativePlanningMode: false,
                     nativeDecisionQuestions: false,
+                    supportsModelProfiles: false,
                   },
                 }}
                 canRemove={false}

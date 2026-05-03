@@ -11,6 +11,7 @@ export interface AdapterCapabilities {
   requiresMaterializedRuntimeSkills: boolean;
   nativePlanningMode: boolean;
   nativeDecisionQuestions: boolean;
+  supportsModelProfiles: boolean;
 }
 
 export interface AdapterInfo {

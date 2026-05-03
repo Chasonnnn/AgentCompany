@@ -10,6 +10,7 @@ const ALL_FALSE: AdapterCapabilities = {
   requiresMaterializedRuntimeSkills: false,
   nativePlanningMode: false,
   nativeDecisionQuestions: false,
+  supportsModelProfiles: false,
 };
 
 /**
@@ -17,13 +18,13 @@ const ALL_FALSE: AdapterCapabilities = {
  * return correct values on first render before the /api/adapters call resolves.
  */
 const KNOWN_DEFAULTS: Record<string, AdapterCapabilities> = {
-  claude_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: false, nativeDecisionQuestions: true },
-  codex_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: true, nativeDecisionQuestions: true },
-  cursor: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false },
-  gemini_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: true },
-  opencode_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false },
-  pi_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false },
-  hermes_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: false, nativeDecisionQuestions: false },
+  claude_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: false, nativeDecisionQuestions: true, supportsModelProfiles: true },
+  codex_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: true, nativeDecisionQuestions: true, supportsModelProfiles: true },
+  cursor: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false, supportsModelProfiles: true },
+  gemini_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: true, supportsModelProfiles: true },
+  opencode_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false, supportsModelProfiles: true },
+  pi_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false, supportsModelProfiles: false },
+  hermes_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: false, nativeDecisionQuestions: false, supportsModelProfiles: false },
   openclaw_gateway: ALL_FALSE,
 };
 

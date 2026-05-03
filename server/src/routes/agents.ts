@@ -69,6 +69,7 @@ import {
   findActiveServerAdapter,
   findServerAdapter,
   listAdapterModels,
+  listAdapterModelProfiles,
   refreshAdapterModels,
   requireServerAdapter,
 } from "../adapters/index.js";
@@ -747,6 +748,99 @@ export function agentRoutes(
     return normalizedRuntimeConfig;
   }
 
+  function listRuntimeModelProfileAdapterConfigs(runtimeConfig: unknown): Array<{
+    profileKey: string;
+    profile: Record<string, unknown>;
+    adapterConfig: Record<string, unknown>;
+    path: string;
+  }> {
+    const runtimeRecord = asRecord(runtimeConfig);
+    const modelProfiles = asRecord(runtimeRecord?.modelProfiles);
+    if (!modelProfiles) return [];
+
+    const entries: Array<{
+      profileKey: string;
+      profile: Record<string, unknown>;
+      adapterConfig: Record<string, unknown>;
+      path: string;
+    }> = [];
+    for (const [profileKey, rawProfile] of Object.entries(modelProfiles)) {
+      const profile = asRecord(rawProfile);
+      const adapterConfig = asRecord(profile?.adapterConfig);
+      if (!profile || !adapterConfig) continue;
+      entries.push({
+        profileKey,
+        profile,
+        adapterConfig,
+        path: `runtimeConfig.modelProfiles.${profileKey}.adapterConfig`,
+      });
+    }
+    return entries;
+  }
+
+  function assertNoAgentRuntimeConfigAdapterConfigMutation(req: Request, runtimeConfig: unknown) {
+    for (const entry of listRuntimeModelProfileAdapterConfigs(runtimeConfig)) {
+      assertNoAgentAdapterConfigMutation(req, entry.adapterConfig, entry.path);
+    }
+  }
+
+  async function normalizeMediatedAdapterConfigForPersistence(input: {
+    companyId: string;
+    adapterType: string | null | undefined;
+    adapterConfig: Record<string, unknown>;
+    constraintAdapterConfig?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+      input.companyId,
+      input.adapterConfig,
+      { strictMode: strictSecretsMode },
+    );
+    await assertAdapterConfigConstraints(
+      input.companyId,
+      input.adapterType,
+      input.constraintAdapterConfig
+        ? { ...input.constraintAdapterConfig, ...normalizedAdapterConfig }
+        : normalizedAdapterConfig,
+    );
+    return normalizedAdapterConfig;
+  }
+
+  async function normalizeRuntimeConfigAdapterConfigsForPersistence(
+    companyId: string,
+    adapterType: string,
+    runtimeConfig: Record<string, unknown>,
+    baseAdapterConfig: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const entries = listRuntimeModelProfileAdapterConfigs(runtimeConfig);
+    if (entries.length === 0) return runtimeConfig;
+    const adapterModelProfiles = await listAdapterModelProfiles(adapterType);
+
+    const normalizedRuntimeConfig = { ...runtimeConfig };
+    const modelProfiles = asRecord(runtimeConfig.modelProfiles) ?? {};
+    const normalizedModelProfiles = { ...modelProfiles };
+    normalizedRuntimeConfig.modelProfiles = normalizedModelProfiles;
+
+    for (const entry of entries) {
+      const adapterProfile = adapterModelProfiles.find((profile) => profile.key === entry.profileKey);
+      const adapterDefaultConfig = asRecord(adapterProfile?.adapterConfig) ?? {};
+      const normalizedAdapterConfig = await normalizeMediatedAdapterConfigForPersistence({
+        companyId,
+        adapterType,
+        adapterConfig: entry.adapterConfig,
+        constraintAdapterConfig: {
+          ...baseAdapterConfig,
+          ...adapterDefaultConfig,
+        },
+      });
+      normalizedModelProfiles[entry.profileKey] = {
+        ...entry.profile,
+        adapterConfig: normalizedAdapterConfig,
+      };
+    }
+
+    return normalizedRuntimeConfig;
+  }
+
   function generateEd25519PrivateKeyPem(): string {
     const { privateKey } = generateKeyPairSync("ed25519");
     return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -1105,6 +1199,37 @@ export function agentRoutes(
     throw forbidden("Only the target agent or an ancestor manager can update instructions path");
   }
 
+  function assertNoAgentInstructionsConfigMutation(
+    req: Request,
+    adapterConfig: Record<string, unknown> | null | undefined,
+    path = "adapterConfig",
+  ) {
+    if (req.actor.type !== "agent" || !adapterConfig) return;
+    const changedSensitiveKeys = KNOWN_INSTRUCTIONS_BUNDLE_KEYS
+      .filter((key) => adapterConfig[key] !== undefined)
+      .map((key) => `${path}.${key}`);
+    if (changedSensitiveKeys.length === 0) return;
+    throw forbidden(
+      `Agent-authenticated callers cannot modify instructions path or bundle configuration (${changedSensitiveKeys.join(", ")})`,
+    );
+  }
+
+  function adapterConfigTouchesInstructionsConfig(adapterConfig: Record<string, unknown>) {
+    return KNOWN_INSTRUCTIONS_BUNDLE_KEYS.some((key) => adapterConfig[key] !== undefined);
+  }
+
+  function assertNoAgentAdapterConfigMutation(
+    req: Request,
+    adapterConfig: Record<string, unknown>,
+    path = "adapterConfig",
+  ) {
+    assertNoAgentInstructionsConfigMutation(req, adapterConfig, path);
+    assertNoAgentHostWorkspaceCommandMutation(
+      req,
+      collectAgentAdapterWorkspaceCommandPaths(adapterConfig, path),
+    );
+  }
+
   function summarizeAgentUpdateDetails(patch: Record<string, unknown>) {
     const changedTopLevelKeys = Object.keys(patch).sort();
     const details: Record<string, unknown> = { changedTopLevelKeys };
@@ -1217,6 +1342,14 @@ export function agentRoutes(
       ? await refreshAdapterModels(type)
       : await listAdapterModels(type);
     res.json(models);
+  });
+
+  router.get("/companies/:companyId/adapters/:type/model-profiles", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const type = assertKnownAdapterType(req.params.type as string);
+    const profiles = await listAdapterModelProfiles(type);
+    res.json(profiles);
   });
 
   router.get("/companies/:companyId/adapters/:type/detect-model", async (req, res) => {
@@ -1873,13 +2006,16 @@ export function agentRoutes(
     hireInput.adapterType = assertKnownAdapterType(
       typeof hireInput.adapterType === "string" ? hireInput.adapterType : null,
     );
-    assertNoAgentHostWorkspaceCommandMutation(
-      req,
-      collectAgentAdapterWorkspaceCommandPaths(hireInput.adapterConfig),
+    const rawHireAdapterConfig = ((hireInput.adapterConfig ?? {}) as Record<string, unknown>);
+    assertNoNewAgentLegacyPromptTemplate(
+      hireInput.adapterType,
+      rawHireAdapterConfig,
     );
+    assertNoAgentAdapterConfigMutation(req, rawHireAdapterConfig);
+    assertNoAgentRuntimeConfigAdapterConfigMutation(req, hireInput.runtimeConfig);
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       hireInput.adapterType as string,
-      ((hireInput.adapterConfig ?? {}) as Record<string, unknown>),
+      rawHireAdapterConfig,
     );
     const mergedDesiredSkillRefs = mergeDefaultDesiredSkills(
       Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
@@ -1896,20 +2032,21 @@ export function agentRoutes(
       requestedAdapterConfig,
       mergedDesiredSkillRefs,
     );
-    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+    const normalizedAdapterConfig = await normalizeMediatedAdapterConfigForPersistence({
       companyId,
-      desiredSkillAssignment.adapterConfig,
-      { strictMode: strictSecretsMode },
-    );
-    await assertAdapterConfigConstraints(
+      adapterType: hireInput.adapterType,
+      adapterConfig: desiredSkillAssignment.adapterConfig,
+    });
+    const normalizedRuntimeConfig = await normalizeRuntimeConfigAdapterConfigsForPersistence(
       companyId,
       hireInput.adapterType as string,
+      normalizeNewAgentRuntimeConfig(hireInput.runtimeConfig),
       normalizedAdapterConfig,
     );
     const normalizedHireInput = {
       ...hireInput,
       adapterConfig: normalizedAdapterConfig,
-      runtimeConfig: normalizeNewAgentRuntimeConfig((hireInput.runtimeConfig ?? {}) as Record<string, unknown>),
+      runtimeConfig: normalizedRuntimeConfig,
       budgetMonthlyCents:
         typeof hireInput.budgetMonthlyCents === "number"
           ? hireInput.budgetMonthlyCents
@@ -2264,13 +2401,16 @@ export function agentRoutes(
     createInput.adapterType = assertKnownAdapterType(
       typeof createInput.adapterType === "string" ? createInput.adapterType : null,
     );
-    assertNoAgentHostWorkspaceCommandMutation(
-      req,
-      collectAgentAdapterWorkspaceCommandPaths(createInput.adapterConfig),
+    const rawCreateAdapterConfig = ((createInput.adapterConfig ?? {}) as Record<string, unknown>);
+    assertNoNewAgentLegacyPromptTemplate(
+      createInput.adapterType,
+      rawCreateAdapterConfig,
     );
+    assertNoAgentAdapterConfigMutation(req, rawCreateAdapterConfig);
+    assertNoAgentRuntimeConfigAdapterConfigMutation(req, createInput.runtimeConfig);
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
       createInput.adapterType as string,
-      ((createInput.adapterConfig ?? {}) as Record<string, unknown>),
+      rawCreateAdapterConfig,
     );
     const mergedDesiredSkillRefs = mergeDefaultDesiredSkills(
       Array.isArray(requestedDesiredSkills) ? requestedDesiredSkills : undefined,
@@ -2287,14 +2427,15 @@ export function agentRoutes(
       requestedAdapterConfig,
       mergedDesiredSkillRefs,
     );
-    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+    const normalizedAdapterConfig = await normalizeMediatedAdapterConfigForPersistence({
       companyId,
-      desiredSkillAssignment.adapterConfig,
-      { strictMode: strictSecretsMode },
-    );
-    await assertAdapterConfigConstraints(
+      adapterType: createInput.adapterType,
+      adapterConfig: desiredSkillAssignment.adapterConfig,
+    });
+    const normalizedRuntimeConfig = await normalizeRuntimeConfigAdapterConfigsForPersistence(
       companyId,
       createInput.adapterType as string,
+      normalizeNewAgentRuntimeConfig(createInput.runtimeConfig),
       normalizedAdapterConfig,
     );
     const requestedProjectPlacement = readProjectPlacement(createInput.projectPlacement);
@@ -2320,7 +2461,7 @@ export function agentRoutes(
     const createdAgent = await svc.create(companyId, buildAgentCreatePayload({
       ...createInput,
       adapterConfig: normalizedAdapterConfig,
-      runtimeConfig: normalizeNewAgentRuntimeConfig((createInput.runtimeConfig ?? {}) as Record<string, unknown>),
+      runtimeConfig: normalizedRuntimeConfig,
       budgetMonthlyCents:
         typeof createInput.budgetMonthlyCents === "number"
           ? createInput.budgetMonthlyCents
@@ -2983,14 +3124,9 @@ export function agentRoutes(
         res.status(422).json({ error: "adapterConfig must be an object" });
         return;
       }
-      assertNoAgentHostWorkspaceCommandMutation(
-        req,
-        collectAgentAdapterWorkspaceCommandPaths(adapterConfig),
-      );
-      const changingInstructionsPath = Object.keys(adapterConfig).some((key) =>
-        KNOWN_INSTRUCTIONS_PATH_KEYS.has(key),
-      );
-      if (changingInstructionsPath) {
+      assertNoAgentAdapterConfigMutation(req, adapterConfig);
+      const changingInstructionsConfig = adapterConfigTouchesInstructionsConfig(adapterConfig);
+      if (changingInstructionsConfig) {
         await assertCanManageInstructionsPath(req, existing);
       }
       patchData.adapterConfig = adapterConfig;
@@ -2999,6 +3135,16 @@ export function agentRoutes(
     const requestedAdapterType = hasOwn(patchData, "adapterType")
       ? assertKnownAdapterType(patchData.adapterType as string | null | undefined)
       : existing.adapterType;
+    let requestedRuntimeConfig: Record<string, unknown> | null = null;
+    if (hasOwn(patchData, "runtimeConfig")) {
+      const runtimeConfig = asRecord(patchData.runtimeConfig);
+      if (!runtimeConfig) {
+        res.status(422).json({ error: "runtimeConfig must be an object" });
+        return;
+      }
+      assertNoAgentRuntimeConfigAdapterConfigMutation(req, runtimeConfig);
+      requestedRuntimeConfig = runtimeConfig;
+    }
     const touchesAdapterConfiguration =
       hasOwn(patchData, "adapterType") ||
       hasOwn(patchData, "adapterConfig");
@@ -3044,19 +3190,20 @@ export function agentRoutes(
         requestedAdapterType,
         rawEffectiveAdapterConfig,
       );
-      const normalizedEffectiveAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
-        existing.companyId,
-        effectiveAdapterConfig,
-        { strictMode: strictSecretsMode },
-      );
+      const normalizedEffectiveAdapterConfig = await normalizeMediatedAdapterConfigForPersistence({
+        companyId: existing.companyId,
+        adapterType: requestedAdapterType,
+        adapterConfig: effectiveAdapterConfig,
+      });
       patchData.adapterConfig = syncInstructionsBundleConfigFromFilePath(existing, normalizedEffectiveAdapterConfig);
     }
-    if (touchesAdapterConfiguration && requestedAdapterType === "opencode_local") {
-      const effectiveAdapterConfig = asRecord(patchData.adapterConfig) ?? {};
-      await assertAdapterConfigConstraints(
+    if (requestedRuntimeConfig) {
+      const baseAdapterConfig = asRecord(patchData.adapterConfig) ?? asRecord(existing.adapterConfig) ?? {};
+      patchData.runtimeConfig = await normalizeRuntimeConfigAdapterConfigsForPersistence(
         existing.companyId,
         requestedAdapterType,
-        effectiveAdapterConfig,
+        requestedRuntimeConfig,
+        baseAdapterConfig,
       );
     }
     if (touchesAdapterConfiguration || Object.prototype.hasOwnProperty.call(patchData, "defaultEnvironmentId")) {

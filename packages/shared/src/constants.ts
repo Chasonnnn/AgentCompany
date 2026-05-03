@@ -213,6 +213,8 @@ export const AGENT_ICON_NAMES = [
 ] as const;
 export type AgentIconName = (typeof AGENT_ICON_NAMES)[number];
 export const AGENT_DEFAULT_MAX_CONCURRENT_RUNS = 20;
+export const MODEL_PROFILE_KEYS = ["cheap"] as const;
+export type ModelProfileKey = (typeof MODEL_PROFILE_KEYS)[number];
 
 export const ISSUE_STATUSES = [
   "backlog",

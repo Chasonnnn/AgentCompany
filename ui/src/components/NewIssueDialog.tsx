@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
+import { useAdapterCapabilities } from "../adapters/use-adapter-capabilities";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { issuesApi } from "../api/issues";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -78,6 +79,7 @@ interface IssueDraft {
   assigneeId?: string;
   projectId: string;
   projectWorkspaceId?: string;
+  assigneeModelLane?: IssueModelLane;
   assigneeModelOverride: string;
   assigneeThinkingEffort: string;
   assigneeChrome: boolean;
@@ -94,7 +96,12 @@ type StagedIssueFile = {
   title?: string | null;
 };
 
-const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
+import {
+  buildAssigneeAdapterOverrides,
+  ISSUE_OVERRIDE_ADAPTER_TYPES,
+  type IssueModelLane,
+} from "../lib/issue-assignee-overrides";
+
 const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 
 const ISSUE_THINKING_EFFORT_OPTIONS = {
@@ -117,41 +124,6 @@ const ISSUE_THINKING_EFFORT_OPTIONS = {
     { value: "max", label: "Max" },
   ],
 } as const;
-
-function buildAssigneeAdapterOverrides(input: {
-  adapterType: string | null | undefined;
-  modelOverride: string;
-  thinkingEffortOverride: string;
-  chrome: boolean;
-}): Record<string, unknown> | null {
-  const adapterType = input.adapterType ?? null;
-  if (!adapterType || !ISSUE_OVERRIDE_ADAPTER_TYPES.has(adapterType)) {
-    return null;
-  }
-
-  const adapterConfig: Record<string, unknown> = {};
-  if (input.modelOverride) adapterConfig.model = input.modelOverride;
-  if (input.thinkingEffortOverride) {
-    if (adapterType === "codex_local") {
-      adapterConfig.modelReasoningEffort = input.thinkingEffortOverride;
-    } else if (adapterType === "opencode_local") {
-      adapterConfig.variant = input.thinkingEffortOverride;
-    } else if (adapterType === "claude_local") {
-      adapterConfig.effort = input.thinkingEffortOverride;
-    } else if (adapterType === "opencode_local") {
-      adapterConfig.variant = input.thinkingEffortOverride;
-    }
-  }
-  if (adapterType === "claude_local" && input.chrome) {
-    adapterConfig.chrome = true;
-  }
-
-  const overrides: Record<string, unknown> = {};
-  if (Object.keys(adapterConfig).length > 0) {
-    overrides.adapterConfig = adapterConfig;
-  }
-  return Object.keys(overrides).length > 0 ? overrides : null;
-}
 
 function loadDraft(): IssueDraft | null {
   try {
@@ -313,6 +285,7 @@ export function NewIssueDialog() {
   const [projectOptionsOpen, setProjectOptionsOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
+  const [assigneeModelLane, setAssigneeModelLane] = useState<IssueModelLane>("primary");
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
   const [assigneeThinkingEffort, setAssigneeThinkingEffort] = useState("");
   const [assigneeChrome, setAssigneeChrome] = useState(false);
@@ -396,6 +369,25 @@ export function NewIssueDialog() {
   const assigneeAdapterType = (agents ?? []).find((agent) => agent.id === selectedAssigneeAgentId)?.adapterType ?? null;
   const supportsAssigneeOverrides = Boolean(
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
+  );
+  const getAdapterCapabilities = useAdapterCapabilities();
+  const assigneeAdapterCapabilities = assigneeAdapterType
+    ? getAdapterCapabilities(assigneeAdapterType)
+    : null;
+  const assigneeSupportsCheapLane = Boolean(
+    supportsAssigneeOverrides && assigneeAdapterCapabilities?.supportsModelProfiles,
+  );
+
+  const { data: assigneeCheapProfiles } = useQuery({
+    queryKey: effectiveCompanyId && assigneeAdapterType
+      ? queryKeys.agents.adapterModelProfiles(effectiveCompanyId, assigneeAdapterType)
+      : ["agents", "none", "adapter-model-profiles", assigneeAdapterType ?? "none"],
+    queryFn: () => agentsApi.adapterModelProfiles(effectiveCompanyId!, assigneeAdapterType!),
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen && assigneeSupportsCheapLane,
+  });
+  const assigneeCheapProfile = useMemo(
+    () => (assigneeCheapProfiles ?? []).find((profile) => profile.key === "cheap") ?? null,
+    [assigneeCheapProfiles],
   );
   const mentionOptions = useMemo<MentionOption[]>(() => {
     const options: MentionOption[] = [];
@@ -517,6 +509,7 @@ export function NewIssueDialog() {
       approverValue,
       projectId,
       projectWorkspaceId,
+      assigneeModelLane,
       assigneeModelOverride,
       assigneeThinkingEffort,
       assigneeChrome,
@@ -533,6 +526,7 @@ export function NewIssueDialog() {
     approverValue,
     projectId,
     projectWorkspaceId,
+    assigneeModelLane,
     assigneeModelOverride,
     assigneeThinkingEffort,
     assigneeChrome,
@@ -564,6 +558,7 @@ export function NewIssueDialog() {
       setProjectId(defaultProjectId);
       setProjectWorkspaceId(defaultProjectWorkspaceId);
       setAssigneeValue(assigneeValueFromSelection(newIssueDefaults));
+      setAssigneeModelLane("primary");
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
@@ -608,6 +603,7 @@ export function NewIssueDialog() {
       setShowApproverRow(!!(draft.approverValue));
       setProjectId(restoredProjectId);
       setProjectWorkspaceId(draft.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(restoredProject));
+      setAssigneeModelLane(draft.assigneeModelLane ?? "primary");
       setAssigneeModelOverride(draft.assigneeModelOverride ?? "");
       setAssigneeThinkingEffort(draft.assigneeThinkingEffort ?? "");
       setAssigneeChrome(draft.assigneeChrome ?? false);
@@ -641,10 +637,14 @@ export function NewIssueDialog() {
   useEffect(() => {
     if (!supportsAssigneeOverrides) {
       setAssigneeOptionsOpen(false);
+      setAssigneeModelLane("primary");
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
       return;
+    }
+    if (!assigneeSupportsCheapLane && assigneeModelLane === "cheap") {
+      setAssigneeModelLane("primary");
     }
 
     const validThinkingValues =
@@ -656,7 +656,13 @@ export function NewIssueDialog() {
     if (!validThinkingValues.some((option) => option.value === assigneeThinkingEffort)) {
       setAssigneeThinkingEffort("");
     }
-  }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort]);
+  }, [
+    supportsAssigneeOverrides,
+    assigneeAdapterType,
+    assigneeThinkingEffort,
+    assigneeSupportsCheapLane,
+    assigneeModelLane,
+  ]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -680,6 +686,7 @@ export function NewIssueDialog() {
     setProjectOptionsOpen(false);
     setProjectSearch("");
     setAssigneeOptionsOpen(false);
+    setAssigneeModelLane("primary");
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
     setAssigneeChrome(false);
@@ -706,6 +713,7 @@ export function NewIssueDialog() {
     setProjectWorkspaceId("");
     setProjectOptionsOpen(false);
     setProjectSearch("");
+    setAssigneeModelLane("primary");
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
     setAssigneeChrome(false);
@@ -721,8 +729,14 @@ export function NewIssueDialog() {
 
   function handleSubmit() {
     if (!effectiveCompanyId || !title.trim() || !projectId || createIssue.isPending) return;
+    const effectiveLane = assigneeSupportsCheapLane
+      ? assigneeModelLane
+      : assigneeModelLane === "cheap"
+        ? "primary"
+        : assigneeModelLane;
     const assigneeAdapterOverrides = buildAssigneeAdapterOverrides({
       adapterType: assigneeAdapterType,
+      lane: effectiveLane,
       modelOverride: assigneeModelOverride,
       thinkingEffortOverride: assigneeThinkingEffort,
       chrome: assigneeChrome,
@@ -1492,36 +1506,84 @@ export function NewIssueDialog() {
             {assigneeOptionsOpen && (
               <div className="mt-2 rounded-md border border-border p-3 bg-muted/20 space-y-3">
                 <div className="space-y-1.5">
-                  <div className="text-xs text-muted-foreground">Model</div>
-                  <InlineEntitySelector
-                    value={assigneeModelOverride}
-                    options={modelOverrideOptions}
-                    placeholder="Default model"
-                    disablePortal
-                    noneLabel="Default model"
-                    searchPlaceholder="Search models..."
-                    emptyMessage="No models found."
-                    onChange={setAssigneeModelOverride}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <div className="text-xs text-muted-foreground">Thinking effort</div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {thinkingEffortOptions.map((option) => (
+                  <div className="text-xs text-muted-foreground">Model lane</div>
+                  <div
+                    className="flex w-full overflow-hidden rounded-md border border-border"
+                    role="radiogroup"
+                    aria-label="Model lane"
+                  >
+                    {(["primary", ...(assigneeSupportsCheapLane ? (["cheap"] as const) : ([] as const)), "custom"] as const).map((lane) => (
                       <button
-                        key={option.value || "default"}
+                        key={lane}
+                        type="button"
+                        role="radio"
+                        aria-checked={assigneeModelLane === lane}
                         className={cn(
-                          "px-2 py-1 rounded-md text-xs border border-border hover:bg-accent/50 transition-colors",
-                          assigneeThinkingEffort === option.value && "bg-accent"
+                          "flex-1 px-2 py-1 text-xs capitalize transition-colors hover:bg-accent/40",
+                          assigneeModelLane === lane && "bg-accent text-foreground",
                         )}
-                        onClick={() => setAssigneeThinkingEffort(option.value)}
+                        onClick={() => setAssigneeModelLane(lane)}
                       >
-                        {option.label}
+                        {lane === "primary"
+                          ? "Primary"
+                          : lane === "cheap"
+                            ? "Cheap"
+                            : "Custom"}
                       </button>
                     ))}
                   </div>
+                  {assigneeModelLane === "cheap" && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Sends <code>modelProfile: "cheap"</code>{" "}
+                      {assigneeCheapProfile?.adapterConfig && typeof (assigneeCheapProfile.adapterConfig as Record<string, unknown>).model === "string"
+                        ? <>· adapter default <code>{String((assigneeCheapProfile.adapterConfig as Record<string, unknown>).model)}</code></>
+                        : assigneeCheapProfile
+                          ? <>· uses the agent's configured cheap profile</>
+                          : <>· falls back to the primary model if no cheap profile is configured</>}
+                    </p>
+                  )}
+                  {assigneeModelLane === "primary" && (
+                    <p className="text-[11px] text-muted-foreground">Runs on the agent's primary model.</p>
+                  )}
+                  {assigneeModelLane === "custom" && (
+                    <p className="text-[11px] text-muted-foreground">Override the model and effort for this issue only.</p>
+                  )}
                 </div>
-                {assigneeAdapterType === "claude_local" && (
+                {assigneeModelLane === "custom" && (
+                  <div className="space-y-1.5">
+                    <div className="text-xs text-muted-foreground">Model</div>
+                    <InlineEntitySelector
+                      value={assigneeModelOverride}
+                      options={modelOverrideOptions}
+                      placeholder="Default model"
+                      disablePortal
+                      noneLabel="Default model"
+                      searchPlaceholder="Search models..."
+                      emptyMessage="No models found."
+                      onChange={setAssigneeModelOverride}
+                    />
+                  </div>
+                )}
+                {assigneeModelLane === "custom" && (
+                  <div className="space-y-1.5">
+                    <div className="text-xs text-muted-foreground">Thinking effort</div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {thinkingEffortOptions.map((option) => (
+                        <button
+                          key={option.value || "default"}
+                          className={cn(
+                            "px-2 py-1 rounded-md text-xs border border-border hover:bg-accent/50 transition-colors",
+                            assigneeThinkingEffort === option.value && "bg-accent"
+                          )}
+                          onClick={() => setAssigneeThinkingEffort(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {assigneeAdapterType === "claude_local" && assigneeModelLane === "custom" && (
                   <div className="flex items-center justify-between rounded-md border border-border px-2 py-1.5">
                     <div className="text-xs text-muted-foreground">Enable Chrome (--chrome)</div>
                     <ToggleSwitch

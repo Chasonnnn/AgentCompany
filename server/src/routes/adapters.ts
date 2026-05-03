@@ -68,6 +68,7 @@ interface AdapterCapabilities {
   requiresMaterializedRuntimeSkills: boolean;
   nativePlanningMode: boolean;
   nativeDecisionQuestions: boolean;
+  supportsModelProfiles: boolean;
 }
 
 interface AdapterInfo {
@@ -123,6 +124,7 @@ function buildAdapterCapabilities(adapter: ServerAdapterModule): AdapterCapabili
     requiresMaterializedRuntimeSkills: adapter.requiresMaterializedRuntimeSkills ?? false,
     nativePlanningMode: adapter.nativePlanningMode ?? false,
     nativeDecisionQuestions: adapter.nativeDecisionQuestions ?? false,
+    supportsModelProfiles: Boolean(adapter.modelProfiles?.length || adapter.listModelProfiles),
   };
 }
 

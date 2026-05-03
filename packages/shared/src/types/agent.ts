@@ -11,6 +11,7 @@ import type {
   AgentOrgLevel,
   AgentProjectRole,
   AgentProjectScopeMode,
+  ModelProfileKey,
   PauseReason,
   AgentRole,
   AgentSecondaryRelationshipType,
@@ -28,6 +29,16 @@ import type {
 
 export interface AgentPermissions {
   canCreateAgents: boolean;
+}
+
+export interface AgentModelProfileConfig {
+  enabled?: boolean;
+  label?: string;
+  adapterConfig: Record<string, unknown>;
+}
+
+export interface AgentRuntimeConfig extends Record<string, unknown> {
+  modelProfiles?: Partial<Record<ModelProfileKey, AgentModelProfileConfig>>;
 }
 
 export type AgentInstructionsBundleMode = "managed" | "external";
@@ -450,7 +461,7 @@ export interface Agent {
   capabilities: string | null;
   adapterType: AgentAdapterType;
   adapterConfig: Record<string, unknown>;
-  runtimeConfig: Record<string, unknown>;
+  runtimeConfig: AgentRuntimeConfig;
   defaultEnvironmentId?: string | null;
   budgetMonthlyCents: number;
   spentMonthlyCents: number;

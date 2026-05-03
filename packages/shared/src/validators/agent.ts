@@ -121,6 +121,18 @@ export const actorPrincipalKindSchema = z.enum(ACTOR_PRINCIPAL_KINDS);
 export const agentExecutionModelSchema = z.enum(AGENT_EXECUTION_MODELS);
 export const agentTemplateLifecycleStatusSchema = z.enum(AGENT_TEMPLATE_LIFECYCLE_STATUSES);
 
+const agentModelProfileConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  label: z.string().trim().min(1).optional(),
+  adapterConfig: adapterConfigSchema,
+}).strict();
+
+export const agentRuntimeConfigSchema = z.object({
+  modelProfiles: z.object({
+    cheap: agentModelProfileConfigSchema.optional(),
+  }).strict().optional(),
+}).catchall(z.unknown());
+
 export const agentHierarchyMemberSummarySchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -487,7 +499,7 @@ const createAgentSchemaBase = z.object({
   desiredSkills: z.array(z.string().min(1)).optional(),
   adapterType: optionalAgentAdapterTypeSchema,
   adapterConfig: adapterConfigSchema.optional(),
-  runtimeConfig: z.record(z.unknown()).optional(),
+  runtimeConfig: agentRuntimeConfigSchema.optional().default({}),
   defaultEnvironmentId: z.string().uuid().optional().nullable(),
   budgetMonthlyCents: z.number().int().nonnegative().optional(),
   permissions: agentPermissionsSchema.optional(),
