@@ -57,6 +57,7 @@ import {
 } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
+import { collectReachableInterfaceHosts } from "../runtime-api.js";
 import {
   accessService,
   agentService,
@@ -1589,6 +1590,11 @@ function buildOnboardingConnectionCandidates(input: {
 
   if (base && isLoopbackHost(base.hostname)) {
     candidates.add(`${protocol}//host.docker.internal${port}`);
+  }
+
+  for (const host of collectReachableInterfaceHosts()) {
+    const formattedHost = host.includes(":") && !host.startsWith("[") && !host.endsWith("]") ? `[${host}]` : host;
+    candidates.add(`${protocol}//${formattedHost}${port}`);
   }
 
   return Array.from(candidates);
