@@ -21,6 +21,7 @@ import {
   runAdapterExecutionTargetProcess,
   describeAdapterExecutionTarget,
   resolveAdapterExecutionTargetCwd,
+  type AdapterExecutionTarget,
 } from "@paperclipai/adapter-utils/execution-target";
 import path from "node:path";
 import { detectClaudeLoginRequired, parseClaudeStreamJson } from "./parse.js";
@@ -66,12 +67,14 @@ type ClaudeAuthStatusProbe = {
 
 async function readClaudeAuthStatus(
   command: string,
+  target: AdapterExecutionTarget | null,
   cwd: string,
   env: Record<string, string>,
 ): Promise<ClaudeAuthStatusProbe | null> {
   if (!commandLooksLike(command, "claude")) return null;
-  const probe = await runChildProcess(
+  const probe = await runAdapterExecutionTargetProcess(
     `claude-auth-status-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    target,
     command,
     ["auth", "status"],
     {
@@ -278,7 +281,7 @@ export async function testEnvironment(
       hint: "Unset ANTHROPIC_API_KEY if you want subscription-based Claude login behavior.",
     });
   } else if (!targetIsRemote) {
-    const authStatus = await readClaudeAuthStatus(command, cwd, env).catch(() => null);
+    const authStatus = await readClaudeAuthStatus(command, target, cwd, env).catch(() => null);
     const authDescription = describeClaudeNativeAuth(authStatus);
     if (authDescription) {
       checks.push({

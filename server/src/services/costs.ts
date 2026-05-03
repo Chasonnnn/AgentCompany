@@ -17,6 +17,10 @@ const SUBSCRIPTION_BILLING_TYPES = ["subscription_included", "subscription_overa
 const SUBSCRIPTION_BILLING_SQL = sql.join(SUBSCRIPTION_BILLING_TYPES.map((value) => sql`${value}`), sql`, `);
 const estimatedApiCostBackfills = new WeakMap<object, Promise<void>>();
 
+function sumAsNumber(column: unknown) {
+  return sql<number>`coalesce(sum(${column}), 0)::int`;
+}
+
 function currentUtcMonthWindow(now = new Date()) {
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth();

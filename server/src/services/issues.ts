@@ -2401,12 +2401,12 @@ export function issueService(db: Db) {
       const nextExecutionWorkspaceId =
         patchableIssueData.executionWorkspaceId !== undefined ? patchableIssueData.executionWorkspaceId : existing.executionWorkspaceId;
       const nextExecutionWorkspacePreference =
-        issueData.executionWorkspacePreference !== undefined
-          ? issueData.executionWorkspacePreference
+        patchableIssueData.executionWorkspacePreference !== undefined
+          ? patchableIssueData.executionWorkspacePreference
           : existing.executionWorkspacePreference;
       const nextExecutionWorkspaceSettings =
-        issueData.executionWorkspaceSettings !== undefined
-          ? parseIssueExecutionWorkspaceSettings(issueData.executionWorkspaceSettings)
+        patchableIssueData.executionWorkspaceSettings !== undefined
+          ? parseIssueExecutionWorkspaceSettings(patchableIssueData.executionWorkspaceSettings)
           : parseIssueExecutionWorkspaceSettings(existing.executionWorkspaceSettings);
       if (nextProjectWorkspaceId) {
         await assertValidProjectWorkspace(existing.companyId, nextProjectId, nextProjectWorkspaceId);
@@ -2482,7 +2482,7 @@ export function issueService(db: Db) {
           );
         }
         if (
-          issueData.executionWorkspaceSettings !== undefined &&
+          patchableIssueData.executionWorkspaceSettings !== undefined &&
           nextExecutionWorkspaceId &&
           nextExecutionWorkspacePreference === "reuse_existing"
         ) {

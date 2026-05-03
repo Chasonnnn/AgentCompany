@@ -89,6 +89,28 @@ const MISSING_LIVENESS_COPY: LivenessCopy = {
 const TERMINAL_CHILD_STATUSES = new Set<Issue["status"]>(["done", "cancelled"]);
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
 
+type RunOutputSilenceLevel = NonNullable<ActiveRunForIssue["outputSilence"]>["level"];
+
+type RunOutputSilenceCopy = {
+  label: string;
+  tone: string;
+};
+
+const RUN_OUTPUT_SILENCE_COPY: Partial<Record<RunOutputSilenceLevel, RunOutputSilenceCopy>> = {
+  suspicious: {
+    label: "Silence watch",
+    tone: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  },
+  critical: {
+    label: "Stale run",
+    tone: "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300",
+  },
+  snoozed: {
+    label: "Silence snoozed",
+    tone: "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+  },
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -548,7 +570,7 @@ export function IssueRunLedger({
                       </span>
                     );
                   })()}
-                  <span className="ml-auto shrink-0">{relativeTime(item.timestamp)}</span>
+                  <span className="ml-auto shrink-0">{relativeTime(run.startedAt ?? run.createdAt)}</span>
                 </div>
 
                 {silenceLabel ? (

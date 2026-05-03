@@ -1214,6 +1214,18 @@ export function agentRoutes(
     );
   }
 
+  function assertNoNewAgentLegacyPromptTemplate(adapterType: string, adapterConfig: Record<string, unknown>) {
+    if (!adapterSupportsInstructionsBundle(adapterType)) return;
+    if (
+      Object.prototype.hasOwnProperty.call(adapterConfig, "promptTemplate")
+      || Object.prototype.hasOwnProperty.call(adapterConfig, "bootstrapPromptTemplate")
+    ) {
+      throw unprocessable(
+        "New agents must use instructionsBundle/AGENTS.md instead of adapterConfig.promptTemplate or bootstrapPromptTemplate",
+      );
+    }
+  }
+
   function adapterConfigTouchesInstructionsConfig(adapterConfig: Record<string, unknown>) {
     return KNOWN_INSTRUCTIONS_BUNDLE_KEYS.some((key) => adapterConfig[key] !== undefined);
   }
@@ -2003,18 +2015,19 @@ export function agentRoutes(
       throw unprocessable("Agent name is required");
     }
     hireInput.role = typeof hireInput.role === "string" ? hireInput.role : "general";
-    hireInput.adapterType = assertKnownAdapterType(
+    const hireAdapterType = assertKnownAdapterType(
       typeof hireInput.adapterType === "string" ? hireInput.adapterType : null,
     );
+    hireInput.adapterType = hireAdapterType;
     const rawHireAdapterConfig = ((hireInput.adapterConfig ?? {}) as Record<string, unknown>);
     assertNoNewAgentLegacyPromptTemplate(
-      hireInput.adapterType,
+      hireAdapterType,
       rawHireAdapterConfig,
     );
     assertNoAgentAdapterConfigMutation(req, rawHireAdapterConfig);
     assertNoAgentRuntimeConfigAdapterConfigMutation(req, hireInput.runtimeConfig);
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
-      hireInput.adapterType as string,
+      hireAdapterType,
       rawHireAdapterConfig,
     );
     const mergedDesiredSkillRefs = mergeDefaultDesiredSkills(
@@ -2028,18 +2041,18 @@ export function agentRoutes(
     );
     const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
       companyId,
-      hireInput.adapterType as string,
+      hireAdapterType,
       requestedAdapterConfig,
       mergedDesiredSkillRefs,
     );
     const normalizedAdapterConfig = await normalizeMediatedAdapterConfigForPersistence({
       companyId,
-      adapterType: hireInput.adapterType,
+      adapterType: hireAdapterType,
       adapterConfig: desiredSkillAssignment.adapterConfig,
     });
     const normalizedRuntimeConfig = await normalizeRuntimeConfigAdapterConfigsForPersistence(
       companyId,
-      hireInput.adapterType as string,
+      hireAdapterType,
       normalizeNewAgentRuntimeConfig(hireInput.runtimeConfig),
       normalizedAdapterConfig,
     );
@@ -2398,18 +2411,19 @@ export function agentRoutes(
       throw unprocessable("Agent name is required");
     }
     createInput.role = typeof createInput.role === "string" ? createInput.role : "general";
-    createInput.adapterType = assertKnownAdapterType(
+    const createAdapterType = assertKnownAdapterType(
       typeof createInput.adapterType === "string" ? createInput.adapterType : null,
     );
+    createInput.adapterType = createAdapterType;
     const rawCreateAdapterConfig = ((createInput.adapterConfig ?? {}) as Record<string, unknown>);
     assertNoNewAgentLegacyPromptTemplate(
-      createInput.adapterType,
+      createAdapterType,
       rawCreateAdapterConfig,
     );
     assertNoAgentAdapterConfigMutation(req, rawCreateAdapterConfig);
     assertNoAgentRuntimeConfigAdapterConfigMutation(req, createInput.runtimeConfig);
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
-      createInput.adapterType as string,
+      createAdapterType,
       rawCreateAdapterConfig,
     );
     const mergedDesiredSkillRefs = mergeDefaultDesiredSkills(
@@ -2423,18 +2437,18 @@ export function agentRoutes(
     );
     const desiredSkillAssignment = await skillSync.resolveDesiredSkillAssignment(
       companyId,
-      createInput.adapterType as string,
+      createAdapterType,
       requestedAdapterConfig,
       mergedDesiredSkillRefs,
     );
     const normalizedAdapterConfig = await normalizeMediatedAdapterConfigForPersistence({
       companyId,
-      adapterType: createInput.adapterType,
+      adapterType: createAdapterType,
       adapterConfig: desiredSkillAssignment.adapterConfig,
     });
     const normalizedRuntimeConfig = await normalizeRuntimeConfigAdapterConfigsForPersistence(
       companyId,
-      createInput.adapterType as string,
+      createAdapterType,
       normalizeNewAgentRuntimeConfig(createInput.runtimeConfig),
       normalizedAdapterConfig,
     );

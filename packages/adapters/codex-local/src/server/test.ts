@@ -14,6 +14,7 @@ import {
   runAdapterExecutionTargetProcess,
   describeAdapterExecutionTarget,
   resolveAdapterExecutionTargetCwd,
+  type AdapterExecutionTarget,
 } from "@paperclipai/adapter-utils/execution-target";
 import path from "node:path";
 import { parseCodexJsonl } from "./parse.js";
@@ -74,12 +75,14 @@ async function resolveProbeCodexHome(
 
 async function readCodexLoginStatus(
   command: string,
+  target: AdapterExecutionTarget | null,
   cwd: string,
   env: Record<string, string>,
 ): Promise<{ loggedIn: boolean; detail: string | null } | null> {
   if (!commandLooksLike(command, "codex")) return null;
-  const probe = await runChildProcess(
+  const probe = await runAdapterExecutionTargetProcess(
     `codex-login-status-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    target,
     command,
     ["login", "status"],
     {
@@ -188,7 +191,7 @@ export async function testEnvironment(
     });
   } else if (!targetIsRemote) {
     const codexHome = isNonEmpty(probeEnv.CODEX_HOME) ? probeEnv.CODEX_HOME : undefined;
-    const loginStatus = await readCodexLoginStatus(command, cwd, probeEnv).catch(() => null);
+    const loginStatus = await readCodexLoginStatus(command, target, cwd, probeEnv).catch(() => null);
     const codexAuth =
       loginStatus?.loggedIn === false
         ? null

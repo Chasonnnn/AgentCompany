@@ -468,6 +468,65 @@ function isClosedIssueStatus(status: string | null | undefined): status is "done
   return status === "done" || status === "cancelled";
 }
 
+function queueResolvedInteractionContinuationWakeup(input: {
+  heartbeat: ReturnType<typeof heartbeatService>;
+  issue: { id: string; assigneeAgentId: string | null; status: string };
+  interaction: {
+    id: string;
+    kind: string;
+    status: string;
+    continuationPolicy: string;
+    sourceCommentId?: string | null;
+    sourceRunId?: string | null;
+  };
+  actor: { actorType: "user" | "agent"; actorId: string };
+  source: string;
+}) {
+  if (
+    input.interaction.continuationPolicy !== "wake_assignee"
+    && input.interaction.continuationPolicy !== "wake_assignee_on_accept"
+  ) return;
+  if (
+    input.interaction.continuationPolicy === "wake_assignee_on_accept"
+    && input.interaction.status !== "accepted"
+  ) return;
+  if (input.interaction.status === "expired") return;
+  if (!input.issue.assigneeAgentId || isClosedIssueStatus(input.issue.status)) return;
+
+  void input.heartbeat.wakeup(input.issue.assigneeAgentId, {
+    source: "automation",
+    triggerDetail: "system",
+    reason: "issue_commented",
+    payload: {
+      issueId: input.issue.id,
+      interactionId: input.interaction.id,
+      interactionKind: input.interaction.kind,
+      interactionStatus: input.interaction.status,
+      sourceCommentId: input.interaction.sourceCommentId ?? null,
+      sourceRunId: input.interaction.sourceRunId ?? null,
+      mutation: "interaction",
+    },
+    requestedByActorType: input.actor.actorType,
+    requestedByActorId: input.actor.actorId,
+    contextSnapshot: {
+      issueId: input.issue.id,
+      taskId: input.issue.id,
+      interactionId: input.interaction.id,
+      interactionKind: input.interaction.kind,
+      interactionStatus: input.interaction.status,
+      sourceCommentId: input.interaction.sourceCommentId ?? null,
+      sourceRunId: input.interaction.sourceRunId ?? null,
+      wakeReason: "issue_commented",
+      source: input.source,
+    },
+  }).catch((err) => logger.warn({
+    err,
+    issueId: input.issue.id,
+    interactionId: input.interaction.id,
+    agentId: input.issue.assigneeAgentId,
+  }, "failed to wake assignee on issue interaction resolution"));
+}
+
 function shouldImplicitlyReopenCommentForAgent(input: {
   issueStatus: string | null | undefined;
   assigneeAgentId: string | null | undefined;
@@ -1073,6 +1132,47 @@ export function issueRoutes(
       });
     }
     return true;
+  }
+
+  async function assertAgentIssueMutationAllowed(
+    req: Request,
+    res: Response,
+    issue: { id: string; companyId: string; status: string; assigneeAgentId: string | null },
+  ) {
+    if (req.actor.type !== "agent") return true;
+    const actorAgentId = req.actor.agentId;
+    if (!actorAgentId) {
+      res.status(403).json({ error: "Agent authentication required" });
+      return false;
+    }
+    if (issue.assigneeAgentId === null || issue.assigneeAgentId === actorAgentId) {
+      return assertRunIdOwnership(req, res, issue);
+    }
+    if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)) {
+      return true;
+    }
+    if (issue.status === "in_progress") {
+      res.status(409).json({
+        error: "Issue is checked out by another agent",
+        details: {
+          issueId: issue.id,
+          assigneeAgentId: issue.assigneeAgentId,
+          actorAgentId,
+        },
+      });
+    } else {
+      res.status(403).json({
+        error: "Agent cannot mutate another agent's issue",
+        details: {
+          issueId: issue.id,
+          assigneeAgentId: issue.assigneeAgentId,
+          actorAgentId,
+          status: issue.status,
+          securityPrinciples: ["Least Privilege", "Complete Mediation", "Fail Securely"],
+        },
+      });
+    }
+    return false;
   }
 
   async function resolveActiveIssueRun(issue: {

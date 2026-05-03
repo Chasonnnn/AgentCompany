@@ -23,7 +23,7 @@ import {
 } from "../components/RoutineRunVariablesDialog";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
-import { useToastActions } from "../context/ToastContext";
+import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime, issueUrl, projectRouteRef, projectWorkspaceUrl } from "../lib/utils";
 import {
@@ -375,7 +375,7 @@ function ExecutionWorkspaceRoutinesList({
   project: Project | null;
 }) {
   const queryClient = useQueryClient();
-  const { pushToast } = useToastActions();
+  const { pushToast } = useToast();
   const [runDialogRoutine, setRunDialogRoutine] = useState<RoutineListItem | null>(null);
   const [runningRoutineId, setRunningRoutineId] = useState<string | null>(null);
 
@@ -481,7 +481,6 @@ function ExecutionWorkspaceRoutinesList({
           if (!next) setRunDialogRoutine(null);
         }}
         companyId={workspace.companyId}
-        routineName={runDialogRoutine?.title ?? null}
         agents={agents ?? []}
         projects={project ? [project] : []}
         defaultProjectId={workspace.projectId}

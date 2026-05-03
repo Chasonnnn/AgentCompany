@@ -150,6 +150,12 @@ function createExecutionWorkspace(): ExecutionWorkspace {
     closedAt: null,
     cleanupEligibleAt: null,
     cleanupReason: null,
+    cleanupState: "idle",
+    cleanupAttemptCount: 0,
+    lastCleanupError: null,
+    nextCleanupAttemptAt: null,
+    reconcileState: "clean",
+    lastReconciledAt: null,
     config: {
       provisionCommand: null,
       teardownCommand: null,

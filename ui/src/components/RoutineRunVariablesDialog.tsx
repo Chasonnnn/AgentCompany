@@ -286,7 +286,7 @@ export function RoutineRunVariablesDialog({
 
   const workspaceIssue = useMemo(() => ({
     companyId: companyId ?? null,
-    projectId: selectedProject?.id ?? null,
+    projectId: selectedProject?.id ?? "",
     projectWorkspaceId: workspaceConfig.projectWorkspaceId,
     executionWorkspaceId: workspaceConfig.executionWorkspaceId,
     executionWorkspacePreference: workspaceConfig.executionWorkspacePreference,
