@@ -532,3 +532,23 @@
     - type: javascript
       value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsPerf = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.react.best.practices`?\\b/i.test(text); const recommendsRN = /\\b(?:use|invoke|choose|select|route to)\\s+`?vercel.react.native.skills`?\\b/i.test(text); return !recommendsPerf && !recommendsRN; })()"
       metric: avoids_performance_or_react_native_drift
+
+- description: "reliability.optimize_activation - routes performance bottleneck fixes (slow page, large bundle, janky animation) to optimize, not measurement-only or visual-polish skills"
+  vars:
+    caseId: reliability.optimize_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-optimize-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says 'our checkout page takes 8 seconds to load on mobile and the JavaScript bundle is 2.4MB — help me fix this.' Three skills are loaded: `optimize` (fixes UI performance bottlenecks across loading speed, rendering, animations, images, and bundle size — Core Web Vitals optimization), `benchmark` (performance regression detection — measures baselines and compares before/after on PRs, but does not change code), and `polish` (final visual polish for alignment, spacing, and micro-detail before shipping — not performance). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\boptimize\\b/i.test(result.finalText); })()"
+      metric: routes_to_optimize
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /Core Web Vitals|LCP|INP|CLS|bundle size|page (?:load|speed)|loading|performance bottleneck|janky|slow/i.test(result.finalText); })()"
+      metric: mentions_performance_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsBenchmark = /\\b(?:use|invoke|choose|select|route to)\\s+`?benchmark`?\\b/i.test(text); const recommendsPolish = /\\b(?:use|invoke|choose|select|route to)\\s+`?polish`?\\b/i.test(text); return !recommendsBenchmark && !recommendsPolish; })()"
+      metric: avoids_benchmark_or_polish_drift
