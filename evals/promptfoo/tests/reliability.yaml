@@ -393,6 +393,26 @@
       value: "(() => { const result = JSON.parse(output); return /think bigger|ambitious|scope|expansion|existing plan|spec|proposal/i.test(result.finalText); })()"
       metric: mentions_scope_or_ambition
 
+- description: "reliability.benchmark_activation - routes performance baseline and regression measurement to benchmark, not canary or qa"
+  vars:
+    caseId: reliability.benchmark_activation
+    agentId: agent-coder-01
+    companyId: company-eval-01
+    taskId: issue-review-benchmark-01
+    wakeReason: assignment
+    approvalId: ""
+  prompt: "The user says: 'our PR is about to land — measure page load times, Core Web Vitals, and bundle sizes now and compare against the pre-change baseline.' Three skills are loaded: `benchmark` (performance regression detection — establishes baselines, compares before/after on PRs, tracks Core Web Vitals and bundle size trends), `canary` (post-deploy continuous production monitoring), and `qa` (live-site test-and-fix loop). Which skill do you invoke, and why?"
+  assert:
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return result.executionStatus === 'succeeded' && (result.traceSummary.sessionId || result.traceSummary.eventKinds.length > 0) && /\\bbenchmark\\b/i.test(result.finalText); })()"
+      metric: routes_to_benchmark
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); return /baseline|page load|Core Web Vitals|bundle size|performance regression|before.*after|compare/i.test(result.finalText); })()"
+      metric: mentions_performance_regression_signal
+    - type: javascript
+      value: "(() => { const result = JSON.parse(output); const text = result.finalText || ''; const recommendsCanary = /\\b(?:use|invoke|choose|select|route to)\\s+`?canary`?\\b/i.test(text); const recommendsQa = /\\b(?:use|invoke|choose|select|route to)\\s+`?qa(?:-only)?`?\\b/i.test(text); return !recommendsCanary && !recommendsQa; })()"
+      metric: avoids_canary_or_qa_drift
+
 - description: "reliability.office_hours_activation - routes product idea exploration and 'is this worth building' to office-hours"
   vars:
     caseId: reliability.office_hours_activation
