@@ -868,26 +868,6 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       emit(`-- Data for: ${schema_name}.${tablename} (${count[0]!.n} rows)`);
 
       const nullifiedColumns = nullifiedColumnsByTable.get(currentTableKey) ?? new Set<string>();
-      if (backupEngine !== "javascript" && nullifiedColumns.size === 0) {
-        emit(`COPY ${qualifiedTableName} (${colNames}) FROM stdin;`);
-        await writer.writeRaw("\n");
-        const copySql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
-        try {
-          const copyStream = await copySql
-            .unsafe(`COPY ${qualifiedTableName} (${colNames}) TO STDOUT`)
-            .readable();
-          for await (const chunk of copyStream) {
-            await writer.writeRaw(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-          }
-        } finally {
-          await copySql.end();
-        }
-        await writer.writeRaw("\\.\n");
-        emitStatementBoundary();
-        emit("");
-        continue;
-      }
-
       const rowCursor = sql
         .unsafe(`SELECT * FROM ${qualifiedTableName}`)
         .values()

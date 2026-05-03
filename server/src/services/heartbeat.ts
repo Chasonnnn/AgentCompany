@@ -5035,7 +5035,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
     if (isFirstHeartbeat && updated) {
       const tc = getTelemetryClient();
-      if (tc) trackAgentFirstHeartbeat(tc, { agentRole: updated.role });
+      if (tc) trackAgentFirstHeartbeat(tc, { agentId, agentRole: updated.role });
     }
 
     if (updated) {

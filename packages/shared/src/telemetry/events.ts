@@ -67,9 +67,12 @@ export function trackSkillImported(
 
 export function trackAgentFirstHeartbeat(
   client: TelemetryClient,
-  dims: { agentRole: string },
+  dims: { agentRole: string; agentId?: string },
 ): void {
-  client.track("agent.first_heartbeat", { agent_role: dims.agentRole });
+  client.track("agent.first_heartbeat", {
+    agent_role: dims.agentRole,
+    ...(dims.agentId ? { agent_id: dims.agentId } : {}),
+  });
 }
 
 export function trackAgentTaskCompleted(

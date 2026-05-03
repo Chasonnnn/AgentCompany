@@ -9,6 +9,7 @@ import {
   heartbeatRuns,
   issueComments,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -60,6 +61,7 @@ describeEmbeddedPostgres("productivity review service", () => {
     const managerId = randomUUID();
     const coderId = randomUUID();
     const issueId = randomUUID();
+    const projectId = randomUUID();
     const issuePrefix = `PR${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const createdAt = new Date("2026-04-28T10:00:00.000Z");
 
@@ -68,6 +70,12 @@ describeEmbeddedPostgres("productivity review service", () => {
       name: "Productivity Review Co",
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Productivity review project",
+      status: "active",
     });
     await db.insert(agents).values([
       {
@@ -97,6 +105,7 @@ describeEmbeddedPostgres("productivity review service", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Implement data import",
       status: opts?.status ?? "in_progress",
       priority: "medium",
@@ -110,7 +119,7 @@ describeEmbeddedPostgres("productivity review service", () => {
       updatedAt: createdAt,
     });
 
-    return { companyId, managerId, coderId, issueId, issuePrefix, createdAt };
+    return { companyId, managerId, coderId, issueId, issuePrefix, projectId, createdAt };
   }
 
   async function insertRuns(input: {
@@ -270,6 +279,7 @@ describeEmbeddedPostgres("productivity review service", () => {
         return {
           id: randomUUID(),
           companyId: seeded.companyId,
+          projectId: seeded.projectId,
           title: `Completed productivity review ${index + 1}`,
           status: "done",
           priority: "high",
@@ -311,6 +321,7 @@ describeEmbeddedPostgres("productivity review service", () => {
         return {
           id: randomUUID(),
           companyId: seeded.companyId,
+          projectId: seeded.projectId,
           title: `Cancelled productivity review ${index + 1}`,
           status: "cancelled",
           priority: "high",
@@ -428,6 +439,7 @@ describeEmbeddedPostgres("productivity review service", () => {
     await db.insert(issues).values({
       id: reviewId,
       companyId: seeded.companyId,
+      projectId: seeded.projectId,
       title: "Existing productivity review",
       status: "todo",
       priority: "high",
@@ -441,6 +453,7 @@ describeEmbeddedPostgres("productivity review service", () => {
     await db.insert(issues).values({
       id: childId,
       companyId: seeded.companyId,
+      projectId: seeded.projectId,
       title: "Review follow-up child",
       status: "in_progress",
       priority: "medium",

@@ -2483,8 +2483,8 @@ describe("company portability", () => {
         heartbeat: expect.objectContaining({
           enabled: false,
           maxConcurrentRuns: 20,
-        },
-      },
+        }),
+      }),
     }));
     expect(result.company.action).toBe("unchanged");
     expect(result.agents).toEqual([

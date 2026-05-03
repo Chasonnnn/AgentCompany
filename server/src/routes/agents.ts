@@ -1214,18 +1214,6 @@ export function agentRoutes(
     );
   }
 
-  function assertNoNewAgentLegacyPromptTemplate(adapterType: string, adapterConfig: Record<string, unknown>) {
-    if (!adapterSupportsInstructionsBundle(adapterType)) return;
-    if (
-      Object.prototype.hasOwnProperty.call(adapterConfig, "promptTemplate")
-      || Object.prototype.hasOwnProperty.call(adapterConfig, "bootstrapPromptTemplate")
-    ) {
-      throw unprocessable(
-        "New agents must use instructionsBundle/AGENTS.md instead of adapterConfig.promptTemplate or bootstrapPromptTemplate",
-      );
-    }
-  }
-
   function adapterConfigTouchesInstructionsConfig(adapterConfig: Record<string, unknown>) {
     return KNOWN_INSTRUCTIONS_BUNDLE_KEYS.some((key) => adapterConfig[key] !== undefined);
   }
@@ -2020,10 +2008,6 @@ export function agentRoutes(
     );
     hireInput.adapterType = hireAdapterType;
     const rawHireAdapterConfig = ((hireInput.adapterConfig ?? {}) as Record<string, unknown>);
-    assertNoNewAgentLegacyPromptTemplate(
-      hireAdapterType,
-      rawHireAdapterConfig,
-    );
     assertNoAgentAdapterConfigMutation(req, rawHireAdapterConfig);
     assertNoAgentRuntimeConfigAdapterConfigMutation(req, hireInput.runtimeConfig);
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
@@ -2416,10 +2400,6 @@ export function agentRoutes(
     );
     createInput.adapterType = createAdapterType;
     const rawCreateAdapterConfig = ((createInput.adapterConfig ?? {}) as Record<string, unknown>);
-    assertNoNewAgentLegacyPromptTemplate(
-      createAdapterType,
-      rawCreateAdapterConfig,
-    );
     assertNoAgentAdapterConfigMutation(req, rawCreateAdapterConfig);
     assertNoAgentRuntimeConfigAdapterConfigMutation(req, createInput.runtimeConfig);
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
