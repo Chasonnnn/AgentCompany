@@ -2359,6 +2359,66 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     cancelWorkForScope: cancelBudgetScopeWork,
   };
   const budgets = budgetService(db, budgetHooks);
+  const recovery = recoveryService(db, { enqueueWakeup });
+  const productivityReviews = productivityReviewService(db, { enqueueWakeup });
+  let unsafeTextProjectionPromise: Promise<boolean> | null = null;
+
+  async function releaseEnvironmentLeasesForRun(input: {
+    runId: string;
+    companyId: string;
+    agentId: string;
+    status: string | null | undefined;
+    failureReason?: string | null;
+  }) {
+    const releasedLeases = await environmentRuntimeSvc
+      .releaseRunLeases(input.runId, leaseReleaseStatusForRunStatus(input.status))
+      .catch((err) => {
+      logger.warn({ err, runId: input.runId }, "failed to release environment leases for heartbeat run");
+      return [];
+    });
+    for (const releasedLease of releasedLeases) {
+      const lease = releasedLease.lease;
+      await logActivity(db, {
+        companyId: input.companyId,
+        actorType: "agent",
+        actorId: input.agentId,
+        agentId: input.agentId,
+        runId: input.runId,
+        action: "environment.lease_released",
+        entityType: "environment_lease",
+        entityId: lease.id,
+        details: {
+          environmentId: lease.environmentId,
+          driver: lease.metadata?.driver ?? "local",
+          leasePolicy: lease.leasePolicy,
+          provider: lease.provider,
+          executionWorkspaceId: lease.executionWorkspaceId,
+          issueId: lease.issueId,
+          status: lease.status,
+          failureReason: input.failureReason ?? null,
+        },
+      }).catch(() => undefined);
+    }
+  }
+
+  async function hasUnsafeTextProjectionDatabase() {
+    if (!unsafeTextProjectionPromise) {
+      unsafeTextProjectionPromise = db
+        .execute(sql`select current_setting('server_encoding') as server_encoding`)
+        .then((rows) => {
+          const first = Array.isArray(rows) ? rows[0] : null;
+          const serverEncoding = typeof first === "object" && first !== null
+            ? (first as Record<string, unknown>).server_encoding
+            : null;
+          return typeof serverEncoding === "string" && serverEncoding.toUpperCase() === "SQL_ASCII";
+        })
+        .catch((err) => {
+          logger.warn({ err }, "failed to inspect database server encoding; using conservative heartbeat result projection");
+          return true;
+        });
+    }
+    return unsafeTextProjectionPromise;
+  }
 
   async function getAgent(agentId: string) {
     return db
@@ -3401,7 +3461,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const existing = await getRuntimeState(agent.id);
     if (existing) return existing;
 
-    return db
+    const inserted = await db
       .insert(agentRuntimeState)
       .values({
         agentId: agent.id,
@@ -3409,8 +3469,18 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         adapterType: agent.adapterType,
         stateJson: {},
       })
+      .onConflictDoNothing({
+        target: agentRuntimeState.agentId,
+      })
       .returning()
-      .then((rows) => rows[0]);
+      .then((rows) => rows[0] ?? null);
+    if (inserted) return inserted;
+
+    const ensured = await getRuntimeState(agent.id);
+    if (!ensured) {
+      throw new Error(`Failed to ensure runtime state for agent ${agent.id}`);
+    }
+    return ensured;
   }
 
   async function setRunStatus(
@@ -4898,6 +4968,14 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       });
       if (!finalizedRun) finalizedRun = await getRun(run.id);
       if (!finalizedRun) continue;
+      finalizedRun = await classifyAndPersistRunLiveness(finalizedRun, parseObject(finalizedRun.resultJson)) ?? finalizedRun;
+      await releaseEnvironmentLeasesForRun({
+        runId: finalizedRun.id,
+        companyId: finalizedRun.companyId,
+        agentId: finalizedRun.agentId,
+        status: finalizedRun.status,
+        failureReason: finalizedRun.error ?? undefined,
+      });
 
       let retriedRun: typeof heartbeatRuns.$inferSelect | null = null;
       if (shouldRetry) {
@@ -6740,34 +6818,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           await finalizeAgentStatus(run.agentId, "failed").catch(() => undefined);
         } finally {
           const latestRun = await getRun(run.id).catch(() => null);
-          const releasedLeases = await environmentRuntimeSvc
-            .releaseRunLeases(run.id, leaseReleaseStatusForRunStatus(latestRun?.status))
-            .catch((err) => {
-              logger.warn({ err, runId: run.id }, "failed to release environment leases for heartbeat run");
-              return [];
-            });
-          for (const releasedLease of releasedLeases) {
-            const lease = releasedLease.lease;
-            await logActivity(db, {
-              companyId: run.companyId,
-              actorType: "agent",
-              actorId: run.agentId,
-              agentId: run.agentId,
-              runId: run.id,
-              action: "environment.lease_released",
-              entityType: "environment_lease",
-              entityId: lease.id,
-              details: {
-                environmentId: lease.environmentId,
-                driver: lease.metadata?.driver ?? "local",
-                leasePolicy: lease.leasePolicy,
-                provider: lease.provider,
-                executionWorkspaceId: lease.executionWorkspaceId,
-                issueId: lease.issueId,
-                status: lease.status,
-              },
-            }).catch(() => undefined);
-          }
+          await releaseEnvironmentLeasesForRun({
+            runId: run.id,
+            companyId: run.companyId,
+            agentId: run.agentId,
+            status: latestRun?.status,
+            failureReason: latestRun?.error ?? undefined,
+          });
           await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
           activeRunExecutions.delete(run.id);
           await startNextQueuedRunForAgent(run.agentId);

@@ -33,6 +33,7 @@ import {
   parseIssueExecutionWorkspaceSettings,
   parseProjectExecutionWorkspacePolicy,
 } from "./execution-workspace-policy.js";
+import { mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
@@ -127,6 +128,17 @@ function readLatestWakeCommentId(record: unknown) {
     if (latest) return latest.trim();
   }
   return readStringFromRecord(record, "wakeCommentId") ?? readStringFromRecord(record, "commentId");
+}
+
+function buildReusedExecutionWorkspaceConfigPatchFromIssueSettings(
+  settings: ReturnType<typeof parseIssueExecutionWorkspaceSettings>,
+) {
+  return {
+    environmentId: settings?.environmentId ?? null,
+    provisionCommand: settings?.workspaceStrategy?.provisionCommand ?? null,
+    teardownCommand: settings?.workspaceStrategy?.teardownCommand ?? null,
+    workspaceRuntime: settings?.workspaceRuntime ?? null,
+  };
 }
 
 export interface IssueFilters {
@@ -2388,6 +2400,14 @@ export function issueService(db: Db) {
         patchableIssueData.projectWorkspaceId !== undefined ? patchableIssueData.projectWorkspaceId : existing.projectWorkspaceId;
       const nextExecutionWorkspaceId =
         patchableIssueData.executionWorkspaceId !== undefined ? patchableIssueData.executionWorkspaceId : existing.executionWorkspaceId;
+      const nextExecutionWorkspacePreference =
+        issueData.executionWorkspacePreference !== undefined
+          ? issueData.executionWorkspacePreference
+          : existing.executionWorkspacePreference;
+      const nextExecutionWorkspaceSettings =
+        issueData.executionWorkspaceSettings !== undefined
+          ? parseIssueExecutionWorkspaceSettings(issueData.executionWorkspaceSettings)
+          : parseIssueExecutionWorkspaceSettings(existing.executionWorkspaceSettings);
       if (nextProjectWorkspaceId) {
         await assertValidProjectWorkspace(existing.companyId, nextProjectId, nextProjectWorkspaceId);
       }
@@ -2460,6 +2480,37 @@ export function issueService(db: Db) {
             },
             tx,
           );
+        }
+        if (
+          issueData.executionWorkspaceSettings !== undefined &&
+          nextExecutionWorkspaceId &&
+          nextExecutionWorkspacePreference === "reuse_existing"
+        ) {
+          const workspace = await tx
+            .select({
+              id: executionWorkspaces.id,
+              metadata: executionWorkspaces.metadata,
+            })
+            .from(executionWorkspaces)
+            .where(
+              and(
+                eq(executionWorkspaces.id, nextExecutionWorkspaceId),
+                eq(executionWorkspaces.companyId, existing.companyId),
+              ),
+            )
+            .then((rows: Array<{ id: string; metadata: unknown }>) => rows[0] ?? null);
+          if (workspace) {
+            await tx
+              .update(executionWorkspaces)
+              .set({
+                metadata: mergeExecutionWorkspaceConfig(
+                  (workspace.metadata as Record<string, unknown> | null) ?? null,
+                  buildReusedExecutionWorkspaceConfigPatchFromIssueSettings(nextExecutionWorkspaceSettings),
+                ),
+                updatedAt: new Date(),
+              })
+              .where(eq(executionWorkspaces.id, workspace.id));
+          }
         }
         const [enriched] = await withIssueLabels(tx, [updated]);
         return enriched;
