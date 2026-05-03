@@ -2403,6 +2403,7 @@ describe("company portability", () => {
       runtimeConfig: {
         heartbeat: {
           enabled: false,
+          maxConcurrentRuns: 20,
         },
       },
     });
@@ -2481,9 +2482,9 @@ describe("company portability", () => {
       runtimeConfig: expect.objectContaining({
         heartbeat: expect.objectContaining({
           enabled: false,
-          maxConcurrentRuns: 1,
-        }),
-      }),
+          maxConcurrentRuns: 20,
+        },
+      },
     }));
     expect(result.company.action).toBe("unchanged");
     expect(result.agents).toEqual([

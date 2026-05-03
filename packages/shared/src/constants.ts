@@ -212,7 +212,7 @@ export const AGENT_ICON_NAMES = [
   "fingerprint",
 ] as const;
 export type AgentIconName = (typeof AGENT_ICON_NAMES)[number];
-export const AGENT_DEFAULT_MAX_CONCURRENT_RUNS = 1;
+export const AGENT_DEFAULT_MAX_CONCURRENT_RUNS = 20;
 
 export const ISSUE_STATUSES = [
   "backlog",

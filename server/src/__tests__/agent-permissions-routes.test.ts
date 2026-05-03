@@ -310,7 +310,7 @@ describe.sequential("agent permission routes", () => {
           heartbeat: {
             enabled: false,
             intervalSec: 3600,
-            maxConcurrentRuns: 1,
+            maxConcurrentRuns: 20,
           },
         },
       }),
@@ -348,9 +348,9 @@ describe.sequential("agent permission routes", () => {
           heartbeat: expect.objectContaining({
             enabled: false,
             intervalSec: 3600,
-            maxConcurrentRuns: 1,
-          }),
-        }),
+            maxConcurrentRuns: 20,
+          },
+        },
       }),
     );
   });
