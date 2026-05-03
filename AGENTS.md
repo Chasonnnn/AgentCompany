@@ -206,6 +206,24 @@ This is a fork of `paperclipai/paperclip` with QoL patches and an **external-onl
 - Kill ALL paperclip processes before starting: `pkill -f "paperclip"; pkill -f "tsx.*index.ts"`
 - Vite cache survives `rm -rf dist` — delete both: `rm -rf ui/dist ui/node_modules/.vite`
 
+### Desktop Rebuild Discipline
+
+When rebuilding the local macOS desktop app, keep exactly one visible Paperclip app bundle: the latest installed app at `~/Applications/Paperclip.app`.
+
+Use this consistent flow:
+
+```sh
+pnpm desktop:package
+rsync -a --delete desktop/dist/package/mac-arm64/Paperclip.app/ ~/Applications/Paperclip.app/
+rm -rf desktop/dist/package/mac-arm64/Paperclip.app
+```
+
+If the build happened in a temporary worktree, remove that generated `.app` bundle too after installing it. Do not leave packaged `.app` artifacts in repo or temp build directories; macOS indexes them as duplicate applications. Verify only the installed latest app remains:
+
+```sh
+find /Applications ~/Applications /private/tmp -maxdepth 7 -type d -name 'Paperclip.app' -print
+```
+
 ### Fork QoL Patches (not in upstream)
 
 These are local modifications in the fork's UI. If re-copying source, these must be re-applied:
