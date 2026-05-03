@@ -12,6 +12,8 @@ import type {
 } from "@paperclipai/shared";
 import {
   DEFAULT_INBOX_ISSUE_COLUMNS,
+  buildGroupedInboxSections,
+  buildInboxKeyboardNavEntries,
   buildInboxDismissedAtByKey,
   computeInboxBadgeData,
   filterInboxIssues,
@@ -19,6 +21,7 @@ import {
   getAvailableInboxIssueColumns,
   getApprovalsForTab,
   getInboxWorkItems,
+  getInboxWorkItemKey,
   getInboxKeyboardSelectionIndex,
   getInboxSearchSupplementIssues,
   getRecentTouchedIssues,
@@ -523,6 +526,181 @@ describe("inbox helpers", () => {
       "join:join-1",
       "approval:approval-oldest",
     ]);
+  });
+
+  it("skips hidden groups when building keyboard navigation entries", () => {
+    const visibleIssue = makeIssue("visible", true);
+    const hiddenIssue = makeIssue("hidden", true);
+    const approval = makeApprovalWithTimestamps("approval-1", "pending", "2026-03-11T03:00:00.000Z");
+
+    const entries = buildInboxKeyboardNavEntries(
+      [
+        {
+          key: "visible-group",
+          displayItems: [{ kind: "issue", timestamp: 3, issue: visibleIssue }],
+          childrenByIssueId: new Map(),
+        },
+        {
+          key: "hidden-group",
+          displayItems: [
+            { kind: "issue", timestamp: 2, issue: hiddenIssue },
+            { kind: "approval", timestamp: 1, approval },
+          ],
+          childrenByIssueId: new Map(),
+        },
+      ],
+      new Set(["hidden-group"]),
+      new Set(),
+    );
+
+    expect(entries).toEqual([
+      {
+        type: "top",
+        itemKey: `visible-group:${getInboxWorkItemKey({ kind: "issue", timestamp: 3, issue: visibleIssue })}`,
+        item: { kind: "issue", timestamp: 3, issue: visibleIssue },
+      },
+    ]);
+  });
+
+  it("includes child issues only when their parent row is expanded", () => {
+    const parentIssue = makeIssue("parent", true);
+    const childIssue = makeIssue("child", true);
+    childIssue.parentId = parentIssue.id;
+
+    const groupedSections = [
+      {
+        key: "workspace:default",
+        displayItems: [{ kind: "issue", timestamp: 2, issue: parentIssue } satisfies InboxWorkItem],
+        childrenByIssueId: new Map([[parentIssue.id, [childIssue]]]),
+      },
+    ];
+
+    expect(
+      buildInboxKeyboardNavEntries(groupedSections, new Set(), new Set()).map((entry) => entry.type === "top"
+        ? entry.itemKey
+        : entry.type === "child"
+          ? entry.issueId
+          : entry.groupKey),
+    ).toEqual([
+      `workspace:default:${getInboxWorkItemKey({ kind: "issue", timestamp: 2, issue: parentIssue })}`,
+      childIssue.id,
+    ]);
+
+    expect(
+      buildInboxKeyboardNavEntries(groupedSections, new Set(), new Set([parentIssue.id])).map((entry) => entry.type === "top"
+        ? entry.itemKey
+        : entry.type === "child"
+          ? entry.issueId
+          : entry.groupKey),
+    ).toEqual([
+      `workspace:default:${getInboxWorkItemKey({ kind: "issue", timestamp: 2, issue: parentIssue })}`,
+    ]);
+  });
+
+  it("keeps nested grandchild issues visible in keyboard navigation", () => {
+    const parentIssue = makeIssue("parent", true);
+    parentIssue.lastActivityAt = new Date("2026-03-11T01:00:00.000Z");
+    const childIssue = makeIssue("child", true);
+    childIssue.parentId = parentIssue.id;
+    childIssue.lastActivityAt = new Date("2026-03-11T02:00:00.000Z");
+    const grandchildIssue = makeIssue("grandchild", false);
+    grandchildIssue.parentId = childIssue.id;
+    grandchildIssue.lastActivityAt = new Date("2026-03-11T05:00:00.000Z");
+
+    const [section] = buildGroupedInboxSections(
+      getInboxWorkItems({ issues: [parentIssue, childIssue, grandchildIssue], approvals: [] }),
+      "none",
+      {},
+      { nestingEnabled: true },
+    );
+
+    expect(section?.displayItems.map((item) => item.kind === "issue" ? item.issue.id : "other")).toEqual([
+      parentIssue.id,
+    ]);
+    expect(section?.displayItems[0]?.timestamp).toBe(new Date("2026-03-11T05:00:00.000Z").getTime());
+
+    expect(
+      buildInboxKeyboardNavEntries([section!], new Set(), new Set()).map((entry) => entry.type === "top"
+        ? entry.item.kind === "issue" ? entry.item.issue.id : "other"
+        : entry.type === "child"
+          ? entry.issueId
+          : entry.groupKey),
+    ).toEqual([parentIssue.id, childIssue.id, grandchildIssue.id]);
+
+    expect(
+      buildInboxKeyboardNavEntries([section!], new Set(), new Set([childIssue.id])).map((entry) => entry.type === "top"
+        ? entry.item.kind === "issue" ? entry.item.issue.id : "other"
+        : entry.type === "child"
+          ? entry.issueId
+          : entry.groupKey),
+    ).toEqual([parentIssue.id, childIssue.id]);
+  });
+
+  it("stops cyclic child issue traversal when building keyboard navigation", () => {
+    const parentIssue = makeIssue("parent", true);
+    const childIssue = makeIssue("child", true);
+    childIssue.parentId = parentIssue.id;
+    parentIssue.parentId = childIssue.id;
+
+    const groupedSections = [
+      {
+        key: "workspace:default",
+        displayItems: [{ kind: "issue", timestamp: 2, issue: parentIssue } satisfies InboxWorkItem],
+        childrenByIssueId: new Map([
+          [parentIssue.id, [childIssue]],
+          [childIssue.id, [parentIssue]],
+        ]),
+      },
+    ];
+
+    expect(
+      buildInboxKeyboardNavEntries(groupedSections, new Set(), new Set()).map((entry) => entry.type === "top"
+        ? entry.item.kind === "issue" ? entry.item.issue.id : "other"
+        : entry.type === "child"
+          ? entry.issueId
+          : entry.groupKey),
+    ).toEqual([parentIssue.id, childIssue.id]);
+  });
+
+  it("emits a group nav entry for labeled groups and omits children when the group is collapsed", () => {
+    const visibleIssue = makeIssue("visible", true);
+    const hiddenIssue = makeIssue("hidden", true);
+    const groupedSections = [
+      {
+        key: "priority:high",
+        label: "High priority",
+        displayItems: [{ kind: "issue", timestamp: 3, issue: visibleIssue } satisfies InboxWorkItem],
+        childrenByIssueId: new Map(),
+      },
+      {
+        key: "priority:medium",
+        label: "Medium priority",
+        displayItems: [{ kind: "issue", timestamp: 2, issue: hiddenIssue } satisfies InboxWorkItem],
+        childrenByIssueId: new Map(),
+      },
+    ];
+
+    const expanded = buildInboxKeyboardNavEntries(groupedSections, new Set(), new Set());
+    expect(expanded.map((entry) => entry.type)).toEqual(["group", "top", "group", "top"]);
+    expect(expanded[0]).toEqual({
+      type: "group",
+      groupKey: "priority:high",
+      label: "High priority",
+      collapsed: false,
+    });
+
+    const collapsed = buildInboxKeyboardNavEntries(
+      groupedSections,
+      new Set(["priority:medium"]),
+      new Set(),
+    );
+    expect(collapsed.map((entry) => entry.type)).toEqual(["group", "top", "group"]);
+    expect(collapsed[2]).toEqual({
+      type: "group",
+      groupKey: "priority:medium",
+      label: "Medium priority",
+      collapsed: true,
+    });
   });
 
   it("sorts self-touched issues without external comments by updatedAt", () => {
