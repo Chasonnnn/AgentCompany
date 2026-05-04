@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import {
   createCostEventSchema,
   createFinanceEventSchema,
+  normalizeIssueIdentifier,
   resolveBudgetIncidentSchema,
   updateBudgetSchema,
   upsertBudgetPolicySchema,
@@ -49,6 +50,7 @@ type CostRouteDeps = {
   financeService: ReturnType<typeof financeService>;
   companyService: ReturnType<typeof companyService>;
   agentService: ReturnType<typeof agentService>;
+  issueService: ReturnType<typeof issueService>;
   logActivity: typeof logActivity;
 };
 
@@ -69,13 +71,14 @@ export function costRoutes(
   const budgets = opts?.services?.budgetService ?? budgetService(db, budgetHooks);
   const companies = opts?.services?.companyService ?? companyService(db);
   const agents = opts?.services?.agentService ?? agentService(db);
+  const issues = opts?.services?.issueService ?? issueService(db);
   const logActivityFn = opts?.services?.logActivity ?? logActivity;
   const fetchAllQuotaWindowsFn = opts?.fetchAllQuotaWindows ?? fetchAllQuotaWindows;
-  const issues = issueService(db);
 
   async function resolveIssueByRef(rawId: string) {
-    if (/^[A-Z]+-\d+$/i.test(rawId)) {
-      return issues.getByIdentifier(rawId);
+    const identifier = normalizeIssueIdentifier(rawId);
+    if (identifier) {
+      return issues.getByIdentifier(identifier);
     }
     return issues.getById(rawId);
   }

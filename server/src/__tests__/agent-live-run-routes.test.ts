@@ -106,10 +106,10 @@ describe("agent live run routes", () => {
   });
 
   it("returns a compact active run payload for issue polling", async () => {
-    const res = await request(createApp()).get("/api/issues/PAP-1295/active-run");
+    const res = await request(createApp()).get("/api/issues/pc1a2-1295/active-run");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PAP-1295");
+    expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PC1A2-1295");
     expect(mockHeartbeatService.getRunIssueSummary).toHaveBeenCalledWith("run-1");
     expect(res.body).toEqual({
       id: "run-1",
@@ -129,6 +129,44 @@ describe("agent live run routes", () => {
     expect(res.body).not.toHaveProperty("resultJson");
     expect(res.body).not.toHaveProperty("contextSnapshot");
     expect(res.body).not.toHaveProperty("logRef");
+  }, 10_000);
+
+  it("ignores a stale execution run from another issue and falls back to the assignee's matching run", async () => {
+    mockHeartbeatService.getRunIssueSummary.mockResolvedValue({
+      id: "run-foreign",
+      status: "running",
+      invocationSource: "assignment",
+      triggerDetail: "callback",
+      startedAt: new Date("2026-04-10T10:00:00.000Z"),
+      finishedAt: null,
+      createdAt: new Date("2026-04-10T09:59:00.000Z"),
+      agentId: "agent-1",
+      issueId: "issue-2",
+    });
+    mockHeartbeatService.getActiveRunIssueSummaryForAgent.mockResolvedValue({
+      id: "run-1",
+      status: "running",
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      startedAt: new Date("2026-04-10T09:30:00.000Z"),
+      finishedAt: null,
+      createdAt: new Date("2026-04-10T09:29:59.000Z"),
+      agentId: "agent-1",
+      issueId: "issue-1",
+    });
+
+    const res = await request(createApp()).get("/api/issues/PC1A2-1295/active-run");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.getRunIssueSummary).toHaveBeenCalledWith("run-1");
+    expect(mockHeartbeatService.getActiveRunIssueSummaryForAgent).toHaveBeenCalledWith("agent-1");
+    expect(res.body).toMatchObject({
+      id: "run-1",
+      issueId: "issue-1",
+      agentId: "agent-1",
+      agentName: "Builder",
+      adapterType: "codex_local",
+    });
   });
 
   it("includes routine-execution issues in agent inbox lite", async () => {

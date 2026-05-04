@@ -60,7 +60,7 @@ describe("activity routes", () => {
     vi.clearAllMocks();
   });
 
-  it("resolves issue identifiers before loading runs", async () => {
+  it("resolves alphanumeric issue identifiers before loading runs", async () => {
     mockIssueService.getByIdentifier.mockResolvedValue({
       id: "issue-uuid-1",
       companyId: "company-1",
@@ -72,10 +72,10 @@ describe("activity routes", () => {
     ]);
 
     const app = await createApp();
-    const res = await request(app).get("/api/issues/PAP-475/runs");
+    const res = await request(app).get("/api/issues/pc1a2-475/runs");
 
     expect(res.status).toBe(200);
-    expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PAP-475");
+    expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PC1A2-475");
     expect(mockIssueService.getById).not.toHaveBeenCalled();
     expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("company-1", "issue-uuid-1");
     expect(res.body).toEqual([{ runId: "run-1" }]);

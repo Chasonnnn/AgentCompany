@@ -23,6 +23,7 @@ import {
   getDefaultDesiredSkillSlugsForAgent,
   groupOperatorState,
   isUuidLike,
+  normalizeIssueIdentifier,
   resetAgentSessionSchema,
   testAdapterEnvironmentSchema,
   type AgentRole,
@@ -3955,10 +3956,10 @@ export function agentRoutes(
     res.json(result);
   });
 
-  router.get("/issues/:issueId/live-runs", async (req, res) => {
-    const rawId = req.params.issueId as string;
-    const isIdentifier = /^[A-Z]+-\d+$/i.test(rawId);
-    const issue = isIdentifier ? await issuesSvc.getByIdentifier(rawId) : await issuesSvc.getById(rawId);
+	  router.get("/issues/:issueId/live-runs", async (req, res) => {
+	    const rawId = req.params.issueId as string;
+	    const identifier = normalizeIssueIdentifier(rawId);
+	    const issue = identifier ? await issuesSvc.getByIdentifier(identifier) : await issuesSvc.getById(rawId);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
@@ -4001,10 +4002,10 @@ export function agentRoutes(
     }))));
   });
 
-  router.get("/issues/:issueId/active-run", async (req, res) => {
-    const rawId = req.params.issueId as string;
-    const isIdentifier = /^[A-Z]+-\d+$/i.test(rawId);
-    const issue = isIdentifier ? await issuesSvc.getByIdentifier(rawId) : await issuesSvc.getById(rawId);
+	  router.get("/issues/:issueId/active-run", async (req, res) => {
+	    const rawId = req.params.issueId as string;
+	    const identifier = normalizeIssueIdentifier(rawId);
+	    const issue = identifier ? await issuesSvc.getByIdentifier(identifier) : await issuesSvc.getById(rawId);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;

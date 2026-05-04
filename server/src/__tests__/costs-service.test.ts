@@ -44,6 +44,15 @@ const mockFetchAllQuotaWindows = vi.hoisted(() => vi.fn());
 const mockCostService = vi.hoisted(() => ({
   createEvent: vi.fn(),
   summary: vi.fn().mockResolvedValue({ spendCents: 0 }),
+  issueTreeSummary: vi.fn().mockResolvedValue({
+    issueId: "issue-1",
+    issueCount: 1,
+    includeDescendants: true,
+    costCents: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+  }),
   byAgent: vi.fn().mockResolvedValue([]),
   byAgentModel: vi.fn().mockResolvedValue([]),
   byProvider: vi.fn().mockResolvedValue([]),
@@ -69,6 +78,10 @@ const mockBudgetService = vi.hoisted(() => ({
   }),
   upsertPolicy: vi.fn(),
   resolveIncident: vi.fn(),
+}));
+const mockIssueService = vi.hoisted(() => ({
+  getById: vi.fn(),
+  getByIdentifier: vi.fn(),
 }));
 
 async function createApp() {
@@ -97,6 +110,7 @@ async function createApp() {
       financeService: mockFinanceService as any,
       companyService: mockCompanyService as any,
       agentService: mockAgentService as any,
+      issueService: mockIssueService as any,
       heartbeatService: mockHeartbeatService as any,
       logActivity: mockLogActivity as any,
     },
@@ -132,6 +146,7 @@ async function createAppWithActor(actor: any) {
       financeService: mockFinanceService as any,
       companyService: mockCompanyService as any,
       agentService: mockAgentService as any,
+      issueService: mockIssueService as any,
       heartbeatService: mockHeartbeatService as any,
       logActivity: mockLogActivity as any,
     },
@@ -152,6 +167,15 @@ beforeEach(() => {
   vi.doUnmock("../middleware/validate.js");
   mockCostService.createEvent.mockResolvedValue(undefined);
   mockCostService.summary.mockResolvedValue({ spendCents: 0 });
+  mockCostService.issueTreeSummary.mockResolvedValue({
+    issueId: "issue-1",
+    issueCount: 1,
+    includeDescendants: true,
+    costCents: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+  });
   mockCostService.byAgent.mockResolvedValue([]);
   mockCostService.byAgentModel.mockResolvedValue([]);
   mockCostService.byProvider.mockResolvedValue([]);
@@ -197,6 +221,16 @@ beforeEach(() => {
     name: "Budget Agent",
     budgetMonthlyCents: 100,
     spentMonthlyCents: 0,
+  });
+  mockIssueService.getById.mockResolvedValue({
+    id: "issue-1",
+    companyId: "company-1",
+    identifier: "PC1A2-1",
+  });
+  mockIssueService.getByIdentifier.mockResolvedValue({
+    id: "issue-1",
+    companyId: "company-1",
+    identifier: "PC1A2-1",
   });
   mockBudgetService.upsertPolicy.mockResolvedValue(undefined);
 });
@@ -245,7 +279,25 @@ describe("cost routes", () => {
     expect(mockFinanceService.summary).toHaveBeenCalled();
   });
 
-  it("rejects invalid finance event list limits", async () => {
+  it("returns issue subtree cost summaries for issue refs", async () => {
+    const app = await createApp();
+    const res = await request(app).get("/api/issues/pc1a2-1/cost-summary");
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.getByIdentifier).toHaveBeenCalledWith("PC1A2-1");
+    expect(mockCostService.issueTreeSummary).toHaveBeenCalledWith("company-1", "issue-1");
+    expect(res.body).toEqual({
+      issueId: "issue-1",
+      issueCount: 1,
+      includeDescendants: true,
+      costCents: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+    });
+  });
+
+  it("returns 400 for invalid finance event list limits", async () => {
     const { parseCostLimit } = await vi.importActual<typeof import("../routes/costs.js")>("../routes/costs.js");
     expect(() => parseCostLimit({ limit: "0" })).toThrow(/invalid 'limit'/i);
   });
