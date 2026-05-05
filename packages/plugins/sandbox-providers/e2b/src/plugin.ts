@@ -1,5 +1,11 @@
 import path from "node:path";
-import { CommandExitError, Sandbox, SandboxNotFoundError, TimeoutError } from "e2b";
+import { randomUUID } from "node:crypto";
+import {
+  CommandExitError,
+  Sandbox,
+  SandboxNotFoundError,
+  TimeoutError,
+} from "e2b";
 import { definePlugin } from "@paperclipai/plugin-sdk";
 import type {
   PluginEnvironmentAcquireLeaseParams,
@@ -61,6 +67,34 @@ async function createSandbox(config: E2bDriverConfig): Promise<Sandbox> {
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function readTimeoutStream(error: TimeoutError, key: "stdout" | "stderr"): string {
+  const record = error as unknown as Record<string, unknown>;
+  const direct = record[key];
+  if (typeof direct === "string" && direct.length > 0) return direct;
+  const nested = (record as { result?: Record<string, unknown> }).result?.[key];
+  if (typeof nested === "string") return nested;
+  return typeof direct === "string" ? direct : "";
+}
+
+function buildTimeoutExecuteResult(error: TimeoutError): PluginEnvironmentExecuteResult {
+  const stdout = readTimeoutStream(error, "stdout");
+  const stderrOutput = readTimeoutStream(error, "stderr");
+  const message = error.message.trim();
+  const stderr = stderrOutput.length > 0
+    ? message.length > 0 && !stderrOutput.includes(message)
+      ? `${stderrOutput}${stderrOutput.endsWith("\n") ? "" : "\n"}${message}\n`
+      : stderrOutput
+    : message.length > 0
+      ? `${message}\n`
+      : "";
+  return {
+    exitCode: null,
+    timedOut: true,
+    stdout,
+    stderr,
+  };
 }
 
 async function ensureSandboxWorkspace(sandbox: Sandbox, remoteCwd: string): Promise<void> {
@@ -317,28 +351,43 @@ const plugin = definePlugin({
 
     const config = parseDriverConfig(params.config);
     const sandbox = await connectSandbox(config, params.lease.providerLeaseId);
-    const started = await sandbox.commands.run(buildCommandLine(params.command, params.args), {
-      background: true,
-      stdin: params.stdin != null,
-      cwd: params.cwd,
-      envs: params.env,
-      timeoutMs: params.timeoutMs ?? config.timeoutMs,
-    }) as Awaited<ReturnType<Sandbox["commands"]["run"]>> & {
-      pid: number;
-      stdout: string;
-      stderr: string;
-      wait(): Promise<{ exitCode: number; stdout: string; stderr: string }>;
-    };
+    const baseCommand = buildCommandLine(params.command, params.args);
+    const timeoutMs = params.timeoutMs ?? config.timeoutMs;
+
+    // For commands with stdin, stage the payload to a temp file inside the
+    // sandbox and shell-redirect it. Streaming stdin via `sendStdin` raced
+    // with fast-failing commands (the process exits before the RPC lands),
+    // and the previous code awaited a foreground `run` before sending stdin
+    // at all, so the data was never delivered. The staged-file approach
+    // keeps execution synchronous, avoids the race, and is unaffected by
+    // whether the command exits in microseconds or minutes.
+    let stagedStdinPath: string | null = null;
+    if (params.stdin != null) {
+      stagedStdinPath = `/tmp/paperclip-stdin-${randomUUID()}`;
+      try {
+        await sandbox.files.write(stagedStdinPath, params.stdin);
+      } catch (error) {
+        // Best-effort cleanup in case the write partially succeeded; ignore
+        // remove failures so the original error is what propagates.
+        await sandbox.files.remove(stagedStdinPath).catch(() => undefined);
+        throw error;
+      }
+    }
+
+    const command = stagedStdinPath
+      ? `${baseCommand} < ${shellQuote(stagedStdinPath)}`
+      : baseCommand;
 
     try {
-      if (params.stdin != null) {
-        try {
-          await sandbox.commands.sendStdin(started.pid, params.stdin);
-        } finally {
-          await sandbox.commands.closeStdin(started.pid);
-        }
-      }
-      const result = await started.wait();
+      const result = await sandbox.commands.run(command, {
+        cwd: params.cwd,
+        envs: params.env,
+        timeoutMs,
+      }) as Awaited<ReturnType<Sandbox["commands"]["run"]>> & {
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+      };
       return {
         exitCode: result.exitCode,
         timedOut: false,
@@ -347,24 +396,21 @@ const plugin = definePlugin({
       };
     } catch (error) {
       if (error instanceof CommandExitError) {
-        const commandError = error as CommandExitError;
         return {
-          exitCode: commandError.exitCode,
+          exitCode: error.exitCode,
           timedOut: false,
-          stdout: commandError.stdout,
-          stderr: commandError.stderr,
+          stdout: error.stdout,
+          stderr: error.stderr,
         };
       }
       if (error instanceof TimeoutError) {
-        const timeoutError = error as TimeoutError;
-        return {
-          exitCode: null,
-          timedOut: true,
-          stdout: started.stdout,
-          stderr: started.stderr || `${timeoutError.message}\n`,
-        };
+        return buildTimeoutExecuteResult(error);
       }
       throw error;
+    } finally {
+      if (stagedStdinPath) {
+        await sandbox.files.remove(stagedStdinPath).catch(() => undefined);
+      }
     }
   },
 });
