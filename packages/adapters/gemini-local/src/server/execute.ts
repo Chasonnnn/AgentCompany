@@ -10,7 +10,6 @@ import {
 } from "@paperclipai/adapter-utils/local-execution-policy";
 import {
   adapterExecutionTargetIsRemote,
-  adapterExecutionTargetPaperclipApiUrl,
   adapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
   adapterExecutionTargetSessionMatches,
@@ -48,6 +47,7 @@ import {
   renderPaperclipWakePrompt,
   renderPaperclipProjectContext,
   normalizePaperclipWakePayload,
+  shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -203,6 +203,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
+  const effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
+  const shapedWorkspaceEnv = shapePaperclipWorkspaceEnvForExecution({
+    workspaceCwd: effectiveWorkspaceCwd,
+    workspaceHints,
+    executionTargetIsRemote,
+    executionCwd: effectiveExecutionCwd,
+  });
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
 
 
@@ -248,17 +255,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (wakeMode) env.PAPERCLIP_CONTINUITY_MODE = wakeMode;
   if (wakePayloadJson) env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
   applyPaperclipWorkspaceEnv(env, {
-    workspaceCwd: effectiveWorkspaceCwd,
+    workspaceCwd: shapedWorkspaceEnv.workspaceCwd,
     workspaceSource,
     workspaceId,
     workspaceRepoUrl,
     workspaceRepoRef,
     agentHome,
   });
-  if (workspaceHints.length > 0) env.PAPERCLIP_WORKSPACES_JSON = JSON.stringify(workspaceHints);
-  const targetPaperclipApiUrl = adapterExecutionTargetPaperclipApiUrl(executionTarget);
-  if (targetPaperclipApiUrl) env.PAPERCLIP_API_URL = targetPaperclipApiUrl;
-
+  if (shapedWorkspaceEnv.workspaceHints.length > 0) {
+    env.PAPERCLIP_WORKSPACES_JSON = JSON.stringify(shapedWorkspaceEnv.workspaceHints);
+  }
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
@@ -309,7 +315,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (fromExtraArgs.length > 0) return fromExtraArgs;
     return asStringArray(config.args);
   })();
-  const effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
   let restoreRemoteWorkspace: (() => Promise<void>) | null = null;
   let remoteSkillsDir: string | null = null;
   let localSkillsDir: string | null = null;
