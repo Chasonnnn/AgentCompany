@@ -11,6 +11,7 @@ import {
 import {
   ensureAdapterExecutionTargetCommandResolvable,
   ensureAdapterExecutionTargetDirectory,
+  maybeRunSandboxInstallCommand,
   runAdapterExecutionTargetProcess,
   describeAdapterExecutionTarget,
   resolveAdapterExecutionTargetCwd,
@@ -18,6 +19,7 @@ import {
 } from "@paperclipai/adapter-utils/execution-target";
 import path from "node:path";
 import { parseCodexJsonl } from "./parse.js";
+import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 import { codexHomeDir, readCodexAuthInfo } from "./quota.js";
 import { buildCodexExecArgs } from "./codex-args.js";
 import { prepareManagedCodexHome, resolveManagedCodexHomeDir } from "./codex-home.js";
@@ -163,6 +165,15 @@ export async function testEnvironment(
     probeEnv.CODEX_HOME = effectiveCodexHome;
   }
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...probeEnv });
+  const installCheck = await maybeRunSandboxInstallCommand({
+    runId,
+    target,
+    adapterKey: "codex",
+    installCommand: SANDBOX_INSTALL_COMMAND,
+    detectCommand: command,
+    env: probeEnv,
+  });
+  if (installCheck) checks.push(installCheck);
   try {
     await ensureAdapterExecutionTargetCommandResolvable(command, target, cwd, runtimeEnv);
     checks.push({

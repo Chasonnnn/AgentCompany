@@ -11,6 +11,8 @@ export const CLAUDE_LOCAL_EFFORT_LEVELS = [
   "max",
 ] as const;
 
+export const SANDBOX_INSTALL_COMMAND = "npm install -g @anthropic-ai/claude-code";
+
 export const models = [
   { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
   { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
