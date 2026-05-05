@@ -7,6 +7,13 @@ export const SANDBOX_INSTALL_COMMAND = "npm install -g opencode-ai";
 
 export const DEFAULT_OPENCODE_LOCAL_MODEL = "openai/gpt-5.2-codex";
 
+export function isValidOpenCodeModelId(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  const slashIndex = trimmed.indexOf("/");
+  return Boolean(trimmed) && slashIndex > 0 && slashIndex !== trimmed.length - 1;
+}
+
 export const models: Array<{ id: string; label: string }> = [
   { id: DEFAULT_OPENCODE_LOCAL_MODEL, label: DEFAULT_OPENCODE_LOCAL_MODEL },
   { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
