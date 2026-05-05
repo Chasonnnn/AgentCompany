@@ -23,7 +23,6 @@ import {
 } from "@paperclipai/shared";
 import {
   ensureSshWorkspaceReady,
-  findReachablePaperclipApiUrlOverSsh,
   type SshRemoteExecutionSpec,
 } from "@paperclipai/adapter-utils/ssh";
 import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
@@ -111,9 +110,9 @@ import {
 import { resolveIssueHeartbeatMode } from "./issue-heartbeat-mode.js";
 import { issueContinuityService } from "./issue-continuity.js";
 import { issueDecisionQuestionService } from "./issue-decision-questions.js";
+import { RECOVERY_ORIGIN_KINDS } from "./recovery/origins.js";
 import {
   ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS,
-  isVerifiedIssueTreeControlInteractionWake,
   issueTreeControlService,
 } from "./issue-tree-control.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
@@ -588,27 +587,6 @@ function leaseReleaseStatusForRunStatus(
   status: string | null | undefined,
 ): Extract<EnvironmentLeaseStatus, "released" | "expired" | "failed"> {
   return status === "failed" || status === "timed_out" ? "failed" : "released";
-}
-
-function runtimeApiUrlCandidates() {
-  const candidates = [
-    process.env.PAPERCLIP_RUNTIME_API_URL,
-    process.env.PAPERCLIP_API_URL,
-    process.env.PUBLIC_BASE_URL,
-  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-  const encoded = process.env.PAPERCLIP_RUNTIME_API_CANDIDATES_JSON;
-  if (!encoded) return candidates;
-  try {
-    const parsed = JSON.parse(encoded);
-    if (Array.isArray(parsed)) {
-      candidates.push(
-        ...parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0),
-      );
-    }
-  } catch {
-    logger.warn("Ignoring invalid PAPERCLIP_RUNTIME_API_CANDIDATES_JSON");
-  }
-  return candidates;
 }
 
 export function applyPersistedExecutionWorkspaceConfig(input: {
@@ -7622,14 +7600,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
     if (selectedEnvironmentRuntimeConfig.driver === "ssh") {
       const { remoteCwd } = await ensureSshWorkspaceReady(selectedEnvironmentRuntimeConfig.config);
-      const paperclipApiUrl = await findReachablePaperclipApiUrlOverSsh({
-        config: selectedEnvironmentRuntimeConfig.config,
-        candidates: runtimeApiUrlCandidates(),
-      });
       remoteExecution = {
         ...selectedEnvironmentRuntimeConfig.config,
         remoteCwd,
-        paperclipApiUrl,
       };
       environmentProvider = "ssh";
       environmentProviderLeaseId = `ssh://${selectedEnvironmentRuntimeConfig.config.username}@${selectedEnvironmentRuntimeConfig.config.host}:${selectedEnvironmentRuntimeConfig.config.port}${remoteCwd}`;
@@ -7640,7 +7613,6 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         username: selectedEnvironmentRuntimeConfig.config.username,
         remoteWorkspacePath: selectedEnvironmentRuntimeConfig.config.remoteWorkspacePath,
         remoteCwd,
-        paperclipApiUrl,
       };
     }
 
@@ -7678,7 +7650,6 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         environmentId: selectedEnvironment.id,
         leaseId: environmentLease.id,
         remoteCwd: remoteExecution.remoteCwd,
-        paperclipApiUrl: remoteExecution.paperclipApiUrl,
         spec: remoteExecution,
       };
     }
@@ -8319,17 +8290,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             );
           }
         }
-        if (outcome === "failed" && isMaxTurnExhaustionRun(livenessRun)) {
+        if (outcome === "failed" && isMaxTurnExhaustionRun(finalizedWithLiveness)) {
           const policy = parseMaxTurnContinuationPolicy(agent);
           if (policy.enabled && policy.maxAttempts > 0) {
-            await scheduleBoundedRetryForRun(livenessRun, agent, {
+            await scheduleBoundedRetryForRun(finalizedWithLiveness, agent, {
               retryReason: MAX_TURN_CONTINUATION_RETRY_REASON,
               wakeReason: MAX_TURN_CONTINUATION_WAKE_REASON,
               maxAttempts: policy.maxAttempts,
               delayMs: policy.delayMs,
             });
           } else {
-            await appendRunEvent(livenessRun, await nextRunEventSeq(livenessRun.id), {
+            await appendRunEvent(finalizedWithLiveness, await nextRunEventSeq(finalizedWithLiveness.id), {
               eventType: "lifecycle",
               stream: "system",
               level: "warn",
@@ -8340,8 +8311,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               },
             });
           }
-        } else if (outcome === "failed" && readTransientRecoveryContractFromRun(livenessRun)) {
-          await scheduleBoundedRetryForRun(livenessRun, agent);
+        } else if (outcome === "failed" && readTransientRecoveryContractFromRun(finalizedWithLiveness)) {
+          await scheduleBoundedRetryForRun(finalizedWithLiveness, agent);
         }
         await finalizeIssueCommentPolicy(finalizedWithLiveness, agent);
         await refreshContinuationSummaryForRun(finalizedWithLiveness, agent);

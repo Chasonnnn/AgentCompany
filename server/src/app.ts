@@ -280,13 +280,18 @@ export async function createApp(
       instanceInfo: {
         instanceId: opts.instanceId ?? "default",
         hostVersion: opts.hostVersion ?? "0.0.0",
+        deploymentMode: opts.deploymentMode,
+        deploymentExposure: opts.deploymentExposure,
       },
       buildHostHandlers: (pluginId, manifest) => {
         const notifyWorker = (method: string, params: unknown) => {
           const handle = workerManager.getWorker(pluginId);
           if (handle) handle.notify(method, params);
         };
-        const services = buildHostServices(db, pluginId, manifest.id, eventBus, notifyWorker);
+        const services = buildHostServices(db, pluginId, manifest.id, eventBus, notifyWorker, {
+          pluginWorkerManager: workerManager,
+          manifest,
+        });
         hostServicesDisposers.set(pluginId, () => services.dispose());
         return createHostClientHandlers({
           pluginId,

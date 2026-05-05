@@ -604,6 +604,7 @@ type ImportPlanInternal = {
 };
 
 type ImportMode = "board_full" | "agent_safe";
+const IMPORT_FORBIDDEN_ADAPTER_TYPES = new Set(["process", "http"]);
 
 type ImportBehaviorOptions = {
   mode?: ImportMode;

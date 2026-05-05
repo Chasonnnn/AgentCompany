@@ -10,6 +10,8 @@ import {
   issueInboxArchives,
   issueReadStates,
   issues,
+  pluginManagedResources,
+  plugins,
   projects,
   routineRuns,
   routines,
@@ -21,6 +23,7 @@ import type {
   Routine,
   RoutineDetail,
   RoutineListItem,
+  RoutineManagedByPlugin,
   RoutineRunSummary,
   RoutineTrigger,
   RoutineTriggerSecretMaterial,
@@ -31,7 +34,9 @@ import type {
 } from "@paperclipai/shared";
 import {
   getBuiltinRoutineVariableValues,
+  extractRoutineVariableNames,
   interpolateRoutineTemplate,
+  pluginOperationIssueOriginKind,
   stringifyRoutineVariableValue,
   syncRoutineVariablesWithTemplate,
   WORKSPACE_BRANCH_ROUTINE_VARIABLE,
@@ -46,6 +51,7 @@ import { parseCron, validateCron } from "./cron.js";
 import { heartbeatService } from "./heartbeat.js";
 import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "./issue-assignment-wakeup.js";
 import { logActivity } from "./activity-log.js";
+import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 const OPEN_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"];
 const LIVE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"];
@@ -487,7 +493,7 @@ function resolveRoutineVariableValues(
   return resolved;
 }
 
-function routineUsesWorkspaceBranch(variables: RoutineVariable[]) {
+function routineVariablesUseWorkspaceBranch(variables: RoutineVariable[]) {
   return variables.some((variable) => variable.name === WORKSPACE_BRANCH_ROUTINE_VARIABLE);
 }
 
@@ -497,7 +503,7 @@ async function resolveWorkspaceBranchRoutineVariables(input: {
   executionWorkspaceId?: string | null;
   variables: RoutineVariable[];
 }) {
-  if (!input.executionWorkspaceId || !routineUsesWorkspaceBranch(input.variables)) {
+  if (!input.executionWorkspaceId || !routineVariablesUseWorkspaceBranch(input.variables)) {
     return {} as Record<string, string>;
   }
 
@@ -571,7 +577,28 @@ function createRoutineDispatchFingerprint(input: {
   return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
-export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeupDeps } = {}) {
+function readManagedRoutineIssueTemplate(defaultsJson: Record<string, unknown> | null | undefined) {
+  const value = defaultsJson?.issueTemplate;
+  if (!isPlainRecord(value)) return null;
+  return {
+    surfaceVisibility: typeof value.surfaceVisibility === "string" ? value.surfaceVisibility : null,
+    originId: typeof value.originId === "string" && value.originId.trim() ? value.originId.trim() : null,
+    billingCode: typeof value.billingCode === "string" && value.billingCode.trim() ? value.billingCode.trim() : null,
+  };
+}
+
+function routineUsesWorkspaceBranch(routine: typeof routines.$inferSelect) {
+  return (routine.variables ?? []).some((variable) => variable.name === WORKSPACE_BRANCH_ROUTINE_VARIABLE)
+    || extractRoutineVariableNames([routine.title, routine.description]).includes(WORKSPACE_BRANCH_ROUTINE_VARIABLE);
+}
+
+export function routineService(
+  db: Db,
+  deps: {
+    heartbeat?: IssueAssignmentWakeupDeps;
+    pluginWorkerManager?: PluginWorkerManager;
+  } = {},
+) {
   const issueSvc = issueService(db);
   const secretsSvc = secretService(db);
   const heartbeat = deps.heartbeat ?? heartbeatService(db);
@@ -634,6 +661,63 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
       .then((rows) => rows[0] ?? null);
     if (!row) return null;
     return { ...row, ...(await getRoutineAdvisorState(id)) };
+  }
+
+  async function getManagedRoutineBinding(routine: typeof routines.$inferSelect) {
+    return db
+      .select({
+        pluginKey: pluginManagedResources.pluginKey,
+        defaultsJson: pluginManagedResources.defaultsJson,
+        manifestJson: plugins.manifestJson,
+      })
+      .from(pluginManagedResources)
+      .innerJoin(plugins, eq(pluginManagedResources.pluginId, plugins.id))
+      .where(
+        and(
+          eq(pluginManagedResources.companyId, routine.companyId),
+          eq(pluginManagedResources.resourceKind, "routine"),
+          eq(pluginManagedResources.resourceId, routine.id),
+        ),
+      )
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function listManagedRoutineMetadata(routineIds: string[]) {
+    if (routineIds.length === 0) return new Map<string, RoutineManagedByPlugin>();
+    const rows = await db
+      .select({
+        id: pluginManagedResources.id,
+        pluginId: pluginManagedResources.pluginId,
+        pluginKey: pluginManagedResources.pluginKey,
+        manifestJson: plugins.manifestJson,
+        resourceKey: pluginManagedResources.resourceKey,
+        resourceId: pluginManagedResources.resourceId,
+        defaultsJson: pluginManagedResources.defaultsJson,
+        createdAt: pluginManagedResources.createdAt,
+        updatedAt: pluginManagedResources.updatedAt,
+      })
+      .from(pluginManagedResources)
+      .innerJoin(plugins, eq(pluginManagedResources.pluginId, plugins.id))
+      .where(
+        and(
+          eq(pluginManagedResources.resourceKind, "routine"),
+          inArray(pluginManagedResources.resourceId, routineIds),
+        ),
+      );
+    return new Map(rows.map((row) => [
+      row.resourceId,
+      {
+        id: row.id,
+        pluginId: row.pluginId,
+        pluginKey: row.pluginKey,
+        pluginDisplayName: row.manifestJson.displayName ?? row.pluginKey,
+        resourceKind: "routine",
+        resourceKey: row.resourceKey,
+        defaultsJson: row.defaultsJson,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      } satisfies RoutineManagedByPlugin,
+    ]));
   }
 
   async function getTriggerById(id: string) {
@@ -919,7 +1003,10 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
     routine: typeof routines.$inferSelect,
     executor: Db = db,
     dispatchFingerprint?: string | null,
+    origin?: { kind: string; id: string | null },
   ) {
+    const originKind = origin?.kind ?? "routine_execution";
+    const originId = origin?.id ?? routine.id;
     const executionBoundIssue = await executor
       .select({
         id: issues.id,
@@ -943,8 +1030,8 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
       .where(
         and(
           eq(issues.companyId, routine.companyId),
-          eq(issues.originKind, "routine_execution"),
-          eq(issues.originId, routine.id),
+          eq(issues.originKind, originKind),
+          eq(issues.originId, originId),
           inArray(issues.status, OPEN_ISSUE_STATUSES),
           isNull(issues.hiddenAt),
         ),
@@ -978,8 +1065,8 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
       .where(
         and(
           eq(issues.companyId, routine.companyId),
-          eq(issues.originKind, "routine_execution"),
-          eq(issues.originId, routine.id),
+          eq(issues.originKind, originKind),
+          eq(issues.originId, originId),
           inArray(issues.status, OPEN_ISSUE_STATUSES),
           isNull(issues.hiddenAt),
         ),
@@ -1098,10 +1185,17 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
       ...input,
       variables: { ...autoVariables, ...(input.variables ?? {}) },
     });
-    const allVariables = { ...getBuiltinRoutineVariableValues(), ...resolvedVariables };
+    const allVariables = { ...getBuiltinRoutineVariableValues(), ...autoVariables, ...resolvedVariables };
     const title = interpolateRoutineTemplate(input.routine.title, allVariables) ?? input.routine.title;
     const description = interpolateRoutineTemplate(input.routine.description, allVariables);
-    const triggerPayload = mergeRoutineRunPayload(input.payload, resolvedVariables);
+    const triggerPayload = mergeRoutineRunPayload(input.payload, { ...autoVariables, ...resolvedVariables });
+    const managedRoutineBinding = await getManagedRoutineBinding(input.routine);
+    const managedIssueTemplate = readManagedRoutineIssueTemplate(managedRoutineBinding?.defaultsJson);
+    const issueOriginKind = managedIssueTemplate?.surfaceVisibility === "plugin_operation" && managedRoutineBinding
+      ? pluginOperationIssueOriginKind(managedRoutineBinding.pluginKey)
+      : "routine_execution";
+    const issueOriginId = managedIssueTemplate?.originId ?? input.routine.id;
+    const issueBillingCode = managedIssueTemplate?.billingCode ?? null;
     const dispatchFingerprint = createRoutineDispatchFingerprint({
       payload: triggerPayload,
       projectId,
@@ -1160,7 +1254,10 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
 
       let createdIssue: Awaited<ReturnType<typeof issueSvc.create>> | null = null;
       try {
-        const activeIssue = await findLiveExecutionIssue(input.routine, txDb, dispatchFingerprint);
+        const activeIssue = await findLiveExecutionIssue(input.routine, txDb, dispatchFingerprint, {
+          kind: issueOriginKind,
+          id: issueOriginId,
+        });
         if (activeIssue && input.routine.concurrencyPolicy !== "always_enqueue") {
           const status = input.routine.concurrencyPolicy === "skip_if_active" ? "skipped" : "coalesced";
           if (manualRunnerUserId) {
@@ -1200,10 +1297,11 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
             assigneeAgentId,
             createdByAgentId: input.source === "manual" ? input.actor?.agentId ?? null : null,
             createdByUserId: manualRunnerUserId,
-            originKind: "routine_execution",
-            originId: input.routine.id,
+            originKind: issueOriginKind,
+            originId: issueOriginId,
             originRunId: createdRun.id,
             originFingerprint: dispatchFingerprint,
+            billingCode: issueBillingCode,
             executionWorkspaceId: input.executionWorkspaceId ?? null,
             executionWorkspacePreference: input.executionWorkspacePreference ?? null,
             executionWorkspaceSettings: input.executionWorkspaceSettings ?? null,
@@ -1220,7 +1318,10 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
             throw error;
           }
 
-          const existingIssue = await findLiveExecutionIssue(input.routine, txDb, dispatchFingerprint);
+          const existingIssue = await findLiveExecutionIssue(input.routine, txDb, dispatchFingerprint, {
+            kind: issueOriginKind,
+            id: issueOriginId,
+          });
           if (!existingIssue) throw error;
           const status = input.routine.concurrencyPolicy === "skip_if_active" ? "skipped" : "coalesced";
           if (manualRunnerUserId) {
@@ -1347,15 +1448,23 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
         .where(and(...conditions))
         .orderBy(desc(routines.updatedAt), asc(routines.title));
       const routineIds = rows.map((row) => row.id);
-      const [triggersByRoutine, latestRunByRoutine, activeIssueByRoutine, advisorStateByRoutine] = await Promise.all([
+      const [
+        triggersByRoutine,
+        latestRunByRoutine,
+        activeIssueByRoutine,
+        advisorStateByRoutine,
+        managedByRoutine,
+      ] = await Promise.all([
         listTriggersForRoutineIds(companyId, routineIds),
         listLatestRunByRoutineIds(companyId, routineIds),
         listLiveIssueByRoutineIds(companyId, routineIds),
         listRoutineAdvisorState(routineIds),
+        listManagedRoutineMetadata(routineIds),
       ]);
       return rows.map((row) => ({
         ...row,
         ...(advisorStateByRoutine.get(row.id) ?? { advisorKind: null, advisorEnabled: false }),
+        managedByPlugin: managedByRoutine.get(row.id) ?? null,
         triggers: (triggersByRoutine.get(row.id) ?? []).map((trigger) => ({
           id: trigger.id,
           kind: trigger.kind as RoutineListItem["triggers"][number]["kind"],
@@ -1375,7 +1484,7 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
     getDetail: async (id: string): Promise<RoutineDetail | null> => {
       const row = await getRoutineById(id);
       if (!row) return null;
-      const [project, assignee, parentIssue, triggers, recentRuns, activeIssue] = await Promise.all([
+      const [project, assignee, parentIssue, triggers, recentRuns, activeIssue, managedByRoutine] = await Promise.all([
         row.projectId
           ? db.select().from(projects).where(eq(projects.id, row.projectId)).then((rows) => rows[0] ?? null)
           : null,
@@ -1454,10 +1563,12 @@ export function routineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeup
             })),
           ),
         findLiveExecutionIssue(row),
+        listManagedRoutineMetadata([row.id]),
       ]);
 
       return {
         ...row,
+        managedByPlugin: managedByRoutine.get(row.id) ?? null,
         project,
         assignee,
         parentIssue,

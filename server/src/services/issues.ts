@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, not, or, sql } from "drizzle-orm";
+import { Buffer } from "node:buffer";
+import { and, asc, desc, eq, gt, inArray, isNull, like, lt, ne, not, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -152,13 +153,18 @@ export interface IssueFilters {
   inboxArchivedByUserId?: string;
   unreadForUserId?: string;
   projectId?: string;
+  workspaceId?: string;
   executionWorkspaceId?: string;
   parentId?: string;
   descendantOf?: string;
   labelId?: string;
   originKind?: string;
+  originKindPrefix?: string;
   originId?: string;
   includeRoutineExecutions?: boolean;
+  excludeRoutineExecutions?: boolean;
+  includePluginOperations?: boolean;
+  includeBlockedBy?: boolean;
   q?: string;
   limit?: number;
   offset?: number;
@@ -586,6 +592,19 @@ function inboxVisibleForUserCondition(companyId: string, userId: string) {
         AND ${issueInboxArchives.archivedAt} >= ${issueLastActivityAt}
     )
   `;
+}
+
+function nonPluginOperationIssueCondition() {
+  return sql<boolean>`NOT (${issues.originKind} LIKE 'plugin:%:operation' OR ${issues.originKind} LIKE 'plugin:%:operation:%')`;
+}
+
+function shouldIncludePluginOperationIssues(filters: IssueFilters | undefined) {
+  return Boolean(
+    filters?.includePluginOperations ||
+    filters?.originKind ||
+    filters?.originId ||
+    filters?.projectId,
+  );
 }
 
 /** Named entities commonly emitted in saved issue bodies; unknown `&name;` sequences are left unchanged. */
@@ -1682,12 +1701,23 @@ export function issueService(db: Db) {
         conditions.push(unreadForUserCondition(companyId, unreadForUserId));
       }
       if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
+      if (filters?.workspaceId) {
+        const workspaceCondition = or(
+          eq(issues.executionWorkspaceId, filters.workspaceId),
+          eq(issues.projectWorkspaceId, filters.workspaceId),
+        );
+        if (workspaceCondition) conditions.push(workspaceCondition);
+      }
       if (filters?.executionWorkspaceId) {
         conditions.push(eq(issues.executionWorkspaceId, filters.executionWorkspaceId));
       }
       if (filters?.parentId) conditions.push(eq(issues.parentId, filters.parentId));
       if (filters?.originKind) conditions.push(eq(issues.originKind, filters.originKind));
+      if (filters?.originKindPrefix) conditions.push(like(issues.originKind, `${filters.originKindPrefix}%`));
       if (filters?.originId) conditions.push(eq(issues.originId, filters.originId));
+      if (!shouldIncludePluginOperationIssues(filters)) {
+        conditions.push(nonPluginOperationIssueCondition());
+      }
       if (filters?.labelId) {
         const labeledIssueIds = await db
           .select({ issueId: issueLabels.issueId })
@@ -1799,6 +1829,7 @@ export function issueService(db: Db) {
       const conditions = [
         eq(issues.companyId, companyId),
         isNull(issues.hiddenAt),
+        nonPluginOperationIssueCondition(),
         unreadForUserCondition(companyId, userId),
         ne(issues.originKind, "routine_execution"),
       ];
@@ -2512,13 +2543,13 @@ export function issueService(db: Db) {
         //     environmentId matches the prior assignee's default, treat it as
         //     auto-promoted and refresh it to the new assignee's default.
         const assigneeChanged =
-          issueData.assigneeAgentId !== undefined &&
-          issueData.assigneeAgentId !== null &&
-          issueData.assigneeAgentId !== existing.assigneeAgentId;
+          patchableIssueData.assigneeAgentId !== undefined &&
+          patchableIssueData.assigneeAgentId !== null &&
+          patchableIssueData.assigneeAgentId !== existing.assigneeAgentId;
         const explicitEnvInThisUpdate =
-          issueData.executionWorkspaceSettings !== undefined &&
+          patchableIssueData.executionWorkspaceSettings !== undefined &&
           Object.prototype.hasOwnProperty.call(
-            parseObject(issueData.executionWorkspaceSettings),
+            parseObject(patchableIssueData.executionWorkspaceSettings),
             "environmentId",
           );
         if (assigneeChanged && isolatedWorkspacesEnabled && !explicitEnvInThisUpdate) {
@@ -2548,17 +2579,17 @@ export function issueService(db: Db) {
               .from(agents)
               .where(
                 and(
-                  eq(agents.companyId, existing.companyId),
-                  inArray(
-                    agents.id,
-                    [issueData.assigneeAgentId!, existing.assigneeAgentId].filter(
-                      (value): value is string => typeof value === "string",
-                    ),
-                  ),
+	                  eq(agents.companyId, existing.companyId),
+	                  inArray(
+	                    agents.id,
+	                    [patchableIssueData.assigneeAgentId!, existing.assigneeAgentId].filter(
+	                      (value): value is string => typeof value === "string",
+	                    ),
+	                  ),
                 ),
               );
 
-            const newAssignee = agentRows.find((row: AgentRow) => row.id === issueData.assigneeAgentId);
+	            const newAssignee = agentRows.find((row: AgentRow) => row.id === patchableIssueData.assigneeAgentId);
             const previousAssignee = existing.assigneeAgentId
               ? agentRows.find((row: AgentRow) => row.id === existing.assigneeAgentId)
               : null;

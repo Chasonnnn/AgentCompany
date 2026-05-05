@@ -209,7 +209,7 @@ function boardRoutes() {
       <Route path="tests/ux/chat" element={<IssueChatUxLab />} />
       <Route path="tests/ux/runs" element={<RunTranscriptUxLab />} />
       <Route path="instance/settings/adapters" element={<AdapterManager />} />
-      <Route path=":pluginRoutePath" element={<PluginPage />} />
+      <Route path=":pluginRoutePath/*" element={<PluginPage />} />
       <Route path="*" element={<NotFoundPage scope="board" />} />
     </>
   );

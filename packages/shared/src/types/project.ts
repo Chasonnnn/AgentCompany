@@ -90,6 +90,18 @@ export interface ProjectCodebase {
   origin: ProjectCodebaseOrigin;
 }
 
+export interface ProjectManagedByPlugin {
+  id: string;
+  pluginId: string;
+  pluginKey: string;
+  pluginDisplayName: string;
+  resourceKind: "project";
+  resourceKey: string;
+  defaultsJson: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface Project {
   id: string;
   companyId: string;
@@ -112,6 +124,7 @@ export interface Project {
   codebase: ProjectCodebase;
   workspaces: ProjectWorkspace[];
   primaryWorkspace: ProjectWorkspace | null;
+  managedByPlugin?: ProjectManagedByPlugin | null;
   archivedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;

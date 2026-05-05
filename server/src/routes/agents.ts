@@ -2497,7 +2497,7 @@ export function agentRoutes(
           desiredSkillAssignment.adapterConfig,
           { strictMode: strictSecretsMode },
         );
-        await assertAdapterConfigConstraints(companyId, seedAgent.adapterType, normalizedAdapterConfig);
+        await assertAdapterConfigConstraints(seedAgent.adapterType, normalizedAdapterConfig);
 
         const seedHeartbeat = asRecord(seedAgent.runtimeConfig)?.heartbeat;
         const templateHeartbeat = asRecord(createInput.runtimeConfig)?.heartbeat;

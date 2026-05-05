@@ -265,6 +265,7 @@ export type {
   ProjectDocumentRevision,
   ProjectDocumentSummary,
   ProjectGoalRef,
+  ProjectManagedByPlugin,
   ProjectWorkspace,
 } from "./project.js";
 export type {
@@ -431,6 +432,7 @@ export type {
 } from "./secrets.js";
 export type {
   Routine,
+  RoutineManagedByPlugin,
   RoutineVariable,
   RoutineVariableDefaultValue,
   RoutineTrigger,
@@ -536,6 +538,15 @@ export type {
   PluginWebhookDeclaration,
   PluginToolDeclaration,
   PluginEnvironmentDriverDeclaration,
+  PluginManagedAgentDeclaration,
+  PluginManagedProjectDeclaration,
+  PluginManagedRoutineDeclaration,
+  PluginLocalFolderDeclaration,
+  PluginManagedAgentResolution,
+  PluginManagedProjectResolution,
+  PluginManagedRoutineResolution,
+  PluginManagedResourceKind,
+  PluginManagedResourceRef,
   PluginUiSlotDeclaration,
   PluginLauncherActionDeclaration,
   PluginLauncherRenderDeclaration,
@@ -552,6 +563,7 @@ export type {
   PluginMigrationRecord,
   PluginStateRecord,
   PluginConfig,
+  PluginCompanySettings,
   PluginEntityRecord,
   PluginEntityQuery,
   PluginJobRecord,

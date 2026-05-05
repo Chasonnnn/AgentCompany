@@ -1,20 +1,24 @@
 import { randomUUID } from "node:crypto";
+import { pluginOperationIssueOriginKind } from "@paperclipai/shared";
 import type {
   PaperclipPluginManifestV1,
   PluginCapability,
   PluginEventType,
+  PluginIssueOriginKind,
+  PluginManagedAgentResolution,
+  PluginManagedRoutineResolution,
   Company,
   Project,
+  Routine,
+  RoutineRun,
   Issue,
   IssueComment,
+  IssueThreadInteraction,
+  CreateIssueThreadInteraction,
   IssueDocument,
-  IssueDocumentSummary,
-  IssueRelationIssueSummary,
-  Approval,
   Agent,
   Goal,
 } from "@paperclipai/shared";
-import { normalizeRequestBoardApprovalPayload } from "@paperclipai/shared";
 import type {
   EventFilter,
   PluginContext,
@@ -31,19 +35,19 @@ import type {
   AgentSessionEvent,
 } from "./types.js";
 import type {
-  PluginEnvironmentAcquireLeaseParams,
-  PluginEnvironmentDestroyLeaseParams,
-  PluginEnvironmentExecuteParams,
-  PluginEnvironmentExecuteResult,
-  PluginEnvironmentLease,
-  PluginEnvironmentProbeParams,
-  PluginEnvironmentProbeResult,
-  PluginEnvironmentRealizeWorkspaceParams,
-  PluginEnvironmentRealizeWorkspaceResult,
-  PluginEnvironmentReleaseLeaseParams,
-  PluginEnvironmentResumeLeaseParams,
   PluginEnvironmentValidateConfigParams,
   PluginEnvironmentValidationResult,
+  PluginEnvironmentProbeParams,
+  PluginEnvironmentProbeResult,
+  PluginEnvironmentLease,
+  PluginEnvironmentAcquireLeaseParams,
+  PluginEnvironmentResumeLeaseParams,
+  PluginEnvironmentReleaseLeaseParams,
+  PluginEnvironmentDestroyLeaseParams,
+  PluginEnvironmentRealizeWorkspaceParams,
+  PluginEnvironmentRealizeWorkspaceResult,
+  PluginEnvironmentExecuteParams,
+  PluginEnvironmentExecuteResult,
 } from "./protocol.js";
 
 export interface TestHarnessOptions {
@@ -92,8 +96,15 @@ export interface TestHarness {
   activity: Array<{ message: string; entityType?: string; entityId?: string; metadata?: Record<string, unknown> }>;
   metrics: Array<{ name: string; value: number; tags?: Record<string, string> }>;
   telemetry: Array<{ eventName: string; dimensions?: Record<string, string | number | boolean> }>;
+  dbQueries: Array<{ sql: string; params?: unknown[] }>;
+  dbExecutes: Array<{ sql: string; params?: unknown[] }>;
 }
 
+// ---------------------------------------------------------------------------
+// Environment test harness types
+// ---------------------------------------------------------------------------
+
+/** Recorded environment lifecycle event for assertion helpers. */
 export interface EnvironmentEventRecord {
   type:
     | "validateConfig"
@@ -112,7 +123,9 @@ export interface EnvironmentEventRecord {
   error?: string;
 }
 
+/** Options for creating an environment-aware test harness. */
 export interface EnvironmentTestHarnessOptions extends TestHarnessOptions {
+  /** Environment driver hooks provided by the plugin under test. */
   environmentDriver: {
     driverKey: string;
     onValidateConfig?: (params: PluginEnvironmentValidateConfigParams) => Promise<PluginEnvironmentValidationResult>;
@@ -126,30 +139,46 @@ export interface EnvironmentTestHarnessOptions extends TestHarnessOptions {
   };
 }
 
+/** Extended test harness with environment driver simulation. */
 export interface EnvironmentTestHarness extends TestHarness {
+  /** Recorded environment lifecycle events for assertion. */
   environmentEvents: EnvironmentEventRecord[];
+  /** Invoke the environment driver's validateConfig hook. */
   validateConfig(params: PluginEnvironmentValidateConfigParams): Promise<PluginEnvironmentValidationResult>;
+  /** Invoke the environment driver's probe hook. */
   probe(params: PluginEnvironmentProbeParams): Promise<PluginEnvironmentProbeResult>;
+  /** Invoke the environment driver's acquireLease hook. */
   acquireLease(params: PluginEnvironmentAcquireLeaseParams): Promise<PluginEnvironmentLease>;
+  /** Invoke the environment driver's resumeLease hook. */
   resumeLease(params: PluginEnvironmentResumeLeaseParams): Promise<PluginEnvironmentLease>;
+  /** Invoke the environment driver's releaseLease hook. */
   releaseLease(params: PluginEnvironmentReleaseLeaseParams): Promise<void>;
+  /** Invoke the environment driver's destroyLease hook. */
   destroyLease(params: PluginEnvironmentDestroyLeaseParams): Promise<void>;
+  /** Invoke the environment driver's realizeWorkspace hook. */
   realizeWorkspace(params: PluginEnvironmentRealizeWorkspaceParams): Promise<PluginEnvironmentRealizeWorkspaceResult>;
+  /** Invoke the environment driver's execute hook. */
   execute(params: PluginEnvironmentExecuteParams): Promise<PluginEnvironmentExecuteResult>;
 }
 
+// ---------------------------------------------------------------------------
+// Environment event assertion helpers
+// ---------------------------------------------------------------------------
+
+/** Filter environment events by type. */
 export function filterEnvironmentEvents(
   events: EnvironmentEventRecord[],
   type: EnvironmentEventRecord["type"],
 ): EnvironmentEventRecord[] {
-  return events.filter((event) => event.type === type);
+  return events.filter((e) => e.type === type);
 }
 
+/** Assert that environment events occurred in the expected order. */
 export function assertEnvironmentEventOrder(
   events: EnvironmentEventRecord[],
   expectedOrder: EnvironmentEventRecord["type"][],
 ): void {
-  const actual = events.map((event) => event.type);
+  const actual = events.map((e) => e.type);
   const matched: EnvironmentEventRecord["type"][] = [];
   let cursor = 0;
   for (const eventType of actual) {
@@ -165,14 +194,13 @@ export function assertEnvironmentEventOrder(
   }
 }
 
+/** Assert that a full lease lifecycle (acquire → release) occurred for an environment. */
 export function assertLeaseLifecycle(
   events: EnvironmentEventRecord[],
   environmentId: string,
 ): { acquire: EnvironmentEventRecord; release: EnvironmentEventRecord } {
-  const acquire = events.find((event) => event.type === "acquireLease" && event.environmentId === environmentId);
-  const release = events.find((event) =>
-    (event.type === "releaseLease" || event.type === "destroyLease") && event.environmentId === environmentId
-  );
+  const acquire = events.find((e) => e.type === "acquireLease" && e.environmentId === environmentId);
+  const release = events.find((e) => (e.type === "releaseLease" || e.type === "destroyLease") && e.environmentId === environmentId);
   if (!acquire) throw new Error(`No acquireLease event found for environment ${environmentId}`);
   if (!release) throw new Error(`No releaseLease/destroyLease event found for environment ${environmentId}`);
   if (acquire.timestamp > release.timestamp) {
@@ -181,25 +209,34 @@ export function assertLeaseLifecycle(
   return { acquire, release };
 }
 
+/** Assert that workspace realization occurred between lease acquire and release. */
 export function assertWorkspaceRealizationLifecycle(
   events: EnvironmentEventRecord[],
   environmentId: string,
 ): EnvironmentEventRecord {
   const lifecycle = assertLeaseLifecycle(events, environmentId);
-  const realize = events.find((event) => event.type === "realizeWorkspace" && event.environmentId === environmentId);
+  const realize = events.find(
+    (e) => e.type === "realizeWorkspace" && e.environmentId === environmentId,
+  );
   if (!realize) throw new Error(`No realizeWorkspace event found for environment ${environmentId}`);
-  if (realize.timestamp < lifecycle.acquire.timestamp || realize.timestamp > lifecycle.release.timestamp) {
-    throw new Error(`realizeWorkspace event occurred outside lease lifecycle for environment ${environmentId}`);
+  if (realize.timestamp < lifecycle.acquire.timestamp) {
+    throw new Error(`realizeWorkspace occurred before acquireLease for environment ${environmentId}`);
+  }
+  if (realize.timestamp > lifecycle.release.timestamp) {
+    throw new Error(`realizeWorkspace occurred after release for environment ${environmentId}`);
   }
   return realize;
 }
 
+/** Assert that an execute call occurred within the lease lifecycle. */
 export function assertExecutionLifecycle(
   events: EnvironmentEventRecord[],
   environmentId: string,
 ): EnvironmentEventRecord[] {
   const lifecycle = assertLeaseLifecycle(events, environmentId);
-  const execEvents = events.filter((event) => event.type === "execute" && event.environmentId === environmentId);
+  const execEvents = events.filter(
+    (e) => e.type === "execute" && e.environmentId === environmentId,
+  );
   if (execEvents.length === 0) {
     throw new Error(`No execute events found for environment ${environmentId}`);
   }
@@ -211,27 +248,47 @@ export function assertExecutionLifecycle(
   return execEvents;
 }
 
+/** Assert that an event recorded an error. */
 export function assertEnvironmentError(
   events: EnvironmentEventRecord[],
   type: EnvironmentEventRecord["type"],
+  environmentId?: string,
 ): EnvironmentEventRecord {
-  const event = events.find((entry) => entry.type === type && typeof entry.error === "string" && entry.error.length > 0);
-  if (!event) throw new Error(`No ${type} error event found`);
-  return event;
+  const match = events.find(
+    (e) => e.type === type && e.error != null && (!environmentId || e.environmentId === environmentId),
+  );
+  if (!match) {
+    throw new Error(`No error event of type '${type}'${environmentId ? ` for environment ${environmentId}` : ""}`);
+  }
+  return match;
 }
 
+// ---------------------------------------------------------------------------
+// Fake environment plugin driver
+// ---------------------------------------------------------------------------
+
+/** Options for creating a fake environment driver for contract testing. */
 export interface FakeEnvironmentDriverOptions {
   driverKey?: string;
+  /** Simulated acquire delay in ms. */
   acquireDelayMs?: number;
+  /** If true, probe will return `ok: false`. */
   probeFailure?: boolean;
+  /** If true, acquireLease will throw. */
   acquireFailure?: string;
+  /** If true, execute will return a non-zero exit code. */
   executeFailure?: boolean;
+  /** Custom metadata returned on lease acquire. */
   leaseMetadata?: Record<string, unknown>;
 }
 
-export function createFakeEnvironmentDriver(
-  options: FakeEnvironmentDriverOptions = {},
-): EnvironmentTestHarnessOptions["environmentDriver"] {
+/**
+ * Create a fake environment driver suitable for contract testing.
+ *
+ * This returns a driver hooks object compatible with `EnvironmentTestHarnessOptions.environmentDriver`.
+ * It simulates the full environment lifecycle with configurable failure injection.
+ */
+export function createFakeEnvironmentDriver(options: FakeEnvironmentDriverOptions = {}): EnvironmentTestHarnessOptions["environmentDriver"] {
   const driverKey = options.driverKey ?? "fake";
   const leases = new Map<string, { providerLeaseId: string; metadata: Record<string, unknown> }>();
   let leaseCounter = 0;
@@ -244,7 +301,7 @@ export function createFakeEnvironmentDriver(
       }
       return { ok: true, normalizedConfig: params.config };
     },
-    async onProbe() {
+    async onProbe(_params) {
       if (options.probeFailure) {
         return { ok: false, summary: "Simulated probe failure", diagnostics: [{ severity: "error", message: "Probe failed" }] };
       }
@@ -265,7 +322,7 @@ export function createFakeEnvironmentDriver(
     async onResumeLease(params) {
       const existing = leases.get(params.providerLeaseId);
       if (!existing) {
-        throw new Error(`Lease ${params.providerLeaseId} not found - cannot resume`);
+        throw new Error(`Lease ${params.providerLeaseId} not found — cannot resume`);
       }
       return { providerLeaseId: existing.providerLeaseId, metadata: { ...existing.metadata, resumed: true } };
     },
@@ -359,16 +416,21 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const activity: TestHarness["activity"] = [];
   const metrics: TestHarness["metrics"] = [];
   const telemetry: TestHarness["telemetry"] = [];
+  const dbQueries: TestHarness["dbQueries"] = [];
+  const dbExecutes: TestHarness["dbExecutes"] = [];
 
   const state = new Map<string, unknown>();
   const entities = new Map<string, PluginEntityRecord>();
   const entityExternalIndex = new Map<string, string>();
   const companies = new Map<string, Company>();
   const projects = new Map<string, Project>();
+  const routines = new Map<string, Routine>();
+  const routineRuns = new Map<string, RoutineRun>();
   const issues = new Map<string, Issue>();
+  const blockedByIssueIds = new Map<string, string[]>();
   const issueComments = new Map<string, IssueComment[]>();
-  const issueDocuments = new Map<string, Map<string, IssueDocument>>();
-  const approvals = new Map<string, Approval>();
+  const issueInteractions = new Map<string, IssueThreadInteraction[]>();
+  const issueDocuments = new Map<string, IssueDocument>();
   const agents = new Map<string, Agent>();
   const goals = new Map<string, Goal>();
   const projectWorkspaces = new Map<string, PluginWorkspace[]>();
@@ -383,78 +445,88 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const actionHandlers = new Map<string, (params: Record<string, unknown>) => Promise<unknown>>();
   const toolHandlers = new Map<string, (params: unknown, runCtx: ToolRunContext) => Promise<ToolResult>>();
 
-  const getIssueSummary = (issue: Issue): IssueRelationIssueSummary => ({
-    id: issue.id,
-    identifier: issue.identifier ?? null,
-    title: issue.title,
-    status: issue.status,
-    priority: issue.priority,
-    assigneeAgentId: issue.assigneeAgentId,
-    assigneeUserId: issue.assigneeUserId,
-  });
-
-  const getRelationSummary = (issueId: string, companyId: string) => {
+  function issueRelationSummary(issueId: string) {
     const issue = issues.get(issueId);
-    if (!isInCompany(issue, companyId)) throw new Error(`Issue not found: ${issueId}`);
-    const blockedBy = (issue.blockedBy ?? [])
-      .map((relation) => issues.get(relation.id))
-      .filter((related): related is Issue => isInCompany(related, companyId))
-      .map(getIssueSummary);
-    const blocks = [...issues.values()]
-      .filter((candidate) =>
-        candidate.companyId === companyId &&
-        (candidate.blockedBy ?? []).some((relation) => relation.id === issueId),
-      )
-      .map(getIssueSummary);
-    return { blockedBy, blocks };
-  };
-
-  const setIssueBlockedBy = (issueId: string, companyId: string, blockedByIssueIds: string[]) => {
-    const issue = issues.get(issueId);
-    if (!isInCompany(issue, companyId)) throw new Error(`Issue not found: ${issueId}`);
-    const blockers = blockedByIssueIds.map((blockerIssueId) => {
-      const blocker = issues.get(blockerIssueId);
-      if (!isInCompany(blocker, companyId)) {
-        throw new Error(`Blocker issue not found: ${blockerIssueId}`);
-      }
-      return getIssueSummary(blocker);
-    });
-    const updated: Issue = {
-      ...issue,
-      blockedBy: blockers,
-      updatedAt: new Date(),
+    if (!issue) throw new Error(`Issue not found: ${issueId}`);
+    const summarize = (candidateId: string) => {
+      const related = issues.get(candidateId);
+      if (!related || related.companyId !== issue.companyId) return null;
+      return {
+        id: related.id,
+        identifier: related.identifier,
+        title: related.title,
+        status: related.status,
+        priority: related.priority,
+        assigneeAgentId: related.assigneeAgentId,
+        assigneeUserId: related.assigneeUserId,
+      };
     };
-    issues.set(issueId, updated);
-    return getRelationSummary(issueId, companyId);
-  };
+    const blockedBy = (blockedByIssueIds.get(issueId) ?? [])
+      .map(summarize)
+      .filter((value): value is NonNullable<typeof value> => value !== null);
+    const blocks = [...blockedByIssueIds.entries()]
+      .filter(([, blockers]) => blockers.includes(issueId))
+      .map(([blockedIssueId]) => summarize(blockedIssueId))
+      .filter((value): value is NonNullable<typeof value> => value !== null);
+    return { blockedBy, blocks };
+  }
 
-  const getIssueDocumentMap = (issueId: string) => {
-    const existing = issueDocuments.get(issueId);
-    if (existing) return existing;
-    const created = new Map<string, IssueDocument>();
-    issueDocuments.set(issueId, created);
-    return created;
-  };
+  const defaultPluginOriginKind: PluginIssueOriginKind = `plugin:${manifest.id}`;
 
-  const listIssueDocumentSummaries = (issueId: string): IssueDocumentSummary[] =>
-    [...getIssueDocumentMap(issueId).values()].map((document) => {
-      const { body: _body, ...summary } = document;
-      return summary;
-    });
+  function managedAgentDeclaration(agentKey: string) {
+    const declaration = manifest.agents?.find((agent) => agent.agentKey === agentKey);
+    if (!declaration) throw new Error(`Managed agent declaration not found: ${agentKey}`);
+    return declaration;
+  }
 
-  const collectSubtreeIssueIds = (issueId: string, companyId: string) => {
-    const seen = new Set<string>([issueId]);
-    let frontier = [issueId];
-    while (frontier.length > 0) {
-      const next = [...issues.values()]
-        .filter((candidate) => candidate.companyId === companyId && frontier.includes(candidate.parentId ?? ""))
-        .map((candidate) => candidate.id)
-        .filter((id) => !seen.has(id));
-      frontier = next;
-      for (const id of next) seen.add(id);
+  function isManagedAgent(agent: Agent, agentKey: string) {
+    const marker = agent.metadata?.paperclipManagedResource;
+    return Boolean(
+      marker
+      && typeof marker === "object"
+      && !Array.isArray(marker)
+      && (marker as Record<string, unknown>).pluginKey === manifest.id
+      && (marker as Record<string, unknown>).resourceKind === "agent"
+      && (marker as Record<string, unknown>).resourceKey === agentKey,
+    );
+  }
+
+  function managedAgentMetadata(agentKey: string, existing?: Record<string, unknown> | null) {
+    return {
+      ...(existing ?? {}),
+      paperclipManagedResource: {
+        pluginKey: manifest.id,
+        resourceKind: "agent",
+        resourceKey: agentKey,
+      },
+    };
+  }
+
+  function managedResolution(
+    agentKey: string,
+    companyId: string,
+    agent: Agent | null,
+    status: PluginManagedAgentResolution["status"],
+  ): PluginManagedAgentResolution {
+    return {
+      pluginKey: manifest.id,
+      resourceKind: "agent",
+      resourceKey: agentKey,
+      companyId,
+      agentId: agent?.id ?? null,
+      agent,
+      status,
+      approvalId: null,
+    };
+  }
+  function normalizePluginOriginKind(originKind: unknown = defaultPluginOriginKind): PluginIssueOriginKind {
+    if (originKind == null || originKind === "") return defaultPluginOriginKind;
+    if (typeof originKind !== "string") throw new Error("Plugin issue originKind must be a string");
+    if (originKind === defaultPluginOriginKind || originKind.startsWith(`${defaultPluginOriginKind}:`)) {
+      return originKind as PluginIssueOriginKind;
     }
-    return [...seen];
-  };
+    throw new Error(`Plugin may only use originKind values under ${defaultPluginOriginKind}`);
+  }
 
   const ctx: PluginContext = {
     manifest,
@@ -463,15 +535,79 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         return { ...currentConfig };
       },
     },
-    db: {
-      namespace: `plugin_${manifest.id.replace(/[^a-z0-9_]+/gi, "_").toLowerCase()}`,
-      async query() {
-        requireCapability(manifest, capabilitySet, "database.namespace.read");
-        return [];
+    localFolders: {
+      declarations() {
+        return manifest.localFolders ?? [];
       },
-      async execute() {
-        requireCapability(manifest, capabilitySet, "database.namespace.write");
-        return { rowCount: 0 };
+      async configure(input) {
+        requireCapability(manifest, capabilitySet, "local.folders");
+        return {
+          folderKey: input.folderKey,
+          configured: true,
+          path: input.path,
+          realPath: input.path,
+          access: input.access ?? "readWrite",
+          readable: true,
+          writable: input.access === "read" ? false : true,
+          requiredDirectories: input.requiredDirectories ?? [],
+          requiredFiles: input.requiredFiles ?? [],
+          missingDirectories: [],
+          missingFiles: [],
+          healthy: true,
+          problems: [],
+          checkedAt: new Date().toISOString(),
+        };
+      },
+      async status(_companyId, folderKey) {
+        requireCapability(manifest, capabilitySet, "local.folders");
+        return {
+          folderKey,
+          configured: false,
+          path: null,
+          realPath: null,
+          access: "readWrite",
+          readable: false,
+          writable: false,
+          requiredDirectories: [],
+          requiredFiles: [],
+          missingDirectories: [],
+          missingFiles: [],
+          healthy: false,
+          problems: [{ code: "not_configured", message: "No local folder path is configured." }],
+          checkedAt: new Date().toISOString(),
+        };
+      },
+      async list(_companyId, folderKey, options) {
+        requireCapability(manifest, capabilitySet, "local.folders");
+        return {
+          folderKey,
+          relativePath: options?.relativePath ?? null,
+          entries: [],
+          truncated: false,
+        };
+      },
+      async readText() {
+        requireCapability(manifest, capabilitySet, "local.folders");
+        throw new Error("Test harness local folder readText is not implemented");
+      },
+      async writeTextAtomic(_companyId, folderKey) {
+        requireCapability(manifest, capabilitySet, "local.folders");
+        return {
+          folderKey,
+          configured: false,
+          path: null,
+          realPath: null,
+          access: "readWrite",
+          readable: false,
+          writable: false,
+          requiredDirectories: [],
+          requiredFiles: [],
+          missingDirectories: [],
+          missingFiles: [],
+          healthy: false,
+          problems: [{ code: "not_configured", message: "No local folder path is configured." }],
+          checkedAt: new Date().toISOString(),
+        };
       },
     },
     events: {
@@ -504,6 +640,19 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
     launchers: {
       register(launcher) {
         launchers.set(launcher.id, launcher);
+      },
+    },
+    db: {
+      namespace: manifest.database ? `test_${manifest.id.replace(/[^a-z0-9_]+/g, "_")}` : "",
+      async query(sql, params) {
+        requireCapability(manifest, capabilitySet, "database.namespace.read");
+        dbQueries.push({ sql, params });
+        return [];
+      },
+      async execute(sql, params) {
+        requireCapability(manifest, capabilitySet, "database.namespace.write");
+        dbExecutes.push({ sql, params });
+        return { rowCount: 0 };
       },
     },
     http: {
@@ -627,6 +776,314 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         const workspaces = projectWorkspaces.get(projectId) ?? [];
         return workspaces.find((workspace) => workspace.isPrimary) ?? null;
       },
+      managed: {
+        async get(projectKey, companyId) {
+          requireCapability(manifest, capabilitySet, "projects.managed");
+          const declaration = manifest.projects?.find((project) => project.projectKey === projectKey);
+          if (!declaration) {
+            return {
+              pluginKey: manifest.id,
+              resourceKind: "project",
+              resourceKey: projectKey,
+              companyId,
+              projectId: null,
+              project: null,
+              status: "missing",
+            };
+          }
+          const externalId = `${manifest.id}:project:${projectKey}`;
+          const existingEntity = [...entities.values()].find((entity) =>
+            entity.entityType === "managed_resource"
+            && entity.scopeKind === "company"
+            && entity.scopeId === companyId
+            && entity.externalId === externalId
+          );
+          const existingProject = existingEntity ? projects.get(String(existingEntity.data?.projectId ?? "")) : null;
+          if (existingProject && isInCompany(existingProject, companyId)) {
+            return {
+              pluginKey: manifest.id,
+              resourceKind: "project",
+              resourceKey: projectKey,
+              companyId,
+              projectId: existingProject.id,
+              project: existingProject,
+              status: "resolved",
+            };
+          }
+          const now = new Date();
+          const project = {
+            id: `project-${projects.size + 1}`,
+            companyId,
+            urlKey: declaration.projectKey,
+            goalId: null,
+            goalIds: [],
+            goals: [],
+            name: declaration.displayName,
+            description: declaration.description ?? null,
+            status: declaration.status ?? "in_progress",
+            leadAgentId: null,
+            targetDate: null,
+            color: declaration.color ?? null,
+            env: null,
+            pauseReason: null,
+            pausedAt: null,
+            executionWorkspacePolicy: null,
+            codebase: {
+              workspaceId: null,
+              repoUrl: null,
+              repoRef: null,
+              defaultRef: null,
+              repoName: null,
+              localFolder: null,
+              managedFolder: `/tmp/${declaration.projectKey}`,
+              effectiveLocalFolder: `/tmp/${declaration.projectKey}`,
+              origin: "managed_checkout",
+            },
+            workspaces: [],
+            primaryWorkspace: null,
+            managedByPlugin: {
+              id: `managed-${projects.size + 1}`,
+              pluginId: manifest.id,
+              pluginKey: manifest.id,
+              pluginDisplayName: manifest.displayName,
+              resourceKind: "project",
+              resourceKey: projectKey,
+              defaultsJson: { displayName: declaration.displayName, settings: declaration.settings ?? {} },
+              createdAt: now,
+              updatedAt: now,
+            },
+            archivedAt: null,
+            createdAt: now,
+            updatedAt: now,
+          } as Project;
+          projects.set(project.id, project);
+          const externalKey = `managed_resource|company|${companyId}|${externalId}`;
+          const nowIso = now.toISOString();
+          const record: PluginEntityRecord = {
+            id: randomUUID(),
+            entityType: "managed_resource",
+            scopeKind: "company",
+            scopeId: companyId,
+            externalId,
+            title: declaration.displayName,
+            status: null,
+            data: { resourceKind: "project", resourceKey: projectKey, projectId: project.id },
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+          entities.set(record.id, record);
+          entityExternalIndex.set(externalKey, record.id);
+          return {
+            pluginKey: manifest.id,
+            resourceKind: "project",
+            resourceKey: projectKey,
+            companyId,
+            projectId: project.id,
+            project,
+            status: "created",
+          };
+        },
+        async reconcile(projectKey, companyId) {
+          return this.get(projectKey, companyId);
+        },
+        async reset(projectKey, companyId) {
+          const resolved = await this.get(projectKey, companyId);
+          return { ...resolved, status: resolved.project ? "reset" : resolved.status };
+        },
+      },
+    },
+    routines: {
+      managed: {
+        async get(routineKey, companyId) {
+          requireCapability(manifest, capabilitySet, "routines.managed");
+          const declaration = manifest.routines?.find((routine) => routine.routineKey === routineKey);
+          if (!declaration) {
+            return {
+              pluginKey: manifest.id,
+              resourceKind: "routine",
+              resourceKey: routineKey,
+              companyId,
+              routineId: null,
+              routine: null,
+              status: "missing",
+              missingRefs: [],
+            } satisfies PluginManagedRoutineResolution;
+          }
+          const externalId = `${manifest.id}:routine:${routineKey}`;
+          const existingEntity = [...entities.values()].find((entity) =>
+            entity.entityType === "managed_resource"
+            && entity.scopeKind === "company"
+            && entity.scopeId === companyId
+            && entity.externalId === externalId
+          );
+          const existingRoutine = existingEntity ? routines.get(String(existingEntity.data?.routineId ?? "")) : null;
+          if (existingRoutine && isInCompany(existingRoutine, companyId)) {
+            return {
+              pluginKey: manifest.id,
+              resourceKind: "routine",
+              resourceKey: routineKey,
+              companyId,
+              routineId: existingRoutine.id,
+              routine: existingRoutine,
+              status: "resolved",
+              missingRefs: [],
+            } satisfies PluginManagedRoutineResolution;
+          }
+          return {
+            pluginKey: manifest.id,
+            resourceKind: "routine",
+            resourceKey: routineKey,
+            companyId,
+            routineId: null,
+            routine: null,
+            status: "missing",
+            missingRefs: [],
+          } satisfies PluginManagedRoutineResolution;
+        },
+        async reconcile(routineKey, companyId, overrides) {
+          const existing = await this.get(routineKey, companyId);
+          if (existing.routine) return existing;
+          const declaration = manifest.routines?.find((routine) => routine.routineKey === routineKey);
+          if (!declaration) return existing;
+          const now = new Date();
+          const agentRef = declaration.assigneeRef;
+          const projectRef = declaration.projectRef;
+          const assigneeAgentId = overrides?.assigneeAgentId
+            ?? (agentRef?.resourceKind === "agent"
+              ? [...agents.values()].find((agent) => isInCompany(agent, companyId) && isManagedAgent(agent, agentRef.resourceKey))?.id
+              : null)
+            ?? null;
+          const projectId = overrides?.projectId
+            ?? (projectRef?.resourceKind === "project"
+              ? [...projects.values()].find((project) => (
+                isInCompany(project, companyId)
+                && project.managedByPlugin?.pluginKey === manifest.id
+                && project.managedByPlugin?.resourceKey === projectRef.resourceKey
+              ))?.id
+              : null)
+            ?? null;
+          const missingRefs: NonNullable<PluginManagedRoutineResolution["missingRefs"]> = [];
+          if (agentRef && !assigneeAgentId) missingRefs.push({ ...agentRef, pluginKey: manifest.id });
+          if (projectRef && !projectId) missingRefs.push({ ...projectRef, pluginKey: manifest.id });
+          if (missingRefs.length > 0) {
+            return {
+              pluginKey: manifest.id,
+              resourceKind: "routine",
+              resourceKey: routineKey,
+              companyId,
+              routineId: null,
+              routine: null,
+              status: "missing_refs",
+              missingRefs,
+            } satisfies PluginManagedRoutineResolution;
+          }
+          const routine = {
+            id: `routine-${routines.size + 1}`,
+            companyId,
+            projectId,
+            goalId: declaration.goalId ?? null,
+            parentIssueId: null,
+            title: declaration.title,
+            description: declaration.description ?? null,
+            assigneeAgentId,
+            priority: declaration.priority ?? "medium",
+            status: declaration.status ?? (assigneeAgentId ? "active" : "paused"),
+            concurrencyPolicy: declaration.concurrencyPolicy ?? "coalesce_if_active",
+            catchUpPolicy: declaration.catchUpPolicy ?? "skip_missed",
+            variables: declaration.variables ?? [],
+            createdByAgentId: null,
+            createdByUserId: null,
+            updatedByAgentId: null,
+            updatedByUserId: null,
+            lastTriggeredAt: null,
+            lastEnqueuedAt: null,
+            createdAt: now,
+            updatedAt: now,
+            managedByPlugin: {
+              id: `managed-routine-${routines.size + 1}`,
+              pluginId: manifest.id,
+              pluginKey: manifest.id,
+              pluginDisplayName: manifest.displayName,
+              resourceKind: "routine",
+              resourceKey: routineKey,
+              defaultsJson: { title: declaration.title, issueTemplate: declaration.issueTemplate ?? null },
+              createdAt: now,
+              updatedAt: now,
+            },
+          } as Routine;
+          routines.set(routine.id, routine);
+          const nowIso = now.toISOString();
+          const record: PluginEntityRecord = {
+            id: randomUUID(),
+            entityType: "managed_resource",
+            scopeKind: "company",
+            scopeId: companyId,
+            externalId: `${manifest.id}:routine:${routineKey}`,
+            title: declaration.title,
+            status: null,
+            data: { resourceKind: "routine", resourceKey: routineKey, routineId: routine.id },
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+          entities.set(record.id, record);
+          return {
+            pluginKey: manifest.id,
+            resourceKind: "routine",
+            resourceKey: routineKey,
+            companyId,
+            routineId: routine.id,
+            routine,
+            status: "created",
+            missingRefs: [],
+          } satisfies PluginManagedRoutineResolution;
+        },
+        async reset(routineKey, companyId, overrides) {
+          const resolved = await this.reconcile(routineKey, companyId, overrides);
+          return { ...resolved, status: resolved.routine ? "reset" : resolved.status } satisfies PluginManagedRoutineResolution;
+        },
+        async update(routineKey, companyId, patch) {
+          const resolved = await this.get(routineKey, companyId);
+          if (!resolved.routine) throw new Error(`Managed routine not found: ${routineKey}`);
+          const next = {
+            ...resolved.routine,
+            ...(patch.status !== undefined ? { status: patch.status } : {}),
+            updatedAt: new Date(),
+          };
+          routines.set(next.id, next);
+          return next;
+        },
+        async run(routineKey, companyId) {
+          const resolved = await this.get(routineKey, companyId);
+          if (!resolved.routine) throw new Error(`Managed routine not found: ${routineKey}`);
+          const now = new Date();
+          const run = {
+            id: `routine-run-${routineRuns.size + 1}`,
+            companyId,
+            routineId: resolved.routine.id,
+            triggerId: null,
+            source: "manual",
+            status: "queued",
+            triggeredAt: now,
+            idempotencyKey: null,
+            triggerPayload: null,
+            dispatchFingerprint: null,
+            linkedIssueId: null,
+            coalescedIntoRunId: null,
+            failureReason: null,
+            completedAt: null,
+            createdAt: now,
+            updatedAt: now,
+          } satisfies RoutineRun;
+          routineRuns.set(run.id, run);
+          routines.set(resolved.routine.id, {
+            ...resolved.routine,
+            lastTriggeredAt: now,
+            lastEnqueuedAt: now,
+            updatedAt: now,
+          });
+          return run;
+        },
+      },
     },
     companies: {
       async list(input) {
@@ -649,7 +1106,17 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         out = out.filter((issue) => issue.companyId === companyId);
         if (input?.projectId) out = out.filter((issue) => issue.projectId === input.projectId);
         if (input?.assigneeAgentId) out = out.filter((issue) => issue.assigneeAgentId === input.assigneeAgentId);
-        if (input?.originKind) out = out.filter((issue) => issue.originKind === input.originKind);
+        if (input?.originKind) {
+          if (input.originKind.startsWith("plugin:")) normalizePluginOriginKind(input.originKind);
+          out = out.filter((issue) => issue.originKind === input.originKind);
+        }
+        if (input?.originKindPrefix) {
+          const prefix = input.originKindPrefix;
+          out = out.filter((issue) =>
+            typeof issue.originKind === "string" && issue.originKind.startsWith(prefix),
+          );
+        }
+        if (input?.originId) out = out.filter((issue) => issue.originId === input.originId);
         if (input?.status) out = out.filter((issue) => issue.status === input.status);
         if (input?.offset) out = out.slice(input.offset);
         if (input?.limit) out = out.slice(0, input.limit);
@@ -662,14 +1129,16 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       },
       async create(input) {
         requireCapability(manifest, capabilitySet, "issues.create");
-        if (!input.projectId) {
-          throw new Error("Mock issue creation requires projectId");
-        }
         const now = new Date();
+        const originKind = normalizePluginOriginKind(
+          input.surfaceVisibility === "plugin_operation" && !input.originKind
+            ? pluginOperationIssueOriginKind(manifest.id)
+            : input.originKind,
+        );
         const record: Issue = {
           id: randomUUID(),
           companyId: input.companyId,
-          projectId: input.projectId,
+          projectId: input.projectId ?? "",
           projectWorkspaceId: null,
           goalId: input.goalId ?? null,
           parentId: input.parentId ?? null,
@@ -683,151 +1152,95 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           executionRunId: null,
           executionAgentNameKey: null,
           executionLockedAt: null,
-          createdByAgentId: input.actor?.actorAgentId ?? null,
-          createdByUserId: input.actor?.actorUserId ?? null,
+          createdByAgentId: null,
+          createdByUserId: null,
           issueNumber: null,
           identifier: null,
-          originKind: input.originKind,
+          originKind,
           originId: input.originId ?? null,
           originRunId: input.originRunId ?? null,
           requestDepth: input.requestDepth ?? 0,
           billingCode: input.billingCode ?? null,
-          pullRequestUrl: null,
           assigneeAdapterOverrides: null,
           executionWorkspaceId: input.executionWorkspaceId ?? null,
           executionWorkspacePreference: input.executionWorkspacePreference ?? null,
-          executionWorkspaceSettings: (input.executionWorkspaceSettings as Issue["executionWorkspaceSettings"]) ?? null,
+          executionWorkspaceSettings: input.executionWorkspaceSettings ?? null,
           startedAt: null,
           completedAt: null,
           cancelledAt: null,
           hiddenAt: null,
-          blockedBy: (input.blockedByIssueIds ?? [])
-            .map((blockerIssueId) => issues.get(blockerIssueId))
-            .filter((blocker): blocker is Issue => Boolean(blocker))
-            .map(getIssueSummary),
-          labelIds: input.labelIds ?? [],
           createdAt: now,
           updatedAt: now,
         };
         issues.set(record.id, record);
+        if (input.blockedByIssueIds) blockedByIssueIds.set(record.id, [...new Set(input.blockedByIssueIds)]);
         return record;
       },
       async update(issueId, patch, companyId) {
         requireCapability(manifest, capabilitySet, "issues.update");
         const record = issues.get(issueId);
         if (!isInCompany(record, companyId)) throw new Error(`Issue not found: ${issueId}`);
-        const { blockedByIssueIds, actorAgentId: _actorAgentId, actorUserId: _actorUserId, actorRunId: _actorRunId, ...rest } =
-          patch as Record<string, unknown>;
+        const { blockedByIssueIds: nextBlockedByIssueIds, ...issuePatch } = patch;
+        if (issuePatch.originKind !== undefined) {
+          issuePatch.originKind = normalizePluginOriginKind(issuePatch.originKind);
+        }
         const updated: Issue = {
           ...record,
-          ...(rest as Partial<Issue>),
+          ...issuePatch,
           updatedAt: new Date(),
         };
-        if (blockedByIssueIds && Array.isArray(blockedByIssueIds)) {
-          updated.blockedBy = blockedByIssueIds
-            .map((blockerIssueId) => issues.get(String(blockerIssueId)))
-            .filter((blocker): blocker is Issue => Boolean(blocker))
-            .map(getIssueSummary);
-        }
         issues.set(issueId, updated);
+        if (nextBlockedByIssueIds !== undefined) {
+          blockedByIssueIds.set(issueId, [...new Set(nextBlockedByIssueIds)]);
+        }
         return updated;
       },
       async assertCheckoutOwner(input) {
         requireCapability(manifest, capabilitySet, "issues.checkout");
-        const issue = issues.get(input.issueId);
-        if (!isInCompany(issue, input.companyId)) throw new Error(`Issue not found: ${input.issueId}`);
-        if (issue.assigneeAgentId !== input.actorAgentId) {
+        const record = issues.get(input.issueId);
+        if (!isInCompany(record, input.companyId)) throw new Error(`Issue not found: ${input.issueId}`);
+        if (
+          record.status !== "in_progress" ||
+          record.assigneeAgentId !== input.actorAgentId ||
+          (record.checkoutRunId !== null && record.checkoutRunId !== input.actorRunId)
+        ) {
           throw new Error("Issue run ownership conflict");
         }
-        const adoptedFromRunId =
-          issue.checkoutRunId && issue.checkoutRunId !== input.actorRunId ? issue.checkoutRunId : null;
-        const updated: Issue = {
-          ...issue,
-          checkoutRunId: input.actorRunId,
-          updatedAt: new Date(),
-        };
-        issues.set(issue.id, updated);
         return {
-          issueId: updated.id,
-          status: updated.status,
-          assigneeAgentId: updated.assigneeAgentId,
-          checkoutRunId: updated.checkoutRunId,
-          adoptedFromRunId,
-        };
-      },
-      async getSubtree(issueId, companyId, options) {
-        requireCapability(manifest, capabilitySet, "issue.subtree.read");
-        const rootIssue = issues.get(issueId);
-        if (!isInCompany(rootIssue, companyId)) throw new Error(`Issue not found: ${issueId}`);
-        const subtreeIssueIds = collectSubtreeIssueIds(issueId, companyId);
-        const includeRoot = options?.includeRoot !== false;
-        const issueIds = includeRoot ? subtreeIssueIds : subtreeIssueIds.filter((id) => id !== issueId);
-        const subtreeIssues = issueIds
-          .map((id) => issues.get(id))
-          .filter((issue): issue is Issue => isInCompany(issue, companyId));
-        const assigneeIds = [...new Set(subtreeIssues.map((issue) => issue.assigneeAgentId).filter(Boolean))];
-        return {
-          rootIssueId: issueId,
-          companyId,
-          issueIds,
-          issues: subtreeIssues,
-          ...(options?.includeRelations
-            ? {
-                relations: Object.fromEntries(issueIds.map((id) => [id, getRelationSummary(id, companyId)])),
-              }
-            : {}),
-          ...(options?.includeDocuments
-            ? {
-                documents: Object.fromEntries(
-                  issueIds.map((id) => [id, listIssueDocumentSummaries(id)]),
-                ),
-              }
-            : {}),
-          ...(options?.includeActiveRuns
-            ? {
-                activeRuns: Object.fromEntries(issueIds.map((id) => [id, []])),
-              }
-            : {}),
-          ...(options?.includeAssignees
-            ? {
-                assignees: Object.fromEntries(
-                  assigneeIds.map((id) => {
-                    const agent = agents.get(String(id));
-                    if (!agent) {
-                      return [
-                        String(id),
-                        { id: String(id), name: "Unknown", role: "unknown", title: null, status: "idle" as const },
-                      ];
-                    }
-                    return [
-                      agent.id,
-                      {
-                        id: agent.id,
-                        name: agent.name,
-                        role: agent.role,
-                        title: agent.title,
-                        status: agent.status,
-                      },
-                    ];
-                  }),
-                ),
-              }
-            : {}),
+          issueId: record.id,
+          status: record.status,
+          assigneeAgentId: record.assigneeAgentId,
+          checkoutRunId: record.checkoutRunId,
+          adoptedFromRunId: null,
         };
       },
       async requestWakeup(issueId, companyId) {
         requireCapability(manifest, capabilitySet, "issues.wakeup");
-        const issue = issues.get(issueId);
-        if (!isInCompany(issue, companyId)) throw new Error(`Issue not found: ${issueId}`);
+        const record = issues.get(issueId);
+        if (!isInCompany(record, companyId)) throw new Error(`Issue not found: ${issueId}`);
+        if (!record.assigneeAgentId) throw new Error("Issue has no assigned agent to wake");
+        if (["backlog", "done", "cancelled"].includes(record.status)) {
+          throw new Error(`Issue is not wakeable in status: ${record.status}`);
+        }
+        const unresolved = issueRelationSummary(issueId).blockedBy.filter((blocker) => blocker.status !== "done");
+        if (unresolved.length > 0) throw new Error("Issue is blocked by unresolved blockers");
         return { queued: true, runId: randomUUID() };
       },
       async requestWakeups(issueIds, companyId) {
         requireCapability(manifest, capabilitySet, "issues.wakeup");
-        return issueIds.map((issueId) => {
-          const issue = issues.get(issueId);
-          if (!isInCompany(issue, companyId)) throw new Error(`Issue not found: ${issueId}`);
-          return { issueId, queued: true, runId: randomUUID() };
-        });
+        const results = [];
+        for (const issueId of issueIds) {
+          const record = issues.get(issueId);
+          if (!isInCompany(record, companyId)) throw new Error(`Issue not found: ${issueId}`);
+          if (!record.assigneeAgentId) throw new Error("Issue has no assigned agent to wake");
+          if (["backlog", "done", "cancelled"].includes(record.status)) {
+            throw new Error(`Issue is not wakeable in status: ${record.status}`);
+          }
+          const unresolved = issueRelationSummary(issueId).blockedBy.filter((blocker) => blocker.status !== "done");
+          if (unresolved.length > 0) throw new Error("Issue is blocked by unresolved blockers");
+          results.push({ issueId, queued: true, runId: randomUUID() });
+        }
+        return results;
       },
       async listComments(issueId, companyId) {
         requireCapability(manifest, capabilitySet, "issue.comments.read");
@@ -856,6 +1269,50 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         issueComments.set(issueId, current);
         return comment;
       },
+      async createInteraction(issueId, interaction, companyId, options) {
+        requireCapability(manifest, capabilitySet, "issue.interactions.create");
+        const parentIssue = issues.get(issueId);
+        if (!isInCompany(parentIssue, companyId)) {
+          throw new Error(`Issue not found: ${issueId}`);
+        }
+        const now = new Date();
+        const current = issueInteractions.get(issueId) ?? [];
+        if (interaction.idempotencyKey) {
+          const existing = current.find((entry) => entry.idempotencyKey === interaction.idempotencyKey);
+          if (existing) return existing;
+        }
+        const created: IssueThreadInteraction = {
+          id: randomUUID(),
+          companyId: parentIssue.companyId,
+          issueId,
+          kind: interaction.kind,
+          status: "pending",
+          continuationPolicy: interaction.continuationPolicy ?? "wake_assignee",
+          idempotencyKey: interaction.idempotencyKey ?? null,
+          sourceCommentId: interaction.sourceCommentId ?? null,
+          sourceRunId: interaction.sourceRunId ?? null,
+          title: interaction.title ?? null,
+          summary: interaction.summary ?? null,
+          createdByAgentId: options?.authorAgentId ?? null,
+          createdByUserId: null,
+          payload: interaction.payload,
+          result: null,
+          createdAt: now,
+          updatedAt: now,
+        } as IssueThreadInteraction;
+        current.push(created);
+        issueInteractions.set(issueId, current);
+        return created;
+      },
+      async suggestTasks(issueId, interaction, companyId, options) {
+        return this.createInteraction(issueId, { ...interaction, kind: "suggest_tasks" }, companyId, options) as Promise<any>;
+      },
+      async askUserQuestions(issueId, interaction, companyId, options) {
+        return this.createInteraction(issueId, { ...interaction, kind: "ask_user_questions" }, companyId, options) as Promise<any>;
+      },
+      async requestConfirmation(issueId, interaction, companyId, options) {
+        return this.createInteraction(issueId, { ...interaction, kind: "request_confirmation" }, companyId, options) as Promise<any>;
+      },
       async requestBoardApproval(issueId, companyId, payload, options) {
         requireCapability(manifest, capabilitySet, "issue.approvals.create");
         const parentIssue = issues.get(issueId);
@@ -863,79 +1320,155 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           throw new Error(`Issue not found: ${issueId}`);
         }
         const now = new Date();
-        const approval: Approval = {
+        return {
           id: randomUUID(),
-          companyId: parentIssue.companyId,
+          companyId,
           type: "request_board_approval",
           requestedByAgentId: options.requestedByAgentId,
           requestedByUserId: null,
           status: "pending",
-          payload: normalizeRequestBoardApprovalPayload(payload),
+          payload,
           decisionNote: null,
           decidedByUserId: null,
           decidedAt: null,
           createdAt: now,
           updatedAt: now,
         };
-        approvals.set(approval.id, approval);
-        return approval;
+      },
+      documents: {
+        async list(issueId, companyId) {
+          requireCapability(manifest, capabilitySet, "issue.documents.read");
+          if (!isInCompany(issues.get(issueId), companyId)) return [];
+          return [...issueDocuments.values()]
+            .filter((document) => document.issueId === issueId && document.companyId === companyId)
+            .map(({ body: _body, ...summary }) => summary);
+        },
+        async get(issueId, key, companyId) {
+          requireCapability(manifest, capabilitySet, "issue.documents.read");
+          if (!isInCompany(issues.get(issueId), companyId)) return null;
+          return issueDocuments.get(`${issueId}|${key}`) ?? null;
+        },
+        async upsert(input) {
+          requireCapability(manifest, capabilitySet, "issue.documents.write");
+          const parentIssue = issues.get(input.issueId);
+          if (!isInCompany(parentIssue, input.companyId)) {
+            throw new Error(`Issue not found: ${input.issueId}`);
+          }
+          const now = new Date();
+          const existing = issueDocuments.get(`${input.issueId}|${input.key}`);
+          const document: IssueDocument = {
+            id: existing?.id ?? randomUUID(),
+            companyId: input.companyId,
+            issueId: input.issueId,
+            key: input.key,
+            title: input.title ?? existing?.title ?? null,
+            format: "markdown",
+            latestRevisionId: randomUUID(),
+            latestRevisionNumber: (existing?.latestRevisionNumber ?? 0) + 1,
+            createdByAgentId: existing?.createdByAgentId ?? null,
+            createdByUserId: existing?.createdByUserId ?? null,
+            updatedByAgentId: null,
+            updatedByUserId: null,
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now,
+            body: input.body,
+          };
+          issueDocuments.set(`${input.issueId}|${input.key}`, document);
+          return document;
+        },
+        async delete(issueId, _key, companyId) {
+          requireCapability(manifest, capabilitySet, "issue.documents.write");
+          const parentIssue = issues.get(issueId);
+          if (!isInCompany(parentIssue, companyId)) {
+            throw new Error(`Issue not found: ${issueId}`);
+          }
+          issueDocuments.delete(`${issueId}|${_key}`);
+        },
       },
       relations: {
         async get(issueId, companyId) {
           requireCapability(manifest, capabilitySet, "issue.relations.read");
-          return getRelationSummary(issueId, companyId);
+          if (!isInCompany(issues.get(issueId), companyId)) throw new Error(`Issue not found: ${issueId}`);
+          return issueRelationSummary(issueId);
         },
-        async setBlockedBy(issueId, blockedByIssueIds, companyId) {
+        async setBlockedBy(issueId, nextBlockedByIssueIds, companyId) {
           requireCapability(manifest, capabilitySet, "issue.relations.write");
-          return setIssueBlockedBy(issueId, companyId, blockedByIssueIds);
+          if (!isInCompany(issues.get(issueId), companyId)) throw new Error(`Issue not found: ${issueId}`);
+          blockedByIssueIds.set(issueId, [...new Set(nextBlockedByIssueIds)]);
+          return issueRelationSummary(issueId);
         },
         async addBlockers(issueId, blockerIssueIds, companyId) {
           requireCapability(manifest, capabilitySet, "issue.relations.write");
-          const current = getRelationSummary(issueId, companyId);
-          return setIssueBlockedBy(issueId, companyId, [
-            ...new Set([...current.blockedBy.map((relation) => relation.id), ...blockerIssueIds]),
-          ]);
+          if (!isInCompany(issues.get(issueId), companyId)) throw new Error(`Issue not found: ${issueId}`);
+          const next = new Set(blockedByIssueIds.get(issueId) ?? []);
+          for (const blockerIssueId of blockerIssueIds) next.add(blockerIssueId);
+          blockedByIssueIds.set(issueId, [...next]);
+          return issueRelationSummary(issueId);
         },
         async removeBlockers(issueId, blockerIssueIds, companyId) {
           requireCapability(manifest, capabilitySet, "issue.relations.write");
-          const current = getRelationSummary(issueId, companyId);
+          if (!isInCompany(issues.get(issueId), companyId)) throw new Error(`Issue not found: ${issueId}`);
           const removals = new Set(blockerIssueIds);
-          return setIssueBlockedBy(
+          blockedByIssueIds.set(
             issueId,
-            companyId,
-            current.blockedBy.map((relation) => relation.id).filter((id) => !removals.has(id)),
+            (blockedByIssueIds.get(issueId) ?? []).filter((blockerIssueId) => !removals.has(blockerIssueId)),
           );
+          return issueRelationSummary(issueId);
         },
+      },
+      async getSubtree(issueId, companyId, options) {
+        requireCapability(manifest, capabilitySet, "issue.subtree.read");
+        const root = issues.get(issueId);
+        if (!isInCompany(root, companyId)) throw new Error(`Issue not found: ${issueId}`);
+        const includeRoot = options?.includeRoot !== false;
+        const allIds = [root.id];
+        let frontier = [root.id];
+        while (frontier.length > 0) {
+          const children = [...issues.values()]
+            .filter((issue) => issue.companyId === companyId && frontier.includes(issue.parentId ?? ""))
+            .map((issue) => issue.id)
+            .filter((id) => !allIds.includes(id));
+          allIds.push(...children);
+          frontier = children;
+        }
+        const issueIds = includeRoot ? allIds : allIds.filter((id) => id !== root.id);
+        const subtreeIssues = issueIds.map((id) => issues.get(id)).filter((candidate): candidate is Issue => Boolean(candidate));
+        return {
+          rootIssueId: root.id,
+          companyId,
+          issueIds,
+          issues: subtreeIssues,
+          ...(options?.includeRelations
+            ? { relations: Object.fromEntries(issueIds.map((id) => [id, issueRelationSummary(id)])) }
+            : {}),
+          ...(options?.includeDocuments ? { documents: Object.fromEntries(issueIds.map((id) => [id, []])) } : {}),
+          ...(options?.includeActiveRuns ? { activeRuns: Object.fromEntries(issueIds.map((id) => [id, []])) } : {}),
+          ...(options?.includeAssignees ? { assignees: {} } : {}),
+        };
       },
       summaries: {
         async getOrchestration(input) {
           requireCapability(manifest, capabilitySet, "issues.orchestration.read");
-          const { issueId, companyId } = input;
-          const rootIssue = issues.get(issueId);
-          if (!isInCompany(rootIssue, companyId)) throw new Error(`Issue not found: ${issueId}`);
-          const subtreeIssueIds = input.includeSubtree
-            ? collectSubtreeIssueIds(issueId, companyId)
-            : [issueId];
+          const root = issues.get(input.issueId);
+          if (!isInCompany(root, input.companyId)) throw new Error(`Issue not found: ${input.issueId}`);
+          const subtreeIssueIds = [root.id];
+          if (input.includeSubtree) {
+            let frontier = [root.id];
+            while (frontier.length > 0) {
+              const children = [...issues.values()]
+                .filter((issue) => issue.companyId === input.companyId && frontier.includes(issue.parentId ?? ""))
+                .map((issue) => issue.id)
+                .filter((id) => !subtreeIssueIds.includes(id));
+              subtreeIssueIds.push(...children);
+              frontier = children;
+            }
+          }
           return {
-            issueId,
-            companyId,
+            issueId: root.id,
+            companyId: input.companyId,
             subtreeIssueIds,
-            relations: Object.fromEntries(
-              subtreeIssueIds.map((id) => [id, getRelationSummary(id, companyId)]),
-            ),
-            approvals: [...approvals.values()]
-              .filter((approval) => approval.companyId === companyId)
-              .map((approval) => ({
-                issueId,
-                id: approval.id,
-                type: approval.type,
-                status: approval.status,
-                requestedByAgentId: approval.requestedByAgentId,
-                requestedByUserId: approval.requestedByUserId,
-                decidedByUserId: approval.decidedByUserId,
-                decidedAt: approval.decidedAt?.toISOString() ?? null,
-                createdAt: approval.createdAt.toISOString(),
-              })),
+            relations: Object.fromEntries(subtreeIssueIds.map((id) => [id, issueRelationSummary(id)])),
+            approvals: [],
             runs: [],
             costs: {
               costCents: 0,
@@ -947,66 +1480,6 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
             openBudgetIncidents: [],
             invocationBlocks: [],
           };
-        },
-      },
-      documents: {
-        async list(issueId, companyId) {
-          requireCapability(manifest, capabilitySet, "issue.documents.read");
-          if (!isInCompany(issues.get(issueId), companyId)) return [];
-          return listIssueDocumentSummaries(issueId);
-        },
-        async get(issueId, key, companyId) {
-          requireCapability(manifest, capabilitySet, "issue.documents.read");
-          if (!isInCompany(issues.get(issueId), companyId)) return null;
-          return getIssueDocumentMap(issueId).get(key) ?? null;
-        },
-        async upsert(input) {
-          requireCapability(manifest, capabilitySet, "issue.documents.write");
-          const parentIssue = issues.get(input.issueId);
-          if (!isInCompany(parentIssue, input.companyId)) {
-            throw new Error(`Issue not found: ${input.issueId}`);
-          }
-          const now = new Date();
-          const existing = getIssueDocumentMap(input.issueId).get(input.key);
-          const document: IssueDocument = existing
-            ? {
-                ...existing,
-                title: input.title ?? existing.title,
-                format: "markdown",
-                body: input.body,
-                updatedAt: now,
-              }
-            : {
-                id: randomUUID(),
-                companyId: input.companyId,
-                issueId: input.issueId,
-                key: input.key,
-                title: input.title ?? null,
-                format: "markdown",
-                latestRevisionId: randomUUID(),
-                latestRevisionNumber: 1,
-                createdByAgentId: null,
-                createdByUserId: null,
-                updatedByAgentId: null,
-                updatedByUserId: null,
-                body: input.body,
-                createdAt: now,
-                updatedAt: now,
-              };
-          if (existing) {
-            document.latestRevisionId = randomUUID();
-            document.latestRevisionNumber = existing.latestRevisionNumber + 1;
-          }
-          getIssueDocumentMap(input.issueId).set(input.key, document);
-          return document;
-        },
-        async delete(issueId, key, companyId) {
-          requireCapability(manifest, capabilitySet, "issue.documents.write");
-          const parentIssue = issues.get(issueId);
-          if (!isInCompany(parentIssue, companyId)) {
-            throw new Error(`Issue not found: ${issueId}`);
-          }
-          getIssueDocumentMap(issueId).delete(key);
         },
       },
     },
@@ -1060,6 +1533,121 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           throw new Error(`Agent is not invokable in its current state: ${agent!.status}`);
         }
         return { runId: randomUUID() };
+      },
+      managed: {
+        async get(agentKey, companyId) {
+          requireCapability(manifest, capabilitySet, "agents.managed");
+          const cid = requireCompanyId(companyId);
+          managedAgentDeclaration(agentKey);
+          const agent = [...agents.values()].find((candidate) =>
+            candidate.companyId === cid &&
+            candidate.status !== "terminated" &&
+            isManagedAgent(candidate, agentKey),
+          ) ?? null;
+          return managedResolution(agentKey, cid, agent, agent ? "resolved" : "missing");
+        },
+        async reconcile(agentKey, companyId) {
+          requireCapability(manifest, capabilitySet, "agents.managed");
+          const cid = requireCompanyId(companyId);
+          const declaration = managedAgentDeclaration(agentKey);
+          const existingAgent = [...agents.values()].find((candidate) =>
+            candidate.companyId === cid &&
+            candidate.status !== "terminated" &&
+            isManagedAgent(candidate, agentKey),
+          ) ?? null;
+          const existing = managedResolution(agentKey, cid, existingAgent, existingAgent ? "resolved" : "missing");
+          if (existing.agent) return existing;
+          const now = new Date();
+          const created: Agent = {
+            id: randomUUID(),
+            companyId: cid,
+            name: declaration.displayName,
+            urlKey: declaration.displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+            role: (declaration.role ?? "general") as Agent["role"],
+            title: declaration.title ?? null,
+            icon: declaration.icon ?? null,
+            status: declaration.status ?? "idle",
+            reportsTo: null,
+            orgLevel: "staff",
+            departmentKey: "general",
+            departmentName: null,
+            capabilities: declaration.capabilities ?? null,
+            adapterType: (declaration.adapterType ?? "process") as Agent["adapterType"],
+            adapterConfig: declaration.adapterConfig ?? {},
+            runtimeConfig: declaration.runtimeConfig ?? {},
+            budgetMonthlyCents: declaration.budgetMonthlyCents ?? 0,
+            spentMonthlyCents: 0,
+            pauseReason: null,
+            pausedAt: null,
+            permissions: { canCreateAgents: Boolean(declaration.permissions?.canCreateAgents) },
+            lastHeartbeatAt: null,
+            metadata: managedAgentMetadata(agentKey),
+            createdAt: now,
+            updatedAt: now,
+          };
+          agents.set(created.id, created);
+          return managedResolution(agentKey, cid, created, "created");
+        },
+        async reset(agentKey, companyId) {
+          requireCapability(manifest, capabilitySet, "agents.managed");
+          const cid = requireCompanyId(companyId);
+          const declaration = managedAgentDeclaration(agentKey);
+          let agent = [...agents.values()].find((candidate) =>
+            candidate.companyId === cid &&
+            candidate.status !== "terminated" &&
+            isManagedAgent(candidate, agentKey),
+          ) ?? null;
+          if (!agent) {
+            const now = new Date();
+            agent = {
+              id: randomUUID(),
+              companyId: cid,
+              name: declaration.displayName,
+              urlKey: declaration.displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+              role: (declaration.role ?? "general") as Agent["role"],
+              title: declaration.title ?? null,
+              icon: declaration.icon ?? null,
+              status: declaration.status ?? "idle",
+              reportsTo: null,
+              orgLevel: "staff",
+              departmentKey: "general",
+              departmentName: null,
+              capabilities: declaration.capabilities ?? null,
+              adapterType: (declaration.adapterType ?? "process") as Agent["adapterType"],
+              adapterConfig: declaration.adapterConfig ?? {},
+              runtimeConfig: declaration.runtimeConfig ?? {},
+              budgetMonthlyCents: declaration.budgetMonthlyCents ?? 0,
+              spentMonthlyCents: 0,
+              pauseReason: null,
+              pausedAt: null,
+              permissions: { canCreateAgents: Boolean(declaration.permissions?.canCreateAgents) },
+              lastHeartbeatAt: null,
+              metadata: managedAgentMetadata(agentKey),
+              createdAt: now,
+              updatedAt: now,
+            };
+            agents.set(agent.id, agent);
+          }
+          const resolved = managedResolution(agentKey, cid, agent, "resolved");
+          if (!resolved.agent) return resolved;
+          const updated: Agent = {
+            ...resolved.agent,
+            name: declaration.displayName,
+            role: (declaration.role ?? "general") as Agent["role"],
+            title: declaration.title ?? null,
+            icon: declaration.icon ?? null,
+            capabilities: declaration.capabilities ?? null,
+            adapterType: (declaration.adapterType ?? "process") as Agent["adapterType"],
+            adapterConfig: declaration.adapterConfig ?? {},
+            runtimeConfig: declaration.runtimeConfig ?? {},
+            budgetMonthlyCents: declaration.budgetMonthlyCents ?? 0,
+            permissions: { canCreateAgents: Boolean(declaration.permissions?.canCreateAgents) },
+            metadata: managedAgentMetadata(agentKey, resolved.agent.metadata),
+            updatedAt: new Date(),
+          };
+          agents.set(updated.id, updated);
+          return managedResolution(agentKey, cid, updated, "reset");
+        },
       },
       sessions: {
         async create(agentId, companyId, opts) {
@@ -1215,7 +1803,12 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
     seed(input) {
       for (const row of input.companies ?? []) companies.set(row.id, row);
       for (const row of input.projects ?? []) projects.set(row.id, row);
-      for (const row of input.issues ?? []) issues.set(row.id, row);
+      for (const row of input.issues ?? []) {
+        issues.set(row.id, row);
+        if (row.blockedBy) {
+          blockedByIssueIds.set(row.id, row.blockedBy.map((blocker) => blocker.id));
+        }
+      }
       for (const row of input.issueComments ?? []) {
         const list = issueComments.get(row.issueId) ?? [];
         list.push(row);
@@ -1293,11 +1886,20 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
     activity,
     metrics,
     telemetry,
+    dbQueries,
+    dbExecutes,
   };
 
   return harness;
 }
 
+/**
+ * Create an environment-aware test harness that wraps the base harness with
+ * environment driver simulation and lifecycle event recording.
+ *
+ * Use this to test environment plugins through the full host contract:
+ * validateConfig → probe → acquireLease → realizeWorkspace → execute → releaseLease.
+ */
 export function createEnvironmentTestHarness(options: EnvironmentTestHarnessOptions): EnvironmentTestHarness {
   const base = createTestHarness(options);
   const environmentEvents: EnvironmentEventRecord[] = [];
@@ -1322,9 +1924,10 @@ export function createEnvironmentTestHarness(options: EnvironmentTestHarnessOpti
     return event;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function callHook<R>(
     type: EnvironmentEventRecord["type"],
-    hook: ((params: never) => Promise<R>) | undefined,
+    hook: ((...args: any[]) => Promise<R>) | undefined,
     params: unknown,
     hookName: string,
   ): Promise<R> {
@@ -1334,17 +1937,17 @@ export function createEnvironmentTestHarness(options: EnvironmentTestHarnessOpti
       throw new Error(err);
     }
     try {
-      const result = await hook(params as never);
+      const result = await hook(params);
       record(type, params as Record<string, unknown>, result);
       return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      record(type, params as Record<string, unknown>, undefined, message);
-      throw error;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      record(type, params as Record<string, unknown>, undefined, msg);
+      throw e;
     }
   }
 
-  return {
+  const envHarness: EnvironmentTestHarness = {
     ...base,
     environmentEvents,
     async validateConfig(params) {
@@ -1372,4 +1975,6 @@ export function createEnvironmentTestHarness(options: EnvironmentTestHarnessOpti
       return callHook("execute", driver.onExecute, params, "onExecute");
     },
   };
+
+  return envHarness;
 }

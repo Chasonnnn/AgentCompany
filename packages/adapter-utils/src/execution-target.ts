@@ -142,13 +142,6 @@ function isAdapterExecutionTargetInstance(value: unknown): value is AdapterExecu
   return false;
 }
 
-function requireSandboxRunner(target: AdapterSandboxExecutionTarget): CommandManagedRuntimeRunner {
-  if (target.runner) return target.runner;
-  throw new Error(
-    "Sandbox execution target is missing its provider runtime runner. Sandbox commands must execute through the environment runtime.",
-  );
-}
-
 export function adapterExecutionTargetToRemoteSpec(
   target: AdapterExecutionTarget | null | undefined,
 ): AdapterRemoteExecutionSpec | null {

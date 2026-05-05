@@ -575,6 +575,13 @@
       "when": 1777999954336,
       "tag": "0081_quiet_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1778000000000,
+      "tag": "0082_plugin_managed_resources",
+      "breakpoints": true
     }
   ]
 }

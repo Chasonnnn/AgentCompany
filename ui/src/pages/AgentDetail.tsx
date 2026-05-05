@@ -41,7 +41,8 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { LowYieldRunList, ProductivityMetricGrid } from "../components/ProductivitySummaryPanel";
 import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
-import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
+import { FileTree, buildFileTree } from "../components/FileTree";
+import { PackageFileTree } from "../components/PackageFileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { formatCents, formatDate, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { cn } from "../lib/utils";
@@ -2813,7 +2814,7 @@ function PromptsTab({
               </div>
             </div>
           )}
-          <PackageFileTree
+          <FileTree
             nodes={fileTree}
             selectedFile={selectedOrEntryFile}
             expandedDirs={expandedDirs}
