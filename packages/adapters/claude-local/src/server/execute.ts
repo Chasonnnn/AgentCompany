@@ -871,6 +871,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const transientUpstream =
       failed &&
       !loginMeta.requiresLogin &&
+      !clearSessionForMaxTurns &&
       isClaudeTransientUpstreamError({
         parsed: parsed ?? null,
         stdout: proc.stdout,
@@ -887,6 +888,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       : null;
     const resolvedErrorCode = loginMeta.requiresLogin
       ? "claude_auth_required"
+      : failed && clearSessionForMaxTurns
+      ? "max_turns_exhausted"
       : transientUpstream
       ? "claude_transient_upstream"
       : null;
@@ -898,6 +901,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         };
     const mergedResultJson: Record<string, unknown> = {
       ...(parsed ?? fallbackResultJson),
+      ...(failed && clearSessionForMaxTurns ? { stopReason: "max_turns_exhausted" } : {}),
       ...(transientUpstream ? { errorFamily: "transient_upstream" } : {}),
       ...(transientRetryNotBefore ? { retryNotBefore: transientRetryNotBefore.toISOString() } : {}),
       ...(transientRetryNotBefore ? { transientRetryNotBefore: transientRetryNotBefore.toISOString() } : {}),
