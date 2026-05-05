@@ -60,6 +60,7 @@ import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { IssueRunLedger } from "../components/IssueRunLedger";
+import { IssueMonitorActivityCard } from "../components/IssueMonitorActivityCard";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueContinuityPanel } from "../components/IssueContinuityPanel";
@@ -2732,6 +2733,7 @@ export function IssueDetail() {
                   hasLiveRuns={hasLiveRuns}
                 />
               </div>
+              <IssueMonitorActivityCard issue={issue} />
               <IssueContinuationHandoff document={continuationHandoff} focusSignal={handoffFocusSignal} />
               {linkedApprovals && linkedApprovals.length > 0 && (
                 <div className="mb-3 space-y-3">
