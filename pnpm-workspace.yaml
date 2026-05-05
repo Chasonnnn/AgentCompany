@@ -2,6 +2,9 @@ packages:
   - packages/*
   - packages/adapters/*
   - packages/plugins/*
+  # Keep sandbox-provider plugins installable as standalone packages without
+  # forcing root pnpm-lock.yaml churn for their third-party deps.
+  - "!packages/plugins/sandbox-providers/**"
   - packages/plugins/examples/*
   - server
   - ui
