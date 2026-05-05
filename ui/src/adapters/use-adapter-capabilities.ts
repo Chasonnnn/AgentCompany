@@ -18,6 +18,7 @@ const ALL_FALSE: AdapterCapabilities = {
  * return correct values on first render before the /api/adapters call resolves.
  */
 const KNOWN_DEFAULTS: Record<string, AdapterCapabilities> = {
+  acpx_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: false, nativeDecisionQuestions: false, supportsModelProfiles: false },
   claude_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: false, nativeDecisionQuestions: true, supportsModelProfiles: true },
   codex_local: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: false, nativePlanningMode: true, nativeDecisionQuestions: true, supportsModelProfiles: true },
   cursor: { supportsInstructionsBundle: true, supportsSkills: true, supportsLocalAgentJwt: true, requiresMaterializedRuntimeSkills: true, nativePlanningMode: false, nativeDecisionQuestions: false, supportsModelProfiles: true },

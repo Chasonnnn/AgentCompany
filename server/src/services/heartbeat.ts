@@ -136,6 +136,7 @@ import {
   RUN_LIVENESS_CONTINUATION_REASON,
 } from "./run-continuations.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
+import { redactEventPayload } from "../redaction.js";
 import {
   hasSessionCompactionThresholds,
   resolveSessionCompactionPolicy,
@@ -3722,9 +3723,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const boundedPayload = event.payload
       ? boundHeartbeatRunEventPayloadForStorage(event.payload)
       : event.payload;
-    const sanitizedPayload = boundedPayload
-      ? redactCurrentUserValue(boundedPayload, currentUserRedactionOptions)
-      : boundedPayload;
+    const secretSanitizedPayload = boundedPayload ? redactEventPayload(boundedPayload) : boundedPayload;
+    const sanitizedPayload = secretSanitizedPayload
+      ? redactCurrentUserValue(secretSanitizedPayload, currentUserRedactionOptions)
+      : secretSanitizedPayload;
 
     await db.insert(heartbeatRunEvents).values({
       companyId: run.companyId,

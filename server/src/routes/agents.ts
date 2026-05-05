@@ -83,6 +83,12 @@ import { loadConfig } from "../config.js";
 import { resolveHomeAwarePath } from "../home-paths.js";
 import { runClaudeLogin } from "@paperclipai/adapter-claude-local/server";
 import {
+  DEFAULT_ACPX_LOCAL_AGENT,
+  DEFAULT_ACPX_LOCAL_MODE,
+  DEFAULT_ACPX_LOCAL_NON_INTERACTIVE_PERMISSIONS,
+  DEFAULT_ACPX_LOCAL_PERMISSION_MODE,
+} from "@paperclipai/adapter-acpx-local";
+import {
   defaultCodexLocalFastModeForModel,
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
@@ -155,6 +161,7 @@ export function agentRoutes(
   // Legacy hardcoded maps — used as fallback when adapter module does not
   // declare capability flags explicitly.
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
+    acpx_local: "instructionsFilePath",
     claude_local: "instructionsFilePath",
     codex_local: "instructionsFilePath",
     droid_local: "instructionsFilePath",
@@ -862,6 +869,21 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
   ): Record<string, unknown> {
     const next = { ...adapterConfig };
+    if (adapterType === "acpx_local") {
+      if (!asNonEmptyString(next.agent)) {
+        next.agent = DEFAULT_ACPX_LOCAL_AGENT;
+      }
+      if (!asNonEmptyString(next.mode)) {
+        next.mode = DEFAULT_ACPX_LOCAL_MODE;
+      }
+      if (!asNonEmptyString(next.permissionMode)) {
+        next.permissionMode = DEFAULT_ACPX_LOCAL_PERMISSION_MODE;
+      }
+      if (!asNonEmptyString(next.nonInteractivePermissions)) {
+        next.nonInteractivePermissions = DEFAULT_ACPX_LOCAL_NON_INTERACTIVE_PERMISSIONS;
+      }
+      return ensureGatewayDeviceKey(adapterType, next);
+    }
     if (adapterType === "codex_local") {
       if (!asNonEmptyString(next.model)) {
         next.model = DEFAULT_CODEX_LOCAL_MODEL;

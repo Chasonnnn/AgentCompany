@@ -1,6 +1,15 @@
 import type { AdapterModelProfileDefinition, ServerAdapterModule } from "./types.js";
 import { getAdapterSessionManagement } from "@paperclipai/adapter-utils";
 import {
+  execute as acpxExecute,
+  testEnvironment as acpxTestEnvironment,
+  sessionCodec as acpxSessionCodec,
+  getConfigSchema as getAcpxConfigSchema,
+  listAcpxSkills,
+  syncAcpxSkills,
+} from "@paperclipai/adapter-acpx-local/server";
+import { agentConfigurationDoc as acpxAgentConfigurationDoc } from "@paperclipai/adapter-acpx-local";
+import {
   execute as claudeExecute,
   listClaudeSkills,
   syncClaudeSkills,
@@ -172,6 +181,22 @@ const claudeLocalAdapter: ServerAdapterModule = {
   getQuotaWindows: claudeGetQuotaWindows,
 };
 
+const acpxLocalAdapter: ServerAdapterModule = {
+  type: "acpx_local",
+  execute: acpxExecute,
+  testEnvironment: acpxTestEnvironment,
+  listSkills: listAcpxSkills,
+  syncSkills: syncAcpxSkills,
+  sessionCodec: acpxSessionCodec,
+  sessionManagement: getAdapterSessionManagement("acpx_local") ?? undefined,
+  supportsLocalAgentJwt: true,
+  supportsInstructionsBundle: true,
+  instructionsPathKey: "instructionsFilePath",
+  requiresMaterializedRuntimeSkills: false,
+  agentConfigurationDoc: acpxAgentConfigurationDoc,
+  getConfigSchema: getAcpxConfigSchema,
+};
+
 const codexLocalAdapter: ServerAdapterModule = {
   type: "codex_local",
   execute: codexExecute,
@@ -306,6 +331,7 @@ const pausedOverrides = new Set<string>();
 
 function registerBuiltInAdapters() {
   for (const adapter of [
+    acpxLocalAdapter,
     claudeLocalAdapter,
     codexLocalAdapter,
     openCodeLocalAdapter,
