@@ -27,6 +27,7 @@ import {
   type TerminalResultCleanupOptions,
 } from "./server-utils.js";
 import type { NormalizedLocalExecutionPolicy } from "./local-execution-policy.js";
+import { preferredShellForSandbox } from "./sandbox-shell.js";
 
 export interface AdapterLocalExecutionTarget {
   kind: "local";
@@ -48,6 +49,7 @@ export interface AdapterSandboxExecutionTarget {
   kind: "remote";
   transport: "sandbox";
   providerKey?: string | null;
+  shellCommand?: "bash" | "sh" | null;
   environmentId?: string | null;
   leaseId?: string | null;
   remoteCwd: string;
@@ -217,6 +219,17 @@ export function describeAdapterExecutionTarget(
   return `sandbox environment${target.providerKey ? ` (${target.providerKey})` : ""}`;
 }
 
+function requireSandboxRunner(target: AdapterSandboxExecutionTarget): CommandManagedRuntimeRunner {
+  if (target.runner) return target.runner;
+  throw new Error(
+    "Sandbox execution target is missing its provider runtime runner. Sandbox commands must execute through the environment runtime.",
+  );
+}
+
+function preferredSandboxShell(target: AdapterSandboxExecutionTarget): "bash" | "sh" {
+  return preferredShellForSandbox(target.shellCommand);
+}
+
 export async function ensureAdapterExecutionTargetCommandResolvable(
   command: string,
   target: AdapterExecutionTarget | null | undefined,
@@ -293,8 +306,9 @@ export async function runAdapterExecutionTargetShellCommand(
   if (target?.kind === "remote") {
     const startedAt = new Date().toISOString();
     if (target.transport === "sandbox") {
+      const shellCommand = preferredSandboxShell(target);
       return await requireSandboxRunner(target).execute({
-        command: "sh",
+        command: shellCommand,
         args: ["-lc", command],
         cwd: target.remoteCwd,
         env: options.env,
@@ -616,6 +630,7 @@ export async function prepareAdapterExecutionTargetRuntime(input: {
     runner: requireSandboxRunner(target),
     spec: {
       providerKey: target.providerKey,
+      shellCommand: target.shellCommand,
       leaseId: target.leaseId,
       remoteCwd: target.remoteCwd,
       timeoutMs: target.timeoutMs,
@@ -749,6 +764,7 @@ export async function startAdapterExecutionTargetPaperclipBridge(input: {
       runner: requireSandboxRunner(target),
       remoteCwd: target.remoteCwd,
       timeoutMs: target.timeoutMs,
+      shellCommand: preferredSandboxShell(target),
     });
     worker = await startSandboxCallbackBridgeWorker({
       client,
@@ -785,6 +801,7 @@ export async function startAdapterExecutionTargetPaperclipBridge(input: {
       bridgeAsset,
       timeoutMs: target.timeoutMs,
       maxBodyBytes,
+      shellCommand: preferredSandboxShell(target),
     });
   } catch (error) {
     await Promise.allSettled([
