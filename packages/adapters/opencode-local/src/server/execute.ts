@@ -52,7 +52,11 @@ import {
   resolveSharedLocalAdapterHomeDir,
 } from "@paperclipai/adapter-utils/server-utils";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
-import { ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
+import {
+  ensureOpenCodeModelConfiguredAndAvailable,
+  parseOpenCodeModelsOutput,
+  requireOpenCodeModelId,
+} from "./models.js";
 import { removeMaintainerOnlySkillSymlinks } from "@paperclipai/adapter-utils/server-utils";
 import { prepareOpenCodeRuntimeConfig } from "./runtime-config.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
@@ -77,6 +81,68 @@ function parseModelProvider(model: string | null): string | null {
 
 function resolveOpenCodeBiller(env: Record<string, string>, provider: string | null): string {
   return inferOpenAiCompatibleBiller(env, null) ?? provider ?? "unknown";
+}
+
+const REMOTE_OPENCODE_MODELS_PROBE_DEFAULT_TIMEOUT_SEC = 20;
+
+async function ensureRemoteOpenCodeModelConfiguredAndAvailable(input: {
+  runId: string;
+  executionTarget: NonNullable<AdapterExecutionContext["executionTarget"]>;
+  command: string;
+  model: string;
+  cwd: string;
+  env: Record<string, string>;
+  timeoutSec: number;
+  graceSec: number;
+}) {
+  const model = requireOpenCodeModelId(input.model);
+  const probeTimeoutSec = input.timeoutSec > 0
+    ? Math.min(input.timeoutSec, REMOTE_OPENCODE_MODELS_PROBE_DEFAULT_TIMEOUT_SEC)
+    : REMOTE_OPENCODE_MODELS_PROBE_DEFAULT_TIMEOUT_SEC;
+  const probe = await runAdapterExecutionTargetProcess(
+    input.runId,
+    input.executionTarget,
+    input.command,
+    ["models"],
+    {
+      cwd: input.cwd,
+      env: input.env,
+      timeoutSec: probeTimeoutSec,
+      graceSec: input.graceSec,
+      onLog: async () => {},
+    },
+  );
+
+  if (probe.timedOut) {
+    throw new Error(`\`opencode models\` timed out on the remote execution target after ${probeTimeoutSec}s.`);
+  }
+
+  if ((probe.exitCode ?? 1) !== 0) {
+    const detail = firstNonEmptyLine(probe.stderr) || firstNonEmptyLine(probe.stdout);
+    throw new Error(
+      detail
+        ? `\`opencode models\` failed on the remote execution target: ${detail}`
+        : "`opencode models` failed on the remote execution target.",
+    );
+  }
+
+  const models = parseOpenCodeModelsOutput(probe.stdout);
+  if (models.length === 0) {
+    throw new Error(
+      "OpenCode returned no models on the remote execution target. Run `opencode models` there and verify provider auth.",
+    );
+  }
+
+  if (!models.some((entry) => entry.id === model)) {
+    const sample = models.slice(0, 12).map((entry) => entry.id).join(", ");
+    throw new Error(
+      `Configured OpenCode model is unavailable on the remote execution target: ${model}. Available models: ${sample}${models.length > 12 ? ", ..." : ""}`,
+    );
+  }
+}
+
+function claudeSkillsHome(): string {
+  return path.join(os.homedir(), ".claude", "skills");
 }
 
 async function ensureOpenCodeSkillsInjected(
@@ -269,7 +335,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       runId,
       target: executionTarget,
       installCommand: ctx.runtimeCommandSpec?.installCommand,
-    detectCommand: ctx.runtimeCommandSpec?.detectCommand,
+      detectCommand: ctx.runtimeCommandSpec?.detectCommand,
       cwd,
       env: runtimeEnv,
       timeoutSec,
@@ -290,22 +356,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         cwd,
         env: runtimeEnv,
       });
+    } else if (executionTarget) {
+      await ensureRemoteOpenCodeModelConfiguredAndAvailable({
+        runId,
+        executionTarget,
+        command,
+        model,
+        cwd,
+        env: runtimeEnv,
+        timeoutSec,
+        graceSec,
+      });
     }
 
-    const timeoutSec = asNumber(config.timeoutSec, 0);
-    const graceSec = asNumber(config.graceSec, 20);
     const extraArgs = (() => {
       const fromExtraArgs = asStringArray(config.extraArgs);
       if (fromExtraArgs.length > 0) return fromExtraArgs;
       return asStringArray(config.args);
     })();
-    const effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
     let restoreRemoteWorkspace: (() => Promise<void>) | null = null;
     let localSkillsDir: string | null = null;
     let remoteRuntimeRootDir: string | null = null;
     let paperclipBridge: Awaited<ReturnType<typeof startAdapterExecutionTargetPaperclipBridge>> = null;
 
-    if (executionTargetIsRemote) {
+    if (executionTarget?.kind === "remote") {
       localSkillsDir = await buildOpenCodeSkillsDir(config);
       await onLog(
         "stdout",
@@ -358,6 +432,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           { cwd, env: preparedRuntimeConfig.env, timeoutSec, graceSec, onLog },
         );
       }
+      await ensureRemoteOpenCodeModelConfiguredAndAvailable({
+        runId,
+        executionTarget,
+        command,
+        model,
+        cwd,
+        env: preparedRuntimeConfig.env,
+        timeoutSec,
+        graceSec,
+      });
     }
     if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(executionTarget)) {
       paperclipBridge = await startAdapterExecutionTargetPaperclipBridge({
