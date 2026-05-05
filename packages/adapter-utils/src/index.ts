@@ -68,20 +68,11 @@ export type {
   SandboxManagedRuntimeClient,
   PreparedSandboxManagedRuntime,
 } from "./sandbox-managed-runtime.js";
-export {
-  parseSandboxRemoteExecutionSpec,
-  buildSandboxExecutionSessionIdentity,
-  sandboxExecutionSessionMatches,
-  mirrorDirectory,
-  prepareSandboxManagedRuntime,
-} from "./sandbox-managed-runtime.js";
-
 export type {
   CommandManagedRuntimeRunner,
   CommandManagedRuntimeSpec,
   CommandManagedRuntimeAsset,
 } from "./command-managed-runtime.js";
-export { prepareCommandManagedRuntime } from "./command-managed-runtime.js";
 // Keep the root adapter-utils entry browser-safe because the UI imports it.
 // The sandbox callback bridge stays available via its dedicated subpath export.
 export type {

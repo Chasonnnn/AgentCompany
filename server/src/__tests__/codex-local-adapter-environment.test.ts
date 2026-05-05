@@ -216,7 +216,6 @@ describe("codex_local environment diagnostics", () => {
       `paperclip-codex-managed-home-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     );
     const binDir = path.join(root, "bin");
-    const sharedCodexHome = path.join(root, "shared-codex-home");
     const paperclipHome = path.join(root, "paperclip-home");
     const cwd = path.join(root, "workspace");
     const capturePath = path.join(root, "capture.txt");
@@ -231,10 +230,10 @@ describe("codex_local environment diagnostics", () => {
     );
     const script = [
       "#!/bin/sh",
-      "if [ -n \"$PAPERCLIP_TEST_CAPTURE_PATH\" ]; then",
-      "  printf '%s' \"$CODEX_HOME\" > \"$PAPERCLIP_TEST_CAPTURE_PATH\"",
-      "fi",
       "if [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then",
+      "  if [ -n \"$PAPERCLIP_TEST_CAPTURE_PATH\" ]; then",
+      "    printf '%s' \"$CODEX_HOME\" > \"$PAPERCLIP_TEST_CAPTURE_PATH\"",
+      "  fi",
       "  echo 'Logged in using ChatGPT'",
       "  exit 0",
       "fi",
@@ -251,14 +250,11 @@ describe("codex_local environment diagnostics", () => {
 
     try {
       await fs.mkdir(binDir, { recursive: true });
-      await fs.mkdir(sharedCodexHome, { recursive: true });
-      await fs.writeFile(path.join(sharedCodexHome, "auth.json"), JSON.stringify({ accessToken: "fake-token" }));
       await fs.writeFile(fakeCodex, script, "utf8");
       await fs.chmod(fakeCodex, 0o755);
 
       vi.stubEnv("HOME", root);
       vi.stubEnv("PAPERCLIP_HOME", paperclipHome);
-      vi.stubEnv("CODEX_HOME", sharedCodexHome);
 
       const result = await testEnvironment({
         companyId: "company-1",

@@ -53,7 +53,10 @@ vi.mock("../context/CompanyContext", () => ({
   }),
 }));
 vi.mock("../context/PanelContext", () => ({ usePanel: () => ({ closePanel: vi.fn() }) }));
-vi.mock("../context/ToastContext", () => ({ useToastActions: () => ({ pushToast: vi.fn() }) }));
+vi.mock("../context/ToastContext", () => ({
+  useToast: () => ({ pushToast: vi.fn() }),
+  useToastActions: () => ({ pushToast: vi.fn() }),
+}));
 vi.mock("../context/BreadcrumbContext", () => ({ useBreadcrumbs: () => ({ setBreadcrumbs: mockSetBreadcrumbs }) }));
 vi.mock("@/plugins/slots", () => ({
   PluginSlotMount: () => null,

@@ -40,23 +40,30 @@ const mockInstanceSettingsService = vi.hoisted(() => ({
 }));
 
 vi.mock("../services/index.js", () => ({
-  agentService: () => mockAgentService,
-  agentInstructionsService: () => ({}),
+	  agentService: () => mockAgentService,
+	  agentProjectPlacementService: () => ({}),
+	  agentTemplateService: () => ({}),
+	  agentInstructionsService: () => ({}),
   accessService: () => mockAccessService,
   approvalService: () => ({}),
-  companySkillService: () => ({
-    listRuntimeSkillEntries: vi.fn(async () => []),
-    resolveRequestedSkillKeys: vi.fn(async () => []),
-  }),
-  budgetService: () => ({}),
+	  companySkillService: () => ({
+	    listRuntimeSkillEntries: vi.fn(async () => []),
+	    resolveRequestedSkillKeys: vi.fn(async () => []),
+	  }),
+	  environmentService: () => mockEnvironmentService,
+	  budgetService: () => ({}),
   heartbeatService: () => ({
     wakeup: vi.fn(),
     cancelActiveForAgent: vi.fn(),
   }),
   ISSUE_LIST_DEFAULT_LIMIT: 50,
-  issueApprovalService: () => ({}),
-  issueService: () => ({}),
-  logActivity: vi.fn(),
+	  issueApprovalService: () => ({}),
+	  issueService: () => ({}),
+	  secretService: () => mockSecretService,
+	  agentSkillService: () => ({}),
+	  memoryService: () => ({}),
+	  productivityService: () => ({}),
+	  logActivity: vi.fn(),
   syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
   workspaceOperationService: () => ({}),
 }));

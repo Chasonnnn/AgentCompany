@@ -40,6 +40,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { scheduleMainContentFocus } from "../lib/main-content-focus";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
+import { PluginSlotMount, resolveRouteSidebarSlot, usePluginSlots } from "../plugins/slots";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "paperclip.lastInstanceSettingsPath";
 
@@ -86,8 +87,29 @@ export function Layout() {
     const activeCompanies = companies.filter((company) => company.status !== "archived");
     return activeCompanies.length > 0 ? activeCompanies : companies;
   }, [companies]);
-  const hasUnknownCompanyPrefix =
-    Boolean(companyPrefix) && !companiesLoading && companies.length > 0 && !matchedCompany;
+	  const hasUnknownCompanyPrefix =
+	    Boolean(companyPrefix) && !companiesLoading && companies.length > 0 && !matchedCompany;
+	  const routeCompany = matchedCompany ?? selectedCompany ?? null;
+	  const pluginRoutePath = useMemo(() => {
+	    const segments = location.pathname.split("/").filter(Boolean);
+	    if (segments.length < 2) return null;
+	    return segments.slice(1).join("/");
+	  }, [location.pathname]);
+	  const pluginSlotsQuery = usePluginSlots({
+	    companyId: routeCompany?.id ?? null,
+	    slotTypes: ["page", "routeSidebar"],
+	    enabled: Boolean(routeCompany?.id),
+	  });
+	  const routeSidebarSlot = useMemo(
+	    () => isInstanceSettingsRoute || isCompanySettingsRoute
+	      ? null
+	      : resolveRouteSidebarSlot(pluginSlotsQuery.slots, pluginRoutePath),
+	    [isCompanySettingsRoute, isInstanceSettingsRoute, pluginRoutePath, pluginSlotsQuery.slots],
+	  );
+	  const routeSidebarContext = useMemo(() => ({
+	    companyId: routeCompany?.id ?? null,
+	    companyPrefix: routeCompany?.issuePrefix ?? companyPrefix ?? null,
+	  }), [companyPrefix, routeCompany?.id, routeCompany?.issuePrefix]);
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -343,13 +365,19 @@ export function Layout() {
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
               <CompanyRail />
-              {isInstanceSettingsRoute ? (
-                <InstanceSidebar />
-              ) : isCompanySettingsRoute ? (
-                <CompanySettingsSidebar />
-              ) : (
-                <Sidebar />
-              )}
+	              {isInstanceSettingsRoute ? (
+	                <InstanceSidebar />
+	              ) : isCompanySettingsRoute ? (
+	                <CompanySettingsSidebar />
+	              ) : routeSidebarSlot ? (
+	                <PluginSlotMount
+	                  slot={routeSidebarSlot}
+	                  context={routeSidebarContext}
+	                  className="h-full w-full"
+	                />
+	              ) : (
+	                <Sidebar />
+	              )}
             </div>
             <SidebarAccountMenu
               deploymentMode={health?.deploymentMode}
@@ -367,13 +395,19 @@ export function Layout() {
                   sidebarOpen ? "w-60" : "w-0"
                 )}
               >
-                {isInstanceSettingsRoute ? (
-                  <InstanceSidebar />
-                ) : isCompanySettingsRoute ? (
-                  <CompanySettingsSidebar />
-                ) : (
-                  <Sidebar />
-                )}
+	                {isInstanceSettingsRoute ? (
+	                  <InstanceSidebar />
+	                ) : isCompanySettingsRoute ? (
+	                  <CompanySettingsSidebar />
+	                ) : routeSidebarSlot ? (
+	                  <PluginSlotMount
+	                    slot={routeSidebarSlot}
+	                    context={routeSidebarContext}
+	                    className="h-full w-full"
+	                  />
+	                ) : (
+	                  <Sidebar />
+	                )}
               </div>
             </div>
             <SidebarAccountMenu

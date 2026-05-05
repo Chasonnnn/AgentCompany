@@ -324,10 +324,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
   try {
-    const runtimeEnv = Object.fromEntries(
-      Object.entries(ensurePathInEnv({ ...process.env, ...preparedRuntimeConfig.env })).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
+	    let runtimeEnv = Object.fromEntries(
+	      Object.entries(ensurePathInEnv({ ...process.env, ...preparedRuntimeConfig.env })).filter(
+	        (entry): entry is [string, string] => typeof entry[1] === "string",
+	      ),
     );
     const timeoutSec = asNumber(config.timeoutSec, 0);
     const graceSec = asNumber(config.graceSec, 20);
@@ -349,25 +349,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       includeRuntimeKeys: ["HOME"],
       resolvedCommand,
     });
-    if (!executionTargetIsRemote) {
-      await ensureOpenCodeModelConfiguredAndAvailable({
-        model,
-        command,
-        cwd,
-        env: runtimeEnv,
-      });
-    } else if (executionTarget) {
-      await ensureRemoteOpenCodeModelConfiguredAndAvailable({
-        runId,
-        executionTarget,
-        command,
-        model,
-        cwd,
-        env: runtimeEnv,
-        timeoutSec,
-        graceSec,
-      });
-    }
+	    if (!executionTargetIsRemote) {
+	      await ensureOpenCodeModelConfiguredAndAvailable({
+	        model,
+	        command,
+	        cwd,
+	        env: runtimeEnv,
+	      });
+	    }
 
     const extraArgs = (() => {
       const fromExtraArgs = asStringArray(config.extraArgs);
@@ -411,9 +400,26 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       if (managedHome && preparedExecutionTargetRuntime.runtimeRootDir) {
         preparedRuntimeConfig.env.HOME = preparedExecutionTargetRuntime.runtimeRootDir;
       }
-      if (localRuntimeConfigHome && preparedExecutionTargetRuntime.assetDirs.xdgConfig) {
-        preparedRuntimeConfig.env.XDG_CONFIG_HOME = preparedExecutionTargetRuntime.assetDirs.xdgConfig;
-      }
+	      if (localRuntimeConfigHome) {
+	        const remoteXdgConfigHome =
+	          preparedExecutionTargetRuntime.assetDirs.xdgConfig ??
+	          (preparedExecutionTargetRuntime.runtimeRootDir
+	            ? path.posix.join(preparedExecutionTargetRuntime.runtimeRootDir, "xdgConfig")
+	            : null);
+	        if (remoteXdgConfigHome) {
+	          preparedRuntimeConfig.env.XDG_CONFIG_HOME = remoteXdgConfigHome;
+	        }
+	      }
+	      runtimeEnv = Object.fromEntries(
+	        Object.entries(ensurePathInEnv({ ...process.env, ...preparedRuntimeConfig.env })).filter(
+	          (entry): entry is [string, string] => typeof entry[1] === "string",
+	        ),
+	      );
+	      loggedEnv = buildInvocationEnvForLogs(preparedRuntimeConfig.env, {
+	        runtimeEnv,
+	        includeRuntimeKeys: ["HOME"],
+	        resolvedCommand,
+	      });
       const remoteHomeDir = managedHome && preparedExecutionTargetRuntime.runtimeRootDir
         ? preparedExecutionTargetRuntime.runtimeRootDir
         : await readAdapterExecutionTargetHomeDir(runId, executionTarget, {

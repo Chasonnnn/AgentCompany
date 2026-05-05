@@ -4012,12 +4012,15 @@ export function agentRoutes(
     }
     assertCompanyAccess(req, issue.companyId);
 
-    let run = issue.executionRunId ? await heartbeat.getRunIssueSummary(issue.executionRunId) : null;
-    if (run && run.status !== "queued" && run.status !== "running") {
-      run = null;
-    }
+	    let run = issue.executionRunId ? await heartbeat.getRunIssueSummary(issue.executionRunId) : null;
+	    if (run && run.status !== "queued" && run.status !== "running") {
+	      run = null;
+	    }
+	    if (run && asNonEmptyString(run.issueId) !== issue.id) {
+	      run = null;
+	    }
 
-    if (!run && issue.assigneeAgentId && issue.status === "in_progress") {
+	    if (!run && issue.assigneeAgentId && issue.status === "in_progress") {
       const candidateRun = await heartbeat.getActiveRunIssueSummaryForAgent(issue.assigneeAgentId);
       const candidateIssueId = asNonEmptyString(candidateRun?.issueId);
       if (candidateRun && candidateIssueId === issue.id) {

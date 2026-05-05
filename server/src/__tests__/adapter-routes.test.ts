@@ -74,7 +74,7 @@ function readAdapterList(res: { body: unknown; text: string }) {
   throw new Error(`Expected adapter list response array, got: ${JSON.stringify(res.body)}`);
 }
 
-function createApp(options: { isInstanceAdmin?: boolean } = {}) {
+function createApp(options: Partial<Express.Request["actor"]> & { isInstanceAdmin?: boolean } = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -84,6 +84,7 @@ function createApp(options: { isInstanceAdmin?: boolean } = {}) {
       companyIds: [],
       source: "local_implicit",
       isInstanceAdmin: options.isInstanceAdmin ?? false,
+      ...options,
     };
     next();
   });

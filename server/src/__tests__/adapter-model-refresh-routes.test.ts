@@ -60,10 +60,6 @@ const mockAgentSkillService = vi.hoisted(() => ({
   resolveDesiredSkillAssignment: vi.fn(),
 }));
 
-const mockEnvironmentService = vi.hoisted(() => ({
-  getById: vi.fn(),
-}));
-
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelActiveForAgent: vi.fn(),
 }));

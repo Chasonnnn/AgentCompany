@@ -483,15 +483,12 @@ describe("agent skill routes", () => {
       warnings: [],
     });
 
-    const res = await requestApp(
-      await createApp(),
-      (baseUrl) => request(baseUrl)
-        .get("/api/agents/11111111-1111-4111-8111-111111111111/skills?companyId=company-1"),
-    );
+    const res = await request(await createApp())
+      .get("/api/agents/11111111-1111-4111-8111-111111111111/skills?companyId=company-1");
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockCompanySkillService.listRuntimeSkillEntries).toHaveBeenCalledWith("company-1", {
-      materializeMissing: false,
+      materializeMissing: true,
     });
     expect(mockAdapter.listSkills).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -530,9 +527,9 @@ describe("agent skill routes", () => {
       warnings: [],
     });
 
-    const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
+    const res = await request(await createApp())
       .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?companyId=company-1")
-      .send({ desiredSkills: ["paperclip"] }));
+      .send({ desiredSkills: ["paperclip"] });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockAgentService.update).toHaveBeenCalledWith(
@@ -545,7 +542,6 @@ describe("agent skill routes", () => {
           }),
         }),
       }),
-      expect.any(Object),
     );
     expect(mockAdapter.syncSkills).toHaveBeenCalledWith(
       expect.objectContaining({
