@@ -81,11 +81,18 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
   async function seedCompanyAndAgent() {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     await db.insert(companies).values({
       id: companyId,
       name: "Paperclip",
       issuePrefix: issuePrefix(companyId),
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Plugin orchestration",
+      status: "in_progress",
     });
     await db.insert(agents).values({
       id: agentId,
@@ -98,7 +105,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
       runtimeConfig: {},
       permissions: {},
     });
-    return { companyId, agentId };
+    return { companyId, agentId, projectId };
   }
 
   async function makeLocalRoot() {
@@ -108,7 +115,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
   }
 
   it("creates plugin-origin issues with full orchestration fields and audit activity", async () => {
-    const { companyId, agentId } = await seedCompanyAndAgent();
+    const { companyId, agentId, projectId } = await seedCompanyAndAgent();
     const blockerIssueId = randomUUID();
     const originRunId = randomUUID();
     await db.insert(heartbeatRuns).values({
@@ -122,6 +129,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     await db.insert(issues).values({
       id: blockerIssueId,
       companyId,
+      projectId,
       title: "Blocker",
       status: "todo",
       priority: "medium",
@@ -131,6 +139,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     const services = buildHostServices(db, "plugin-record-id", "paperclip.missions", createEventBusStub());
     const issue = await services.issues.create({
       companyId,
+      projectId,
       title: "Plugin child issue",
       status: "todo",
       assigneeAgentId: agentId,
@@ -179,11 +188,12 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
   });
 
   it("enforces plugin origin namespaces", async () => {
-    const { companyId } = await seedCompanyAndAgent();
+    const { companyId, projectId } = await seedCompanyAndAgent();
     const services = buildHostServices(db, "plugin-record-id", "paperclip.missions", createEventBusStub());
 
     const featureIssue = await services.issues.create({
       companyId,
+      projectId,
       title: "Feature issue",
       originKind: "plugin:paperclip.missions:feature",
       originId: "mission-alpha:feature-1",
@@ -193,6 +203,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     await expect(
       services.issues.create({
         companyId,
+        projectId,
         title: "Spoofed issue",
         originKind: "plugin:other.plugin:feature",
       }),
@@ -208,11 +219,12 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
   });
 
   it("creates plugin operation issues with the generic operation origin", async () => {
-    const { companyId } = await seedCompanyAndAgent();
+    const { companyId, projectId } = await seedCompanyAndAgent();
     const services = buildHostServices(db, "plugin-record-id", "paperclip.missions", createEventBusStub());
 
     const issue = await services.issues.create({
       companyId,
+      projectId,
       title: "Background operation",
       surfaceVisibility: "plugin_operation",
       originId: "mission-alpha:operation-1",
@@ -495,7 +507,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
   });
 
   it("asserts checkout ownership for run-scoped plugin actions", async () => {
-    const { companyId, agentId } = await seedCompanyAndAgent();
+    const { companyId, agentId, projectId } = await seedCompanyAndAgent();
     const issueId = randomUUID();
     const runId = randomUUID();
     await db.insert(heartbeatRuns).values({
@@ -509,6 +521,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Checked out issue",
       status: "in_progress",
       priority: "medium",
@@ -534,13 +547,14 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
   });
 
   it("refuses plugin wakeups for issues with unresolved blockers", async () => {
-    const { companyId, agentId } = await seedCompanyAndAgent();
+    const { companyId, agentId, projectId } = await seedCompanyAndAgent();
     const blockerIssueId = randomUUID();
     const blockedIssueId = randomUUID();
     await db.insert(issues).values([
       {
         id: blockerIssueId,
         companyId,
+        projectId,
         title: "Unresolved blocker",
         status: "todo",
         priority: "medium",
@@ -548,6 +562,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
       {
         id: blockedIssueId,
         companyId,
+        projectId,
         title: "Blocked issue",
         status: "todo",
         priority: "medium",
@@ -572,7 +587,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
   });
 
   it("narrows orchestration cost summaries by subtree and billing code", async () => {
-    const { companyId, agentId } = await seedCompanyAndAgent();
+    const { companyId, agentId, projectId } = await seedCompanyAndAgent();
     const rootIssueId = randomUUID();
     const childIssueId = randomUUID();
     const unrelatedIssueId = randomUUID();
@@ -580,6 +595,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
       {
         id: rootIssueId,
         companyId,
+        projectId,
         title: "Root mission",
         status: "todo",
         priority: "medium",
@@ -588,6 +604,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
       {
         id: childIssueId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Child mission",
         status: "todo",
@@ -597,6 +614,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
       {
         id: unrelatedIssueId,
         companyId,
+        projectId,
         title: "Different mission",
         status: "todo",
         priority: "medium",

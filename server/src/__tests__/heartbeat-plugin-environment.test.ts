@@ -20,6 +20,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { instanceSettingsService } from "../services/instance-settings.ts";
+import { issueContinuityService } from "../services/issue-continuity.ts";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.ts";
 
 const adapterExecute = vi.hoisted(() => vi.fn(async () => ({
@@ -403,6 +404,7 @@ describeEmbeddedPostgres("heartbeat plugin environments", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+    await issueContinuityService(db).prepare(issueId, { tier: "normal" }, { userId: "local-board" });
 
     const heartbeat = heartbeatService(db, { pluginWorkerManager: workerManager });
     const run = await heartbeat.wakeup(agentId, {

@@ -6982,6 +6982,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       const claimedRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
       for (const queuedRun of prioritizedRuns) {
         if (claimedRuns.length >= availableSlots) break;
+        const context = parseObject(queuedRun.contextSnapshot);
+        const issueId = readNonEmptyString(context.issueId);
+        if (issueId) {
+          const staleness = await evaluateQueuedRunStaleness(queuedRun, issueId, context);
+          if (staleness.stale) {
+            await cancelQueuedRunForStaleIssue(queuedRun, issueId, staleness);
+            continue;
+          }
+        }
         const claimed = await claimQueuedRun(queuedRun);
         if (claimed) claimedRuns.push(claimed);
       }

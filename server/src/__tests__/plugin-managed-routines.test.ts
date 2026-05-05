@@ -4,7 +4,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import {
   activityLog,
   agentConfigRevisions,
+  agentTemplateRevisions,
+  agentTemplates,
   agents,
+  approvals,
   companies,
   createDb,
   issues,
@@ -113,6 +116,9 @@ describeEmbeddedPostgres("plugin-managed routines", () => {
     await db.delete(agentConfigRevisions);
     await db.delete(activityLog);
     await db.delete(pluginManagedResources);
+    await db.delete(approvals);
+    await db.delete(agentTemplateRevisions);
+    await db.delete(agentTemplates);
     await db.delete(agents);
     await db.delete(projects);
     await db.delete(plugins);
@@ -130,6 +136,7 @@ describeEmbeddedPostgres("plugin-managed routines", () => {
       id: companyId,
       name: "Paperclip",
       issuePrefix: issuePrefix(companyId),
+      requireBoardApprovalForNewAgents: false,
     });
     await db.insert(plugins).values({
       id: pluginId,

@@ -7,12 +7,14 @@ import {
   agentWakeupRequests,
   budgetPolicies,
   companies,
+  companySkills,
   createDb,
   environmentLeases,
   heartbeatRunEvents,
   heartbeatRuns,
   issueRelations,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -54,7 +56,12 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     await db.delete(agentWakeupRequests);
     await db.delete(agentRuntimeState);
     await db.delete(budgetPolicies);
+    await db.delete(companySkills);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await db.delete(agentRuntimeState);
+    await db.delete(companySkills);
     await db.delete(agents);
+    await db.delete(projects);
     await db.delete(companies);
   });
 
@@ -130,6 +137,17 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     });
   }
 
+  async function seedProject(companyId: string, name = "Heartbeat retry project") {
+    const projectId = randomUUID();
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name,
+      status: "in_progress",
+    });
+    return projectId;
+  }
+
   async function seedMaxTurnFixture(input?: {
     companyId?: string;
     agentId?: string;
@@ -153,6 +171,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await seedProject(companyId, "Max-turn continuation");
 
     await db.insert(agents).values({
       id: agentId,
@@ -202,6 +221,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Continue after max turns",
       status: input?.issueStatus ?? "in_progress",
       priority: "medium",
@@ -213,7 +233,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       identifier: `${issuePrefix}-1`,
     });
 
-    return { companyId, agentId, issueId, runId, now };
+    return { companyId, agentId, projectId, issueId, runId, now };
   }
 
   it("schedules a retry with durable metadata and only promotes it when due", async () => {
@@ -678,7 +698,12 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(agentRuntimeState);
+    await db.delete(companySkills);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await db.delete(agentRuntimeState);
+    await db.delete(companySkills);
     await db.delete(agents);
+    await db.delete(projects);
     await db.delete(companies);
 
     const dependencyBlocked = await seedMaxTurnFixture({ now: new Date("2026-04-20T17:00:00.000Z") });
@@ -686,6 +711,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     await db.insert(issues).values({
       id: blockerId,
       companyId: dependencyBlocked.companyId,
+      projectId: dependencyBlocked.projectId,
       title: "Blocker",
       status: "todo",
       priority: "medium",
@@ -734,6 +760,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await seedProject(companyId, "Retry reassignment");
 
     await db.insert(agents).values([
       {
@@ -791,6 +818,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Retry reassignment",
       status: "todo",
       priority: "medium",
@@ -887,6 +915,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await seedProject(companyId, "Retry promotion reassignment");
 
     await db.insert(agents).values([
       {
@@ -944,6 +973,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Retry promotion reassignment",
       status: "todo",
       priority: "medium",
@@ -1004,6 +1034,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await seedProject(companyId, "Retry promotion cancellation");
 
     await db.insert(agents).values({
       id: agentId,
@@ -1043,6 +1074,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Retry promotion cancellation",
       status: "todo",
       priority: "medium",

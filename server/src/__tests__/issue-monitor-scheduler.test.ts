@@ -17,6 +17,7 @@ import {
   issueComments,
   issueDocuments,
   issues,
+  projects,
   workspaceRuntimeServices,
 } from "@paperclipai/db";
 import {
@@ -113,6 +114,7 @@ describeEmbeddedPostgres("issue monitor scheduler", () => {
     await db.delete(agentRuntimeState);
     await db.delete(agents);
     await db.delete(companySkills);
+    await db.delete(projects);
     await db.delete(companies);
   }
 
@@ -143,6 +145,7 @@ describeEmbeddedPostgres("issue monitor scheduler", () => {
   }) {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     const issueId = randomUUID();
     const nextCheckAt = new Date("2026-04-11T12:30:00.000Z");
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
@@ -160,6 +163,12 @@ describeEmbeddedPostgres("issue monitor scheduler", () => {
       name: "Paperclip",
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Issue monitor",
+      status: "in_progress",
     });
 
     await db.insert(agents).values({
@@ -187,6 +196,7 @@ describeEmbeddedPostgres("issue monitor scheduler", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Watch external deploy",
       status: input?.issueStatus ?? "in_progress",
       priority: "medium",
@@ -231,7 +241,7 @@ describeEmbeddedPostgres("issue monitor scheduler", () => {
       monitorScheduledBy: "assignee",
     });
 
-    return { companyId, agentId, issueId, nextCheckAt };
+    return { companyId, agentId, projectId, issueId, nextCheckAt };
   }
 
   it("triggers due issue monitors once and clears the one-shot schedule", async () => {

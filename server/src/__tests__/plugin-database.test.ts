@@ -12,6 +12,7 @@ import {
   pluginDatabaseNamespaces,
   pluginMigrations,
   plugins,
+  projects,
 } from "@paperclipai/db";
 import type { PaperclipPluginManifestV1 } from "@paperclipai/shared";
 import {
@@ -104,6 +105,7 @@ describeEmbeddedPostgres("plugin database namespaces", () => {
     await db.delete(plugins);
     await db.delete(issueRelations);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(companies);
     await Promise.all(packageRoots.map((root) => rm(root, { recursive: true, force: true })));
     packageRoots = [];
@@ -232,9 +234,17 @@ describeEmbeddedPostgres("plugin database namespaces", () => {
       issuePrefix: "TST",
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = randomUUID();
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Plugin database",
+      status: "in_progress",
+    });
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Joined issue",
       status: "todo",
       priority: "medium",

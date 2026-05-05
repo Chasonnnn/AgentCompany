@@ -7,6 +7,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agentConfigRevisions,
+  agentTemplateRevisions,
+  agentTemplates,
   agents,
   approvals,
   companies,
@@ -91,6 +93,8 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
     await db.delete(pluginManagedResources);
     await db.delete(pluginCompanySettings);
     await db.delete(approvals);
+    await db.delete(agentTemplateRevisions);
+    await db.delete(agentTemplates);
     await db.delete(agents);
     await db.delete(plugins);
     await db.delete(companies);

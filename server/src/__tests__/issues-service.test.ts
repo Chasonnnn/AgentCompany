@@ -723,6 +723,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: normalIssueId,
         companyId,
+        projectId,
         title: "Normal issue",
         status: "todo",
         priority: "medium",
@@ -731,6 +732,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: pluginVisibleIssueId,
         companyId,
+        projectId,
         title: "Plugin-visible issue",
         status: "todo",
         priority: "medium",
@@ -788,10 +790,12 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = await insertProject(db, companyId, "Unread plugin operations");
     await db.insert(issues).values([
       {
         id: normalIssueId,
         companyId,
+        projectId,
         title: "Normal touched issue",
         status: "todo",
         priority: "medium",
@@ -800,6 +804,7 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
       {
         id: operationIssueId,
         companyId,
+        projectId,
         title: "Plugin operation touched issue",
         status: "todo",
         priority: "medium",

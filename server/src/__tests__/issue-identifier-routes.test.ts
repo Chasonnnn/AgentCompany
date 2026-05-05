@@ -3,7 +3,7 @@ import express from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { companies, createDb, issues } from "@paperclipai/db";
+import { companies, createDb, issues, projects } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -62,9 +62,17 @@ describeEmbeddedPostgres("issue identifier routes", () => {
       issuePrefix: "PC1A2",
       requireBoardApprovalForNewAgents: false,
     });
+    const projectId = randomUUID();
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Cloud tenant project",
+      status: "in_progress",
+    });
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       issueNumber: 7,
       identifier: "PC1A2-7",
       title: "Tenant identifier route",
