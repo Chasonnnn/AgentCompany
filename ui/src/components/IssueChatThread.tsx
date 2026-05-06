@@ -57,7 +57,12 @@ import {
   type SegmentTiming,
 } from "../lib/issue-chat-messages";
 import { resolveIssueChatTranscriptRuns } from "../lib/issueChatTranscriptRuns";
-import type { IssueTimelineAssignee, IssueTimelineEvent } from "../lib/issue-timeline-events";
+import {
+  formatTimelineWorkspaceLabel,
+  type IssueTimelineAssignee,
+  type IssueTimelineEvent,
+  type IssueTimelineWorkspace,
+} from "../lib/issue-timeline-events";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -558,6 +563,25 @@ function formatTimelineAssigneeLabel(
     return formatAssigneeUserLabel(assignee.userId, currentUserId) ?? "Board";
   }
   return "Unassigned";
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isTimelineWorkspace(value: unknown): value is IssueTimelineWorkspace {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const workspace = value as Record<string, unknown>;
+  return isNullableString(workspace.label)
+    && isNullableString(workspace.projectWorkspaceId)
+    && isNullableString(workspace.executionWorkspaceId)
+    && isNullableString(workspace.mode);
+}
+
+function isTimelineWorkspaceChange(value: unknown): value is NonNullable<IssueTimelineEvent["workspaceChange"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const change = value as Record<string, unknown>;
+  return isTimelineWorkspace(change.from) && isTimelineWorkspace(change.to);
 }
 
 function initialsForName(name: string) {
@@ -1800,6 +1824,7 @@ function IssueChatSystemMessage() {
         to: IssueTimelineAssignee;
       }
     : null;
+  const workspaceChange = isTimelineWorkspaceChange(custom.workspaceChange) ? custom.workspaceChange : null;
 
   if (custom.kind === "system_notice") {
     return (
@@ -1849,6 +1874,21 @@ function IssueChatSystemMessage() {
             <ArrowRight className="h-3 w-3 text-muted-foreground" />
             <span className="font-medium text-foreground">
               {formatTimelineAssigneeLabel(assigneeChange.to, agentMap, currentUserId)}
+            </span>
+          </div>
+        ) : null}
+
+        {workspaceChange ? (
+          <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isCurrentUser && "justify-end")}>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Workspace
+            </span>
+            <span className="text-muted-foreground">
+              {formatTimelineWorkspaceLabel(workspaceChange.from)}
+            </span>
+            <ArrowRight className="h-3 w-3 text-muted-foreground" />
+            <span className="font-medium text-foreground">
+              {formatTimelineWorkspaceLabel(workspaceChange.to)}
             </span>
           </div>
         ) : null}
@@ -2253,6 +2293,7 @@ function IssueChatManualSystemMessage({ message }: { message: ThreadMessage }) {
         to: IssueTimelineAssignee;
       }
     : null;
+  const workspaceChange = isTimelineWorkspaceChange(custom.workspaceChange) ? custom.workspaceChange : null;
 
   if (custom.kind === "system_notice") {
     return (
@@ -2302,6 +2343,21 @@ function IssueChatManualSystemMessage({ message }: { message: ThreadMessage }) {
             <ArrowRight className="h-3 w-3 text-muted-foreground" />
             <span className="font-medium text-foreground">
               {formatTimelineAssigneeLabel(assigneeChange.to, agentMap, currentUserId)}
+            </span>
+          </div>
+        ) : null}
+
+        {workspaceChange ? (
+          <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isCurrentUser && "justify-end")}>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Workspace
+            </span>
+            <span className="text-muted-foreground">
+              {formatTimelineWorkspaceLabel(workspaceChange.from)}
+            </span>
+            <ArrowRight className="h-3 w-3 text-muted-foreground" />
+            <span className="font-medium text-foreground">
+              {formatTimelineWorkspaceLabel(workspaceChange.to)}
             </span>
           </div>
         ) : null}

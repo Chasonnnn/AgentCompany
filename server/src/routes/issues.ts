@@ -4,7 +4,7 @@ import multer from "multer";
 import { z } from "zod";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { activityLog, issueExecutionDecisions } from "@paperclipai/db";
+import { activityLog, executionWorkspaces, issueExecutionDecisions, projectWorkspaces } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,
@@ -131,6 +131,7 @@ import {
   redactIssueMonitorExternalRef,
   setIssueExecutionPolicyMonitorScheduledBy,
 } from "../services/issue-execution-policy.js";
+import { parseIssueExecutionWorkspaceSettings } from "../services/execution-workspace-policy.js";
 import { buildIssueContinuitySummary } from "../services/issue-continuity-summary.js";
 import {
   conferenceContextService,
@@ -143,10 +144,6 @@ import {
   inReviewRoutingMissingReviewerError,
   selectLeastLoadedQaReviewer,
 } from "../services/in-review-routing.js";
-import {
-  createCompanySearchRateLimiter,
-  type CompanySearchRateLimiter,
-} from "../services/company-search-rate-limit.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -361,8 +358,146 @@ const SUCCESSFUL_RUN_HANDOFF_ACTIONS = [
   "issue.successful_run_handoff_escalated",
 ] as const;
 
+const ISSUE_WORKSPACE_AUDIT_FIELDS = new Set([
+  "projectWorkspaceId",
+  "executionWorkspaceId",
+  "executionWorkspacePreference",
+  "executionWorkspaceSettings",
+]);
+
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function hasIssueWorkspaceAuditChange(previous: Record<string, unknown>) {
+  return Object.keys(previous).some((key) => ISSUE_WORKSPACE_AUDIT_FIELDS.has(key));
+}
+
+function labelIssueWorkspaceMode(mode: string | null) {
+  switch (mode) {
+    case "shared_workspace":
+      return "Project default";
+    case "isolated_workspace":
+      return "New isolated workspace";
+    case "operator_branch":
+      return "Operator branch";
+    case "reuse_existing":
+      return "Reuse existing workspace";
+    case "agent_default":
+      return "Agent default";
+    case "inherit":
+      return "Inherited workspace";
+    default:
+      return "No workspace";
+  }
+}
+
+type IssueWorkspaceAuditInput = {
+  projectWorkspaceId?: string | null;
+  executionWorkspaceId?: string | null;
+  executionWorkspacePreference?: string | null;
+  executionWorkspaceSettings?: unknown;
+};
+
+type WorkspaceNameMaps = {
+  projectWorkspaceNames: Map<string, string>;
+  executionWorkspaceNames: Map<string, string>;
+};
+
+function emptyWorkspaceNameMaps(): WorkspaceNameMaps {
+  return {
+    projectWorkspaceNames: new Map(),
+    executionWorkspaceNames: new Map(),
+  };
+}
+
+function summarizeIssueWorkspaceForActivity(
+  issue: IssueWorkspaceAuditInput,
+  names: WorkspaceNameMaps,
+) {
+  const settings = parseIssueExecutionWorkspaceSettings(issue.executionWorkspaceSettings);
+  const mode = settings?.mode ?? issue.executionWorkspacePreference ?? null;
+  const executionWorkspaceId = issue.executionWorkspaceId ?? null;
+  const projectWorkspaceId = issue.projectWorkspaceId ?? null;
+
+  const label = (() => {
+    if (executionWorkspaceId) {
+      return names.executionWorkspaceNames.get(executionWorkspaceId) ?? `Workspace ${executionWorkspaceId.slice(0, 8)}`;
+    }
+    if (projectWorkspaceId) {
+      return names.projectWorkspaceNames.get(projectWorkspaceId) ?? `Workspace ${projectWorkspaceId.slice(0, 8)}`;
+    }
+    return labelIssueWorkspaceMode(mode);
+  })();
+
+  return {
+    label,
+    projectWorkspaceId,
+    executionWorkspaceId,
+    mode,
+  };
+}
+
+async function buildIssueWorkspaceChangeActivityDetails(
+  db: Db,
+  companyId: string,
+  previousIssue: IssueWorkspaceAuditInput,
+  nextIssue: IssueWorkspaceAuditInput,
+) {
+  const projectWorkspaceIds = [
+    previousIssue.projectWorkspaceId,
+    nextIssue.projectWorkspaceId,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+  const executionWorkspaceIds = [
+    previousIssue.executionWorkspaceId,
+    nextIssue.executionWorkspaceId,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+
+  const [projectRows, executionRows] = await Promise.all([
+    projectWorkspaceIds.length > 0
+      ? db
+          .select({ id: projectWorkspaces.id, name: projectWorkspaces.name })
+          .from(projectWorkspaces)
+          .where(and(eq(projectWorkspaces.companyId, companyId), inArray(projectWorkspaces.id, projectWorkspaceIds)))
+      : Promise.resolve([]),
+    executionWorkspaceIds.length > 0
+      ? db
+          .select({ id: executionWorkspaces.id, name: executionWorkspaces.name })
+          .from(executionWorkspaces)
+          .where(and(eq(executionWorkspaces.companyId, companyId), inArray(executionWorkspaces.id, executionWorkspaceIds)))
+      : Promise.resolve([]),
+  ]);
+
+  const names: WorkspaceNameMaps = {
+    projectWorkspaceNames: new Map(projectRows.map((row) => [row.id, row.name])),
+    executionWorkspaceNames: new Map(executionRows.map((row) => [row.id, row.name])),
+  };
+
+  return {
+    from: summarizeIssueWorkspaceForActivity(previousIssue, names),
+    to: summarizeIssueWorkspaceForActivity(nextIssue, names),
+  };
+}
+
+function hasExecutionParticipant(value: unknown) {
+  const state = parseIssueExecutionState(value);
+  if (!state || state.status !== "pending") return false;
+  const participant = state.currentParticipant;
+  if (!participant) return false;
+  if (participant.type === "agent") return Boolean(participant.agentId);
+  if (participant.type === "user") return Boolean(participant.userId);
+  return false;
+}
+
+function hasScheduledMonitor(input: {
+  existingMonitorNextCheckAt?: Date | null;
+  patchMonitorNextCheckAt?: unknown;
+  executionPolicy?: unknown;
+}) {
+  if (input.patchMonitorNextCheckAt instanceof Date && !Number.isNaN(input.patchMonitorNextCheckAt.getTime())) return true;
+  if (input.patchMonitorNextCheckAt === undefined && input.existingMonitorNextCheckAt) return true;
+  const policy = normalizeIssueExecutionPolicy(input.executionPolicy ?? null);
+  return Boolean(policy?.monitor?.nextCheckAt);
 }
 
 function successfulRunHandoffStateFromActivity(row: {
@@ -454,27 +589,6 @@ const INVALID_AGENT_IN_REVIEW_DISPOSITION_MESSAGE =
   "Keep working instead of moving to review, create a request_confirmation or ask_user_questions interaction, " +
   "link or request a pending approval, assign a human reviewer with assigneeUserId, set a typed executionState.currentParticipant through an execution policy, " +
   "or schedule an issue monitor for an external review/check. After creating one of those review paths, retry the status update.";
-
-function hasExecutionParticipant(value: unknown) {
-  const state = parseIssueExecutionState(value);
-  if (!state || state.status !== "pending") return false;
-  const participant = state.currentParticipant;
-  if (!participant) return false;
-  if (participant.type === "agent") return Boolean(participant.agentId);
-  if (participant.type === "user") return Boolean(participant.userId);
-  return false;
-}
-
-function hasScheduledMonitor(input: {
-  existingMonitorNextCheckAt?: Date | null;
-  patchMonitorNextCheckAt?: unknown;
-  executionPolicy?: unknown;
-}) {
-  if (input.patchMonitorNextCheckAt instanceof Date && !Number.isNaN(input.patchMonitorNextCheckAt.getTime())) return true;
-  if (input.patchMonitorNextCheckAt === undefined && input.existingMonitorNextCheckAt) return true;
-  const policy = normalizeIssueExecutionPolicy(input.executionPolicy ?? null);
-  return Boolean(policy?.monitor?.nextCheckAt);
-}
 
 function executionPrincipalsEqual(
   left: ParsedExecutionState["currentParticipant"] | null,
@@ -4126,6 +4240,19 @@ export function issueRoutes(
     }
 
     const hasFieldChanges = Object.keys(previous).length > 0;
+    let workspaceChange = null;
+    if (hasIssueWorkspaceAuditChange(previous)) {
+      try {
+        workspaceChange = await buildIssueWorkspaceChangeActivityDetails(db, issue.companyId, existing, issue);
+      } catch (err) {
+        logger.warn({ err, issueId: issue.id }, "failed to enrich issue workspace change activity details");
+        const fallbackNames = emptyWorkspaceNameMaps();
+        workspaceChange = {
+          from: summarizeIssueWorkspaceForActivity(existing, fallbackNames),
+          to: summarizeIssueWorkspaceForActivity(issue, fallbackNames),
+        };
+      }
+    }
     const reopened =
       commentBody &&
       effectiveReopenRequested &&
@@ -4148,6 +4275,7 @@ export function issueRoutes(
         ...(commentBody ? { source: "comment" } : {}),
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
         ...(interruptedRunId ? { interruptedRunId } : {}),
+        ...(workspaceChange ? { workspaceChange } : {}),
         _previous: hasFieldChanges ? previous : undefined,
         ...summarizeIssueReferenceActivityDetails(
           updateReferenceDiff
