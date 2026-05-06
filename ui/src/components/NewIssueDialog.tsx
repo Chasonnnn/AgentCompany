@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { IssueWorkMode } from "@paperclipai/shared";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
@@ -43,6 +44,8 @@ import {
   ChevronRight,
   ChevronDown,
   CircleDot,
+  ClipboardList,
+  Hammer,
   Minus,
   ArrowUp,
   ArrowDown,
@@ -86,6 +89,7 @@ interface IssueDraft {
   executionWorkspaceMode?: string;
   selectedExecutionWorkspaceId?: string;
   useIsolatedExecutionWorkspace?: boolean;
+  workMode?: IssueWorkMode;
 }
 
 type StagedIssueFile = {
@@ -124,6 +128,19 @@ const ISSUE_THINKING_EFFORT_OPTIONS = {
     { value: "max", label: "Max" },
   ],
 } as const;
+
+function isIssueWorkMode(value: unknown): value is IssueWorkMode {
+  return value === "standard" || value === "planning";
+}
+
+const ISSUE_WORK_MODE_OPTIONS: ReadonlyArray<{
+  value: IssueWorkMode;
+  label: string;
+  icon: typeof Hammer;
+}> = [
+  { value: "standard", label: "Standard", icon: Hammer },
+  { value: "planning", label: "Planning", icon: ClipboardList },
+];
 
 function loadDraft(): IssueDraft | null {
   try {
@@ -291,6 +308,7 @@ export function NewIssueDialog() {
   const [assigneeChrome, setAssigneeChrome] = useState(false);
   const [executionWorkspaceMode, setExecutionWorkspaceMode] = useState<string>("shared_workspace");
   const [selectedExecutionWorkspaceId, setSelectedExecutionWorkspaceId] = useState("");
+  const [workMode, setWorkMode] = useState<IssueWorkMode>("standard");
   const [expanded, setExpanded] = useState(false);
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
@@ -309,6 +327,7 @@ export function NewIssueDialog() {
   // Popover states
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
+  const [workModeOpen, setWorkModeOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
@@ -515,6 +534,7 @@ export function NewIssueDialog() {
       assigneeChrome,
       executionWorkspaceMode,
       selectedExecutionWorkspaceId,
+      workMode,
     });
   }, [
     title,
@@ -532,6 +552,7 @@ export function NewIssueDialog() {
     assigneeChrome,
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
+    workMode,
     newIssueOpen,
     scheduleSave,
   ]);
@@ -544,6 +565,7 @@ export function NewIssueDialog() {
 
     const draft = loadDraft();
     if (newIssueDefaults.parentId) {
+      const nextWorkMode = isIssueWorkMode(newIssueDefaults.workMode) ? newIssueDefaults.workMode : "standard";
       const defaultProjectId = newIssueDefaults.projectId ?? "";
       const defaultProject = orderedProjects.find((project) => project.id === defaultProjectId);
       const defaultProjectWorkspaceId = newIssueDefaults.projectWorkspaceId
@@ -563,17 +585,24 @@ export function NewIssueDialog() {
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceMode);
+      setWorkMode(nextWorkMode);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = defaultProjectId || null;
     } else if (newIssueDefaults.title) {
+      const nextWorkMode = isIssueWorkMode(newIssueDefaults.workMode) ? newIssueDefaults.workMode : "standard";
+      const defaultProjectId = newIssueDefaults.projectId ?? "";
+      const defaultProject = orderedProjects.find((project) => project.id === defaultProjectId);
+      const defaultProjectWorkspaceId = newIssueDefaults.projectWorkspaceId
+        ?? defaultProjectWorkspaceIdForProject(defaultProject);
+      const defaultExecutionWorkspaceMode = newIssueDefaults.executionWorkspaceId
+        ? "reuse_existing"
+        : (newIssueDefaults.executionWorkspaceMode ?? defaultExecutionWorkspaceModeForProject(defaultProject));
       setTitle(newIssueDefaults.title);
       setDescription(newIssueDefaults.description ?? "");
       setStatus(newIssueDefaults.status ?? "todo");
       setPriority(newIssueDefaults.priority ?? "");
-      const defaultProjectId = newIssueDefaults.projectId ?? "";
-      const defaultProject = orderedProjects.find((project) => project.id === defaultProjectId);
       setProjectId(defaultProjectId);
-      setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(defaultProject));
+      setProjectWorkspaceId(defaultProjectWorkspaceId);
       setAssigneeValue(assigneeValueFromSelection(newIssueDefaults));
       setReviewerValue("");
       setApproverValue("");
@@ -582,10 +611,14 @@ export function NewIssueDialog() {
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
-      setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(defaultProject));
-      setSelectedExecutionWorkspaceId("");
-      executionWorkspaceDefaultProjectId.current = defaultProjectId || null;
+      setExecutionWorkspaceMode(defaultExecutionWorkspaceMode);
+      setWorkMode(nextWorkMode);
+      setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
+      executionWorkspaceDefaultProjectId.current = newIssueDefaults.projectWorkspaceId || newIssueDefaults.executionWorkspaceId || defaultProject
+        ? defaultProjectId || null
+        : null;
     } else if (draft && draft.title.trim()) {
+      const nextWorkMode = isIssueWorkMode(draft.workMode) ? draft.workMode : "standard";
       const restoredProjectId = newIssueDefaults.projectId ?? draft.projectId;
       const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
       setTitle(draft.title);
@@ -611,9 +644,17 @@ export function NewIssueDialog() {
         draft.executionWorkspaceMode
           ?? (draft.useIsolatedExecutionWorkspace ? "isolated_workspace" : defaultExecutionWorkspaceModeForProject(restoredProject)),
       );
-      setSelectedExecutionWorkspaceId(draft.selectedExecutionWorkspaceId ?? "");
-      executionWorkspaceDefaultProjectId.current = restoredProjectId || null;
+      setWorkMode(nextWorkMode);
+      setSelectedExecutionWorkspaceId(
+        newIssueDefaults.executionWorkspaceId
+          ? (newIssueDefaults.executionWorkspaceId ?? "")
+          : (draft.selectedExecutionWorkspaceId ?? ""),
+      );
+      executionWorkspaceDefaultProjectId.current = newIssueDefaults.projectWorkspaceId || newIssueDefaults.executionWorkspaceId || draft.projectWorkspaceId || restoredProject
+        ? restoredProjectId || null
+        : null;
     } else {
+      setWorkMode("standard");
       const defaultProjectId = newIssueDefaults.projectId ?? "";
       const defaultProject = orderedProjects.find((project) => project.id === defaultProjectId);
       setStatus(newIssueDefaults.status ?? "todo");
@@ -692,6 +733,7 @@ export function NewIssueDialog() {
     setAssigneeChrome(false);
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
+    setWorkMode("standard");
     setExpanded(false);
     setDialogCompanyId(null);
     setStagedFiles([]);
@@ -719,6 +761,7 @@ export function NewIssueDialog() {
     setAssigneeChrome(false);
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
+    setWorkMode("standard");
   }
 
   function discardDraft() {
@@ -769,6 +812,7 @@ export function NewIssueDialog() {
       priority: priority || "medium",
       continuityTier: "normal",
       prepareContinuity: true,
+      workMode,
       ...(selectedAssigneeAgentId ? { assigneeAgentId: selectedAssigneeAgentId } : {}),
       ...(selectedAssigneeUserId ? { assigneeUserId: selectedAssigneeUserId } : {}),
       ...(newIssueDefaults.parentId ? { parentId: newIssueDefaults.parentId } : {}),
@@ -998,6 +1042,8 @@ export function NewIssueDialog() {
     },
     [assigneeAdapterModels],
   );
+  const currentWorkMode = ISSUE_WORK_MODE_OPTIONS[workMode === "planning" ? 1 : 0]!;
+  const CurrentWorkModeIcon = currentWorkMode.icon;
 
   return (
     <Dialog
@@ -1781,6 +1827,48 @@ export function NewIssueDialog() {
             <Paperclip className="h-3 w-3" />
             Upload
           </button>
+
+          {/* Work mode chip */}
+          <Popover open={workModeOpen} onOpenChange={setWorkModeOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                data-issue-work-mode-chip={workMode}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors",
+                  workMode === "planning"
+                    ? "border-amber-500/60 bg-amber-500/15 text-amber-800 hover:bg-amber-500/25 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25"
+                    : "border-border text-muted-foreground hover:bg-accent/50",
+                )}
+              >
+                <CurrentWorkModeIcon className="h-3 w-3" />
+                {currentWorkMode.label}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-36 p-1" align="start">
+              {ISSUE_WORK_MODE_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button
+                    key={option.value}
+                    data-issue-work-mode={option.value}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50",
+                      option.value === workMode && "bg-accent",
+                      option.value === "planning" && "text-amber-700 dark:text-amber-300",
+                    )}
+                    onClick={() => {
+                      setWorkMode(option.value);
+                      setWorkModeOpen(false);
+                    }}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {option.label}
+                  </button>
+                );
+              })}
+            </PopoverContent>
+          </Popover>
 
           {/* More (dates) */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>

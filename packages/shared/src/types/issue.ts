@@ -24,6 +24,7 @@ import type {
   IssueOriginKind,
   IssuePriority,
   IssueReferenceSourceKind,
+  IssueWorkMode,
   ModelProfileKey,
   IssueThreadInteractionContinuationPolicy,
   IssueThreadInteractionKind,
@@ -35,6 +36,8 @@ import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
 import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
 import type { IssueWorkProduct } from "./work-product.js";
+
+export type { IssueWorkMode };
 
 export interface IssueAncestorProject {
   id: string;
@@ -460,6 +463,7 @@ export interface Issue {
   title: string;
   description: string | null;
   status: IssueStatus;
+  workMode: IssueWorkMode;
   priority: IssuePriority;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
@@ -624,6 +628,7 @@ export interface SuggestedTaskDraft {
   clientKey: string;
   title: string;
   description?: string | null;
+  workMode?: IssueWorkMode | null;
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
   priority?: IssuePriority | null;

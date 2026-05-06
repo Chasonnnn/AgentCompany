@@ -1259,6 +1259,7 @@ export interface PluginIssuesClient {
     title: string;
     description?: string;
     status?: Issue["status"];
+    workMode?: Issue["workMode"];
     priority?: Issue["priority"];
     assigneeAgentId?: string;
     assigneeUserId?: string | null;
@@ -1282,6 +1283,7 @@ export interface PluginIssuesClient {
       | "title"
       | "description"
       | "status"
+      | "workMode"
       | "priority"
       | "assigneeAgentId"
       | "assigneeUserId"

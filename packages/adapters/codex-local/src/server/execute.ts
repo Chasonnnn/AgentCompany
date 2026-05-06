@@ -3,10 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
 import {
-  parseLocalExecutionPolicy,
-  permissiveLocalExecutionPolicy,
-} from "@paperclipai/adapter-utils/local-execution-policy";
-import {
   adapterExecutionTargetIsRemote,
   adapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
@@ -32,13 +28,13 @@ import {
   ensurePaperclipSkillSymlink,
   ensurePathInEnv,
   readPaperclipRuntimeSkillEntries,
+  readPaperclipIssueWorkModeFromContext,
   resolvePaperclipDesiredSkillNames,
   renderTemplate,
   renderPaperclipWakePrompt,
-  renderPaperclipProjectContext,
-  normalizePaperclipWakePayload,
   shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
+  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   joinPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
@@ -50,16 +46,7 @@ import {
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 import { buildCodexExecArgs } from "./codex-args.js";
-import { CodexAppServerClient, NO_RESPONSE } from "./app-server-client.js";
-import { DEFAULT_CODEX_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
-import {
-  buildDecisionQuestionCapture,
-  buildPendingUserInputResponse,
-  normalizeAppServerNotification,
-  normalizePendingUserInputQuestions,
-  parsePendingUserInput,
-  type PendingUserInputState,
-} from "./app-server-normalize.js";
+import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const CODEX_ROLLOUT_NOISE_RE =
@@ -87,10 +74,6 @@ function firstNonEmptyLine(text: string): string {
       .map((line) => line.trim())
       .find(Boolean) ?? ""
   );
-}
-
-function readNonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
@@ -187,6 +170,52 @@ type EnsureCodexSkillsInjectedOptions = {
   linkSkill?: (source: string, target: string) => Promise<void>;
 };
 
+type CodexTransientFallbackMode =
+  | "same_session"
+  | "safer_invocation"
+  | "fresh_session"
+  | "fresh_session_safer_invocation";
+
+function readCodexTransientFallbackMode(context: Record<string, unknown>): CodexTransientFallbackMode | null {
+  const value = asString(context.codexTransientFallbackMode, "").trim();
+  switch (value) {
+    case "same_session":
+    case "safer_invocation":
+    case "fresh_session":
+    case "fresh_session_safer_invocation":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function fallbackModeUsesSaferInvocation(mode: CodexTransientFallbackMode | null): boolean {
+  return mode === "safer_invocation" || mode === "fresh_session_safer_invocation";
+}
+
+function fallbackModeUsesFreshSession(mode: CodexTransientFallbackMode | null): boolean {
+  return mode === "fresh_session" || mode === "fresh_session_safer_invocation";
+}
+
+function buildCodexTransientHandoffNote(input: {
+  previousSessionId: string | null;
+  fallbackMode: CodexTransientFallbackMode;
+  continuationSummaryBody: string | null;
+}): string {
+  return [
+    "Paperclip session handoff:",
+    input.previousSessionId ? `- Previous session: ${input.previousSessionId}` : "",
+    "- Rotation reason: repeated Codex transient remote-compaction failures",
+    `- Fallback mode: ${input.fallbackMode}`,
+    input.continuationSummaryBody
+      ? `- Issue continuation summary: ${input.continuationSummaryBody.slice(0, 1_500)}`
+      : "",
+    "Continue from the current task state. Rebuild only the minimum context you need.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export async function ensureCodexSkillsInjected(
   onLog: AdapterExecutionContext["onLog"],
   options: EnsureCodexSkillsInjectedOptions = {},
@@ -252,195 +281,12 @@ export async function ensureCodexSkillsInjected(
   );
 }
 
-type CodexTransport = "exec" | "app_server";
-
-type AppServerAttempt = {
-  proc: {
-    exitCode: number | null;
-    signal: string | null;
-    timedOut: boolean;
-    stdout: string;
-    stderr: string;
-  };
-  rawStderr: string;
-  parsed: ReturnType<typeof parseCodexJsonl>;
-  question: AdapterExecutionResult["question"];
-  sessionParams: Record<string, unknown> | null;
-  sessionDisplayId: string | null;
-  clearSession: boolean;
-};
-
-function resolveCodexTransport(): CodexTransport {
-  const raw = process.env.PAPERCLIP_CODEX_LOCAL_TRANSPORT?.trim().toLowerCase();
-  return raw === "exec" ? "exec" : "app_server";
-}
-
-function readExtraArgs(config: Record<string, unknown>): string[] {
-  const direct = Array.isArray(config.extraArgs) ? config.extraArgs : Array.isArray(config.args) ? config.args : [];
-  return direct.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-}
-
-function buildCodexAppServerArgs(config: Record<string, unknown>) {
-  const execPreview = buildCodexExecArgs(config);
-  const extraArgs = readExtraArgs(config);
-  const args: string[] = ["app-server"];
-  if (extraArgs.length > 0) args.push(...extraArgs);
-  return {
-    args,
-    fastModeApplied: execPreview.fastModeApplied,
-    fastModeIgnoredReason: execPreview.fastModeIgnoredReason,
-  };
-}
-
-function buildAppServerThreadConfig(
-  config: Record<string, unknown>,
-  options: { fastModeApplied: boolean },
-) {
-  const threadConfig: Record<string, unknown> = {};
-  const search = config.search === true;
-  threadConfig.web_search = search ? "live" : "disabled";
-  if (options.fastModeApplied) {
-    threadConfig.features = {
-      fast_mode: true,
-    };
-  }
-  return threadConfig;
-}
-
-function resolveAppServerSandboxPolicy(bypass: boolean): string | null {
-  if (!bypass) return null;
-  return "danger-full-access";
-}
-
-function resolveAppServerApprovalPolicy(bypass: boolean): string | null {
-  return bypass ? "never" : null;
-}
-
-function resolveAppServerServiceTier(fastModeApplied: boolean): string | null {
-  return fastModeApplied ? "fast" : null;
-}
-
-function buildInitializeCapabilities(planningMode: boolean) {
-  if (!planningMode) return null;
-  return {
-    experimentalApi: true,
-  };
-}
-
-function buildCollaborationMode(config: Record<string, unknown>, planningMode: boolean) {
-  if (!planningMode) return null;
-  const model = asString(config.model, "").trim() || DEFAULT_CODEX_LOCAL_MODEL;
-  const configuredEffort = asString(
-    config.modelReasoningEffort,
-    asString(config.reasoningEffort, ""),
-  ).trim();
-  return {
-    mode: "plan",
-    settings: {
-      model,
-      reasoning_effort: configuredEffort || null,
-      developer_instructions: null,
-    },
-  };
-}
-
-function isExperimentalPlanningCapabilityError(message: string) {
-  const normalized = message.trim().toLowerCase();
-  if (!normalized) return false;
-  if (normalized.includes("turn/start.collaborationmode requires experimentalapi capability")) {
-    return true;
-  }
-  const mentionsExperimentalApi =
-    normalized.includes("experimentalapi") ||
-    normalized.includes("experimental api");
-  const mentionsPlanningNegotiation =
-    normalized.includes("collaborationmode") ||
-    normalized.includes("capabilit") ||
-    normalized.includes("initialize");
-  return mentionsExperimentalApi && mentionsPlanningNegotiation;
-}
-
-function normalizePlanningCapabilityError(message: string, planningMode: boolean) {
-  const trimmed = message.trim();
-  if (!planningMode || !isExperimentalPlanningCapabilityError(trimmed)) {
-    return trimmed;
-  }
-  return [
-    "Paperclip requested native Codex Plan mode, but codex app-server rejected experimental capability negotiation.",
-    trimmed,
-    "Paperclip does not downgrade planning runs automatically.",
-    "Use PAPERCLIP_CODEX_LOCAL_TRANSPORT=exec as a temporary workaround while this app-server path is unavailable.",
-  ].join(" ");
-}
-
-function extractDecisionQuestionAnswer(context: Record<string, unknown>) {
-  const wake = parseObject(context.paperclipWake);
-  const wakeReason =
-    readNonEmptyString(wake.reason) ??
-    readNonEmptyString(context.wakeReason);
-  const answerSource =
-    parseObject(wake.decisionQuestion).answer ??
-    parseObject(context.decisionQuestionAnswer);
-  const answer = parseObject(answerSource);
-  if (wakeReason !== "decision_question_answered" || Object.keys(answer).length === 0) {
-    return null;
-  }
-  return {
-    selectedOptionKey: readNonEmptyString(answer.selectedOptionKey),
-    answer: readNonEmptyString(answer.answer),
-    note: readNonEmptyString(answer.note),
-  };
-}
-
-function shouldPauseForPendingQuestionWithoutAnswer(
-  wakeReason: string | null,
-  pendingUserInput: PendingUserInputState | null,
-  answeredQuestion: { selectedOptionKey: string | null; answer: string | null; note: string | null } | null,
-) {
-  return Boolean(
-    pendingUserInput &&
-    (!answeredQuestion || wakeReason !== "decision_question_answered"),
-  );
-}
-
-function capturePendingUserInput(
-  requestId: string,
-  params: Record<string, unknown>,
-): PendingUserInputState | null {
-  const threadId = readNonEmptyString(params.threadId);
-  const turnId = readNonEmptyString(params.turnId);
-  const itemId = readNonEmptyString(params.itemId);
-  if (!threadId || !turnId || !itemId) return null;
-  const questions = normalizePendingUserInputQuestions(params.questions);
-  if (questions.length === 0) return null;
-  return {
-    requestId,
-    threadId,
-    turnId,
-    itemId,
-    questions,
-  };
-}
-
-function pendingUserInputMatches(
-  pending: PendingUserInputState,
-  params: Record<string, unknown>,
-) {
-  const threadId = readNonEmptyString(params.threadId);
-  const turnId = readNonEmptyString(params.turnId);
-  const itemId = readNonEmptyString(params.itemId);
-  if (threadId && threadId !== pending.threadId) return false;
-  if (turnId && turnId !== pending.turnId) return false;
-  if (itemId && itemId !== pending.itemId) return false;
-  return true;
-}
-
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
   const promptTemplate = asString(
     config.promptTemplate,
-    "You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.",
+    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   );
   const command = asString(config.command, "codex");
   const model = asString(config.model, "");
@@ -553,9 +399,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const hasExplicitApiKey =
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
-  const localExecutionPolicy =
-    parseLocalExecutionPolicy(config.localExecutionPolicy, { defaultPreset: "permissive" }) ??
-    permissiveLocalExecutionPolicy();
   env.PAPERCLIP_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -581,9 +424,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
-  const wakeMode = normalizePaperclipWakePayload(context.paperclipWake)?.mode ?? null;
+  const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) {
     env.PAPERCLIP_TASK_ID = wakeTaskId;
+  }
+  if (issueWorkMode) {
+    env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   }
   if (wakeReason) {
     env.PAPERCLIP_WAKE_REASON = wakeReason;
@@ -599,9 +445,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   if (linkedIssueIds.length > 0) {
     env.PAPERCLIP_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
-  }
-  if (wakeMode) {
-    env.PAPERCLIP_CONTINUITY_MODE = wakeMode;
   }
   if (wakePayloadJson) {
     env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
@@ -683,35 +526,26 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const graceSec = asNumber(config.graceSec, 20);
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
-  const runtimeSessionId = asString(
-    runtimeSessionParams.threadId,
-    asString(runtimeSessionParams.sessionId, runtime.sessionId ?? ""),
-  );
+  const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
-  const codexTransientFallbackMode = asString(context.codexTransientFallbackMode, "");
-  const forceFreshSessionForTransientFallback = codexTransientFallbackMode.includes("fresh_session");
-  const forceSaferTransientInvocation = codexTransientFallbackMode.includes("safer_invocation");
   const canResumeSession =
     runtimeSessionId.length > 0 &&
-    (executionTargetIsRemote
-      ? adapterExecutionTargetSessionMatches(runtimeRemoteExecution, executionTarget) &&
-        (runtimeSessionCwd.length === 0 || runtimeSessionCwd === effectiveExecutionCwd)
-      : runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
-  const sessionId = canResumeSession && !forceFreshSessionForTransientFallback ? runtimeSessionId : null;
-  const pendingUserInput = parsePendingUserInput(runtimeSessionParams.pendingUserInput);
-  const answeredDecisionQuestion = extractDecisionQuestionAnswer(context);
-  if (runtimeSessionId && forceFreshSessionForTransientFallback) {
+    (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(effectiveExecutionCwd)) &&
+    adapterExecutionTargetSessionMatches(runtimeRemoteExecution, executionTarget);
+  const codexTransientFallbackMode = readCodexTransientFallbackMode(context);
+  const forceSaferInvocation = fallbackModeUsesSaferInvocation(codexTransientFallbackMode);
+  const forceFreshSession = fallbackModeUsesFreshSession(codexTransientFallbackMode);
+  const sessionId = canResumeSession && !forceFreshSession ? runtimeSessionId : null;
+  if (executionTargetIsRemote && runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
-      `[paperclip] Codex transient fallback requested a fresh session instead of resuming "${runtimeSessionId}".\n`,
+      `[paperclip] Codex session "${runtimeSessionId}" does not match the current remote execution identity and will not be resumed in "${effectiveExecutionCwd}". Starting a fresh remote session.\n`,
     );
   } else if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
-      executionTargetIsRemote
-        ? `[paperclip] Codex session "${runtimeSessionId}" does not match the current remote execution identity and will not be resumed in "${effectiveExecutionCwd}". Starting a fresh remote session.\n`
-        : `[paperclip] Codex session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${effectiveExecutionCwd}".\n`,
+      `[paperclip] Codex session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${effectiveExecutionCwd}".\n`,
     );
   }
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
@@ -724,7 +558,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       instructionsPrefix =
         `${instructionsContents}\n\n` +
         `The above agent instructions were loaded from ${instructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsDir}, including sibling files such as ./MEMORY.md.\n\n`;
+        `Resolve any relative file references from ${instructionsDir}.\n\n`;
       instructionsChars = instructionsPrefix.length;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -735,7 +569,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
   }
   const repoAgentsNote =
-    "Codex automatically applies repo-scoped AGENTS.md instructions from the current workspace; Paperclip does not currently suppress that discovery.";
+    "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Paperclip does not currently suppress that discovery.";
   const bootstrapPromptTemplate = asString(config.bootstrapPromptTemplate, "");
   const templateData = {
     agentId: agent.id,
@@ -754,44 +588,75 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
   const promptInstructionsPrefix = shouldUseResumeDeltaPrompt ? "" : instructionsPrefix;
   instructionsChars = promptInstructionsPrefix.length;
+  const continuationSummary = parseObject(context.paperclipContinuationSummary);
+  const continuationSummaryBody = asString(continuationSummary.body, "").trim() || null;
+  const codexFallbackHandoffNote =
+    forceFreshSession
+      ? buildCodexTransientHandoffNote({
+          previousSessionId: runtimeSessionId || runtime.sessionId || null,
+          fallbackMode: codexTransientFallbackMode ?? "fresh_session",
+          continuationSummaryBody,
+        })
+      : "";
   const commandNotes = (() => {
     if (!instructionsFilePath) {
-      return [repoAgentsNote];
+      const notes = [repoAgentsNote];
+      if (forceSaferInvocation) {
+        notes.push("Codex transient fallback requested safer invocation settings for this retry.");
+      }
+      if (forceFreshSession) {
+        notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
+      }
+      return notes;
     }
     if (instructionsPrefix.length > 0) {
       if (shouldUseResumeDeltaPrompt) {
-        return [
+        const notes = [
           `Loaded agent instructions from ${instructionsFilePath}`,
           "Skipped stdin instruction reinjection because an existing Codex session is being resumed with a wake delta.",
           repoAgentsNote,
         ];
+        if (forceSaferInvocation) {
+          notes.push("Codex transient fallback requested safer invocation settings for this retry.");
+        }
+        if (forceFreshSession) {
+          notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
+        }
+        return notes;
       }
-      return [
+      const notes = [
         `Loaded agent instructions from ${instructionsFilePath}`,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
         repoAgentsNote,
       ];
+      if (forceSaferInvocation) {
+        notes.push("Codex transient fallback requested safer invocation settings for this retry.");
+      }
+      if (forceFreshSession) {
+        notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
+      }
+      return notes;
     }
-    return [
+    const notes = [
       `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
       repoAgentsNote,
     ];
+    if (forceSaferInvocation) {
+      notes.push("Codex transient fallback requested safer invocation settings for this retry.");
+    }
+    if (forceFreshSession) {
+      notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
+    }
+    return notes;
   })();
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
-  const continuationSummary = parseObject(context.paperclipContinuationSummary);
-  const transientFallbackHandoffNote =
-    forceFreshSessionForTransientFallback && asString(continuationSummary.body, "").trim().length > 0
-      ? `Paperclip session handoff:\n\n${asString(continuationSummary.body, "").trim()}`
-      : "";
-  const projectContextNote = renderPaperclipProjectContext(context);
   const prompt = joinPromptSections([
     promptInstructionsPrefix,
     renderedBootstrapPrompt,
     wakePrompt,
-    projectContextNote,
+    codexFallbackHandoffNote,
     sessionHandoffNote,
-    transientFallbackHandoffNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
@@ -799,85 +664,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     instructionsChars,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     wakePromptChars: wakePrompt.length,
-    projectContextChars: projectContextNote.length,
-    sessionHandoffChars: sessionHandoffNote.length + transientFallbackHandoffNote.length,
+    sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
 
-  const transport = executionTargetIsRemote ? "exec" : resolveCodexTransport();
-  if (executionTargetIsRemote && resolveCodexTransport() !== "exec") {
-    await onLog(
-      "stdout",
-      "[paperclip] Codex SSH execution uses exec transport; app-server transport is host-local only.\n",
+  const runAttempt = async (resumeSessionId: string | null) => {
+    const execArgs = buildCodexExecArgs(
+      forceSaferInvocation ? { ...config, fastMode: false } : config,
+      { resumeSessionId },
     );
-  }
-
-  const buildSessionParams = (
-    threadId: string | null,
-    nextPendingUserInput: PendingUserInputState | null = null,
-  ) => threadId
-    ? ({
-      threadId,
-      sessionId: threadId,
-      cwd: effectiveExecutionCwd,
-      ...(executionTargetIsRemote
-        ? { remoteExecution: adapterExecutionTargetSessionIdentity(executionTarget) }
-        : {}),
-      ...(workspaceId ? { workspaceId } : {}),
-      ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
-      ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
-      ...(nextPendingUserInput ? { pendingUserInput: nextPendingUserInput } : {}),
-    } as Record<string, unknown>)
-    : null;
-
-  if (transport === "app_server" && shouldPauseForPendingQuestionWithoutAnswer(wakeReason, pendingUserInput, answeredDecisionQuestion)) {
-    await onLog(
-      "stdout",
-      `[paperclip] Codex thread "${runtimeSessionId}" is waiting on a board answer; preserving the pending question without starting a new turn.\n`,
-    );
-    return {
-      exitCode: 0,
-      signal: null,
-      timedOut: false,
-      errorMessage: null,
-      sessionId: runtimeSessionId || null,
-      sessionParams: buildSessionParams(runtimeSessionId || null, pendingUserInput),
-      sessionDisplayId: runtimeSessionId || null,
-      provider: "openai",
-      biller: resolveCodexBiller(effectiveEnv, billingType),
-      model,
-      billingType,
-      costUsd: null,
-      resultJson: {
-        stdout: "",
-        stderr: "",
-      },
-      summary: "",
-      clearSession: false,
-    };
-  }
-
-  const runExecAttempt = async (resumeSessionId: string | null) => {
-    const execConfig = forceSaferTransientInvocation
-      ? {
-          ...config,
-          fastMode: false,
-        }
-      : config;
-    const execArgs = buildCodexExecArgs(execConfig, { resumeSessionId });
     const args = execArgs.args;
-    const transientNotes = [
-      ...(forceSaferTransientInvocation
-        ? ["Codex transient fallback requested safer invocation settings for this retry."]
-        : []),
-      ...(forceFreshSessionForTransientFallback
-        ? ["Codex transient fallback forced a fresh session with a continuation handoff."]
-        : []),
-    ];
     const commandNotesWithFastMode =
       execArgs.fastModeIgnoredReason == null
-        ? [...commandNotes, ...transientNotes]
-        : [...commandNotes, execArgs.fastModeIgnoredReason, ...transientNotes];
+        ? commandNotes
+        : [...commandNotes, execArgs.fastModeIgnoredReason];
     if (onMeta) {
       await onMeta({
         adapterType: "codex_local",
@@ -902,8 +702,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       timeoutSec,
       graceSec,
       onSpawn,
-      localExecutionPolicy,
-      declaredEnvKeys: Object.keys(envConfig),
       onLog: async (stream, chunk) => {
         if (stream !== "stderr") {
           await onLog(stream, chunk);
@@ -915,309 +713,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       },
     });
     const cleanedStderr = stripCodexRolloutNoise(proc.stderr);
-    const parsed = parseCodexJsonl(proc.stdout);
-    const resolvedSessionId = parsed.sessionId ?? runtimeSessionId ?? runtime.sessionId ?? null;
     return {
       proc: {
         ...proc,
         stderr: cleanedStderr,
       },
       rawStderr: proc.stderr,
-      parsed,
-      question: null,
-      sessionParams: buildSessionParams(resolvedSessionId),
-      sessionDisplayId: resolvedSessionId,
-      clearSession: false,
-    } satisfies AppServerAttempt;
-  };
-
-  const runAppServerAttempt = async (resumeThreadId: string | null): Promise<AppServerAttempt> => {
-    const configRecord = parseObject(config);
-    const bypass = configRecord.dangerouslyBypassApprovalsAndSandbox === true || configRecord.dangerouslyBypassSandbox === true;
-    const appServerArgs = buildCodexAppServerArgs(configRecord);
-    const threadConfig = buildAppServerThreadConfig(configRecord, {
-      fastModeApplied: appServerArgs.fastModeApplied,
-    });
-    const approvalPolicy = resolveAppServerApprovalPolicy(bypass);
-    const sandboxPolicy = resolveAppServerSandboxPolicy(bypass);
-    const serviceTier = resolveAppServerServiceTier(appServerArgs.fastModeApplied);
-    const effort = asString(configRecord.modelReasoningEffort, asString(configRecord.reasoningEffort, "")).trim();
-    const planningMode = context.paperclipPlanningMode === true;
-    const initializeCapabilities = buildInitializeCapabilities(planningMode);
-    const collaborationMode = buildCollaborationMode(
-      configRecord,
-      initializeCapabilities?.experimentalApi === true,
-    );
-    const commandNotesWithFastMode =
-      appServerArgs.fastModeIgnoredReason == null
-        ? commandNotes
-        : [...commandNotes, appServerArgs.fastModeIgnoredReason];
-    const shouldResumePendingAnswer = Boolean(
-      resumeThreadId &&
-      pendingUserInput &&
-      answeredDecisionQuestion &&
-      wakeReason === "decision_question_answered",
-    );
-    const appServerPrompt = shouldResumePendingAnswer ? "" : prompt;
-    const appServerPromptMetrics = shouldResumePendingAnswer
-      ? {
-        promptChars: 0,
-        instructionsChars: 0,
-        bootstrapPromptChars: 0,
-        wakePromptChars: 0,
-        projectContextChars: 0,
-        sessionHandoffChars: 0,
-        heartbeatPromptChars: 0,
-      }
-      : promptMetrics;
-
-    if (onMeta) {
-      await onMeta({
-        adapterType: "codex_local",
-        command: resolvedCommand,
-        cwd,
-        commandNotes: commandNotesWithFastMode,
-        commandArgs: appServerArgs.args,
-        env: loggedEnv,
-        prompt: appServerPrompt,
-        promptMetrics: appServerPromptMetrics,
-        context,
-      });
-    }
-
-    const stdoutLines: string[] = [];
-    const usageByTurn = new Map<string, { input_tokens: number; cached_input_tokens: number; output_tokens: number }>();
-    let rawStderr = "";
-    let cleanedStderr = "";
-    let threadId = resumeThreadId;
-    let exitCode: number | null = 0;
-    let signal: string | null = null;
-    let timedOut = false;
-    let capturedQuestion: AdapterExecutionResult["question"] = null;
-    let nextPendingUserInput = shouldResumePendingAnswer ? null : pendingUserInput;
-    let loggedThreadStarted = false;
-    let settled = false;
-    let resolveOutcome!: (value: "completed" | "question") => void;
-    const outcomePromise = new Promise<"completed" | "question">((resolve) => {
-      resolveOutcome = resolve;
-    });
-    const settle = (value: "completed" | "question") => {
-      if (settled) return;
-      settled = true;
-      resolveOutcome(value);
-    };
-    const appendError = async (message: string) => {
-      const trimmed = message.trim();
-      if (!trimmed) return;
-      rawStderr += rawStderr.endsWith("\n") || rawStderr.length === 0 ? `${trimmed}\n` : `\n${trimmed}\n`;
-      cleanedStderr += cleanedStderr.endsWith("\n") || cleanedStderr.length === 0 ? `${trimmed}\n` : `\n${trimmed}\n`;
-      await onLog("stderr", `${trimmed}\n`);
-      const errorLine = JSON.stringify({
-        type: "error",
-        message: trimmed,
-      });
-      stdoutLines.push(errorLine);
-      await onLog("stdout", `${errorLine}\n`);
-    };
-
-    const client = new CodexAppServerClient({
-      command,
-      args: appServerArgs.args,
-      cwd,
-      env,
-      onSpawn,
-      onStderr: async (chunk) => {
-        rawStderr += chunk;
-        const cleaned = stripCodexRolloutNoise(chunk);
-        cleanedStderr += cleaned;
-        if (cleaned.trim().length > 0) {
-          await onLog("stderr", cleaned);
-        }
-      },
-      onNotification: async (method, params) => {
-        if (method === "error") {
-          const error = parseObject(params.error);
-          const message = readNonEmptyString(error.message);
-          if (message) {
-            error.message = normalizePlanningCapabilityError(message, planningMode);
-          }
-        }
-        const normalized = normalizeAppServerNotification({ method, params, usageByTurn });
-        if (method === "thread/started") {
-          const thread = parseObject(params.thread);
-          threadId = readNonEmptyString(thread.id) ?? threadId;
-          loggedThreadStarted = Boolean(threadId);
-        }
-        if (method === "error") {
-          const error = parseObject(params.error);
-          const message = readNonEmptyString(error.message);
-          if (message) {
-            exitCode = 1;
-          }
-          settle("completed");
-        }
-        if (method === "turn/completed") {
-          const turn = parseObject(params.turn);
-          if (asString(turn.status, "").trim().toLowerCase() === "failed") {
-            exitCode = 1;
-          }
-        }
-        if (normalized?.line) {
-          stdoutLines.push(normalized.line);
-          await onLog("stdout", `${normalized.line}\n`);
-        }
-        if (method === "turn/completed") {
-          settle("completed");
-        }
-      },
-      onRequest: async (method, id, params) => {
-        if (method !== "item/tool/requestUserInput") {
-          return null;
-        }
-
-        const livePending = capturePendingUserInput(String(id), params);
-        if (!livePending) {
-          return null;
-        }
-
-        const debugLine = JSON.stringify({
-          type: "item.requested_user_input",
-          request_id: String(id),
-          thread_id: livePending.threadId,
-          turn_id: livePending.turnId,
-          item_id: livePending.itemId,
-          questions: livePending.questions,
-        });
-        stdoutLines.push(debugLine);
-        await onLog("stdout", `${debugLine}\n`);
-
-        if (answeredDecisionQuestion && (!pendingUserInput || pendingUserInputMatches(pendingUserInput, params))) {
-          nextPendingUserInput = null;
-          return buildPendingUserInputResponse({
-            questions: livePending.questions,
-            selectedOptionKey: answeredDecisionQuestion.selectedOptionKey,
-            answer: answeredDecisionQuestion.answer,
-            note: answeredDecisionQuestion.note,
-          });
-        }
-
-        nextPendingUserInput = livePending;
-        capturedQuestion = buildDecisionQuestionCapture(livePending.questions);
-        settle("question");
-        return NO_RESPONSE;
-      },
-    });
-
-    const timeoutTimer = timeoutSec > 0
-      ? setTimeout(() => {
-        timedOut = true;
-        exitCode = null;
-        settle("completed");
-      }, timeoutSec * 1000)
-      : null;
-
-    try {
-      await client.initialize(
-        initializeCapabilities ? { capabilities: initializeCapabilities } : undefined,
-      );
-
-      if (resumeThreadId) {
-        const resumeResponse = await client.request("thread/resume", {
-          threadId: resumeThreadId,
-          cwd,
-          ...(approvalPolicy ? { approvalPolicy } : {}),
-          ...(sandboxPolicy ? { sandbox: sandboxPolicy } : {}),
-          ...(serviceTier ? { serviceTier } : {}),
-          ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
-          ...(model ? { model } : {}),
-        });
-        const thread = parseObject(parseObject(resumeResponse.result).thread);
-        threadId = readNonEmptyString(thread.id) ?? threadId;
-      } else {
-        const startResponse = await client.request("thread/start", {
-          ...(model ? { model } : {}),
-          cwd,
-          ...(approvalPolicy ? { approvalPolicy } : {}),
-          ...(sandboxPolicy ? { sandbox: sandboxPolicy } : {}),
-          ...(serviceTier ? { serviceTier } : {}),
-          ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
-          experimentalRawEvents: false,
-        });
-        const thread = parseObject(parseObject(startResponse.result).thread);
-        threadId = readNonEmptyString(thread.id) ?? threadId;
-      }
-
-      if (threadId && !loggedThreadStarted) {
-        const threadStartedLine = JSON.stringify({
-          type: "thread.started",
-          thread_id: threadId,
-        });
-        stdoutLines.push(threadStartedLine);
-        await onLog("stdout", `${threadStartedLine}\n`);
-        loggedThreadStarted = true;
-      }
-
-      if (!threadId) {
-        throw new Error("Codex app-server did not return a thread id");
-      }
-
-      if (!shouldResumePendingAnswer) {
-        const turnResponse = await client.request("turn/start", {
-          threadId,
-          input: [{ type: "text", text: prompt }],
-          cwd,
-          ...(approvalPolicy ? { approvalPolicy } : {}),
-          ...(sandboxPolicy ? { sandbox: sandboxPolicy } : {}),
-          ...(serviceTier ? { serviceTier } : {}),
-          ...(model ? { model } : {}),
-          ...(effort ? { effort } : {}),
-          ...(collaborationMode ? { collaborationMode } : {}),
-        });
-        const turn = parseObject(parseObject(turnResponse.result).turn);
-        if (asString(turn.status, "") === "failed") {
-          exitCode = 1;
-          settle("completed");
-        }
-      }
-
-      await outcomePromise;
-    } catch (error) {
-      if (!timedOut) {
-        exitCode = 1;
-        await appendError(
-          normalizePlanningCapabilityError(
-            error instanceof Error ? error.message : String(error),
-            planningMode,
-          ),
-        );
-      }
-    } finally {
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (timedOut) signal = "SIGTERM";
-      await client.shutdown({ graceMs: graceSec * 1000 });
-    }
-
-    const stdout = stdoutLines.join("\n");
-    return {
-      proc: {
-        exitCode: timedOut ? null : exitCode,
-        signal,
-        timedOut,
-        stdout,
-        stderr: cleanedStderr,
-      },
-      rawStderr,
-      parsed: parseCodexJsonl(stdout),
-      question: capturedQuestion,
-      sessionParams: buildSessionParams(threadId ?? runtimeSessionId ?? runtime.sessionId ?? null, nextPendingUserInput),
-      sessionDisplayId: threadId ?? runtimeSessionId ?? runtime.sessionId ?? null,
-      clearSession: false,
+      parsed: parseCodexJsonl(proc.stdout),
     };
   };
 
   const toResult = (
-    attempt: AppServerAttempt,
+    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl> },
     clearSessionOnMissingSession = false,
+    isRetry = false,
   ): AdapterExecutionResult => {
     if (attempt.proc.timedOut) {
       return {
@@ -1229,14 +738,24 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       };
     }
 
+    const canFallbackToRuntimeSession = !isRetry && !forceFreshSession;
     const resolvedSessionId =
-      attempt.sessionDisplayId ??
       attempt.parsed.sessionId ??
-      runtimeSessionId ??
-      runtime.sessionId ??
-      null;
-    const resolvedSessionParams = attempt.sessionParams ?? buildSessionParams(resolvedSessionId);
-
+      (canFallbackToRuntimeSession ? (runtimeSessionId ?? runtime.sessionId ?? null) : null);
+    const resolvedSessionParams = resolvedSessionId
+      ? ({
+        sessionId: resolvedSessionId,
+        cwd: effectiveExecutionCwd,
+        ...(executionTargetIsRemote
+          ? {
+              remoteExecution: adapterExecutionTargetSessionIdentity(executionTarget),
+            }
+          : {}),
+        ...(workspaceId ? { workspaceId } : {}),
+        ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
+        ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
+      } as Record<string, unknown>)
+      : null;
     const parsedError = typeof attempt.parsed.errorMessage === "string" ? attempt.parsed.errorMessage.trim() : "";
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
     const fallbackErrorMessage =
@@ -1290,15 +809,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         ...(transientRetryNotBefore ? { transientRetryNotBefore: transientRetryNotBefore.toISOString() } : {}),
       },
       summary: attempt.parsed.summary,
-      clearSession: attempt.clearSession || Boolean(clearSessionOnMissingSession && !resolvedSessionId),
-      question: attempt.question ?? null,
+      clearSession: Boolean((clearSessionOnMissingSession || forceFreshSession) && !resolvedSessionId),
     };
   };
-
-  const runAttempt = async (resumeSessionId: string | null) =>
-    transport === "exec"
-      ? runExecAttempt(resumeSessionId)
-      : runAppServerAttempt(resumeSessionId);
 
   try {
     const initial = await runAttempt(sessionId);
@@ -1313,13 +826,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `[paperclip] Codex resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
       );
       const retry = await runAttempt(null);
-      return toResult({
-        ...retry,
-        clearSession: true,
-      });
+      return toResult(retry, true, true);
     }
 
-    return toResult(initial);
+    return toResult(initial, false, false);
   } finally {
     if (paperclipBridge) {
       await paperclipBridge.stop();

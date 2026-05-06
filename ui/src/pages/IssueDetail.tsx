@@ -2665,6 +2665,7 @@ export function IssueDetail() {
                 companyId={issue.companyId}
                 projectId={issue.projectId}
                 issueStatus={issue.status}
+                issueWorkMode={issue.workMode ?? "standard"}
                 agentMap={agentMap}
                 currentUserId={currentUserId}
                 enableLiveTranscriptPolling={false}
@@ -2694,6 +2695,10 @@ export function IssueDetail() {
                     return;
                   }
                   await addComment.mutateAsync({ body, reopen });
+                }}
+                onWorkModeChange={async (nextMode) => {
+                  if ((issue.workMode ?? "standard") === nextMode) return;
+                  await updateIssue.mutateAsync({ workMode: nextMode });
                 }}
                 imageUploadHandler={async (file) => {
                   const attachment = await uploadAttachment.mutateAsync(file);

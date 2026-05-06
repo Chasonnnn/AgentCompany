@@ -5,10 +5,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
 import {
-  parseLocalExecutionPolicy,
-  permissiveLocalExecutionPolicy,
-} from "@paperclipai/adapter-utils/local-execution-policy";
-import {
   adapterExecutionTargetIsRemote,
   adapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
@@ -38,18 +34,16 @@ import {
   ensurePaperclipSkillSymlink,
   joinPromptSections,
   ensurePathInEnv,
-  prepareManagedAdapterHome,
   readPaperclipRuntimeSkillEntries,
+  readPaperclipIssueWorkModeFromContext,
   resolvePaperclipDesiredSkillNames,
-  resolveSharedLocalAdapterHomeDir,
   removeMaintainerOnlySkillSymlinks,
   parseObject,
   renderTemplate,
   renderPaperclipWakePrompt,
-  renderPaperclipProjectContext,
-  normalizePaperclipWakePayload,
   shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
+  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_GEMINI_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
@@ -103,21 +97,25 @@ function renderApiAccessNote(env: Record<string, string>): string {
   ].join("\n");
 }
 
+function geminiSkillsHome(): string {
+  return path.join(os.homedir(), ".gemini", "skills");
+}
+
 /**
  * Inject Paperclip skills directly into `~/.gemini/skills/` via symlinks.
- * The caller controls the actual skills home so runs can stay isolated from
- * any shared host-level Gemini skill installations.
+ * This avoids needing GEMINI_CLI_HOME overrides, so the CLI naturally finds
+ * both its auth credentials and the injected skills in the real home directory.
  */
 async function ensureGeminiSkillsInjected(
   onLog: AdapterExecutionContext["onLog"],
   skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
-  skillsHome: string,
   desiredSkillNames?: string[],
 ): Promise<void> {
   const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
   if (selectedEntries.length === 0) return;
 
+  const skillsHome = geminiSkillsHome();
   try {
     await fs.mkdir(skillsHome, { recursive: true });
   } catch (err) {
@@ -182,7 +180,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const promptTemplate = asString(
     config.promptTemplate,
-    "You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.",
+    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   );
   const command = asString(config.command, "gemini");
   const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
@@ -212,15 +210,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     executionCwd: effectiveExecutionCwd,
   });
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-
+  const geminiSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+  const desiredGeminiSkillNames = resolvePaperclipDesiredSkillNames(config, geminiSkillEntries);
+  if (!executionTargetIsRemote) {
+    await ensureGeminiSkillsInjected(onLog, geminiSkillEntries, desiredGeminiSkillNames);
+  }
 
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
-  const localExecutionPolicy =
-    parseLocalExecutionPolicy(config.localExecutionPolicy, { defaultPreset: "permissive" }) ??
-    permissiveLocalExecutionPolicy();
   env.PAPERCLIP_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -246,14 +245,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
-  const wakeMode = normalizePaperclipWakePayload(context.paperclipWake)?.mode ?? null;
+  const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
+  if (issueWorkMode) env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   if (wakeReason) env.PAPERCLIP_WAKE_REASON = wakeReason;
   if (wakeCommentId) env.PAPERCLIP_WAKE_COMMENT_ID = wakeCommentId;
   if (approvalId) env.PAPERCLIP_APPROVAL_ID = approvalId;
   if (approvalStatus) env.PAPERCLIP_APPROVAL_STATUS = approvalStatus;
   if (linkedIssueIds.length > 0) env.PAPERCLIP_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
-  if (wakeMode) env.PAPERCLIP_CONTINUITY_MODE = wakeMode;
   if (wakePayloadJson) env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
   applyPaperclipWorkspaceEnv(env, {
     workspaceCwd: shapedWorkspaceEnv.workspaceCwd,
@@ -272,28 +271,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
-
-  const sharedHome = resolveSharedLocalAdapterHomeDir({ ...process.env, ...env });
-  const managedHome = await prepareManagedAdapterHome({
-    env: { ...process.env, ...env },
-    adapterKey: "gemini",
-    companyId: agent.companyId,
-    sharedHomeDir: sharedHome,
-    logLabel: "Gemini",
-    subtrees: [{ relativePath: ".gemini", excludeChildren: ["skills"] }],
-    onLog,
-  });
-  env.HOME = managedHome;
-
-  const geminiSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredGeminiSkillNames = resolvePaperclipDesiredSkillNames(config, geminiSkillEntries);
-  await ensureGeminiSkillsInjected(
-    onLog,
-    geminiSkillEntries,
-    path.join(managedHome, ".gemini", "skills"),
-    desiredGeminiSkillNames,
-  );
-
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -437,7 +414,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       instructionsPrefix =
         `${instructionsContents}\n\n` +
         `The above agent instructions were loaded from ${instructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsDir}, including sibling files such as ./MEMORY.md.\n\n`;
+        `Resolve any relative file references from ${instructionsDir}.\n\n`;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       await onLog(
@@ -481,14 +458,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
-  const projectContextNote = renderPaperclipProjectContext(context);
   const paperclipEnvNote = renderPaperclipEnvNote(env);
   const apiAccessNote = renderApiAccessNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
     renderedBootstrapPrompt,
     wakePrompt,
-    projectContextNote,
     sessionHandoffNote,
     paperclipEnvNote,
     apiAccessNote,
@@ -499,7 +474,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     instructionsChars: instructionsPrefix.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     wakePromptChars: wakePrompt.length,
-    projectContextChars: projectContextNote.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: paperclipEnvNote.length + apiAccessNote.length,
     heartbeatPromptChars: renderedPrompt.length,
@@ -545,8 +519,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       graceSec,
       onSpawn,
       onLog,
-      localExecutionPolicy,
-      declaredEnvKeys: Object.keys(envConfig),
     });
     return {
       proc,

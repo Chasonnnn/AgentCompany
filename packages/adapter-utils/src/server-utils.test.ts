@@ -203,6 +203,25 @@ describe("materializePaperclipSkillCopy", () => {
 });
 
 describe("runChildProcess", () => {
+  it("does not arm a timeout when timeoutSec is 0", async () => {
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      ["-e", "setTimeout(() => process.stdout.write('done'), 150);"],
+      {
+        cwd: process.cwd(),
+        env: {},
+        timeoutSec: 0,
+        graceSec: 1,
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(false);
+    expect(result.stdout).toBe("done");
+  });
+
   it("waits for onSpawn before sending stdin to the child", async () => {
     const spawnDelayMs = 150;
     const startedAt = Date.now();
@@ -236,34 +255,6 @@ describe("runChildProcess", () => {
     expect(finishedAt - startedAt).toBeGreaterThanOrEqual(spawnDelayMs);
   });
 
-  it("ignores broken-pipe stdin errors when the child closes fd 0 before delayed prompt handoff", async () => {
-    const logErrors: string[] = [];
-
-    const result = await runChildProcess(
-      randomUUID(),
-      "/bin/sh",
-      ["-lc", "exec 0<&-; sleep 0.2"],
-      {
-        cwd: process.cwd(),
-        env: {},
-        stdin: "hello from stdin",
-        timeoutSec: 5,
-        graceSec: 1,
-        onLog: async () => {},
-        onSpawn: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        },
-        onLogError: (_err, _runId, message) => {
-          logErrors.push(message);
-        },
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.signal).toBeNull();
-    expect(logErrors).toEqual([]);
-  });
-
   it.skipIf(process.platform === "win32")("kills descendant processes on timeout via the process group", async () => {
     let descendantPid: number | null = null;
 
@@ -292,6 +283,7 @@ describe("runChildProcess", () => {
     descendantPid = Number.parseInt(result.stdout.trim(), 10);
     expect(result.timedOut).toBe(true);
     expect(Number.isInteger(descendantPid) && descendantPid > 0).toBe(true);
+
     expect(await waitForPidExit(descendantPid!, 2_000)).toBe(true);
   });
 
@@ -348,7 +340,7 @@ describe("runChildProcess", () => {
         onLog: async () => {},
         terminalResultCleanup: {
           graceMs: 100,
-          hasTerminalResult: ({ stdout }) => stdout.includes('\"type\":\"result\"'),
+          hasTerminalResult: ({ stdout }) => stdout.includes('"type":"result"'),
         },
       },
     );
@@ -426,8 +418,6 @@ describe("renderPaperclipWakePrompt", () => {
   it("keeps the default local-agent prompt action-oriented", () => {
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Start actionable work in this heartbeat");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("do not stop at a plan");
-    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("If no linked issue or explicit target exists");
-    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Make the first output useful");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Prefer the smallest verification that proves the change");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Use child issues");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("instead of polling agents, sessions, or processes");
@@ -450,123 +440,165 @@ describe("renderPaperclipWakePrompt", () => {
         title: "Update prompts",
         status: "in_progress",
       },
+      commentWindow: {
+        requestedCount: 0,
+        includedCount: 0,
+        missingCount: 0,
+      },
+      comments: [],
+      fallbackFetchNeeded: false,
     });
 
-    expect(prompt).toContain("Treat this wake payload as the highest-priority change");
-    expect(prompt).toContain("take one concrete issue action or name the blocker, owner, and unblock step");
-    expect(prompt).toContain("issue: PAP-1580 Update prompts");
+    expect(prompt).toContain("## Paperclip Wake Payload");
+    expect(prompt).toContain("Execution contract: take concrete action in this heartbeat");
+    expect(prompt).toContain("use child issues instead of polling");
+    expect(prompt).toContain("mark blocked work with the unblock owner/action");
   });
 
-  it("renders productivity report packets as read-only advisory context", () => {
-    const prompt = renderPaperclipWakePrompt({
+  it("renders planning-mode directives for assignment and comment wakes", () => {
+    const assignmentPrompt = renderPaperclipWakePrompt({
       reason: "issue_assigned",
       issue: {
         id: "issue-1",
-        identifier: "PAP-1581",
-        title: "Monitor productivity",
-        status: "todo",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        status: "in_progress",
+        workMode: "planning",
       },
-      productivityReport: {
-        kind: "paperclip/productivity-report.v1",
-        scope: "company",
-        companyId: "company-1",
-        window: "7d",
-        generatedAt: "2026-04-24T20:00:00.000Z",
-        totals: {
-          runCount: 10,
-          terminalRunCount: 8,
-          usefulRunCount: 4,
-          lowYieldRunCount: 2,
-          planOnlyRunCount: 1,
-          emptyResponseRunCount: 0,
-          needsFollowupRunCount: 1,
-          continuationExhaustionCount: 0,
-          completedIssueCount: 1,
-          totalTokens: 1_250_000,
-        },
-        ratios: {
-          usefulRunRate: 0.5,
-          lowYieldRunRate: 0.25,
-          tokensPerUsefulRun: 312_500,
-          tokensPerCompletedIssue: 1_250_000,
-          avgTimeToFirstUsefulActionMs: 180_000,
-        },
-        recommendations: ["Check low-yield agents first."],
-        agents: [
-          {
-            agentId: "agent-1",
-            agentName: "QA",
-            health: "watch",
-            usefulRunRate: 0.4,
-            lowYieldRunCount: 2,
-            tokensPerUsefulRun: 500_000,
-          },
-        ],
-        lowYieldRuns: [
-          {
-            runId: "run-1",
-            agentName: "QA",
-            issueIdentifier: "PAP-10",
-            issueTitle: "Overplanned fix",
-            livenessState: "plan_only",
-            totalTokens: 80_000,
-            nextAction: "Reduce QA ceremony.",
-          },
-          {
-            runId: "run-2",
-            agentName: "Project Lead",
-            issueIdentifier: null,
-            issueTitle: null,
-            livenessState: "needs_followup",
-            totalTokens: 918_000,
-            nextAction: JSON.stringify({
-              type: "assistant",
-              message: {
-                model: "claude-opus-4-7",
-                id: "msg_123",
-                type: "message",
-                role: "assistant",
-                content: [
-                  {
-                    type: "text",
-                    text: "Let me check the source run for context and the in-progress proposals that are stuck in revision_requested.",
-                  },
-                ],
-                usage: {
-                  input_tokens: 1,
-                  cache_creation_input_tokens: 960,
-                  cache_read_input_tokens: 52855,
-                },
-              },
-            }),
-          },
-        ],
-      },
+      commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 },
+      comments: [],
+      fallbackFetchNeeded: false,
     });
 
-    expect(prompt).toContain("advisory-only Productivity Monitor wake");
-    expect(prompt).toContain("Do not load the full company run ledger or full issue list");
-    expect(prompt).toContain("Productivity report packet:");
-    expect(prompt).toContain("useful runs: 50% (4/8)");
-    expect(prompt).toContain("Check low-yield agents first.");
-    expect(prompt).toContain("QA: watch");
-    expect(prompt).toContain("PAP-10 Overplanned fix");
-    expect(prompt).toContain("next action: Reduce QA ceremony.");
-    expect(prompt).toContain("Project Lead, needs_followup, 918K tokens");
-    expect(prompt).toContain("next action: Let me check the source run for context");
-    expect(prompt).toContain("recommend a blocker-owner-unblock packet");
-    expect(prompt).toContain("recommend missing-link, owner, and unblock-step evidence");
-    expect(prompt).toContain("Fetch a specific agent productivity summary only when you need detail");
-    expect(prompt).toContain("do not mutate target issues");
-    expect(prompt).not.toContain("\"usage\"");
-    expect(prompt).not.toContain("cache_creation_input_tokens");
-    expect(prompt).not.toContain("claude-opus-4-7");
-    expect(prompt).not.toContain("\"type\":\"assistant\"");
-    expect(prompt).not.toContain("Before generic repo exploration");
-  });
-});
+    expect(assignmentPrompt).toContain("- issue work mode: planning");
+    expect(assignmentPrompt).toContain("Make the plan only. Do not write code or perform implementation work.");
 
-describe("renderPaperclipWakePrompt conference-room payloads", () => {
+    const commentPrompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        status: "in_progress",
+        workMode: "planning",
+      },
+      commentIds: ["comment-1"],
+      latestCommentId: "comment-1",
+      commentWindow: { requestedCount: 1, includedCount: 1, missingCount: 0 },
+      comments: [{ id: "comment-1", body: "Revise the plan" }],
+      fallbackFetchNeeded: false,
+    });
+
+    expect(commentPrompt).toContain("Update the plan only. Do not write code or perform implementation work.");
+  });
+
+  it("does not render stale accepted-plan continuation guidance for later planning comment wakes", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        status: "in_progress",
+        workMode: "planning",
+      },
+      interactionKind: "request_confirmation",
+      interactionStatus: "accepted",
+      commentIds: ["comment-1"],
+      latestCommentId: "comment-1",
+      commentWindow: { requestedCount: 1, includedCount: 1, missingCount: 0 },
+      comments: [{ id: "comment-1", body: "Revise the plan" }],
+      fallbackFetchNeeded: false,
+    });
+
+    expect(prompt).toContain("Update the plan only. Do not write code or perform implementation work.");
+    expect(prompt).not.toContain("accepted-plan continuation");
+    expect(prompt).not.toContain("Create child issues from the approved plan only");
+  });
+
+  it("renders accepted-plan continuation guidance for planning issues", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        status: "in_progress",
+        workMode: "planning",
+      },
+      interactionKind: "request_confirmation",
+      interactionStatus: "accepted",
+      commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 },
+      comments: [],
+      fallbackFetchNeeded: false,
+    });
+
+    expect(prompt).toContain("accepted-plan continuation");
+    expect(prompt).toContain("Create child issues from the approved plan only");
+    expect(prompt).toContain("may create child implementation issues");
+    expect(prompt).toContain("must not start implementation work on the planning issue itself");
+  });
+
+  it("keeps accepted-plan guidance when stale comment ids have no loaded comments", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        status: "in_progress",
+        workMode: "planning",
+      },
+      interactionKind: "request_confirmation",
+      interactionStatus: "accepted",
+      commentIds: ["stale-comment-1"],
+      latestCommentId: "stale-comment-1",
+      commentWindow: { requestedCount: 1, includedCount: 0, missingCount: 1 },
+      comments: [],
+      fallbackFetchNeeded: true,
+    });
+
+    expect(prompt).toContain("accepted-plan continuation");
+    expect(prompt).toContain("Create child issues from the approved plan only");
+    expect(prompt).not.toContain("Update the plan only");
+  });
+
+  it("renders dependency-blocked interaction guidance", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-1703",
+        title: "Blocked parent",
+        status: "todo",
+      },
+      dependencyBlockedInteraction: true,
+      unresolvedBlockerIssueIds: ["blocker-1"],
+      unresolvedBlockerSummaries: [
+        {
+          id: "blocker-1",
+          identifier: "PAP-1723",
+          title: "Finish blocker",
+          status: "todo",
+          priority: "medium",
+        },
+      ],
+      commentWindow: {
+        requestedCount: 1,
+        includedCount: 1,
+        missingCount: 0,
+      },
+      commentIds: ["comment-1"],
+      latestCommentId: "comment-1",
+      comments: [{ id: "comment-1", body: "hello" }],
+      fallbackFetchNeeded: false,
+    });
+
+    expect(prompt).toContain("dependency-blocked interaction: yes");
+    expect(prompt).toContain("respond or triage the human comment");
+    expect(prompt).toContain("PAP-1723 Finish blocker (todo)");
+  });
+
   it("renders loose review request instructions for execution handoffs", () => {
     const prompt = renderPaperclipWakePrompt({
       reason: "execution_review_requested",
@@ -595,155 +627,73 @@ describe("renderPaperclipWakePrompt conference-room payloads", () => {
     expect(prompt).toContain("You are waking as the active reviewer for this issue.");
   });
 
-  it("renders room-specific guidance for conference room questions", () => {
+  it("includes continuation and child issue summaries in structured wake context", () => {
     const payload = {
-      reason: "conference_room_question",
-      conferenceRoom: {
-        id: "room-1",
-        title: "Onboarding Meeting",
-        kind: "project_leadership",
-        status: "open",
-        linkedIssues: [
-          {
-            id: "issue-1",
-            identifier: "PAP-1",
-            title: "Kickoff onboarding work",
-          },
-        ],
+      reason: "issue_children_completed",
+      issue: {
+        id: "parent-1",
+        identifier: "PAP-100",
+        title: "Integrate child work",
+        status: "in_progress",
+        priority: "medium",
       },
-      conferenceRoomMessage: {
-        id: "comment-1",
-        parentCommentId: null,
-        messageType: "question",
-        body: "How do you feel about the audit?",
-        createdAt: "2026-04-17T00:48:07.000Z",
-        author: {
-          type: "user",
-          id: "board-user",
-        },
+      continuationSummary: {
+        key: "continuation-summary",
+        title: "Continuation Summary",
+        body: "# Continuation Summary\n\n## Next Action\n\n- Integrate child outputs.",
+        updatedAt: "2026-04-18T12:00:00.000Z",
       },
-      conferenceRoomThread: [
+      livenessContinuation: {
+        attempt: 2,
+        maxAttempts: 2,
+        sourceRunId: "run-1",
+        state: "plan_only",
+        reason: "Run described future work without concrete action evidence",
+        instruction: "Take the first concrete action now.",
+      },
+      childIssueSummaries: [
         {
-          id: "comment-1",
-          parentCommentId: null,
-          messageType: "question",
-          body: "How do you feel about the audit?",
-          createdAt: "2026-04-17T00:48:07.000Z",
-          author: {
-            type: "user",
-            id: "board-user",
-          },
-        },
-      ],
-      conferenceRoomPendingResponses: [
-        {
-          agent: { id: "agent-1", name: "Technical Project Lead" },
-          status: "pending",
-          repliedCommentId: null,
+          id: "child-1",
+          identifier: "PAP-101",
+          title: "Implement helper",
+          status: "done",
+          priority: "medium",
+          summary: "Added the helper route and tests.",
         },
       ],
     };
 
-    expect(stringifyPaperclipWakePayload(payload)).toContain('"conferenceRoom"');
-
-    const prompt = renderPaperclipWakePrompt(payload);
-
-    expect(prompt).toContain("Paperclip Wake Payload");
-    expect(prompt).toContain("conference room: Onboarding Meeting (room-1)");
-    expect(prompt).toContain("reply in the conference room thread");
-    expect(prompt).toContain("An invited board question is awaiting your in-thread response.");
-    expect(prompt).toContain("Room response state:");
-    expect(prompt).toContain("Technical Project Lead: pending");
-    expect(prompt).not.toContain("issue below. Do not switch");
-  });
-});
-
-describe("renderPaperclipWakePrompt office coordination payloads", () => {
-  it("renders company-scoped coordination guidance for the office operator", () => {
-    const prompt = renderPaperclipWakePrompt({
-      reason: "office_coordination_requested",
-      officeCoordination: {
-        companyId: "company-1",
-        officeAgentId: "office-1",
-        trigger: {
-          reason: "issue_intake_created",
-          entityType: "issue",
-          entityId: "issue-1",
-          summary: "PAP-1 Architecture audit",
-        },
-        queueCounts: {
-          untriagedIntake: 1,
-          unassignedIssues: 1,
-          blockedIssues: 1,
-          staleIssues: 0,
-          staffingGaps: 1,
-          engagementsNeedingAttention: 1,
-          sharedSkillItems: 1,
-        },
-        untriagedIntake: [
-          {
-            id: "issue-1",
-            identifier: "PAP-1",
-            title: "Architecture audit",
-            status: "todo",
-            priority: "medium",
-            projectId: "project-1",
-            projectName: "Platform",
-            updatedAt: "2026-04-21T12:00:00.000Z",
-          },
-        ],
-        unassignedIssues: [],
-        blockedIssues: [],
-        staleIssues: [],
-        staffingGaps: [
-          {
-            projectId: "project-1",
-            projectName: "Platform",
-            missingRoles: ["project_lead"],
-            openIssueCount: 3,
-          },
-        ],
-        engagementsNeedingAttention: [
-          {
-            id: "engagement-1",
-            title: "Security audit",
-            serviceAreaKey: "security",
-            status: "requested",
-            targetProjectId: "project-1",
-            targetProjectName: "Platform",
-            updatedAt: "2026-04-21T12:00:00.000Z",
-          },
-        ],
-        sharedSkillItems: [
-          {
-            sharedSkillId: "shared-skill-1",
-            key: "global/codex/find-skills",
-            name: "Find Skills",
-            mirrorState: "paperclip_modified",
-            sourceDriftState: "diverged_needs_review",
-            openProposalId: "proposal-1",
-            openProposalStatus: "pending",
-            openProposalSummary: "Merge upstream changes",
-          },
-        ],
-        recentActions: [
-          {
-            action: "issue.assigned",
-            entityType: "issue",
-            entityId: "issue-2",
-            summary: "PAP-2",
-            createdAt: "2026-04-21T12:00:00.000Z",
-          },
-        ],
+    expect(JSON.parse(stringifyPaperclipWakePayload(payload) ?? "{}")).toMatchObject({
+      continuationSummary: {
+        body: expect.stringContaining("Continuation Summary"),
       },
+      livenessContinuation: {
+        attempt: 2,
+        maxAttempts: 2,
+        sourceRunId: "run-1",
+        state: "plan_only",
+        instruction: "Take the first concrete action now.",
+      },
+      childIssueSummaries: [
+        {
+          identifier: "PAP-101",
+          summary: "Added the helper route and tests.",
+        },
+      ],
     });
 
-    expect(prompt).toContain("company-wide office/logistics operator");
-    expect(prompt).toContain("Company coordination queue counts");
-    expect(prompt).toContain("Untriaged Intake");
-    expect(prompt).toContain("Project staffing gaps");
-    expect(prompt).toContain("Shared skill coordination items");
-    expect(prompt).toContain("Do not become the continuity owner by default");
+    const prompt = renderPaperclipWakePrompt(payload);
+    expect(prompt).toContain("Issue continuation summary:");
+    expect(prompt).toContain("Integrate child outputs.");
+    expect(prompt).toContain("Run liveness continuation:");
+    expect(prompt).toContain("- attempt: 2/2");
+    expect(prompt).toContain("- source run: run-1");
+    expect(prompt).toContain("- liveness state: plan_only");
+    expect(prompt).toContain("- reason: Run described future work without concrete action evidence");
+    expect(prompt).toContain("- instruction: Take the first concrete action now.");
+    expect(prompt).toContain("Direct child issue summaries:");
+    expect(prompt).toContain("PAP-101 Implement helper (done)");
+    expect(prompt).toContain("Added the helper route and tests.");
   });
 });
 

@@ -2528,6 +2528,7 @@ export function issueRoutes(
         title: issue.title,
         description: issue.description,
         status: issue.status,
+        workMode: issue.workMode,
         priority: issue.priority,
         projectId: issue.projectId,
         goalId: goal?.id ?? issue.goalId,

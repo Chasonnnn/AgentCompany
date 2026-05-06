@@ -854,6 +854,7 @@ export interface WorkerToHostMethods {
       title: string;
       description?: string;
       status?: string;
+      workMode?: string;
       priority?: string;
       assigneeAgentId?: string;
       assigneeUserId?: string | null;

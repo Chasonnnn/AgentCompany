@@ -4,10 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
 import {
-  parseLocalExecutionPolicy,
-  permissiveLocalExecutionPolicy,
-} from "@paperclipai/adapter-utils/local-execution-policy";
-import {
   adapterExecutionTargetIsRemote,
   adapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
@@ -37,19 +33,15 @@ import {
   ensureAbsoluteDirectory,
   ensurePaperclipSkillSymlink,
   ensurePathInEnv,
-  prepareManagedAdapterHome,
-  resolveCommandForLogs,
-
   renderTemplate,
   renderPaperclipWakePrompt,
-  renderPaperclipProjectContext,
-  normalizePaperclipWakePayload,
   shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
+  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
   readPaperclipRuntimeSkillEntries,
+  readPaperclipIssueWorkModeFromContext,
   resolvePaperclipDesiredSkillNames,
-  resolveSharedLocalAdapterHomeDir,
 } from "@paperclipai/adapter-utils/server-utils";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 import {
@@ -148,9 +140,9 @@ function claudeSkillsHome(): string {
 async function ensureOpenCodeSkillsInjected(
   onLog: AdapterExecutionContext["onLog"],
   skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
-  skillsHome: string,
   desiredSkillNames?: string[],
 ) {
+  const skillsHome = claudeSkillsHome();
   await fs.mkdir(skillsHome, { recursive: true });
   const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
@@ -206,7 +198,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const promptTemplate = asString(
     config.promptTemplate,
-    "You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.",
+    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   );
   const command = asString(config.command, "opencode");
   const model = asString(config.model, "").trim();
@@ -236,15 +228,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     executionCwd: effectiveExecutionCwd,
   });
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-
+  const openCodeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+  const desiredOpenCodeSkillNames = resolvePaperclipDesiredSkillNames(config, openCodeSkillEntries);
+  if (!executionTargetIsRemote) {
+    await ensureOpenCodeSkillsInjected(
+      onLog,
+      openCodeSkillEntries,
+      desiredOpenCodeSkillNames,
+    );
+  }
 
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
-  const localExecutionPolicy =
-    parseLocalExecutionPolicy(config.localExecutionPolicy, { defaultPreset: "permissive" }) ??
-    permissiveLocalExecutionPolicy();
   env.PAPERCLIP_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -270,14 +267,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
-  const wakeMode = normalizePaperclipWakePayload(context.paperclipWake)?.mode ?? null;
+  const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
+  if (issueWorkMode) env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   if (wakeReason) env.PAPERCLIP_WAKE_REASON = wakeReason;
   if (wakeCommentId) env.PAPERCLIP_WAKE_COMMENT_ID = wakeCommentId;
   if (approvalId) env.PAPERCLIP_APPROVAL_ID = approvalId;
   if (approvalStatus) env.PAPERCLIP_APPROVAL_STATUS = approvalStatus;
   if (linkedIssueIds.length > 0) env.PAPERCLIP_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
-  if (wakeMode) env.PAPERCLIP_CONTINUITY_MODE = wakeMode;
   if (wakePayloadJson) env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
   applyPaperclipWorkspaceEnv(env, {
     workspaceCwd: shapedWorkspaceEnv.workspaceCwd,
@@ -301,33 +298,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
-  const sharedHome = resolveSharedLocalAdapterHomeDir({ ...process.env, ...env });
-  const managedHome = await prepareManagedAdapterHome({
-    env: { ...process.env, ...env },
-    adapterKey: "opencode",
-    companyId: agent.companyId,
-    sharedHomeDir: sharedHome,
-    logLabel: "OpenCode",
-    subtrees: [{ relativePath: ".claude", excludeChildren: ["skills"] }],
-    onLog,
-  });
-  env.HOME = managedHome;
-  const openCodeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredOpenCodeSkillNames = resolvePaperclipDesiredSkillNames(config, openCodeSkillEntries);
-  await ensureOpenCodeSkillsInjected(
-    onLog,
-    openCodeSkillEntries,
-    path.join(managedHome, ".claude", "skills"),
-    desiredOpenCodeSkillNames,
-  );
   const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
   try {
-	    let runtimeEnv = Object.fromEntries(
-	      Object.entries(ensurePathInEnv({ ...process.env, ...preparedRuntimeConfig.env })).filter(
-	        (entry): entry is [string, string] => typeof entry[1] === "string",
-	      ),
+    const runtimeEnv = Object.fromEntries(
+      Object.entries(ensurePathInEnv({ ...process.env, ...preparedRuntimeConfig.env })).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
     );
     const timeoutSec = asNumber(config.timeoutSec, 0);
     const graceSec = asNumber(config.graceSec, 20);
@@ -335,7 +313,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       runId,
       target: executionTarget,
       installCommand: ctx.runtimeCommandSpec?.installCommand,
-      detectCommand: ctx.runtimeCommandSpec?.detectCommand,
+    detectCommand: ctx.runtimeCommandSpec?.detectCommand,
       cwd,
       env: runtimeEnv,
       timeoutSec,
@@ -349,14 +327,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       includeRuntimeKeys: ["HOME"],
       resolvedCommand,
     });
-	    if (!executionTargetIsRemote) {
-	      await ensureOpenCodeModelConfiguredAndAvailable({
-	        model,
-	        command,
-	        cwd,
-	        env: runtimeEnv,
-	      });
-	    }
+    if (!executionTargetIsRemote) {
+      await ensureOpenCodeModelConfiguredAndAvailable({
+        model,
+        command,
+        cwd,
+        env: runtimeEnv,
+      });
+    }
 
     const extraArgs = (() => {
       const fromExtraArgs = asStringArray(config.extraArgs);
@@ -400,26 +378,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       if (managedHome && preparedExecutionTargetRuntime.runtimeRootDir) {
         preparedRuntimeConfig.env.HOME = preparedExecutionTargetRuntime.runtimeRootDir;
       }
-	      if (localRuntimeConfigHome) {
-	        const remoteXdgConfigHome =
-	          preparedExecutionTargetRuntime.assetDirs.xdgConfig ??
-	          (preparedExecutionTargetRuntime.runtimeRootDir
-	            ? path.posix.join(preparedExecutionTargetRuntime.runtimeRootDir, "xdgConfig")
-	            : null);
-	        if (remoteXdgConfigHome) {
-	          preparedRuntimeConfig.env.XDG_CONFIG_HOME = remoteXdgConfigHome;
-	        }
-	      }
-	      runtimeEnv = Object.fromEntries(
-	        Object.entries(ensurePathInEnv({ ...process.env, ...preparedRuntimeConfig.env })).filter(
-	          (entry): entry is [string, string] => typeof entry[1] === "string",
-	        ),
-	      );
-	      loggedEnv = buildInvocationEnvForLogs(preparedRuntimeConfig.env, {
-	        runtimeEnv,
-	        includeRuntimeKeys: ["HOME"],
-	        resolvedCommand,
-	      });
+      if (localRuntimeConfigHome && preparedExecutionTargetRuntime.assetDirs.xdgConfig) {
+        preparedRuntimeConfig.env.XDG_CONFIG_HOME = preparedExecutionTargetRuntime.assetDirs.xdgConfig;
+      }
       const remoteHomeDir = managedHome && preparedExecutionTargetRuntime.runtimeRootDir
         ? preparedExecutionTargetRuntime.runtimeRootDir
         : await readAdapterExecutionTargetHomeDir(runId, executionTarget, {
@@ -504,7 +465,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         instructionsPrefix =
           `${instructionsContents}\n\n` +
           `The above agent instructions were loaded from ${resolvedInstructionsFilePath}. ` +
-          `Resolve any relative file references from ${instructionsDir}, including sibling files such as ./MEMORY.md.\n\n`;
+          `Resolve any relative file references from ${instructionsDir}.\n\n`;
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         await onLog(
@@ -548,12 +509,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
     const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
     const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
-    const projectContextNote = renderPaperclipProjectContext(context);
     const prompt = joinPromptSections([
       instructionsPrefix,
       renderedBootstrapPrompt,
       wakePrompt,
-      projectContextNote,
       sessionHandoffNote,
       renderedPrompt,
     ]);
@@ -562,7 +521,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       instructionsChars: instructionsPrefix.length,
       bootstrapPromptChars: renderedBootstrapPrompt.length,
       wakePromptChars: wakePrompt.length,
-      projectContextChars: projectContextNote.length,
       sessionHandoffChars: sessionHandoffNote.length,
       heartbeatPromptChars: renderedPrompt.length,
     };
@@ -600,8 +558,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         graceSec,
         onSpawn,
         onLog,
-        localExecutionPolicy,
-        declaredEnvKeys: Object.keys(envConfig),
       });
       return {
         proc,

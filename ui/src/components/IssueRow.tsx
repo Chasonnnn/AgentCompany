@@ -54,6 +54,14 @@ export function IssueRow({
   const showUnreadDot = unreadState === "visible" || unreadState === "fading";
   const selectedStatusClass = selected ? "!text-muted-foreground !border-muted-foreground" : undefined;
   const detailState = withIssueDetailHeaderSeed(issueLinkState, issue);
+  const planningModeIndicator = issue.workMode === "planning" ? (
+    <span
+      className="ml-1.5 inline-flex shrink-0 items-center rounded-full border border-amber-500/60 bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+      title="This issue is in planning mode."
+    >
+      Planning
+    </span>
+  ) : null;
 
   return (
     <Link
@@ -69,8 +77,9 @@ export function IssueRow({
         className,
       )}
     >
-      <span className="shrink-0 pt-px sm:hidden">
+      <span className="flex shrink-0 items-center gap-1 pt-px sm:hidden">
         {mobileLeading ?? <StatusIcon status={issue.status} className={selectedStatusClass} />}
+        {planningModeIndicator}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-1 sm:contents">
         <span className="line-clamp-2 text-sm sm:order-2 sm:min-w-0 sm:flex-1 sm:truncate sm:line-clamp-none">
@@ -89,6 +98,7 @@ export function IssueRow({
                 {identifier}
               </span>
               <IssueContinuityBadge issue={issue} />
+              {planningModeIndicator}
             </>
           )}
           {mobileMeta ? (
