@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { issueExecutionDecisions } from "@paperclipai/db";
+import { activityLog, issueExecutionDecisions } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,
@@ -57,6 +58,7 @@ import {
   normalizeIssueIdentifier as normalizeIssueReferenceIdentifier,
   type ExecutionWorkspace,
   type ProductivitySummary,
+  type SuccessfulRunHandoffState,
 } from "@paperclipai/shared";
 import { trackAgentTaskCompleted } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
@@ -95,6 +97,7 @@ import { assertInReviewEntryGate } from "../services/issue-review-gate.js";
 import { wakeCompanyOfficeOperatorSafely } from "../services/office-coordination-wakeup.js";
 import { issueDecisionQuestionService } from "../services/issue-decision-questions.js";
 import { logger } from "../middleware/logger.js";
+import { redactSensitiveText } from "../redaction.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
@@ -328,6 +331,106 @@ type ExecutionStageWakeContext = {
   lastDecisionOutcome: ParsedExecutionState["lastDecisionOutcome"];
   allowedActions: string[];
 };
+
+type SuccessfulRunHandoffActivityRow = {
+  entityId: string;
+  action: string;
+  agentId: string | null;
+  runId: string | null;
+  details: Record<string, unknown> | null;
+  createdAt: Date;
+};
+
+const SUCCESSFUL_RUN_HANDOFF_ACTIONS = [
+  "issue.successful_run_handoff_required",
+  "issue.successful_run_handoff_resolved",
+  "issue.successful_run_handoff_escalated",
+] as const;
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function successfulRunHandoffStateFromActivity(row: {
+  action: string;
+  agentId: string | null;
+  runId: string | null;
+  details: Record<string, unknown> | null;
+  createdAt: Date;
+}): SuccessfulRunHandoffState | null {
+  const details = row.details ?? {};
+  const state =
+    row.action === "issue.successful_run_handoff_required"
+      ? "required"
+      : row.action === "issue.successful_run_handoff_resolved"
+        ? "resolved"
+        : row.action === "issue.successful_run_handoff_escalated"
+          ? "escalated"
+          : null;
+  if (!state) return null;
+
+  const detectedProgressSummary =
+    readNonEmptyString(details.detectedProgressSummary)
+    ?? readNonEmptyString(details.detected_progress_summary)
+    ?? null;
+
+  return {
+    state,
+    required: state === "required",
+    sourceRunId:
+      readNonEmptyString(details.sourceRunId)
+      ?? readNonEmptyString(details.source_run_id)
+      ?? readNonEmptyString(details.resumeFromRunId)
+      ?? row.runId
+      ?? null,
+    correctiveRunId:
+      readNonEmptyString(details.correctiveRunId)
+      ?? readNonEmptyString(details.corrective_run_id)
+      ?? (state !== "required" ? row.runId : null),
+    assigneeAgentId:
+      readNonEmptyString(details.assigneeAgentId)
+      ?? readNonEmptyString(details.agentId)
+      ?? row.agentId
+      ?? null,
+    detectedProgressSummary: detectedProgressSummary
+      ? redactSensitiveText(detectedProgressSummary)
+      : null,
+    createdAt: row.createdAt,
+  };
+}
+
+async function listSuccessfulRunHandoffStates(
+  db: Db,
+  companyId: string,
+  issueIds: string[],
+): Promise<Map<string, SuccessfulRunHandoffState>> {
+  if (issueIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      entityId: activityLog.entityId,
+      action: activityLog.action,
+      agentId: activityLog.agentId,
+      runId: activityLog.runId,
+      details: activityLog.details,
+      createdAt: activityLog.createdAt,
+    })
+    .from(activityLog)
+    .where(and(
+      eq(activityLog.companyId, companyId),
+      eq(activityLog.entityType, "issue"),
+      inArray(activityLog.entityId, issueIds),
+      inArray(activityLog.action, [...SUCCESSFUL_RUN_HANDOFF_ACTIONS]),
+    ))
+    .orderBy(activityLog.entityId, desc(activityLog.createdAt), desc(activityLog.id)) as SuccessfulRunHandoffActivityRow[];
+
+  const states = new Map<string, SuccessfulRunHandoffState>();
+  for (const row of rows) {
+    if (states.has(row.entityId)) continue;
+    const state = successfulRunHandoffStateFromActivity(row);
+    if (state) states.set(row.entityId, state);
+  }
+  return states;
+}
 
 function executionPrincipalsEqual(
   left: ParsedExecutionState["currentParticipant"] | null,
@@ -3892,6 +3995,33 @@ export function issueRoutes(
         ),
       },
     });
+
+    if (existing.status === "in_progress" && issue.status !== existing.status && issue.status !== "in_progress") {
+      await listSuccessfulRunHandoffStates(db, issue.companyId, [issue.id])
+        .then(async (handoffStates) => {
+          const handoff = handoffStates.get(issue.id);
+          if (handoff?.state !== "required") return;
+          await logActivity(db, {
+            companyId: issue.companyId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            runId: actor.runId,
+            action: "issue.successful_run_handoff_resolved",
+            entityType: "issue",
+            entityId: issue.id,
+            details: {
+              identifier: issue.identifier,
+              sourceRunId: handoff.sourceRunId,
+              correctiveRunId: handoff.correctiveRunId,
+              resolvedByStatus: issue.status,
+            },
+          });
+        })
+        .catch((err) => {
+          logger.warn({ err, issueId: issue.id }, "failed to log successful run handoff resolution");
+        });
+    }
 
     if (Array.isArray(req.body.blockedByIssueIds)) {
       const previousBlockedByIds = new Set((existingRelations?.blockedBy ?? []).map((relation) => relation.id));

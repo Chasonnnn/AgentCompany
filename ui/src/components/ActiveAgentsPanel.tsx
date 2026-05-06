@@ -1,14 +1,13 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo } from "react";
 import { Link } from "@/lib/router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import type { Issue } from "@paperclipai/shared";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../adapters";
 import { issuesApi } from "../api/issues";
-import { uniqueRunsByAgent } from "../lib/dashboard-runs";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, relativeTime } from "../lib/utils";
-import { ExternalLink, Square } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { Identity } from "./Identity";
 import { RunChatSurface } from "./RunChatSurface";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
@@ -26,32 +25,59 @@ function isRunActive(run: LiveRunForIssue): boolean {
 
 interface ActiveAgentsPanelProps {
   companyId: string;
+  title?: string;
+  minRunCount?: number;
+  fetchLimit?: number;
+  cardLimit?: number;
+  gridClassName?: string;
+  cardClassName?: string;
+  emptyMessage?: string;
+  queryScope?: string;
+  showMoreLink?: boolean;
 }
 
-export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
-  const queryClient = useQueryClient();
-  const [stoppingRunIds, setStoppingRunIds] = useState(new Set<string>());
+export function ActiveAgentsPanel({
+  companyId,
+  title = "Agents",
+  minRunCount = MIN_DASHBOARD_RUNS,
+  fetchLimit,
+  cardLimit = DASHBOARD_RUN_CARD_LIMIT,
+  gridClassName,
+  cardClassName,
+  emptyMessage = "No recent agent runs.",
+  queryScope = "dashboard",
+  showMoreLink = true,
+}: ActiveAgentsPanelProps) {
   const { data: liveRuns } = useQuery({
-    queryKey: [...queryKeys.liveRuns(companyId), "dashboard"],
-    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, MIN_DASHBOARD_RUNS),
+    queryKey: [...queryKeys.liveRuns(companyId), queryScope, { minRunCount, fetchLimit }],
+    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, { minCount: minRunCount, limit: fetchLimit }),
   });
 
-  const runs = useMemo(() => uniqueRunsByAgent(liveRuns ?? []), [liveRuns]);
-  const visibleRuns = useMemo(() => runs.slice(0, DASHBOARD_RUN_CARD_LIMIT), [runs]);
+  const runs = liveRuns ?? [];
+  const visibleRuns = useMemo(() => runs.slice(0, cardLimit), [cardLimit, runs]);
   const hiddenRunCount = Math.max(0, runs.length - visibleRuns.length);
-  const { data: issues } = useQuery({
-    queryKey: [...queryKeys.issues.list(companyId), "with-routine-executions"],
-    queryFn: () => issuesApi.list(companyId, { includeRoutineExecutions: true }),
-    enabled: visibleRuns.length > 0,
+  const visibleIssueIds = useMemo(
+    () => [...new Set(visibleRuns.map((run) => run.issueId).filter((issueId): issueId is string => Boolean(issueId)))],
+    [visibleRuns],
+  );
+
+  const issueQueries = useQueries({
+    queries: visibleIssueIds.map((issueId) => ({
+      queryKey: queryKeys.issues.detail(issueId),
+      queryFn: () => issuesApi.get(issueId),
+      staleTime: 30_000,
+      retry: false,
+    })),
   });
 
   const issueById = useMemo(() => {
     const map = new Map<string, Issue>();
-    for (const issue of issues ?? []) {
-      map.set(issue.id, issue);
+    for (const query of issueQueries) {
+      const issue = query.data;
+      if (issue) map.set(issue.id, issue);
     }
     return map;
-  }, [issues]);
+  }, [issueQueries]);
 
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
     runs: visibleRuns,
@@ -62,38 +88,17 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
     enableRealtimeUpdates: false,
   });
 
-  const handleStopRun = async (run: LiveRunForIssue) => {
-    setStoppingRunIds((current) => new Set(current).add(run.id));
-    try {
-      await heartbeatsApi.cancel(run.id);
-      queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(companyId) });
-      if (run.issueId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(run.issueId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(run.issueId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(run.issueId) });
-      }
-    } finally {
-      setStoppingRunIds((current) => {
-        const next = new Set(current);
-        next.delete(run.id);
-        return next;
-      });
-    }
-  };
-
   return (
     <div>
       <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Agents
+        {title}
       </h3>
       {runs.length === 0 ? (
         <div className="rounded-xl border border-border p-4">
-          <p className="text-sm text-muted-foreground">No recent agent runs.</p>
+          <p className="text-sm text-muted-foreground">{emptyMessage}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+        <div className={cn("grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4", gridClassName)}>
           {visibleRuns.map((run) => (
             <AgentRunCard
               key={run.id}
@@ -103,34 +108,30 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
               transcript={transcriptByRun.get(run.id) ?? EMPTY_TRANSCRIPT}
               hasOutput={hasOutputForRun(run.id)}
               isActive={isRunActive(run)}
-              stopping={stoppingRunIds.has(run.id)}
-              onStopRun={() => {
-                void handleStopRun(run);
-              }}
+              className={cardClassName}
             />
           ))}
         </div>
       )}
-      {hiddenRunCount > 0 ? (
+      {showMoreLink && hiddenRunCount > 0 && (
         <div className="mt-3 flex justify-end text-xs text-muted-foreground">
-          <Link to="/agents" className="hover:text-foreground hover:underline">
+          <Link to="/dashboard/live" className="hover:text-foreground hover:underline">
             {hiddenRunCount} more active/recent run{hiddenRunCount === 1 ? "" : "s"}
           </Link>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
 
-function AgentRunCard({
+const AgentRunCard = memo(function AgentRunCard({
   companyId,
   run,
   issue,
   transcript,
   hasOutput,
   isActive,
-  stopping,
-  onStopRun,
+  className,
 }: {
   companyId: string;
   run: LiveRunForIssue;
@@ -138,8 +139,7 @@ function AgentRunCard({
   transcript: TranscriptEntry[];
   hasOutput: boolean;
   isActive: boolean;
-  stopping: boolean;
-  onStopRun: () => void;
+  className?: string;
 }) {
   return (
     <div className={cn(
@@ -147,6 +147,7 @@ function AgentRunCard({
       isActive
         ? "border-cyan-500/25 bg-cyan-500/[0.04] shadow-[0_16px_40px_rgba(6,182,212,0.08)]"
         : "border-border bg-background/70",
+      className,
     )}>
       <div className="border-b border-border/60 px-3 py-3">
         <div className="flex items-start justify-between gap-2">
@@ -173,17 +174,6 @@ function AgentRunCard({
           >
             <ExternalLink className="h-2.5 w-2.5" />
           </Link>
-          {isActive ? (
-            <button
-              type="button"
-              onClick={onStopRun}
-              disabled={stopping}
-              className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/[0.06] px-2 py-1 text-[10px] font-medium text-red-700 transition-colors hover:bg-red-500/[0.12] dark:text-red-300 disabled:opacity-50"
-            >
-              <Square className="h-2.5 w-2.5" fill="currentColor" />
-              {stopping ? "Stopping..." : "Stop"}
-            </button>
-          ) : null}
         </div>
 
         {run.issueId && (
@@ -213,4 +203,4 @@ function AgentRunCard({
       </div>
     </div>
   );
-}
+});

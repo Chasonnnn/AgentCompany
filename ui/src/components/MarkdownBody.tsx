@@ -1,7 +1,6 @@
-import { isValidElement, useEffect, useId, useState, type ReactNode } from "react";
+import { isValidElement, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { CSSProperties } from "react";
-import { ExternalLink, Github } from "lucide-react";
+import { Check, Copy, ExternalLink, Github } from "lucide-react";
 import Markdown, { defaultUrlTransform, type Components, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
@@ -75,24 +74,36 @@ function loadMermaid() {
   return mermaidLoaderPromise;
 }
 
-const wrapAnywhereStyle: CSSProperties = {
+const wrapAnywhereStyle: React.CSSProperties = {
   overflowWrap: "anywhere",
   wordBreak: "break-word",
 };
 
-const scrollableBlockStyle: CSSProperties = {
+const scrollableBlockStyle: React.CSSProperties = {
   maxWidth: "100%",
   overflowX: "auto",
 };
 
-function mergeWrapStyle(style?: CSSProperties): CSSProperties {
+const tableCellWrapStyle: React.CSSProperties = {
+  overflowWrap: "anywhere",
+  wordBreak: "normal",
+};
+
+function mergeWrapStyle(style?: React.CSSProperties): React.CSSProperties {
   return {
     ...wrapAnywhereStyle,
     ...style,
   };
 }
 
-function mergeScrollableBlockStyle(style?: CSSProperties): CSSProperties {
+function mergeTableCellStyle(style?: React.CSSProperties): React.CSSProperties {
+  return {
+    ...tableCellWrapStyle,
+    ...style,
+  };
+}
+
+function mergeScrollableBlockStyle(style?: React.CSSProperties): React.CSSProperties {
   return {
     ...scrollableBlockStyle,
     ...style,
@@ -344,6 +355,83 @@ function renderLinkBody(
   );
 }
 
+function CodeBlock({
+  children,
+  preProps,
+}: {
+  children: ReactNode;
+  preProps: React.HTMLAttributes<HTMLPreElement>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const preRef = useRef<HTMLPreElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const handleCopy = useCallback(async () => {
+    const text = preRef.current?.innerText ?? flattenText(children);
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        try {
+          textarea.select();
+          const success = document.execCommand("copy");
+          if (!success) throw new Error("execCommand copy failed");
+        } finally {
+          document.body.removeChild(textarea);
+        }
+      }
+      setFailed(false);
+      setCopied(true);
+    } catch {
+      setFailed(true);
+      setCopied(true);
+    }
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setCopied(false);
+      setFailed(false);
+    }, 1500);
+  }, [children]);
+
+  const label = failed ? "Copy failed" : copied ? "Copied!" : "Copy";
+
+  return (
+    <div className="paperclip-markdown-codeblock">
+      <pre
+        {...preProps}
+        ref={preRef}
+        style={mergeScrollableBlockStyle(preProps.style as React.CSSProperties | undefined)}
+      >
+        {children}
+      </pre>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label="Copy code"
+        title={label}
+        className="paperclip-markdown-codeblock-copy"
+        data-copied={copied || undefined}
+        data-failed={failed || undefined}
+      >
+        {copied && !failed ? (
+          <Check aria-hidden="true" className="h-3.5 w-3.5" />
+        ) : (
+          <Copy aria-hidden="true" className="h-3.5 w-3.5" />
+        )}
+        <span className="paperclip-markdown-codeblock-copy-label">{label}</span>
+      </button>
+    </div>
+  );
+}
+
 function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: boolean }) {
   const renderId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [svg, setSvg] = useState<string | null>(null);
@@ -424,27 +512,34 @@ export function MarkdownBody({
   }
   const components: Components = {
     p: ({ node: _node, style: paragraphStyle, children: paragraphChildren, ...paragraphProps }) => (
-      <p {...paragraphProps} style={mergeWrapStyle(paragraphStyle as CSSProperties | undefined)}>
+      <p {...paragraphProps} style={mergeWrapStyle(paragraphStyle as React.CSSProperties | undefined)}>
         {paragraphChildren}
       </p>
     ),
     li: ({ node: _node, style: listItemStyle, children: listItemChildren, ...listItemProps }) => (
-      <li {...listItemProps} style={mergeWrapStyle(listItemStyle as CSSProperties | undefined)}>
+      <li {...listItemProps} style={mergeWrapStyle(listItemStyle as React.CSSProperties | undefined)}>
         {listItemChildren}
       </li>
     ),
     blockquote: ({ node: _node, style: blockquoteStyle, children: blockquoteChildren, ...blockquoteProps }) => (
-      <blockquote {...blockquoteProps} style={mergeWrapStyle(blockquoteStyle as CSSProperties | undefined)}>
+      <blockquote {...blockquoteProps} style={mergeWrapStyle(blockquoteStyle as React.CSSProperties | undefined)}>
         {blockquoteChildren}
       </blockquote>
     ),
+    table: ({ node: _node, style: tableStyle, children: tableChildren, ...tableProps }) => (
+      <div className="paperclip-markdown-table-scroll" role="region" aria-label="Scrollable table" tabIndex={0}>
+        <table {...tableProps} style={tableStyle as React.CSSProperties | undefined}>
+          {tableChildren}
+        </table>
+      </div>
+    ),
     td: ({ node: _node, style: tableCellStyle, children: tableCellChildren, ...tableCellProps }) => (
-      <td {...tableCellProps} style={mergeWrapStyle(tableCellStyle as CSSProperties | undefined)}>
+      <td {...tableCellProps} style={mergeTableCellStyle(tableCellStyle as React.CSSProperties | undefined)}>
         {tableCellChildren}
       </td>
     ),
     th: ({ node: _node, style: tableHeaderStyle, children: tableHeaderChildren, ...tableHeaderProps }) => (
-      <th {...tableHeaderProps} style={mergeWrapStyle(tableHeaderStyle as CSSProperties | undefined)}>
+      <th {...tableHeaderProps} style={mergeTableCellStyle(tableHeaderStyle as React.CSSProperties | undefined)}>
         {tableHeaderChildren}
       </th>
     ),
@@ -453,10 +548,10 @@ export function MarkdownBody({
       if (mermaidSource) {
         return <MermaidDiagramBlock source={mermaidSource} darkMode={theme === "dark"} />;
       }
-      return <pre {...preProps} style={mergeScrollableBlockStyle(preProps.style as CSSProperties | undefined)}>{preChildren}</pre>;
+      return <CodeBlock preProps={preProps}>{preChildren}</CodeBlock>;
     },
     code: ({ node: _node, style: codeStyle, children: codeChildren, ...codeProps }) => (
-      <code {...codeProps} style={mergeWrapStyle(codeStyle as CSSProperties | undefined)}>
+      <code {...codeProps} style={mergeWrapStyle(codeStyle as React.CSSProperties | undefined)}>
         {codeChildren}
       </code>
     ),
@@ -489,8 +584,12 @@ export function MarkdownBody({
       if (parsed) {
         const targetHref = parsed.kind === "project"
           ? `/projects/${parsed.projectId}`
+          : parsed.kind === "issue"
+            ? `/issues/${parsed.identifier}`
           : parsed.kind === "skill"
             ? `/skills/${parsed.skillId}`
+            : parsed.kind === "user"
+              ? "/company/settings/access"
             : `/agents/${parsed.agentId}`;
         return (
           <a
@@ -501,7 +600,7 @@ export function MarkdownBody({
               parsed.kind === "project" && "paperclip-project-mention-chip",
             )}
             data-mention-kind={parsed.kind}
-            style={mentionChipInlineStyle(parsed)}
+            style={{ ...mergeWrapStyle(linkStyle as React.CSSProperties | undefined), ...mentionChipInlineStyle(parsed) }}
           >
             {linkChildren}
           </a>
@@ -521,7 +620,7 @@ export function MarkdownBody({
           {...(isExternal
             ? { target: "_blank", rel: "noopener noreferrer" }
             : { rel: "noreferrer" })}
-          style={mergeWrapStyle(linkStyle as CSSProperties | undefined)}
+          style={mergeWrapStyle(linkStyle as React.CSSProperties | undefined)}
         >
           {renderLinkBody(linkChildren, leadingIcon, trailingIcon)}
         </a>
@@ -553,7 +652,11 @@ export function MarkdownBody({
       )}
       style={mergeWrapStyle(style)}
     >
-      <Markdown remarkPlugins={remarkPlugins} components={components} urlTransform={safeMarkdownUrlTransform}>
+      <Markdown
+        remarkPlugins={remarkPlugins}
+        components={components}
+        urlTransform={safeMarkdownUrlTransform}
+      >
         {children}
       </Markdown>
     </div>

@@ -15,6 +15,7 @@ import { IssueWorkspaceCard } from "./IssueWorkspaceCard";
 import { AgentIcon } from "./AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -181,6 +182,7 @@ export function RoutineRunVariablesDialog({
   open,
   onOpenChange,
   companyId,
+  routineName,
   projects,
   agents,
   defaultProjectId,
@@ -193,6 +195,7 @@ export function RoutineRunVariablesDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   companyId: string | null | undefined;
+  routineName?: string | null;
   projects: Project[];
   agents: Agent[];
   defaultProjectId?: string | null;
@@ -212,6 +215,7 @@ export function RoutineRunVariablesDialog({
     [projects, selection.projectId],
   );
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [open]);
+  const recentProjectIds = useMemo(() => getRecentProjectIds(), [open]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
     () =>
       sortAgentsByRecency(
@@ -286,7 +290,7 @@ export function RoutineRunVariablesDialog({
 
   const workspaceIssue = useMemo(() => ({
     companyId: companyId ?? null,
-    projectId: selectedProject?.id ?? "",
+    projectId: selectedProject?.id ?? null,
     projectWorkspaceId: workspaceConfig.projectWorkspaceId,
     executionWorkspaceId: workspaceConfig.executionWorkspaceId,
     executionWorkspacePreference: workspaceConfig.executionWorkspacePreference,
@@ -331,21 +335,25 @@ export function RoutineRunVariablesDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !isPending && onOpenChange(next)}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
+      <DialogContent className="flex h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] max-w-xl flex-col gap-0 overflow-hidden p-0 sm:h-auto sm:max-h-[min(calc(100dvh-2rem),42rem)]">
+        <DialogHeader className="shrink-0 border-b border-border/60 px-6 pb-4 pr-12 pt-6">
+          {routineName && (
+            <p className="text-muted-foreground text-sm">{routineName}</p>
+          )}
           <DialogTitle>Run routine</DialogTitle>
           <DialogDescription>
             Choose the agent and optional project for this one run. Routine defaults are prefilled and won&apos;t be changed.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Agent *</Label>
               <InlineEntitySelector
                 value={selection.assigneeAgentId}
                 options={assigneeOptions}
+                recentOptionIds={recentAssigneeIds}
                 placeholder="Agent"
                 noneLabel="Select an agent"
                 searchPlaceholder="Search agents..."
@@ -387,6 +395,7 @@ export function RoutineRunVariablesDialog({
               <InlineEntitySelector
                 value={selection.projectId}
                 options={projectOptions}
+                recentOptionIds={recentProjectIds}
                 placeholder="Project"
                 noneLabel="No project"
                 searchPlaceholder="Search projects..."
@@ -395,6 +404,7 @@ export function RoutineRunVariablesDialog({
                 openOnFocus={false}
                 onChange={(projectId) => {
                   const project = projects.find((entry) => entry.id === projectId) ?? null;
+                  if (projectId) trackRecentProject(projectId);
                   setSelection((current) => ({ ...current, projectId }));
                   setWorkspaceConfig(buildInitialWorkspaceConfig(project, defaultExecutionWorkspace));
                   setWorkspaceConfigValid(true);
@@ -441,7 +451,11 @@ export function RoutineRunVariablesDialog({
                 {variable.required ? " *" : ""}
               </Label>
               {isAutoWorkspaceBranchVariable(variable) ? (
-                <Input value={workspaceBranchAutoValue ?? ""} readOnly disabled />
+                <Input
+                  readOnly
+                  disabled
+                  value={workspaceBranchAutoValue ?? ""}
+                />
               ) : variable.type === "textarea" ? (
                 <Textarea
                   rows={4}
@@ -493,7 +507,7 @@ export function RoutineRunVariablesDialog({
             </div>
           ))}
 
-          {workspaceSelectionEnabled && selectedProject && companyId && workspaceIssue ? (
+          {workspaceSelectionEnabled && selectedProject && companyId ? (
             <IssueWorkspaceCard
               key={`${open ? "open" : "closed"}:${selectedProject.id}`}
               issue={workspaceIssue}
@@ -506,7 +520,10 @@ export function RoutineRunVariablesDialog({
           ) : null}
         </div>
 
-        <DialogFooter showCloseButton={false}>
+        <DialogFooter
+          showCloseButton={false}
+          className="shrink-0 border-t border-border/60 bg-background px-6 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4"
+        >
           {!selection.assigneeAgentId ? (
             <p className="mr-auto text-xs text-amber-600">Default agent required for this run.</p>
           ) : missingRequired.length > 0 ? (
