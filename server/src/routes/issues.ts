@@ -5,6 +5,7 @@ import { z } from "zod";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, executionWorkspaces, issueExecutionDecisions, projectWorkspaces } from "@paperclipai/db";
+import { logger } from "../middleware/logger.js";
 import {
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,

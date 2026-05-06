@@ -1,8 +1,10 @@
 import { useId, useState, type ReactNode } from "react";
 import {
   ChevronDown,
+  Check,
   CircleAlert,
   CircleCheck,
+  Copy,
   Info,
   OctagonAlert,
   TriangleAlert,
@@ -38,6 +40,8 @@ export type SystemNoticeProps = {
   detailsDefaultOpen?: boolean;
   /** Optional ISO timestamp shown next to the label. */
   timestamp?: string;
+  copyHref?: string;
+  copyText?: string;
   className?: string;
 };
 
@@ -214,11 +218,15 @@ export function SystemNotice({
   metadata,
   detailsDefaultOpen = false,
   timestamp,
+  copyHref,
+  copyText,
   className,
 }: SystemNoticeProps) {
   const tokens = TONE_TOKENS[tone];
   const ToneIcon = tokens.icon;
   const [open, setOpen] = useState(detailsDefaultOpen);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedText, setCopiedText] = useState(false);
   const detailsId = useId();
   const hasDetails = Boolean(metadata && metadata.length > 0);
   const resolvedLabel =
@@ -230,6 +238,12 @@ export function SystemNotice({
       warning: "System warning",
       danger: "System alert",
     }[tone];
+  const copyValue = (value: string, onCopied: (copied: boolean) => void) => {
+    void navigator.clipboard?.writeText(value).then(() => {
+      onCopied(true);
+      window.setTimeout(() => onCopied(false), 2000);
+    });
+  };
 
   return (
     <section
@@ -282,6 +296,28 @@ export function SystemNotice({
           </div>
           <div className="mt-1 break-words text-[14px] leading-6 text-foreground">{body}</div>
         </div>
+        {copyHref ? (
+          <button
+            type="button"
+            aria-label="Copy link to system notice"
+            title="Copy link"
+            onClick={() => copyValue(copyHref, setCopiedLink)}
+            className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
+          >
+            {copiedLink ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        ) : null}
+        {copyText ? (
+          <button
+            type="button"
+            aria-label="Copy system notice"
+            title="Copy notice"
+            onClick={() => copyValue(copyText, setCopiedText)}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
+          >
+            {copiedText ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        ) : null}
         {hasDetails ? (
           <button
             type="button"

@@ -487,6 +487,7 @@ export {
 export {
   executionWorkspaceConfigSchema,
   updateExecutionWorkspaceSchema,
+  workspaceRuntimeControlTargetSchema,
   executionWorkspaceStatusSchema,
   executionWorkspaceCloseActionKindSchema,
   executionWorkspaceCloseActionSchema,

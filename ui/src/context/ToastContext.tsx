@@ -170,3 +170,5 @@ export function useToast() {
   }
   return context;
 }
+
+export const useToastActions = useToast;

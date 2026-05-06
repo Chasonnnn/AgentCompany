@@ -20,6 +20,13 @@ type AgentOption = {
   name: string;
 };
 
+type CreatorOption = {
+  id: string;
+  label: string;
+  kind?: "agent" | "user";
+  searchText?: string;
+};
+
 type ProjectOption = {
   id: string;
   name: string;
@@ -41,6 +48,7 @@ export function IssueFiltersPopover({
   onChange,
   activeFilterCount,
   agents,
+  creators: _creators,
   projects,
   labels,
   currentUserId,
@@ -53,6 +61,7 @@ export function IssueFiltersPopover({
   onChange: (patch: Partial<IssueFilterState>) => void;
   activeFilterCount: number;
   agents?: AgentOption[];
+  creators?: CreatorOption[];
   projects?: ProjectOption[];
   labels?: LabelOption[];
   currentUserId?: string | null;
@@ -244,10 +253,10 @@ export function IssueFiltersPopover({
                   <span className="text-xs text-muted-foreground">Visibility</span>
                   <label className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
                     <Checkbox
-                      checked={state.showRoutineExecutions}
-                      onCheckedChange={(checked) => onChange({ showRoutineExecutions: checked === true })}
+                      checked={state.hideRoutineExecutions}
+                      onCheckedChange={(checked) => onChange({ hideRoutineExecutions: checked === true })}
                     />
-                    <span className="text-sm">Show routine runs</span>
+                    <span className="text-sm">Hide routine runs</span>
                   </label>
                 </div>
               ) : null}

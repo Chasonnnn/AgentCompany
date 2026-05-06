@@ -3189,6 +3189,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         id: issues.id,
         identifier: issues.identifier,
         title: issues.title,
+        description: issues.description,
         status: issues.status,
         workMode: issues.workMode,
         priority: issues.priority,
@@ -7495,6 +7496,27 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         context.continuityInvalidated = true;
       }
     }
+    const wakeCommentId = deriveCommentId(context, null);
+    const wakeCommentContext =
+      issueContext && wakeCommentId
+        ? await db
+            .select({
+              id: issueComments.id,
+              body: issueComments.body,
+              authorType: issueComments.authorType,
+              authorAgentId: issueComments.authorAgentId,
+              authorUserId: issueComments.authorUserId,
+              presentation: issueComments.presentation,
+              metadata: issueComments.metadata,
+            })
+            .from(issueComments)
+            .where(and(
+              eq(issueComments.id, wakeCommentId),
+              eq(issueComments.issueId, issueContext.id),
+              eq(issueComments.companyId, agent.companyId),
+            ))
+            .then((rows) => rows[0] ?? null)
+        : null;
     const issueAssigneeOverrides =
       issueContext && issueContext.assigneeAgentId === agent.id
         ? parseIssueAssigneeAdapterOverrides(

@@ -8,6 +8,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { AdapterRuntimeServiceReport } from "@paperclipai/adapter-utils";
 import type { Db } from "@paperclipai/db";
 import { executionWorkspaces, projectWorkspaces, workspaceRuntimeServices } from "@paperclipai/db";
+import type { WorkspaceRuntimeDesiredState, WorkspaceRuntimeServiceStateMap } from "@paperclipai/shared";
+import { listWorkspaceServiceCommandDefinitions } from "@paperclipai/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { asNumber, asString, parseObject, renderTemplate } from "../adapters/utils.js";
 import { resolveHomeAwarePath } from "../home-paths.js";
@@ -1172,6 +1174,147 @@ export async function realizeExecutionWorkspace(input: {
   };
 }
 
+export async function ensurePersistedExecutionWorkspaceAvailable(input: {
+  base: ExecutionWorkspaceInput;
+  workspace: {
+    mode: string | null | undefined;
+    strategyType: string | null | undefined;
+    cwd: string | null | undefined;
+    providerRef: string | null | undefined;
+    projectId: string | null | undefined;
+    projectWorkspaceId: string | null | undefined;
+    repoUrl: string | null | undefined;
+    baseRef: string | null | undefined;
+    branchName: string | null | undefined;
+    config?: {
+      provisionCommand?: string | null;
+    } | null;
+  };
+  issue: ExecutionWorkspaceIssueRef | null;
+  agent: ExecutionWorkspaceAgentRef;
+  recorder?: WorkspaceOperationRecorder | null;
+}): Promise<RealizedExecutionWorkspace | null> {
+  const cwd = asString(input.workspace.cwd ?? input.workspace.providerRef, "").trim();
+  if (!cwd) return null;
+
+  const strategy = input.workspace.strategyType === "git_worktree" ? "git_worktree" : "project_primary";
+  const realized: RealizedExecutionWorkspace = {
+    baseCwd: input.base.baseCwd,
+    source: input.workspace.mode === "shared_workspace" ? "project_primary" : "task_session",
+    projectId: input.workspace.projectId ?? input.base.projectId,
+    workspaceId: input.workspace.projectWorkspaceId ?? input.base.workspaceId,
+    repoUrl: input.workspace.repoUrl ?? input.base.repoUrl,
+    repoRef: input.workspace.baseRef ?? input.base.repoRef,
+    strategy,
+    cwd,
+    branchName: input.workspace.branchName ?? null,
+    worktreePath: strategy === "git_worktree" ? (input.workspace.providerRef ?? cwd) : null,
+    warnings: [],
+    created: false,
+  };
+  const provisionCommand = asString(input.workspace.config?.provisionCommand, "").trim();
+
+  if (strategy !== "git_worktree") {
+    return realized;
+  }
+  if (await directoryExists(cwd)) {
+    if (provisionCommand) {
+      const repoRoot = await runGit(["rev-parse", "--show-toplevel"], input.base.baseCwd);
+      await provisionExecutionWorktree({
+        strategy: {
+          type: "git_worktree",
+          provisionCommand,
+        },
+        base: input.base,
+        repoRoot,
+        worktreePath: realized.worktreePath ?? cwd,
+        branchName: realized.branchName ?? "",
+        issue: input.issue,
+        agent: input.agent,
+        created: false,
+        recorder: input.recorder ?? null,
+      });
+    }
+    return realized;
+  }
+
+  const repoRoot = await runGit(["rev-parse", "--show-toplevel"], input.base.baseCwd);
+  const worktreePath = realized.worktreePath ?? cwd;
+  const branchName = asString(input.workspace.branchName, "").trim();
+  if (!branchName) {
+    throw new Error(`Execution workspace "${cwd}" is missing and cannot be restored because no branch name is recorded.`);
+  }
+
+  await fs.mkdir(path.dirname(worktreePath), { recursive: true });
+  await runGit(["worktree", "prune"], repoRoot).catch(() => {});
+
+  let created = false;
+  try {
+    await recordGitOperation(input.recorder, {
+      phase: "worktree_prepare",
+      args: ["worktree", "add", worktreePath, branchName],
+      cwd: repoRoot,
+      metadata: {
+        repoRoot,
+        worktreePath,
+        branchName,
+        baseRef: input.workspace.baseRef ?? input.base.repoRef ?? null,
+        created: false,
+        restored: true,
+      },
+      successMessage: `Reattached missing git worktree at ${worktreePath}\n`,
+      failureLabel: `git worktree add ${worktreePath}`,
+    });
+  } catch (error) {
+    if (
+      !gitErrorIncludes(error, "invalid reference")
+      && !gitErrorIncludes(error, "not a commit")
+      && !gitErrorIncludes(error, "unknown revision")
+    ) {
+      throw error;
+    }
+    const baseRef = input.workspace.baseRef ?? await detectDefaultBranch(repoRoot) ?? "HEAD";
+    await recordGitOperation(input.recorder, {
+      phase: "worktree_prepare",
+      args: ["worktree", "add", "-b", branchName, worktreePath, baseRef],
+      cwd: repoRoot,
+      metadata: {
+        repoRoot,
+        worktreePath,
+        branchName,
+        baseRef,
+        created: true,
+        restored: true,
+      },
+      successMessage: `Recreated missing git worktree at ${worktreePath}\n`,
+      failureLabel: `git worktree add ${worktreePath}`,
+    });
+    created = true;
+  }
+
+  await provisionExecutionWorktree({
+    strategy: {
+      type: "git_worktree",
+      ...(provisionCommand ? { provisionCommand } : {}),
+    },
+    base: input.base,
+    repoRoot,
+    worktreePath,
+    branchName,
+    issue: input.issue,
+    agent: input.agent,
+    created,
+    recorder: input.recorder ?? null,
+  });
+
+  return {
+    ...realized,
+    cwd: worktreePath,
+    worktreePath,
+    created,
+  };
+}
+
 export async function cleanupExecutionWorkspaceArtifacts(input: {
   workspace: {
     id: string;
@@ -1509,6 +1652,83 @@ function resolveRuntimeServiceReuseIdentity(input: {
     identityPort,
     reuseKey,
   };
+}
+
+function resolveWorkspaceCommandExecution(input: {
+  command: Record<string, unknown>;
+  workspace: RealizedExecutionWorkspace;
+  agent: ExecutionWorkspaceAgentRef;
+  issue: ExecutionWorkspaceIssueRef | null;
+  adapterEnv: Record<string, string>;
+}) {
+  const name =
+    asString(input.command.name, "")
+    || asString(input.command.label, "")
+    || asString(input.command.title, "")
+    || "workspace command";
+  const command = asString(input.command.command, "");
+  const templateData = buildTemplateData({
+    workspace: input.workspace,
+    agent: input.agent,
+    issue: input.issue,
+    adapterEnv: input.adapterEnv,
+    port: null,
+  });
+  const cwd = resolveConfiguredPath(
+    renderTemplate(asString(input.command.cwd, "."), templateData),
+    input.workspace.cwd,
+  );
+  const env = {
+    ...sanitizeRuntimeServiceBaseEnv(process.env),
+    ...input.adapterEnv,
+    ...renderRuntimeServiceEnv({
+      envConfig: parseObject(input.command.env),
+      templateData,
+    }),
+  } as Record<string, string>;
+
+  return {
+    name,
+    command,
+    cwd,
+    env,
+  };
+}
+
+export async function runWorkspaceJobForControl(input: {
+  actor: ExecutionWorkspaceAgentRef;
+  issue: ExecutionWorkspaceIssueRef | null;
+  workspace: RealizedExecutionWorkspace;
+  command: Record<string, unknown>;
+  adapterEnv?: Record<string, string>;
+  recorder?: WorkspaceOperationRecorder | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  const resolved = resolveWorkspaceCommandExecution({
+    command: input.command,
+    workspace: input.workspace,
+    agent: input.actor,
+    issue: input.issue,
+    adapterEnv: input.adapterEnv ?? {},
+  });
+  if (!resolved.command) {
+    throw new Error(`Workspace job "${resolved.name}" is missing command`);
+  }
+
+  await ensureServerWorkspaceLinksCurrent(resolved.cwd);
+  return await recordWorkspaceCommandOperation(input.recorder, {
+    phase: "workspace_provision",
+    command: resolved.command,
+    cwd: resolved.cwd,
+    env: resolved.env,
+    label: `Workspace job "${resolved.name}"`,
+    metadata: {
+      workspaceCommandKind: "job",
+      workspaceCommandName: resolved.name,
+      ...(input.metadata ?? {}),
+    },
+    successMessage: `Completed workspace job "${resolved.name}"\n`,
+  });
 }
 
 function resolveServiceScopeId(input: {
@@ -2082,16 +2302,93 @@ function registerRuntimeService(db: Db | undefined, record: RuntimeServiceRecord
 }
 
 function readRuntimeServiceEntries(config: Record<string, unknown>) {
-  const runtime = parseObject(config.workspaceRuntime);
-  return Array.isArray(runtime.services)
-    ? runtime.services.filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
-    : [];
+  return listWorkspaceServiceCommandDefinitions(parseObject(config.workspaceRuntime))
+    .map((command) => command.rawConfig);
 }
 
-function readDesiredRuntimeState(config: Record<string, unknown>) {
-  return config.desiredState === "running" || config.desiredState === "stopped" || config.desiredState === "manual"
-    ? config.desiredState
+export function listConfiguredRuntimeServiceEntries(config: Record<string, unknown>) {
+  return readRuntimeServiceEntries(config);
+}
+
+function readConfiguredServiceStates(config: Record<string, unknown>) {
+  const raw = parseObject(config.serviceStates);
+  const states: WorkspaceRuntimeServiceStateMap = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === "running" || value === "stopped" || value === "manual") {
+      states[key] = value;
+    }
+  }
+  return states;
+}
+
+function readDesiredRuntimeState(value: unknown): WorkspaceRuntimeDesiredState | null {
+  return value === "running" || value === "stopped" || value === "manual"
+    ? value
     : null;
+}
+
+export function buildWorkspaceRuntimeDesiredStatePatch(input: {
+  config: Record<string, unknown>;
+  currentDesiredState: WorkspaceRuntimeDesiredState | null;
+  currentServiceStates: WorkspaceRuntimeServiceStateMap | null | undefined;
+  action: "start" | "stop" | "restart";
+  serviceIndex?: number | null;
+}): {
+  desiredState: WorkspaceRuntimeDesiredState;
+  serviceStates: WorkspaceRuntimeServiceStateMap | null;
+} {
+  const configuredServices = listConfiguredRuntimeServiceEntries(input.config);
+  const fallbackState: WorkspaceRuntimeDesiredState = readDesiredRuntimeState(input.currentDesiredState) ?? "stopped";
+  const nextServiceStates: WorkspaceRuntimeServiceStateMap = {};
+
+  for (let index = 0; index < configuredServices.length; index += 1) {
+    nextServiceStates[String(index)] = input.currentServiceStates?.[String(index)] ?? fallbackState;
+  }
+
+  const nextState: WorkspaceRuntimeDesiredState = input.action === "stop" ? "stopped" : "running";
+  const applyActionState = (index: number) => {
+    const key = String(index);
+    if (nextServiceStates[key] === "manual") return;
+    nextServiceStates[key] = nextState;
+  };
+  if (input.serviceIndex === undefined || input.serviceIndex === null) {
+    for (let index = 0; index < configuredServices.length; index += 1) {
+      applyActionState(index);
+    }
+  } else if (input.serviceIndex >= 0 && input.serviceIndex < configuredServices.length) {
+    applyActionState(input.serviceIndex);
+  }
+
+  const desiredState = Object.values(nextServiceStates).some((state) => state === "running")
+    ? "running"
+    : Object.values(nextServiceStates).some((state) => state === "manual")
+      ? "manual"
+      : "stopped";
+
+  return {
+    desiredState,
+    serviceStates: Object.keys(nextServiceStates).length > 0 ? nextServiceStates : null,
+  };
+}
+
+function selectRuntimeServiceEntries(input: {
+  config: Record<string, unknown>;
+  serviceIndex?: number | null;
+  respectDesiredStates?: boolean;
+  defaultDesiredState?: WorkspaceRuntimeDesiredState | null;
+  serviceStates?: WorkspaceRuntimeServiceStateMap | null;
+}) {
+  const entries = listConfiguredRuntimeServiceEntries(input.config);
+  const states = input.serviceStates ?? readConfiguredServiceStates(input.config);
+  const fallbackState: WorkspaceRuntimeDesiredState = readDesiredRuntimeState(input.defaultDesiredState) ?? "stopped";
+
+  return entries.filter((_, index) => {
+    if (input.serviceIndex !== undefined && input.serviceIndex !== null) {
+      return index === input.serviceIndex;
+    }
+    if (!input.respectDesiredStates) return true;
+    return (states[String(index)] ?? fallbackState) === "running";
+  });
 }
 
 export async function ensureRuntimeServicesForRun(input: {
@@ -2105,13 +2402,12 @@ export async function ensureRuntimeServicesForRun(input: {
   adapterEnv: Record<string, string>;
   onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
 }): Promise<RuntimeServiceRef[]> {
-  const desiredState = readDesiredRuntimeState(input.config);
-  if (desiredState === "stopped" || desiredState === "manual") {
-    runtimeServiceLeasesByRun.set(input.runId, []);
-    return [];
-  }
-
-  const rawServices = readRuntimeServiceEntries(input.config);
+  const rawServices = selectRuntimeServiceEntries({
+    config: input.config,
+    respectDesiredStates: true,
+    defaultDesiredState: readDesiredRuntimeState(input.config.desiredState) ?? "running",
+    serviceStates: readConfiguredServiceStates(input.config),
+  });
   const acquiredServiceIds: string[] = [];
   const refs: RuntimeServiceRef[] = [];
   runtimeServiceLeasesByRun.set(input.runId, acquiredServiceIds);
@@ -2192,8 +2488,16 @@ export async function startRuntimeServicesForWorkspaceControl(input: {
   config: Record<string, unknown>;
   adapterEnv: Record<string, string>;
   onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+  serviceIndex?: number | null;
+  respectDesiredStates?: boolean;
 }): Promise<RuntimeServiceRef[]> {
-  const rawServices = readRuntimeServiceEntries(input.config);
+  const rawServices = selectRuntimeServiceEntries({
+    config: input.config,
+    serviceIndex: input.serviceIndex,
+    respectDesiredStates: input.respectDesiredStates,
+    defaultDesiredState: readDesiredRuntimeState(input.config.desiredState) ?? "stopped",
+    serviceStates: readConfiguredServiceStates(input.config),
+  });
   const refs: RuntimeServiceRef[] = [];
   const invocationId = input.invocationId ?? randomUUID();
 
@@ -2283,10 +2587,12 @@ export async function stopRuntimeServicesForExecutionWorkspace(input: {
   db?: Db;
   executionWorkspaceId: string;
   workspaceCwd?: string | null;
+  runtimeServiceId?: string | null;
 }) {
   const normalizedWorkspaceCwd = input.workspaceCwd ? path.resolve(input.workspaceCwd) : null;
   const matchingServiceIds = Array.from(runtimeServicesById.values())
     .filter((record) => {
+      if (input.runtimeServiceId) return record.id === input.runtimeServiceId;
       if (record.executionWorkspaceId === input.executionWorkspaceId) return true;
       if (!normalizedWorkspaceCwd || !record.cwd) return false;
       const resolvedCwd = path.resolve(record.cwd);
@@ -2302,19 +2608,37 @@ export async function stopRuntimeServicesForExecutionWorkspace(input: {
   }
 
   if (input.db) {
-    await markPersistedRuntimeServicesStoppedForExecutionWorkspace({
-      db: input.db,
-      executionWorkspaceId: input.executionWorkspaceId,
-    });
+    if (input.runtimeServiceId) {
+      const now = new Date();
+      await input.db
+        .update(workspaceRuntimeServices)
+        .set({
+          status: "stopped",
+          healthStatus: "unknown",
+          stoppedAt: now,
+          lastUsedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(workspaceRuntimeServices.id, input.runtimeServiceId));
+    } else {
+      await markPersistedRuntimeServicesStoppedForExecutionWorkspace({
+        db: input.db,
+        executionWorkspaceId: input.executionWorkspaceId,
+      });
+    }
   }
 }
 
 export async function stopRuntimeServicesForProjectWorkspace(input: {
   db?: Db;
   projectWorkspaceId: string;
+  runtimeServiceId?: string | null;
 }) {
   const matchingServiceIds = Array.from(runtimeServicesById.values())
-    .filter((record) => record.projectWorkspaceId === input.projectWorkspaceId && record.scopeType === "project_workspace")
+    .filter((record) => {
+      if (input.runtimeServiceId) return record.id === input.runtimeServiceId;
+      return record.projectWorkspaceId === input.projectWorkspaceId && record.scopeType === "project_workspace";
+    })
     .map((record) => record.id);
 
   for (const serviceId of matchingServiceIds) {
@@ -2333,11 +2657,13 @@ export async function stopRuntimeServicesForProjectWorkspace(input: {
         updatedAt: now,
       })
       .where(
-        and(
-          eq(workspaceRuntimeServices.projectWorkspaceId, input.projectWorkspaceId),
-          eq(workspaceRuntimeServices.scopeType, "project_workspace"),
-          inArray(workspaceRuntimeServices.status, ["starting", "running"]),
-        ),
+        input.runtimeServiceId
+          ? eq(workspaceRuntimeServices.id, input.runtimeServiceId)
+          : and(
+              eq(workspaceRuntimeServices.projectWorkspaceId, input.projectWorkspaceId),
+              eq(workspaceRuntimeServices.scopeType, "project_workspace"),
+              inArray(workspaceRuntimeServices.status, ["starting", "running"]),
+            ),
       );
   }
 }

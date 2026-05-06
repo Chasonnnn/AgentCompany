@@ -22,6 +22,7 @@ import {
   useContext,
   useEffect,
   useImperativeHandle,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -102,7 +103,7 @@ import { cn, formatDateTime, formatShortDate } from "../lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, ClipboardList, Copy, Hammer, Loader2, MoreHorizontal, Paperclip, Search, Square, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, ClipboardList, Copy, Hammer, Info, Loader2, MoreHorizontal, Paperclip, Search, Square, ThumbsDown, ThumbsUp } from "lucide-react";
 
 interface IssueChatMessageContext {
   feedbackVoteByTargetId: Map<string, FeedbackVoteValue>;
@@ -110,6 +111,7 @@ interface IssueChatMessageContext {
   feedbackTermsUrl: string | null;
   agentMap?: Map<string, Agent>;
   currentUserId?: string | null;
+  issueStatus?: string | null;
   onVote?: (
     commentId: string,
     vote: FeedbackVoteValue,
@@ -1030,6 +1032,7 @@ function IssueChatSystemNoticeContent({
   message: ThreadMessage;
   custom: Record<string, unknown>;
 }) {
+  const { agentMap } = useContext(IssueChatCtx);
   const presentation = isIssueCommentPresentation(custom.presentation)
     ? custom.presentation
     : null;
@@ -1038,13 +1041,13 @@ function IssueChatSystemNoticeContent({
     : null;
   const runId = typeof custom.runId === "string" ? custom.runId : null;
   const runAgentId = typeof custom.runAgentId === "string" ? custom.runAgentId : null;
-  const source = runId
-    ? {
-        label: `Run ${runId.slice(0, 8)}`,
-        href: runAgentId ? `/agents/${runAgentId}/runs/${runId}` : undefined,
-      }
-    : undefined;
+  const runAgentName = typeof custom.runAgentName === "string" ? custom.runAgentName : null;
+  const source = {
+    label: runAgentName ?? (runAgentId ? agentMap?.get(runAgentId)?.name ?? "Paperclip" : "Paperclip"),
+    href: runId && runAgentId ? `/agents/${runAgentId}/runs/${runId}` : undefined,
+  };
   const bodyText = getThreadMessageCopyText(message).trim() || "System update";
+  const anchorId = typeof custom.anchorId === "string" ? custom.anchorId : undefined;
 
   return (
     <div className="py-2">
@@ -1056,9 +1059,66 @@ function IssueChatSystemNoticeContent({
           timestamp: message.createdAt.toISOString(),
           source,
           runAgentId,
+          copyHref: anchorId ? `#${anchorId}` : undefined,
+          copyText: bodyText,
         })}
       />
     </div>
+  );
+}
+
+function IssueChatStaleDispositionWarning({
+  message,
+  custom,
+}: {
+  message: ThreadMessage;
+  custom: Record<string, unknown>;
+}) {
+  const [open, setOpen] = useState(false);
+  const detailsId = useId();
+  const anchorId = typeof custom.anchorId === "string" ? custom.anchorId : undefined;
+  const metadata = isIssueCommentMetadata(custom.commentMetadata)
+    ? custom.commentMetadata
+    : null;
+  const runId = typeof metadata?.sourceRunId === "string"
+    ? metadata.sourceRunId
+    : typeof custom.runId === "string"
+      ? custom.runId
+      : null;
+
+  return (
+    <MessagePrimitive.Root id={anchorId}>
+      <div
+        data-testid="stale-disposition-warning"
+        className="rounded-md border border-border/70 bg-muted/25 text-sm"
+      >
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-0.5 text-left text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+          aria-expanded={open}
+          aria-controls={detailsId}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <Info className="h-3.5 w-3.5" />
+          </span>
+          <span className="font-medium text-foreground">Stale disposition warning</span>
+          <span className="text-xs text-muted-foreground">resolved</span>
+          <span className="ml-auto text-xs text-muted-foreground">
+            <span data-testid="stale-disposition-warning-time">{formatShortDate(message.createdAt)}</span>
+          </span>
+          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+        </button>
+        <div id={detailsId} hidden={!open} className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground">
+          <div>{runId ? `Completed run: ${runId}` : "Completed run"}</div>
+          {metadata ? (
+            <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px]">
+              {JSON.stringify(metadata, null, 2)}
+            </pre>
+          ) : null}
+        </div>
+      </div>
+    </MessagePrimitive.Root>
   );
 }
 
@@ -1804,7 +1864,7 @@ function IssueChatFeedbackButtons({
 }
 
 function IssueChatSystemMessage() {
-  const { agentMap, currentUserId } = useContext(IssueChatCtx);
+  const { agentMap, currentUserId, issueStatus } = useContext(IssueChatCtx);
   const message = useMessage();
   const custom = message.metadata.custom as Record<string, unknown>;
   const anchorId = typeof custom.anchorId === "string" ? custom.anchorId : undefined;
@@ -1825,6 +1885,15 @@ function IssueChatSystemMessage() {
       }
     : null;
   const workspaceChange = isTimelineWorkspaceChange(custom.workspaceChange) ? custom.workspaceChange : null;
+
+  if (
+    custom.kind === "system_notice"
+    && (issueStatus === "done" || issueStatus === "cancelled")
+    && isIssueCommentMetadata(custom.commentMetadata)
+    && typeof custom.commentMetadata.sourceRunId === "string"
+  ) {
+    return <IssueChatStaleDispositionWarning message={message} custom={custom} />;
+  }
 
   if (custom.kind === "system_notice") {
     return (
@@ -3604,6 +3673,7 @@ export function IssueChatThread({
       feedbackTermsUrl,
       agentMap,
       currentUserId,
+      issueStatus,
       onVote,
       onInterruptQueued,
       interruptingQueuedRunId,
@@ -3615,6 +3685,7 @@ export function IssueChatThread({
       feedbackTermsUrl,
       agentMap,
       currentUserId,
+      issueStatus,
       onVote,
       onInterruptQueued,
       interruptingQueuedRunId,

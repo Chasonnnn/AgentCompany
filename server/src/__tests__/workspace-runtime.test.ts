@@ -30,6 +30,7 @@ import {
   resetRuntimeServicesForTests,
   resolveShell,
   sanitizeRuntimeServiceBaseEnv,
+  startRuntimeServicesForWorkspaceControl,
   stopRuntimeServicesForExecutionWorkspace,
   type RealizedExecutionWorkspace,
 } from "../services/workspace-runtime.ts";

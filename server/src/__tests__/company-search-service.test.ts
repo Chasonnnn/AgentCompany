@@ -94,9 +94,11 @@ describeEmbeddedPostgres("companySearchService", () => {
 
   async function createIssue(companyId: string, values: Partial<typeof issues.$inferInsert> = {}) {
     const id = values.id ?? randomUUID();
+    const projectId = values.projectId ?? await createProject(companyId, { name: "Issue search project" });
     await db.insert(issues).values({
       id,
       companyId,
+      projectId,
       title: values.title ?? "Search target",
       description: values.description ?? null,
       status: values.status ?? "todo",

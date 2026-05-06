@@ -66,7 +66,7 @@ export interface IssueAncestor {
   priority: string;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
-  projectId: string;
+  projectId: string | null;
   goalId: string | null;
   project: IssueAncestorProject | null;
   goal: IssueAncestorGoal | null;
@@ -140,6 +140,27 @@ export interface IssueRelationIssueSummary {
   priority: IssuePriority;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
+  terminalBlockers?: IssueRelationIssueSummary[];
+}
+
+export type IssueBlockerAttentionState = "none" | "covered" | "stalled" | "needs_attention";
+
+export type IssueBlockerAttentionReason =
+  | "active_child"
+  | "active_dependency"
+  | "stalled_review"
+  | "attention_required"
+  | null;
+
+export interface IssueBlockerAttention {
+  state: IssueBlockerAttentionState;
+  reason: IssueBlockerAttentionReason;
+  unresolvedBlockerCount: number;
+  coveredBlockerCount: number;
+  stalledBlockerCount: number;
+  attentionBlockerCount: number;
+  sampleBlockerIdentifier: string | null;
+  sampleStalledBlockerIdentifier: string | null;
 }
 
 export interface IssueRelation {
@@ -455,7 +476,7 @@ export interface IssueBranchMergePreview {
 export interface Issue {
   id: string;
   companyId: string;
-  projectId: string;
+  projectId: string | null;
   projectWorkspaceId: string | null;
   goalId: string | null;
   parentId: string | null;
@@ -463,7 +484,7 @@ export interface Issue {
   title: string;
   description: string | null;
   status: IssueStatus;
-  workMode: IssueWorkMode;
+  workMode?: IssueWorkMode;
   priority: IssuePriority;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
@@ -502,6 +523,7 @@ export interface Issue {
   labels?: IssueLabel[];
   blockedBy?: IssueRelationIssueSummary[];
   blocks?: IssueRelationIssueSummary[];
+  blockerAttention?: IssueBlockerAttention;
   successfulRunHandoff?: SuccessfulRunHandoffState | null;
   relatedWork?: IssueRelatedWorkSummary;
   referencedIssueIdentifiers?: string[];
@@ -528,12 +550,12 @@ export interface IssueComment {
   id: string;
   companyId: string;
   issueId: string;
-  authorType: IssueCommentAuthorType;
+  authorType?: IssueCommentAuthorType;
   authorAgentId: string | null;
   authorUserId: string | null;
   body: string;
-  presentation: IssueCommentPresentation | null;
-  metadata: IssueCommentMetadata | null;
+  presentation?: IssueCommentPresentation | null;
+  metadata?: IssueCommentMetadata | null;
   followUpRequested?: boolean;
   createdAt: Date;
   updatedAt: Date;

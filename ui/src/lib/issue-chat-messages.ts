@@ -258,8 +258,7 @@ function createCommentMessage(args: {
   const { comment, agentMap, currentUserId, companyId, projectId } = args;
   const createdAt = toDate(comment.createdAt);
   const authorName = authorNameForComment(comment, agentMap, currentUserId);
-  const isSystemNotice = comment.authorType === "system" ||
-    comment.presentation?.kind === "system_notice";
+  const isSystemNotice = comment.authorType === "system";
   const custom = {
     kind: isSystemNotice ? "system_notice" : "comment",
     commentId: comment.id,

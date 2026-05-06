@@ -20,6 +20,7 @@ import {
   routineTriggers,
 } from "@paperclipai/db";
 import type {
+  AdvisorKind,
   CreateRoutine,
   CreateRoutineTrigger,
   Routine,
@@ -157,6 +158,13 @@ const BUILTIN_ADVISOR_ROUTINE_TEMPLATES: AdvisorRoutineTemplate[] = [
     variables: [{ name: "sampleSize", label: "Sample size", type: "number", defaultValue: 5, required: true, options: [] }],
   },
 ];
+
+function routineFromRow(row: RoutineRow): Routine {
+  return {
+    ...row,
+    advisorKind: row.advisorKind as AdvisorKind | null,
+  };
+}
 
 interface RoutineTriggerSecretRestoreMaterial extends RoutineTriggerSecretMaterial {
   triggerId: string;
@@ -1420,7 +1428,10 @@ export function routineService(
   }
 
   return {
-    get: getRoutineById,
+    get: async (id: string): Promise<Routine | null> => {
+      const row = await getRoutineById(id);
+      return row ? routineFromRow(row) : null;
+    },
     getTrigger: getTriggerById,
     listAdvisorTemplates: () =>
       BUILTIN_ADVISOR_ROUTINE_TEMPLATES.map((template) => ({
@@ -1448,7 +1459,7 @@ export function routineService(
         listManagedRoutineMetadata(routineIds),
       ]);
       return rows.map((row) => ({
-        ...row,
+        ...routineFromRow(row),
         managedByPlugin: managedByRoutine.get(row.id) ?? null,
         triggers: (triggersByRoutine.get(row.id) ?? []).map((trigger) => ({
           id: trigger.id,
@@ -1552,7 +1563,7 @@ export function routineService(
       ]);
 
       return {
-        ...row,
+        ...routineFromRow(row),
         managedByPlugin: managedByRoutine.get(row.id) ?? null,
         project,
         assignee,
@@ -1602,7 +1613,7 @@ export function routineService(
         const { routine } = await appendRoutineRevision(txDb, created, actor, {
           changeSummary: "Created routine",
         });
-        return routine;
+        return routineFromRow(routine);
       });
     },
 
@@ -1682,7 +1693,7 @@ export function routineService(
         };
 
         if (locked.latestRevisionId && routineCurrentFieldsMatch(locked, candidate)) {
-          return locked;
+          return routineFromRow(locked);
         }
 
         const nextSnapshot = await buildRoutineRevisionSnapshot(txDb, candidate);
@@ -1699,7 +1710,7 @@ export function routineService(
             )
             .then((rows) => rows[0] ?? null);
           if (latestRevision && snapshotsMatch(nextSnapshot, latestRevision.snapshot as RoutineRevisionSnapshotV1)) {
-            return locked;
+            return routineFromRow(locked);
           }
         }
 
@@ -1729,7 +1740,7 @@ export function routineService(
         const { routine } = await appendRoutineRevision(txDb, updated, actor, {
           changeSummary: "Updated routine",
         });
-        return routine;
+        return routineFromRow(routine);
       });
     },
 
@@ -2104,7 +2115,7 @@ export function routineService(
           restoredFromRevisionId: targetRevision.id,
         });
         return {
-          routine: appended.routine,
+          routine: routineFromRow(appended.routine),
           revision: appended.revision,
           restoredFromRevisionId: targetRevision.id,
           restoredFromRevisionNumber: targetRevision.revisionNumber,

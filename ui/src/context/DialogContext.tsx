@@ -143,3 +143,5 @@ export function useDialog() {
   }
   return ctx;
 }
+
+export const useDialogActions = useDialog;

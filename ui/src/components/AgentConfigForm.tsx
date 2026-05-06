@@ -349,6 +349,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const rawModels = fetchedModels ?? externalModels ?? [];
   const adapterCommandField =
     adapterType === "hermes_local" ? "hermesCommand" : "command";
+  const val = isCreate ? props.values : null;
   const acpxAgent =
     adapterType === "acpx_local"
       ? isCreate
@@ -455,7 +456,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   }, [adapterCheapDefault]);
 
   // Create mode helpers
-  const val = isCreate ? props.values : null;
   const set = isCreate
     ? (patch: Partial<CreateConfigValues>) => props.onChange(patch)
     : null;

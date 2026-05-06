@@ -271,10 +271,10 @@ function makeExecutionWorkspace(overrides: Partial<ExecutionWorkspace> = {}): Ex
     createdAt: new Date("2026-03-11T00:00:00.000Z"),
     updatedAt: new Date("2026-03-11T00:00:00.000Z"),
     ...overrides,
-  };
+  } as ExecutionWorkspace;
 }
 
-const dashboard: DashboardSummary = {
+const dashboard = {
   companyId: "company-1",
   agents: {
     active: 1,
@@ -301,7 +301,7 @@ const dashboard: DashboardSummary = {
     pausedProjects: 0,
   },
   runActivity: [],
-};
+} as unknown as DashboardSummary;
 
 describe("inbox helpers", () => {
   beforeEach(() => {

@@ -45,11 +45,12 @@ import { useEditorAutocomplete, type SkillCommandOption } from "../context/Edito
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project";
+  kind?: "agent" | "project" | "user";
   agentId?: string;
   agentIcon?: string | null;
   projectId?: string;
   projectColor?: string | null;
+  userId?: string;
 }
 
 /* ---- Editor props ---- */
@@ -593,6 +594,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       }
 
       if (parsed.kind === "skill") {
+        applyMentionChipDecoration(link, parsed);
+        continue;
+      }
+
+      if (parsed.kind === "user" || parsed.kind === "issue") {
         applyMentionChipDecoration(link, parsed);
         continue;
       }

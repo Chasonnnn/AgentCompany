@@ -7,11 +7,90 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueChatThread } from "./IssueChatThread";
 import type { IssueChatComment } from "../lib/issue-chat-messages";
-import type { Agent, SuccessfulRunHandoffState } from "@paperclipai/shared";
+import type { Agent } from "@paperclipai/shared";
 
-vi.mock("@assistant-ui/react", () => ({
-  AssistantRuntimeProvider: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  useAui: () => ({ thread: () => ({ append: async () => undefined }) }),
+const assistantUiMockState = vi.hoisted(() => ({
+  messages: [] as Array<{
+    id?: string;
+    role?: string;
+    content?: Array<{ type: string; text?: string }>;
+    metadata?: { custom?: Record<string, unknown> };
+    createdAt?: Date;
+    status?: unknown;
+  }>,
+}));
+
+vi.mock("@assistant-ui/react", async () => {
+  const React = await import("react");
+  const MessageContext = React.createContext<(typeof assistantUiMockState.messages)[number] | null>(null);
+  const renderParts = (
+    message: (typeof assistantUiMockState.messages)[number] | null,
+    components?: { Text?: (props: { text: string }) => ReactNode; ChainOfThought?: () => ReactNode },
+  ) => (
+    <>
+      {(message?.content ?? []).map((part, index) => {
+        if (part.type === "text" && components?.Text) {
+          return <React.Fragment key={index}>{components.Text({ text: part.text ?? "" })}</React.Fragment>;
+        }
+        if ((part.type === "reasoning" || part.type === "tool-call") && components?.ChainOfThought) {
+          const ChainOfThought = components.ChainOfThought;
+          return <ChainOfThought key={index} />;
+        }
+        return null;
+      })}
+    </>
+  );
+  return {
+    AssistantRuntimeProvider: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    ThreadPrimitive: {
+      Root: ({ children, className }: { children: ReactNode; className?: string }) => <div className={className}>{children}</div>,
+      Viewport: ({ children, className }: { children: ReactNode; className?: string }) => <div className={className}>{children}</div>,
+      Empty: ({ children }: { children: ReactNode }) => assistantUiMockState.messages.length === 0 ? <>{children}</> : null,
+      Messages: ({ components }: { components: Record<string, () => ReactNode> }) => (
+        <>
+          {assistantUiMockState.messages.map((message, index) => {
+            const Component =
+              message.role === "user"
+                ? components.UserMessage
+                : message.role === "assistant"
+                  ? components.AssistantMessage
+                  : components.SystemMessage;
+            return (
+              <div
+                key={message.id ?? index}
+                data-message-role={message.role}
+                data-message-kind={message.metadata?.custom?.kind}
+              >
+                <MessageContext.Provider value={message}>
+                  <Component />
+                </MessageContext.Provider>
+              </div>
+            );
+          })}
+        </>
+      ),
+    },
+    MessagePrimitive: {
+      Root: ({ children, id }: { children: ReactNode; id?: string }) => <div id={id}>{children}</div>,
+      Parts: ({ components }: { components?: { Text?: (props: { text: string }) => ReactNode; ChainOfThought?: () => ReactNode } }) =>
+        renderParts(React.useContext(MessageContext), components),
+    },
+    ActionBarPrimitive: {
+      Copy: ({ children, copiedDuration: _copiedDuration, ...props }: { children: ReactNode; copiedDuration?: number }) => (
+        <button type="button" {...props}>{children}</button>
+      ),
+    },
+    useMessage: () => React.useContext(MessageContext),
+    useAuiState: (selector: (state: unknown) => unknown) => selector({ chainOfThought: { parts: [] } }),
+    useAui: () => ({ thread: () => ({ append: async () => undefined }) }),
+  };
+});
+
+vi.mock("../hooks/usePaperclipIssueRuntime", () => ({
+  usePaperclipIssueRuntime: ({ messages }: { messages?: typeof assistantUiMockState.messages }) => {
+    assistantUiMockState.messages = messages ?? [];
+    return {};
+  },
 }));
 
 vi.mock("./transcript/useLiveRunTranscripts", () => ({
@@ -48,10 +127,6 @@ vi.mock("./IssueLinkQuicklook", () => ({
     to: string;
   }) => <a href={to}>{children}</a>,
 }));
-vi.mock("../hooks/usePaperclipIssueRuntime", () => ({
-  usePaperclipIssueRuntime: () => ({}),
-}));
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -75,7 +150,6 @@ function renderThread(
   options: {
     agentMap?: Map<string, Agent>;
     issueStatus?: string;
-    successfulRunHandoff?: SuccessfulRunHandoffState | null;
   } = {},
 ) {
   act(() => {
@@ -91,7 +165,6 @@ function renderThread(
           enableLiveTranscriptPolling={false}
           agentMap={options.agentMap}
           issueStatus={options.issueStatus}
-          successfulRunHandoff={options.successfulRunHandoff}
         />
       </MemoryRouter>,
     );
@@ -440,15 +513,6 @@ describe("IssueChatThread system notice routing", () => {
 
     renderThread([comment], {
       issueStatus: "done",
-      successfulRunHandoff: {
-        state: "resolved",
-        required: false,
-        sourceRunId: "run-stale",
-        correctiveRunId: "run-corrective",
-        assigneeAgentId: "agent-codex",
-        detectedProgressSummary: null,
-        createdAt: new Date("2026-05-04T17:00:00.000Z"),
-      },
     });
 
     const row = container.querySelector('[data-testid="stale-disposition-warning"]');

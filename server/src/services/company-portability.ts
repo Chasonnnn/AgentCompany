@@ -2647,11 +2647,12 @@ function buildManifestFromPackageFiles(
       executionWorkspaceSettings: isPlainRecord(extension.executionWorkspaceSettings)
         ? extension.executionWorkspaceSettings
         : null,
-      assigneeAdapterOverrides: isPlainRecord(extension.assigneeAdapterOverrides)
-        ? extension.assigneeAdapterOverrides
-        : null,
-      metadata: isPlainRecord(extension.metadata) ? extension.metadata : null,
-    });
+	      assigneeAdapterOverrides: isPlainRecord(extension.assigneeAdapterOverrides)
+	        ? extension.assigneeAdapterOverrides
+	        : null,
+	      comments: [],
+	      metadata: isPlainRecord(extension.metadata) ? extension.metadata : null,
+	    });
     if (frontmatter.kind && frontmatter.kind !== "task") {
       warnings.push(`Task markdown ${taskPath} does not declare kind: task in frontmatter.`);
     }

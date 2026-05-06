@@ -136,6 +136,7 @@ interface IssuesListProps {
   searchFilters?: {
     participantAgentId?: string;
   };
+  baseCreateIssueDefaults?: Record<string, unknown>;
   enableRoutineVisibilityFilter?: boolean;
   hasMoreIssues?: boolean;
   isLoadingMoreIssues?: boolean;

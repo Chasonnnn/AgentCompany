@@ -1,9 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, promises as fs, type Dirent } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { sanitizeRemoteExecutionEnv } from "./remote-execution-env.js";
 import { buildSshSpawnTarget, type SshRemoteExecutionSpec } from "./ssh.js";
+import {
+  applyLocalExecutionPolicy,
+  type NormalizedLocalExecutionPolicy,
+} from "./local-execution-policy.js";
+export type { NormalizedLocalExecutionPolicy } from "./local-execution-policy.js";
 import { redactCommandText } from "./command-redaction.js";
 import type {
   AdapterSkillEntry,
@@ -84,6 +90,7 @@ const PAPERCLIP_SKILL_ROOT_RELATIVE_CANDIDATES = [
   "../../skills",
   "../../../../../skills",
 ];
+const DEFAULT_PAPERCLIP_INSTANCE_ID = "default";
 const MATERIALIZED_SKILL_SENTINEL = ".paperclip-materialized-skill.json";
 const MATERIALIZED_SKILL_LOCK_OWNER = "owner.json";
 const MATERIALIZED_SKILL_LOCK_STALE_MS = 30_000;
@@ -93,17 +100,17 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "",
   "Execution contract:",
   "- Start actionable work in this heartbeat; do not stop at a plan unless the issue asks for planning.",
-  "- Leave durable progress in comments, documents, or work products, then update the issue to a clear final disposition before ending the heartbeat.",
-  "- Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
-  "- Final disposition checklist: mark `done` when complete; use `in_review` only with a real reviewer, approval, interaction, or monitor path; use `blocked` only with first-class blockers or a named unblock owner/action; create delegated follow-up issues with blockers when another agent owns the next step; keep `in_progress` only when a live continuation path exists.",
+  "- Inspect the scoped wake delta before broad context. If no linked issue or explicit target exists, report the missing link, likely owner, and unblock step instead of exploring broadly.",
+  "- Make the first output useful: one concrete issue action, or a blocker/redirect/no-op verdict when no action is available.",
+  "- Leave durable progress in comments, documents, or work products with a clear next action.",
   "- Prefer the smallest verification that proves the change; do not default to full workspace typecheck/build/test on every heartbeat unless the task scope warrants it.",
   "- Use child issues for parallel or long delegated work instead of polling agents, sessions, or processes.",
   "- If woken by a human comment on a dependency-blocked issue, respond or triage the comment without treating the blocked deliverable work as unblocked.",
   "- Create child issues directly when you know what needs to be done; use issue-thread interactions when the board/user must choose suggested tasks, answer structured questions, or confirm a proposal.",
   "- To ask for that input, create an interaction on the current issue with POST /api/issues/{issueId}/interactions using kind suggest_tasks, ask_user_questions, or request_confirmation. Use continuationPolicy wake_assignee when you need to resume after a response; for request_confirmation this resumes only after acceptance.",
-  "- When you intentionally restart follow-up work on a completed assigned issue, include structured `resume: true` with the POST /api/issues/{issueId}/comments or PATCH /api/issues/{issueId} comment payload. Generic agent comments on closed issues are inert by default.",
   "- For plan approval, update the plan document first, then create request_confirmation targeting the latest plan revision with idempotencyKey confirmation:{issueId}:plan:{revisionId}. Wait for acceptance before creating implementation subtasks, and create a fresh confirmation after superseding board/user comments if approval is still needed.",
   "- If blocked, mark the issue blocked and name the unblock owner and action.",
+  "- Before stopping, say whether the issue can close now; if not, name the exact next action and owner.",
   "- Respect budget, pause/cancel, approval gates, and company boundaries.",
 ].join("\n");
 
@@ -111,6 +118,7 @@ export interface PaperclipSkillEntry {
   key: string;
   runtimeName: string;
   source: string;
+  sharedSkillId?: string | null;
   required?: boolean;
   requiredReason?: string | null;
 }
@@ -130,13 +138,31 @@ interface PersistentSkillSnapshotOptions {
   availableEntries: PaperclipSkillEntry[];
   desiredSkills: string[];
   installed: Map<string, InstalledSkillTarget>;
+  diagnosticInstalled?: Map<string, InstalledSkillTarget>;
   skillsHome: string;
   locationLabel?: string | null;
   installedDetail?: string | null;
   missingDetail: string;
   externalConflictDetail: string;
   externalDetail: string;
+  diagnosticLocationLabel?: string | null;
+  diagnosticExternalDetail?: string | null;
   warnings?: string[];
+}
+
+interface ManagedHomeSubtree {
+  relativePath: string;
+  excludeChildren?: string[];
+}
+
+interface PrepareManagedAdapterHomeOptions {
+  env?: NodeJS.ProcessEnv;
+  adapterKey: string;
+  companyId?: string;
+  sharedHomeDir?: string | null;
+  logLabel: string;
+  subtrees: ManagedHomeSubtree[];
+  onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
 }
 
 function normalizePathSlashes(value: string): string {
@@ -169,6 +195,131 @@ function buildManagedSkillOrigin(entry: { required?: boolean }): Pick<
     originLabel: "Managed by Paperclip",
     readOnly: false,
   };
+}
+
+function nonEmptyString(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeRelativePath(value: string): string {
+  return value
+    .replaceAll("\\", "/")
+    .replace(/^\/+|\/+$/g, "");
+}
+
+function hasNestedExclude(excludes: Set<string>, relativePath: string): boolean {
+  const prefix = `${relativePath}/`;
+  for (const value of excludes) {
+    if (value.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+async function ensureDirectoryAt(targetDir: string): Promise<void> {
+  const existing = await fs.lstat(targetDir).catch(() => null);
+  if (existing?.isDirectory()) return;
+  if (existing) {
+    await fs.rm(targetDir, { recursive: true, force: true });
+  }
+  await fs.mkdir(targetDir, { recursive: true });
+}
+
+async function ensureSymlinkTarget(target: string, source: string): Promise<void> {
+  const existing = await fs.lstat(target).catch(() => null);
+  if (!existing) {
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.symlink(source, target);
+    return;
+  }
+
+  if (existing.isSymbolicLink()) {
+    const linkedPath = await fs.readlink(target).catch(() => null);
+    if (!linkedPath) return;
+    const resolvedLinkedPath = path.resolve(path.dirname(target), linkedPath);
+    if (resolvedLinkedPath === source) return;
+    await fs.unlink(target);
+    await fs.symlink(source, target);
+    return;
+  }
+}
+
+async function mirrorManagedHomeSubtree(
+  sourceRoot: string,
+  targetRoot: string,
+  excludes: Set<string>,
+  relativePath = "",
+): Promise<void> {
+  const entries = await fs.readdir(sourceRoot, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const nextRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+    if (excludes.has(nextRelativePath)) {
+      continue;
+    }
+
+    const sourcePath = path.join(sourceRoot, entry.name);
+    const targetPath = path.join(targetRoot, entry.name);
+    if (entry.isDirectory() && hasNestedExclude(excludes, nextRelativePath)) {
+      await ensureDirectoryAt(targetPath);
+      await mirrorManagedHomeSubtree(sourcePath, targetPath, excludes, nextRelativePath);
+      continue;
+    }
+
+    await ensureSymlinkTarget(targetPath, sourcePath);
+  }
+}
+
+export function resolveSharedLocalAdapterHomeDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.resolve(nonEmptyString(env.HOME) ?? os.homedir());
+}
+
+export function resolveManagedLocalAdapterHomeDir(
+  env: NodeJS.ProcessEnv = process.env,
+  adapterKey: string,
+  companyId?: string,
+): string {
+  const paperclipHome = nonEmptyString(env.PAPERCLIP_HOME) ?? path.resolve(os.homedir(), ".paperclip");
+  const instanceId = nonEmptyString(env.PAPERCLIP_INSTANCE_ID) ?? DEFAULT_PAPERCLIP_INSTANCE_ID;
+  return companyId
+    ? path.resolve(paperclipHome, "instances", instanceId, "companies", companyId, `${adapterKey}-home`)
+    : path.resolve(paperclipHome, "instances", instanceId, `${adapterKey}-home`);
+}
+
+export async function prepareManagedAdapterHome(
+  options: PrepareManagedAdapterHomeOptions,
+): Promise<string> {
+  const env = options.env ?? process.env;
+  const sourceHome = path.resolve(options.sharedHomeDir ?? resolveSharedLocalAdapterHomeDir(env));
+  const targetHome = resolveManagedLocalAdapterHomeDir(env, options.adapterKey, options.companyId);
+  if (path.resolve(sourceHome) === path.resolve(targetHome)) {
+    return targetHome;
+  }
+
+  await fs.mkdir(targetHome, { recursive: true });
+  for (const subtree of options.subtrees) {
+    const normalizedRelativePath = normalizeRelativePath(subtree.relativePath);
+    if (!normalizedRelativePath) continue;
+    const sourceRoot = path.join(sourceHome, normalizedRelativePath);
+    const sourceExists = await fs.access(sourceRoot).then(() => true).catch(() => false);
+    if (!sourceExists) continue;
+
+    const targetRoot = path.join(targetHome, normalizedRelativePath);
+    await ensureDirectoryAt(targetRoot);
+    const excludes = new Set(
+      (subtree.excludeChildren ?? [])
+        .map((value) => normalizeRelativePath(value))
+        .filter(Boolean),
+    );
+    await mirrorManagedHomeSubtree(sourceRoot, targetRoot, excludes);
+  }
+
+  if (options.onLog) {
+    await options.onLog(
+      "stdout",
+      `[paperclip] Using Paperclip-managed ${options.logLabel} home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    );
+  }
+
+  return targetHome;
 }
 
 function resolveInstalledEntryTarget(
@@ -233,7 +384,9 @@ export function appendWithByteCap(prev: string, chunk: string, cap = MAX_CAPTURE
 
   const buffer = Buffer.from(combined, "utf8");
   let start = Math.max(0, bytes - cap);
-  while (start < buffer.length && (buffer[start]! & 0xc0) === 0x80) start += 1;
+  while (start < buffer.length && (buffer[start]! & 0xc0) === 0x80) {
+    start += 1;
+  }
   return buffer.subarray(start).toString("utf8");
 }
 
@@ -278,6 +431,26 @@ export function joinPromptSections(
     .join(separator);
 }
 
+export function renderPaperclipProjectContext(context: Record<string, unknown> | null | undefined) {
+  if (!context || typeof context !== "object" || Array.isArray(context)) return "";
+  const projectContextRaw = context.paperclipProjectContext;
+  if (typeof projectContextRaw !== "object" || projectContextRaw === null || Array.isArray(projectContextRaw)) {
+    return "";
+  }
+  const projectContext = projectContextRaw as Record<string, unknown>;
+  const body =
+    typeof projectContext.body === "string"
+      ? projectContext.body.trim()
+      : "";
+  if (!body.length) return "";
+  const projectName =
+    typeof projectContext.projectName === "string"
+      ? projectContext.projectName.trim()
+      : "";
+  const title = projectName.length ? `${projectName} PROJECT_CONTEXT.md` : "PROJECT_CONTEXT.md";
+  return [`# ${title}`, body].join("\n\n");
+}
+
 type PaperclipWakeIssue = {
   id: string | null;
   identifier: string | null;
@@ -316,30 +489,184 @@ type PaperclipWakeComment = {
   authorId: string | null;
 };
 
-type PaperclipWakeContinuationSummary = {
-  key: string | null;
+type PaperclipWakeConferenceRoomIssue = {
+  id: string | null;
+  identifier: string | null;
   title: string | null;
+};
+
+type PaperclipWakeConferenceRoom = {
+  id: string | null;
+  title: string | null;
+  kind: string | null;
+  status: string | null;
+  linkedIssues: PaperclipWakeConferenceRoomIssue[];
+};
+
+type PaperclipWakeConferenceRoomMessage = {
+  id: string | null;
+  parentCommentId: string | null;
+  messageType: string | null;
   body: string;
-  bodyTruncated: boolean;
-  updatedAt: string | null;
+  createdAt: string | null;
+  authorType: string | null;
+  authorId: string | null;
 };
 
-type PaperclipWakeLivenessContinuation = {
-  attempt: number | null;
-  maxAttempts: number | null;
+type PaperclipWakeConferenceRoomPendingResponse = {
+  agentId: string | null;
+  agentName: string | null;
+  status: string | null;
+  repliedCommentId: string | null;
+};
+
+type PaperclipWakeDecisionOption = {
+  key: string;
+  label: string;
+  description?: string;
+};
+
+type PaperclipWakeDecisionAnswer = {
+  answer: string;
+  selectedOptionKey: string | null;
+  note: string | null;
+};
+
+type PaperclipWakeDecisionQuestion = {
+  id: string | null;
+  status: string | null;
+  blocking: boolean;
+  title: string | null;
+  question: string | null;
+  whyBlocked: string | null;
+  suggestedDefault: string | null;
+  linkedApprovalId: string | null;
+  recommendedOptions: PaperclipWakeDecisionOption[];
+  answer: PaperclipWakeDecisionAnswer | null;
+};
+
+type PaperclipWakePlanApproval = {
+  approvalId: string | null;
+  status: string | null;
+  currentPlanRevisionId: string | null;
+  requestedPlanRevisionId: string | null;
+  approvedPlanRevisionId: string | null;
+  decisionNote: string | null;
+  currentRevisionApproved: boolean;
+  requiresApproval: boolean;
+  requiresResubmission: boolean;
+  lastRequestedAt: string | null;
+  lastDecidedAt: string | null;
+};
+
+type PaperclipWakeSharedSkillOpenProposal = {
+  id: string;
+  kind: string;
+  status: string;
+  summary: string;
+  createdAt: string;
+};
+
+type PaperclipWakeSharedSkill = {
+  sharedSkillId: string;
+  key: string;
+  name: string;
+  mirrorState: string | null;
+  sourceDriftState: string | null;
+  proposalAllowed: boolean;
+  applyAllowed: boolean;
+  openProposal: PaperclipWakeSharedSkillOpenProposal | null;
+};
+
+type PaperclipWakeSharedSkillReview = {
   sourceRunId: string | null;
-  state: string | null;
-  reason: string | null;
-  instruction: string | null;
+  sourceRunStatus: string | null;
+  sourceIssueId: string | null;
+  sharedSkillIds: string[];
 };
 
-type PaperclipWakeChildIssueSummary = {
+type PaperclipWakeOfficeCoordinationTrigger = {
+  reason: string | null;
+  entityType: string | null;
+  entityId: string | null;
+  summary: string | null;
+};
+
+type PaperclipWakeOfficeIssueItem = {
   id: string | null;
   identifier: string | null;
   title: string | null;
   status: string | null;
   priority: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  updatedAt: string | null;
+};
+
+type PaperclipWakeOfficeStaffingGap = {
+  projectId: string | null;
+  projectName: string | null;
+  missingRoles: string[];
+  openIssueCount: number;
+};
+
+type PaperclipWakeOfficeEngagementItem = {
+  id: string | null;
+  title: string | null;
+  serviceAreaKey: string | null;
+  status: string | null;
+  targetProjectId: string | null;
+  targetProjectName: string | null;
+  updatedAt: string | null;
+};
+
+type PaperclipWakeOfficeSharedSkillItem = {
+  sharedSkillId: string | null;
+  key: string | null;
+  name: string | null;
+  mirrorState: string | null;
+  sourceDriftState: string | null;
+  openProposalId: string | null;
+  openProposalStatus: string | null;
+  openProposalSummary: string | null;
+};
+
+type PaperclipWakeOfficeRecentAction = {
+  action: string | null;
+  entityType: string | null;
+  entityId: string | null;
   summary: string | null;
+  createdAt: string | null;
+};
+
+type PaperclipWakeOfficeCoordination = {
+  companyId: string | null;
+  officeAgentId: string | null;
+  trigger: PaperclipWakeOfficeCoordinationTrigger | null;
+  queueCounts: {
+    untriagedIntake: number;
+    unassignedIssues: number;
+    blockedIssues: number;
+    staleIssues: number;
+    staffingGaps: number;
+    engagementsNeedingAttention: number;
+    sharedSkillItems: number;
+  };
+  untriagedIntake: PaperclipWakeOfficeIssueItem[];
+  unassignedIssues: PaperclipWakeOfficeIssueItem[];
+  blockedIssues: PaperclipWakeOfficeIssueItem[];
+  staleIssues: PaperclipWakeOfficeIssueItem[];
+  staffingGaps: PaperclipWakeOfficeStaffingGap[];
+  engagementsNeedingAttention: PaperclipWakeOfficeEngagementItem[];
+  sharedSkillItems: PaperclipWakeOfficeSharedSkillItem[];
+  recentActions: PaperclipWakeOfficeRecentAction[];
+};
+
+type PaperclipWakeTreeHoldSummary = {
+  holdId: string | null;
+  rootIssueId: string | null;
+  mode: string | null;
+  reason: string | null;
 };
 
 type PaperclipWakeBlockerSummary = {
@@ -350,16 +677,84 @@ type PaperclipWakeBlockerSummary = {
   priority: string | null;
 };
 
-type PaperclipWakeTreeHoldSummary = {
-  holdId: string | null;
-  rootIssueId: string | null;
-  mode: string | null;
-  reason: string | null;
+type PaperclipWakeProductivityLowYieldRun = {
+  runId: string | null;
+  agentName: string | null;
+  issueIdentifier: string | null;
+  issueTitle: string | null;
+  livenessState: string | null;
+  totalTokens: number;
+  nextAction: string | null;
 };
+
+type PaperclipWakeProductivityAgentSummary = {
+  agentId: string | null;
+  agentName: string | null;
+  health: string | null;
+  usefulRunRate: number;
+  lowYieldRunCount: number;
+  tokensPerUsefulRun: number | null;
+};
+
+type PaperclipWakeProductivityReport = {
+  kind: string | null;
+  scope: string | null;
+  companyId: string | null;
+  window: string | null;
+  generatedAt: string | null;
+  totals: {
+    runCount: number;
+    terminalRunCount: number;
+    usefulRunCount: number;
+    lowYieldRunCount: number;
+    planOnlyRunCount: number;
+    emptyResponseRunCount: number;
+    needsFollowupRunCount: number;
+    continuationExhaustionCount: number;
+    completedIssueCount: number;
+    totalTokens: number;
+  };
+  ratios: {
+    usefulRunRate: number;
+    lowYieldRunRate: number;
+    tokensPerUsefulRun: number | null;
+    tokensPerCompletedIssue: number | null;
+    avgTimeToFirstUsefulActionMs: number | null;
+  };
+  lowYieldRuns: PaperclipWakeProductivityLowYieldRun[];
+  agents: PaperclipWakeProductivityAgentSummary[];
+  recommendations: string[];
+};
+
+const PRODUCTIVITY_NEXT_ACTION_PREVIEW_MAX = 180;
+const PRODUCTIVITY_JSON_TEXT_KEYS = new Set(["text", "nextAction", "summary", "reason"]);
+const PRODUCTIVITY_JSON_SKIP_KEYS = new Set([
+  "usage",
+  "cache_creation",
+  "cache_read_input_tokens",
+  "cache_creation_input_tokens",
+  "input_tokens",
+  "output_tokens",
+  "stop_details",
+  "stop_sequence",
+  "id",
+  "model",
+  "role",
+  "type",
+]);
 
 type PaperclipWakePayload = {
   reason: string | null;
   issue: PaperclipWakeIssue | null;
+  mode: string | null;
+  planningMode: boolean;
+  continuityStatus: string | null;
+  openDecisionQuestionCount: number;
+  blockingDecisionQuestionCount: number;
+  decisionQuestion: PaperclipWakeDecisionQuestion | null;
+  planApproval: PaperclipWakePlanApproval | null;
+  interactionKind: string | null;
+  interactionStatus: string | null;
   checkedOutByHarness: boolean;
   dependencyBlockedInteraction: boolean;
   treeHoldInteraction: boolean;
@@ -367,12 +762,6 @@ type PaperclipWakePayload = {
   unresolvedBlockerIssueIds: string[];
   unresolvedBlockerSummaries: PaperclipWakeBlockerSummary[];
   executionStage: PaperclipWakeExecutionStage | null;
-  continuationSummary: PaperclipWakeContinuationSummary | null;
-  livenessContinuation: PaperclipWakeLivenessContinuation | null;
-  interactionKind: string | null;
-  interactionStatus: string | null;
-  childIssueSummaries: PaperclipWakeChildIssueSummary[];
-  childIssueSummaryTruncated: boolean;
   commentIds: string[];
   latestCommentId: string | null;
   comments: PaperclipWakeComment[];
@@ -381,7 +770,295 @@ type PaperclipWakePayload = {
   missingCount: number;
   truncated: boolean;
   fallbackFetchNeeded: boolean;
+  sharedSkills: PaperclipWakeSharedSkill[];
+  sharedSkillReview: PaperclipWakeSharedSkillReview | null;
+  officeCoordination: PaperclipWakeOfficeCoordination | null;
+  productivityReport: PaperclipWakeProductivityReport | null;
+  conferenceRoom: PaperclipWakeConferenceRoom | null;
+  conferenceRoomMessage: PaperclipWakeConferenceRoomMessage | null;
+  conferenceRoomThread: PaperclipWakeConferenceRoomMessage[];
+  conferenceRoomPendingResponses: PaperclipWakeConferenceRoomPendingResponse[];
 };
+
+function compactProductivityPreviewText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function collectProductivityJsonText(value: unknown, depth = 0): string[] {
+  if (depth > 5 || value == null) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectProductivityJsonText(entry, depth + 1));
+  }
+  if (typeof value !== "object") return [];
+
+  const record = value as Record<string, unknown>;
+  const results: string[] = [];
+  for (const [key, entry] of Object.entries(record)) {
+    if (PRODUCTIVITY_JSON_SKIP_KEYS.has(key)) continue;
+    if (PRODUCTIVITY_JSON_TEXT_KEYS.has(key) && typeof entry === "string") {
+      results.push(entry);
+      continue;
+    }
+    if (key === "message" || key === "content" || key === "payload" || key === "result") {
+      results.push(...collectProductivityJsonText(entry, depth + 1));
+    }
+  }
+  return results;
+}
+
+function formatProductivityNextActionPreview(raw: string | null) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  let text = trimmed;
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      text = collectProductivityJsonText(parsed)
+        .map(compactProductivityPreviewText)
+        .filter(Boolean)
+        .join(" ");
+    } catch {
+      text = "";
+    }
+  }
+
+  const compact = compactProductivityPreviewText(text);
+  if (!compact) return null;
+  if ((compact.startsWith("{") || compact.startsWith("[")) && /"usage"|"model"|"content"/.test(compact)) return null;
+  return compact.length <= PRODUCTIVITY_NEXT_ACTION_PREVIEW_MAX
+    ? compact
+    : `${compact.slice(0, PRODUCTIVITY_NEXT_ACTION_PREVIEW_MAX - 3)}...`;
+}
+
+function normalizePaperclipWakeSharedSkill(value: unknown): PaperclipWakeSharedSkill | null {
+  const skill = parseObject(value);
+  const openProposalObject = parseObject(skill.openProposal);
+  const sharedSkillId = asString(skill.sharedSkillId, "").trim();
+  const key = asString(skill.key, "").trim();
+  const name = asString(skill.name, "").trim();
+  if (!sharedSkillId || !key || !name) return null;
+  const openProposal =
+    Object.keys(openProposalObject).length > 0
+      ? {
+          id: asString(openProposalObject.id, "").trim(),
+          kind: asString(openProposalObject.kind, "").trim(),
+          status: asString(openProposalObject.status, "").trim(),
+          summary: asString(openProposalObject.summary, "").trim(),
+          createdAt: asString(openProposalObject.createdAt, "").trim(),
+        }
+      : null;
+  return {
+    sharedSkillId,
+    key,
+    name,
+    mirrorState: asString(skill.mirrorState, "").trim() || null,
+    sourceDriftState: asString(skill.sourceDriftState, "").trim() || null,
+    proposalAllowed: asBoolean(skill.proposalAllowed, false),
+    applyAllowed: asBoolean(skill.applyAllowed, false),
+    openProposal:
+      openProposal?.id && openProposal.kind && openProposal.status && openProposal.summary && openProposal.createdAt
+        ? openProposal
+        : null,
+  };
+}
+
+function normalizePaperclipWakeSharedSkillReview(value: unknown): PaperclipWakeSharedSkillReview | null {
+  const review = parseObject(value);
+  const sharedSkillIds = Array.isArray(review.sharedSkillIds)
+    ? review.sharedSkillIds
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .map((entry) => entry.trim())
+    : [];
+  const sourceRunId = asString(review.sourceRunId, "").trim() || null;
+  const sourceRunStatus = asString(review.sourceRunStatus, "").trim() || null;
+  const sourceIssueId = asString(review.sourceIssueId, "").trim() || null;
+  if (!sourceRunId && !sourceRunStatus && !sourceIssueId && sharedSkillIds.length === 0) return null;
+  return {
+    sourceRunId,
+    sourceRunStatus,
+    sourceIssueId,
+    sharedSkillIds,
+  };
+}
+
+function normalizePaperclipWakeOfficeIssueItem(value: unknown): PaperclipWakeOfficeIssueItem | null {
+  const item = parseObject(value);
+  const id = asString(item.id, "").trim() || null;
+  const title = asString(item.title, "").trim() || null;
+  if (!id && !title) return null;
+  return {
+    id,
+    identifier: asString(item.identifier, "").trim() || null,
+    title,
+    status: asString(item.status, "").trim() || null,
+    priority: asString(item.priority, "").trim() || null,
+    projectId: asString(item.projectId, "").trim() || null,
+    projectName: asString(item.projectName, "").trim() || null,
+    updatedAt: asString(item.updatedAt, "").trim() || null,
+  };
+}
+
+function normalizePaperclipWakeOfficeCoordination(value: unknown): PaperclipWakeOfficeCoordination | null {
+  const office = parseObject(value);
+  const triggerObject = parseObject(office.trigger);
+  const queueCounts = parseObject(office.queueCounts);
+  const untriagedIntake = Array.isArray(office.untriagedIntake)
+    ? office.untriagedIntake
+        .map((entry) => normalizePaperclipWakeOfficeIssueItem(entry))
+        .filter((entry): entry is PaperclipWakeOfficeIssueItem => Boolean(entry))
+    : [];
+  const unassignedIssues = Array.isArray(office.unassignedIssues)
+    ? office.unassignedIssues
+        .map((entry) => normalizePaperclipWakeOfficeIssueItem(entry))
+        .filter((entry): entry is PaperclipWakeOfficeIssueItem => Boolean(entry))
+    : [];
+  const blockedIssues = Array.isArray(office.blockedIssues)
+    ? office.blockedIssues
+        .map((entry) => normalizePaperclipWakeOfficeIssueItem(entry))
+        .filter((entry): entry is PaperclipWakeOfficeIssueItem => Boolean(entry))
+    : [];
+  const staleIssues = Array.isArray(office.staleIssues)
+    ? office.staleIssues
+        .map((entry) => normalizePaperclipWakeOfficeIssueItem(entry))
+        .filter((entry): entry is PaperclipWakeOfficeIssueItem => Boolean(entry))
+    : [];
+  const staffingGaps = Array.isArray(office.staffingGaps)
+    ? office.staffingGaps
+        .map((entry) => {
+          const gap = parseObject(entry);
+          const projectId = asString(gap.projectId, "").trim() || null;
+          const projectName = asString(gap.projectName, "").trim() || null;
+          const missingRoles = Array.isArray(gap.missingRoles)
+            ? gap.missingRoles
+                .filter((role): role is string => typeof role === "string" && role.trim().length > 0)
+                .map((role) => role.trim())
+            : [];
+          if (!projectId && !projectName && missingRoles.length === 0) return null;
+          return {
+            projectId,
+            projectName,
+            missingRoles,
+            openIssueCount: asNumber(gap.openIssueCount, 0),
+          };
+        })
+        .filter((entry): entry is PaperclipWakeOfficeStaffingGap => Boolean(entry))
+    : [];
+  const engagementsNeedingAttention = Array.isArray(office.engagementsNeedingAttention)
+    ? office.engagementsNeedingAttention
+        .map((entry) => {
+          const item = parseObject(entry);
+          const id = asString(item.id, "").trim() || null;
+          const title = asString(item.title, "").trim() || null;
+          if (!id && !title) return null;
+          return {
+            id,
+            title,
+            serviceAreaKey: asString(item.serviceAreaKey, "").trim() || null,
+            status: asString(item.status, "").trim() || null,
+            targetProjectId: asString(item.targetProjectId, "").trim() || null,
+            targetProjectName: asString(item.targetProjectName, "").trim() || null,
+            updatedAt: asString(item.updatedAt, "").trim() || null,
+          };
+        })
+        .filter((entry): entry is PaperclipWakeOfficeEngagementItem => Boolean(entry))
+    : [];
+  const sharedSkillItems = Array.isArray(office.sharedSkillItems)
+    ? office.sharedSkillItems
+        .map((entry) => {
+          const item = parseObject(entry);
+          const sharedSkillId = asString(item.sharedSkillId, "").trim() || null;
+          const key = asString(item.key, "").trim() || null;
+          const name = asString(item.name, "").trim() || null;
+          if (!sharedSkillId && !key && !name) return null;
+          return {
+            sharedSkillId,
+            key,
+            name,
+            mirrorState: asString(item.mirrorState, "").trim() || null,
+            sourceDriftState: asString(item.sourceDriftState, "").trim() || null,
+            openProposalId: asString(item.openProposalId, "").trim() || null,
+            openProposalStatus: asString(item.openProposalStatus, "").trim() || null,
+            openProposalSummary: asString(item.openProposalSummary, "").trim() || null,
+          };
+        })
+        .filter((entry): entry is PaperclipWakeOfficeSharedSkillItem => Boolean(entry))
+    : [];
+  const recentActions = Array.isArray(office.recentActions)
+    ? office.recentActions
+        .map((entry) => {
+          const action = parseObject(entry);
+          const actionName = asString(action.action, "").trim() || null;
+          const entityType = asString(action.entityType, "").trim() || null;
+          const entityId = asString(action.entityId, "").trim() || null;
+          if (!actionName && !entityType && !entityId) return null;
+          return {
+            action: actionName,
+            entityType,
+            entityId,
+            summary: asString(action.summary, "").trim() || null,
+            createdAt: asString(action.createdAt, "").trim() || null,
+          };
+        })
+        .filter((entry): entry is PaperclipWakeOfficeRecentAction => Boolean(entry))
+    : [];
+
+  const companyId = asString(office.companyId, "").trim() || null;
+  const officeAgentId = asString(office.officeAgentId, "").trim() || null;
+  const trigger =
+    Object.keys(triggerObject).length > 0
+      ? {
+          reason: asString(triggerObject.reason, "").trim() || null,
+          entityType: asString(triggerObject.entityType, "").trim() || null,
+          entityId: asString(triggerObject.entityId, "").trim() || null,
+          summary: asString(triggerObject.summary, "").trim() || null,
+        }
+      : null;
+
+  if (
+    !companyId &&
+    !officeAgentId &&
+    !trigger &&
+    untriagedIntake.length === 0 &&
+    unassignedIssues.length === 0 &&
+    blockedIssues.length === 0 &&
+    staleIssues.length === 0 &&
+    staffingGaps.length === 0 &&
+    engagementsNeedingAttention.length === 0 &&
+    sharedSkillItems.length === 0 &&
+    recentActions.length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    companyId,
+    officeAgentId,
+    trigger,
+    queueCounts: {
+      untriagedIntake: asNumber(queueCounts.untriagedIntake, untriagedIntake.length),
+      unassignedIssues: asNumber(queueCounts.unassignedIssues, unassignedIssues.length),
+      blockedIssues: asNumber(queueCounts.blockedIssues, blockedIssues.length),
+      staleIssues: asNumber(queueCounts.staleIssues, staleIssues.length),
+      staffingGaps: asNumber(queueCounts.staffingGaps, staffingGaps.length),
+      engagementsNeedingAttention: asNumber(
+        queueCounts.engagementsNeedingAttention,
+        engagementsNeedingAttention.length,
+      ),
+      sharedSkillItems: asNumber(queueCounts.sharedSkillItems, sharedSkillItems.length),
+    },
+    untriagedIntake,
+    unassignedIssues,
+    blockedIssues,
+    staleIssues,
+    staffingGaps,
+    engagementsNeedingAttention,
+    sharedSkillItems,
+    recentActions,
+  };
+}
 
 function normalizePaperclipWakeIssue(value: unknown): PaperclipWakeIssue | null {
   const issue = parseObject(value);
@@ -418,48 +1095,159 @@ function normalizePaperclipWakeComment(value: unknown): PaperclipWakeComment | n
   };
 }
 
-function normalizePaperclipWakeContinuationSummary(value: unknown): PaperclipWakeContinuationSummary | null {
-  const summary = parseObject(value);
-  const body = asString(summary.body, "").trim();
-  if (!body) return null;
+function normalizePaperclipWakeConferenceRoomIssue(value: unknown): PaperclipWakeConferenceRoomIssue | null {
+  const issue = parseObject(value);
+  const id = asString(issue.id, "").trim() || null;
+  const identifier = asString(issue.identifier, "").trim() || null;
+  const title = asString(issue.title, "").trim() || null;
+  if (!id && !identifier && !title) return null;
+  return { id, identifier, title };
+}
+
+function normalizePaperclipWakeConferenceRoom(value: unknown): PaperclipWakeConferenceRoom | null {
+  const room = parseObject(value);
+  const linkedIssues = Array.isArray(room.linkedIssues)
+    ? room.linkedIssues
+        .map((entry) => normalizePaperclipWakeConferenceRoomIssue(entry))
+        .filter((entry): entry is PaperclipWakeConferenceRoomIssue => Boolean(entry))
+    : [];
+  const id = asString(room.id, "").trim() || null;
+  const title = asString(room.title, "").trim() || null;
+  const kind = asString(room.kind, "").trim() || null;
+  const status = asString(room.status, "").trim() || null;
+  if (!id && !title) return null;
+  return { id, title, kind, status, linkedIssues };
+}
+
+function normalizePaperclipWakeConferenceRoomMessage(value: unknown): PaperclipWakeConferenceRoomMessage | null {
+  const message = parseObject(value);
+  const author = parseObject(message.author);
+  const body = asString(message.body, "");
+  if (!body.trim()) return null;
   return {
-    key: asString(summary.key, "").trim() || null,
-    title: asString(summary.title, "").trim() || null,
+    id: asString(message.id, "").trim() || null,
+    parentCommentId: asString(message.parentCommentId, "").trim() || null,
+    messageType: asString(message.messageType, "").trim() || null,
     body,
-    bodyTruncated: asBoolean(summary.bodyTruncated, false),
-    updatedAt: asString(summary.updatedAt, "").trim() || null,
+    createdAt: asString(message.createdAt, "").trim() || null,
+    authorType: asString(author.type, "").trim() || null,
+    authorId: asString(author.id, "").trim() || null,
   };
 }
 
-function normalizePaperclipWakeLivenessContinuation(value: unknown): PaperclipWakeLivenessContinuation | null {
-  const continuation = parseObject(value);
-  const attempt = asNumber(continuation.attempt, 0);
-  const maxAttempts = asNumber(continuation.maxAttempts, 0);
-  const sourceRunId = asString(continuation.sourceRunId, "").trim() || null;
-  const state = asString(continuation.state, "").trim() || null;
-  const reason = asString(continuation.reason, "").trim() || null;
-  const instruction = asString(continuation.instruction, "").trim() || null;
-  if (!attempt && !maxAttempts && !sourceRunId && !state && !reason && !instruction) return null;
+function normalizePaperclipWakeConferenceRoomPendingResponse(
+  value: unknown,
+): PaperclipWakeConferenceRoomPendingResponse | null {
+  const response = parseObject(value);
+  const agent = parseObject(response.agent);
+  const agentId = asString(agent.id, "").trim() || null;
+  const agentName = asString(agent.name, "").trim() || null;
+  const status = asString(response.status, "").trim() || null;
+  const repliedCommentId = asString(response.repliedCommentId, "").trim() || null;
+  if (!agentId && !agentName && !status) return null;
   return {
-    attempt: attempt > 0 ? attempt : null,
-    maxAttempts: maxAttempts > 0 ? maxAttempts : null,
-    sourceRunId,
-    state,
-    reason,
-    instruction,
+    agentId,
+    agentName,
+    status,
+    repliedCommentId,
   };
 }
 
-function normalizePaperclipWakeChildIssueSummary(value: unknown): PaperclipWakeChildIssueSummary | null {
-  const child = parseObject(value);
-  const id = asString(child.id, "").trim() || null;
-  const identifier = asString(child.identifier, "").trim() || null;
-  const title = asString(child.title, "").trim() || null;
-  const status = asString(child.status, "").trim() || null;
-  const priority = asString(child.priority, "").trim() || null;
-  const summary = asString(child.summary, "").trim() || null;
-  if (!id && !identifier && !title && !status && !summary) return null;
-  return { id, identifier, title, status, priority, summary };
+function normalizePaperclipWakeDecisionQuestion(value: unknown): PaperclipWakeDecisionQuestion | null {
+  const question = parseObject(value);
+  const answer = parseObject(question.answer);
+  const recommendedOptions = Array.isArray(question.recommendedOptions)
+    ? question.recommendedOptions
+        .map((entry) => {
+          const option = parseObject(entry);
+          const key = asString(option.key, "").trim();
+          const label = asString(option.label, "").trim();
+          const description = asString(option.description, "").trim();
+          if (!key || !label) return null;
+          return {
+            key,
+            label,
+            ...(description ? { description } : {}),
+          };
+        })
+        .filter((entry): entry is PaperclipWakeDecisionOption => Boolean(entry))
+    : [];
+  const normalizedAnswer =
+    Object.keys(answer).length === 0 && !asString(question.answer, "").trim()
+      ? null
+      : {
+          answer: asString(answer.answer, asString(question.answer, "")).trim(),
+          selectedOptionKey: asString(answer.selectedOptionKey, "").trim() || null,
+          note: asString(answer.note, "").trim() || null,
+        };
+  const id = asString(question.id, "").trim() || null;
+  const status = asString(question.status, "").trim() || null;
+  const title = asString(question.title, "").trim() || null;
+  const prompt = asString(question.question, "").trim() || null;
+  if (!id && !status && !title && !prompt && !normalizedAnswer) return null;
+  return {
+    id,
+    status,
+    blocking: asBoolean(question.blocking, false),
+    title,
+    question: prompt,
+    whyBlocked: asString(question.whyBlocked, "").trim() || null,
+    suggestedDefault: asString(question.suggestedDefault, "").trim() || null,
+    linkedApprovalId: asString(question.linkedApprovalId, "").trim() || null,
+    recommendedOptions,
+    answer: normalizedAnswer && normalizedAnswer.answer
+      ? normalizedAnswer
+      : normalizedAnswer?.selectedOptionKey || normalizedAnswer?.note
+        ? normalizedAnswer
+        : null,
+  };
+}
+
+function normalizePaperclipWakePlanApproval(value: unknown): PaperclipWakePlanApproval | null {
+  const approval = parseObject(value);
+  const approvalId = asString(approval.approvalId, "").trim() || null;
+  const status = asString(approval.status, "").trim() || null;
+  const currentPlanRevisionId = asString(approval.currentPlanRevisionId, "").trim() || null;
+  const requestedPlanRevisionId = asString(approval.requestedPlanRevisionId, "").trim() || null;
+  const approvedPlanRevisionId = asString(approval.approvedPlanRevisionId, "").trim() || null;
+  const decisionNote = asString(approval.decisionNote, "").trim() || null;
+  const lastRequestedAt = asString(approval.lastRequestedAt, "").trim() || null;
+  const lastDecidedAt = asString(approval.lastDecidedAt, "").trim() || null;
+
+  if (
+    !approvalId &&
+    !status &&
+    !currentPlanRevisionId &&
+    !requestedPlanRevisionId &&
+    !approvedPlanRevisionId &&
+    !decisionNote
+  ) {
+    return null;
+  }
+
+  return {
+    approvalId,
+    status,
+    currentPlanRevisionId,
+    requestedPlanRevisionId,
+    approvedPlanRevisionId,
+    decisionNote,
+    currentRevisionApproved: asBoolean(approval.currentRevisionApproved, false),
+    requiresApproval: asBoolean(approval.requiresApproval, false),
+    requiresResubmission: asBoolean(approval.requiresResubmission, false),
+    lastRequestedAt,
+    lastDecidedAt,
+  };
+}
+
+function normalizePaperclipWakeTreeHoldSummary(value: unknown): PaperclipWakeTreeHoldSummary | null {
+  const hold = parseObject(value);
+  const holdId = asString(hold.holdId, "").trim() || null;
+  const rootIssueId = asString(hold.rootIssueId, "").trim() || null;
+  const mode = asString(hold.mode, "").trim() || null;
+  const reason = asString(hold.reason, "").trim() || null;
+  if (!holdId && !rootIssueId && !mode && !reason) return null;
+  return { holdId, rootIssueId, mode, reason };
 }
 
 function normalizePaperclipWakeBlockerSummary(value: unknown): PaperclipWakeBlockerSummary | null {
@@ -473,14 +1261,73 @@ function normalizePaperclipWakeBlockerSummary(value: unknown): PaperclipWakeBloc
   return { id, identifier, title, status, priority };
 }
 
-function normalizePaperclipWakeTreeHoldSummary(value: unknown): PaperclipWakeTreeHoldSummary | null {
-  const hold = parseObject(value);
-  const holdId = asString(hold.holdId, "").trim() || null;
-  const rootIssueId = asString(hold.rootIssueId, "").trim() || null;
-  const mode = asString(hold.mode, "").trim() || null;
-  const reason = asString(hold.reason, "").trim() || null;
-  if (!holdId && !rootIssueId && !mode && !reason) return null;
-  return { holdId, rootIssueId, mode, reason };
+function nullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizePaperclipWakeProductivityReport(value: unknown): PaperclipWakeProductivityReport | null {
+  const report = parseObject(value);
+  const kind = asString(report.kind, "").trim() || null;
+  if (kind !== "paperclip/productivity-report.v1") return null;
+  const totals = parseObject(report.totals);
+  const ratios = parseObject(report.ratios);
+  const lowYieldRuns = Array.isArray(report.lowYieldRuns)
+    ? report.lowYieldRuns.map((entry) => {
+        const run = parseObject(entry);
+        return {
+          runId: asString(run.runId, "").trim() || null,
+          agentName: asString(run.agentName, "").trim() || null,
+          issueIdentifier: asString(run.issueIdentifier, "").trim() || null,
+          issueTitle: asString(run.issueTitle, "").trim() || null,
+          livenessState: asString(run.livenessState, "").trim() || null,
+          totalTokens: asNumber(run.totalTokens, 0),
+          nextAction: asString(run.nextAction, "").trim() || null,
+        };
+      }).slice(0, 5)
+    : [];
+  const agents = Array.isArray(report.agents)
+    ? report.agents.map((entry) => {
+        const agent = parseObject(entry);
+        return {
+          agentId: asString(agent.agentId, "").trim() || null,
+          agentName: asString(agent.agentName, "").trim() || null,
+          health: asString(agent.health, "").trim() || null,
+          usefulRunRate: asNumber(agent.usefulRunRate, 0),
+          lowYieldRunCount: asNumber(agent.lowYieldRunCount, 0),
+          tokensPerUsefulRun: nullableNumber(agent.tokensPerUsefulRun),
+        };
+      }).slice(0, 5)
+    : [];
+
+  return {
+    kind,
+    scope: asString(report.scope, "").trim() || null,
+    companyId: asString(report.companyId, "").trim() || null,
+    window: asString(report.window, "").trim() || null,
+    generatedAt: asString(report.generatedAt, "").trim() || null,
+    totals: {
+      runCount: asNumber(totals.runCount, 0),
+      terminalRunCount: asNumber(totals.terminalRunCount, 0),
+      usefulRunCount: asNumber(totals.usefulRunCount, 0),
+      lowYieldRunCount: asNumber(totals.lowYieldRunCount, 0),
+      planOnlyRunCount: asNumber(totals.planOnlyRunCount, 0),
+      emptyResponseRunCount: asNumber(totals.emptyResponseRunCount, 0),
+      needsFollowupRunCount: asNumber(totals.needsFollowupRunCount, 0),
+      continuationExhaustionCount: asNumber(totals.continuationExhaustionCount, 0),
+      completedIssueCount: asNumber(totals.completedIssueCount, 0),
+      totalTokens: asNumber(totals.totalTokens, 0),
+    },
+    ratios: {
+      usefulRunRate: asNumber(ratios.usefulRunRate, 0),
+      lowYieldRunRate: asNumber(ratios.lowYieldRunRate, 0),
+      tokensPerUsefulRun: nullableNumber(ratios.tokensPerUsefulRun),
+      tokensPerCompletedIssue: nullableNumber(ratios.tokensPerCompletedIssue),
+      avgTimeToFirstUsefulActionMs: nullableNumber(ratios.avgTimeToFirstUsefulActionMs),
+    },
+    lowYieldRuns,
+    agents,
+    recommendations: asStringArray(report.recommendations).slice(0, 5),
+  };
 }
 
 function normalizePaperclipWakeExecutionPrincipal(value: unknown): PaperclipWakeExecutionPrincipal | null {
@@ -545,13 +1392,28 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
         .map((entry) => entry.trim())
     : [];
   const executionStage = normalizePaperclipWakeExecutionStage(payload.executionStage);
-  const continuationSummary = normalizePaperclipWakeContinuationSummary(payload.continuationSummary);
-  const livenessContinuation = normalizePaperclipWakeLivenessContinuation(payload.livenessContinuation);
-  const childIssueSummaries = Array.isArray(payload.childIssueSummaries)
-    ? payload.childIssueSummaries
-        .map((entry) => normalizePaperclipWakeChildIssueSummary(entry))
-        .filter((entry): entry is PaperclipWakeChildIssueSummary => Boolean(entry))
+  const conferenceRoom = normalizePaperclipWakeConferenceRoom(payload.conferenceRoom);
+  const conferenceRoomMessage = normalizePaperclipWakeConferenceRoomMessage(payload.conferenceRoomMessage);
+  const conferenceRoomThread = Array.isArray(payload.conferenceRoomThread)
+    ? payload.conferenceRoomThread
+        .map((entry) => normalizePaperclipWakeConferenceRoomMessage(entry))
+        .filter((entry): entry is PaperclipWakeConferenceRoomMessage => Boolean(entry))
     : [];
+  const conferenceRoomPendingResponses = Array.isArray(payload.conferenceRoomPendingResponses)
+    ? payload.conferenceRoomPendingResponses
+        .map((entry) => normalizePaperclipWakeConferenceRoomPendingResponse(entry))
+        .filter((entry): entry is PaperclipWakeConferenceRoomPendingResponse => Boolean(entry))
+    : [];
+  const sharedSkills = Array.isArray(payload.sharedSkills)
+    ? payload.sharedSkills
+        .map((entry) => normalizePaperclipWakeSharedSkill(entry))
+        .filter((entry): entry is PaperclipWakeSharedSkill => Boolean(entry))
+    : [];
+  const sharedSkillReview = normalizePaperclipWakeSharedSkillReview(payload.sharedSkillReview);
+  const officeCoordination = normalizePaperclipWakeOfficeCoordination(payload.officeCoordination);
+  const productivityReport = normalizePaperclipWakeProductivityReport(payload.productivityReport);
+
+  const activeTreeHold = normalizePaperclipWakeTreeHoldSummary(payload.activeTreeHold);
   const unresolvedBlockerIssueIds = Array.isArray(payload.unresolvedBlockerIssueIds)
     ? payload.unresolvedBlockerIssueIds
         .map((entry) => asString(entry, "").trim())
@@ -562,15 +1424,36 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
         .map((entry) => normalizePaperclipWakeBlockerSummary(entry))
         .filter((entry): entry is PaperclipWakeBlockerSummary => Boolean(entry))
     : [];
-
-  const activeTreeHold = normalizePaperclipWakeTreeHoldSummary(payload.activeTreeHold);
-  if (comments.length === 0 && commentIds.length === 0 && childIssueSummaries.length === 0 && unresolvedBlockerIssueIds.length === 0 && unresolvedBlockerSummaries.length === 0 && !activeTreeHold && !executionStage && !continuationSummary && !livenessContinuation && !normalizePaperclipWakeIssue(payload.issue)) {
+  if (
+    comments.length === 0 &&
+    commentIds.length === 0 &&
+    !executionStage &&
+    !activeTreeHold &&
+    unresolvedBlockerIssueIds.length === 0 &&
+    unresolvedBlockerSummaries.length === 0 &&
+    !normalizePaperclipWakeIssue(payload.issue) &&
+    sharedSkills.length === 0 &&
+    !officeCoordination &&
+    !productivityReport &&
+    !conferenceRoom &&
+    !conferenceRoomMessage &&
+    conferenceRoomThread.length === 0
+  ) {
     return null;
   }
 
   return {
     reason: asString(payload.reason, "").trim() || null,
     issue: normalizePaperclipWakeIssue(payload.issue),
+    mode: asString(payload.mode, "").trim() || null,
+    planningMode: asBoolean(payload.planningMode, false),
+    continuityStatus: asString(payload.continuityStatus, "").trim() || null,
+    openDecisionQuestionCount: asNumber(payload.openDecisionQuestionCount, 0),
+    blockingDecisionQuestionCount: asNumber(payload.blockingDecisionQuestionCount, 0),
+    decisionQuestion: normalizePaperclipWakeDecisionQuestion(payload.decisionQuestion),
+    planApproval: normalizePaperclipWakePlanApproval(payload.planApproval),
+    interactionKind: asString(payload.interactionKind, "").trim() || null,
+    interactionStatus: asString(payload.interactionStatus, "").trim() || null,
     checkedOutByHarness: asBoolean(payload.checkedOutByHarness, false),
     dependencyBlockedInteraction: asBoolean(payload.dependencyBlockedInteraction, false),
     treeHoldInteraction: asBoolean(payload.treeHoldInteraction, false),
@@ -578,12 +1461,6 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     unresolvedBlockerIssueIds,
     unresolvedBlockerSummaries,
     executionStage,
-    continuationSummary,
-    livenessContinuation,
-    interactionKind: asString(payload.interactionKind, "").trim() || null,
-    interactionStatus: asString(payload.interactionStatus, "").trim() || null,
-    childIssueSummaries,
-    childIssueSummaryTruncated: asBoolean(payload.childIssueSummaryTruncated, false),
     commentIds,
     latestCommentId: asString(payload.latestCommentId, "").trim() || null,
     comments,
@@ -592,6 +1469,14 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     missingCount: asNumber(commentWindow.missingCount, 0),
     truncated: asBoolean(payload.truncated, false),
     fallbackFetchNeeded: asBoolean(payload.fallbackFetchNeeded, false),
+    sharedSkills,
+    sharedSkillReview,
+    officeCoordination,
+    productivityReport,
+    conferenceRoom,
+    conferenceRoomMessage,
+    conferenceRoomThread,
+    conferenceRoomPendingResponses,
   };
 }
 
@@ -610,6 +1495,17 @@ export function readPaperclipIssueWorkModeFromContext(value: unknown): string | 
   return wake?.issue?.workMode ?? null;
 }
 
+function formatWakeRate(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatWakeTokens(value: number | null) {
+  if (value == null) return "n/a";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return String(value);
+}
+
 export function renderPaperclipWakePrompt(
   value: unknown,
   options: { resumedSession?: boolean } = {},
@@ -624,6 +1520,315 @@ export function renderPaperclipWakePrompt(
     return principal.userId ? `user ${principal.userId}` : "user";
   };
 
+  if (normalized.conferenceRoom) {
+    const room = normalized.conferenceRoom;
+    const thread = normalized.conferenceRoomThread;
+    const triggerMessage = normalized.conferenceRoomMessage;
+    const lines = resumedSession
+      ? [
+          "## Paperclip Resume Delta",
+          "",
+          "You are resuming an existing Paperclip session.",
+          "This heartbeat is scoped to the conference room below. Handle this room wake before returning to generic inbox work.",
+          "Use the inline room payload first before refetching the room thread.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- conference room: ${room.title ?? room.id ?? "unknown"} (${room.id ?? "unknown"})`,
+          `- linked issues: ${room.linkedIssues.length}`,
+          `- trigger message: ${triggerMessage?.id ?? "none"}`,
+          `- pending room responses: ${normalized.conferenceRoomPendingResponses.filter((entry) => entry.status === "pending").length}`,
+        ]
+      : [
+          "## Paperclip Wake Payload",
+          "",
+          "Treat this wake payload as the highest-priority change for the current heartbeat.",
+          "This heartbeat is scoped to the conference room below. Handle this room wake before returning to generic inbox work.",
+          "For room questions, reply in the conference room thread instead of forcing issue checkout first.",
+          "Use the inline room payload first before refetching the room thread.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- conference room: ${room.title ?? room.id ?? "unknown"} (${room.id ?? "unknown"})`,
+          `- linked issues: ${room.linkedIssues.length}`,
+          `- trigger message: ${triggerMessage?.id ?? "none"}`,
+          `- pending room responses: ${normalized.conferenceRoomPendingResponses.filter((entry) => entry.status === "pending").length}`,
+        ];
+
+    if (room.kind) {
+      lines.push(`- room kind: ${room.kind}`);
+    }
+    if (room.status) {
+      lines.push(`- room status: ${room.status}`);
+    }
+    if (room.linkedIssues.length > 0) {
+      lines.push(
+        "- linked issues:",
+        ...room.linkedIssues.map((issue, index) =>
+          `  ${index + 1}. ${issue.identifier ?? issue.id ?? "unknown"}${issue.title ? ` ${issue.title}` : ""}`),
+      );
+    }
+
+    lines.push("");
+    if (normalized.reason === "conference_room_question") {
+      lines.push(
+        "An invited board question is awaiting your in-thread response.",
+        "Post your reply back into the conference room thread after you have the needed context.",
+      );
+    } else if (normalized.reason === "conference_room_message") {
+      lines.push(
+        "Another invited agent posted a new top-level room message.",
+        "Read it, decide whether you need to respond in-thread, and keep the room conversation moving.",
+      );
+    } else if (normalized.reason === "conference_room_invite") {
+      lines.push(
+        "You were invited into this conference room.",
+        "Read the room context before deciding whether a reply is needed.",
+      );
+    }
+
+    if (triggerMessage) {
+      const authorLabel = triggerMessage.authorId
+        ? `${triggerMessage.authorType ?? "unknown"} ${triggerMessage.authorId}`
+        : triggerMessage.authorType ?? "unknown";
+      lines.push(
+        "",
+        "Triggering room message:",
+        `- id: ${triggerMessage.id ?? "unknown"}`,
+        `- type: ${triggerMessage.messageType ?? "note"}`,
+        `- author: ${authorLabel}`,
+        `- created at: ${triggerMessage.createdAt ?? "unknown"}`,
+        triggerMessage.body,
+      );
+    }
+
+    if (thread.length > 0) {
+      lines.push("", "Conference room thread context:");
+      for (const [index, message] of thread.entries()) {
+        const authorLabel = message.authorId
+          ? `${message.authorType ?? "unknown"} ${message.authorId}`
+          : message.authorType ?? "unknown";
+        lines.push(
+          `${index + 1}. message ${message.id ?? "unknown"} (${message.messageType ?? "note"}) at ${message.createdAt ?? "unknown"} by ${authorLabel}`,
+          message.body,
+        );
+      }
+    }
+
+    if (normalized.conferenceRoomPendingResponses.length > 0) {
+      lines.push("", "Room response state:");
+      for (const response of normalized.conferenceRoomPendingResponses) {
+        lines.push(
+          `- ${response.agentName ?? response.agentId ?? "unknown"}: ${response.status ?? "unknown"}${response.repliedCommentId ? ` (reply ${response.repliedCommentId})` : ""}`,
+        );
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  if (normalized.officeCoordination && !normalized.issue) {
+    const office = normalized.officeCoordination;
+    const lines = resumedSession
+      ? [
+          "## Paperclip Resume Delta",
+          "",
+          "You are resuming a company-scoped office/logistics coordination session.",
+          "Handle the office coordination queue below before switching to project-local or issue-local work.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- company id: ${office.companyId ?? "unknown"}`,
+          `- office operator id: ${office.officeAgentId ?? "unknown"}`,
+        ]
+      : [
+          "## Paperclip Wake Payload",
+          "",
+          "Treat this wake payload as the highest-priority company coordination change for the current heartbeat.",
+          "You are acting as the company-wide office/logistics operator, not as an issue continuity owner.",
+          "Route, assign, nudge, request engagements, and draft proposals through existing Paperclip APIs and records.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- company id: ${office.companyId ?? "unknown"}`,
+          `- office operator id: ${office.officeAgentId ?? "unknown"}`,
+        ];
+
+    if (office.trigger) {
+      lines.push(
+        `- trigger reason: ${office.trigger.reason ?? "unknown"}`,
+        `- trigger entity: ${office.trigger.entityType ?? "unknown"} ${office.trigger.entityId ?? "unknown"}`,
+      );
+      if (office.trigger.summary) {
+        lines.push(`- trigger summary: ${office.trigger.summary}`);
+      }
+    }
+
+    lines.push(
+      "",
+      "Company coordination queue counts:",
+      `- untriaged intake: ${office.queueCounts.untriagedIntake}`,
+      `- unassigned issues: ${office.queueCounts.unassignedIssues}`,
+      `- blocked issues: ${office.queueCounts.blockedIssues}`,
+      `- stale issues: ${office.queueCounts.staleIssues}`,
+      `- staffing gaps: ${office.queueCounts.staffingGaps}`,
+      `- engagements needing attention: ${office.queueCounts.engagementsNeedingAttention}`,
+      `- shared skill items: ${office.queueCounts.sharedSkillItems}`,
+    );
+
+    const appendIssueQueue = (label: string, items: PaperclipWakeOfficeIssueItem[]) => {
+      if (items.length === 0) return;
+      lines.push("", `${label}:`);
+      for (const item of items) {
+        lines.push(
+          `- ${item.identifier ?? item.id ?? "unknown"}${item.title ? ` ${item.title}` : ""}${item.projectName ? ` [${item.projectName}]` : ""}${item.status ? ` (${item.status})` : ""}`,
+        );
+      }
+    };
+
+    appendIssueQueue("Untriaged Intake", office.untriagedIntake);
+    appendIssueQueue("Unassigned Issues", office.unassignedIssues);
+    appendIssueQueue("Blocked Issues", office.blockedIssues);
+    appendIssueQueue("Stale Issues", office.staleIssues);
+
+    if (office.staffingGaps.length > 0) {
+      lines.push("", "Project staffing gaps:");
+      for (const gap of office.staffingGaps) {
+        lines.push(
+          `- ${gap.projectName ?? gap.projectId ?? "unknown"}: missing ${gap.missingRoles.join(", ")}${gap.openIssueCount > 0 ? ` (${gap.openIssueCount} open issues)` : ""}`,
+        );
+      }
+    }
+
+    if (office.engagementsNeedingAttention.length > 0) {
+      lines.push("", "Shared-service engagements needing attention:");
+      for (const item of office.engagementsNeedingAttention) {
+        lines.push(
+          `- ${item.title ?? item.id ?? "unknown"}${item.targetProjectName ? ` [${item.targetProjectName}]` : ""}${item.status ? ` (${item.status})` : ""}`,
+        );
+      }
+    }
+
+    if (office.sharedSkillItems.length > 0) {
+      lines.push("", "Shared skill coordination items:");
+      for (const item of office.sharedSkillItems) {
+        lines.push(
+          `- ${item.name ?? item.key ?? item.sharedSkillId ?? "unknown"}${item.sourceDriftState ? ` (${item.sourceDriftState})` : ""}`,
+        );
+        if (item.openProposalId && item.openProposalStatus) {
+          lines.push(
+            `  open proposal: ${item.openProposalId} (${item.openProposalStatus})${item.openProposalSummary ? ` - ${item.openProposalSummary}` : ""}`,
+          );
+        }
+      }
+    }
+
+    if (office.recentActions.length > 0) {
+      lines.push("", "Recent coordination actions:");
+      for (const item of office.recentActions) {
+        lines.push(
+          `- ${item.action ?? "unknown"} on ${item.entityType ?? "unknown"} ${item.entityId ?? "unknown"}${item.summary ? ` - ${item.summary}` : ""}`,
+        );
+      }
+    }
+
+    lines.push(
+      "",
+      "You may assign or reassign issues within policy, request review, request shared-service engagements, draft shared-skill proposals, comment, summarize, and nudge.",
+      "Do not become the continuity owner by default, do not approve governed actions without authority, do not apply shared-skill proposals, and do not run instance-wide mirror sync.",
+      "For shared-skill items, decide between self-improvement, upstream adoption, or merge review, but route the actual mirror change through the proposal and approval flow.",
+    );
+
+    return lines.join("\n");
+  }
+
+  const maxInlineComments = resumedSession ? 1 : 3;
+  const inlineComments = normalized.comments.slice(-maxInlineComments);
+  const omittedInlineCommentCount = Math.max(0, normalized.comments.length - inlineComments.length);
+  const includeSharedSkillDetails = normalized.reason === "shared_skill_review_requested";
+
+  if (normalized.productivityReport) {
+    const report = normalized.productivityReport;
+    const lines = resumedSession
+      ? [
+          "## Paperclip Resume Delta",
+          "",
+          "You are resuming an advisory-only Productivity Monitor session.",
+          "Use the compact productivity report packet below before fetching any broader context.",
+          "Do not load the full company run ledger or full issue list. Drill down one agent or one run at a time only when the packet shows a concrete reason.",
+          "For unlinked or needs-followup examples, recommend a blocker-owner-unblock packet before any broad exploration.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- monitoring issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
+          `- issue status: ${normalized.issue?.status ?? "unknown"}`,
+          `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
+        ]
+      : [
+          "## Paperclip Wake Payload",
+          "",
+          "Treat this as an advisory-only Productivity Monitor wake.",
+          "Use the compact productivity report packet below before fetching any broader context.",
+          "Do not load the full company run ledger or full issue list. Drill down one agent or one run at a time only when the packet shows a concrete reason.",
+          "For unlinked or needs-followup examples, recommend a blocker-owner-unblock packet before any broad exploration.",
+          "Write recommendations only on the assigned monitoring issue or requested report surface.",
+          "",
+          `- reason: ${normalized.reason ?? "unknown"}`,
+          `- monitoring issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
+          `- issue status: ${normalized.issue?.status ?? "unknown"}`,
+          `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
+        ];
+
+    lines.push(
+      "",
+      "Productivity report packet:",
+      `- scope: ${report.scope ?? "unknown"} (${report.window ?? "unknown"} window)`,
+      `- useful runs: ${formatWakeRate(report.ratios.usefulRunRate)} (${report.totals.usefulRunCount}/${report.totals.terminalRunCount})`,
+      `- low yield: ${formatWakeRate(report.ratios.lowYieldRunRate)} (${report.totals.lowYieldRunCount} runs)`,
+      `- tokens per useful run: ${formatWakeTokens(report.ratios.tokensPerUsefulRun)}; total tokens: ${formatWakeTokens(report.totals.totalTokens)}`,
+      `- completed issues: ${report.totals.completedIssueCount}`,
+      `- continuation exhaustion: ${report.totals.continuationExhaustionCount}`,
+    );
+    if (report.recommendations.length > 0) {
+      lines.push("- current recommendations:", ...report.recommendations.map((entry) => `  - ${entry}`));
+    }
+    if (report.agents.length > 0) {
+      lines.push("- agents to inspect first:");
+      for (const agent of report.agents) {
+        lines.push(
+          `  - ${agent.agentName ?? agent.agentId ?? "unknown"}: ${agent.health ?? "unknown"}, useful ${formatWakeRate(agent.usefulRunRate)}, low-yield ${agent.lowYieldRunCount}, tokens/useful ${formatWakeTokens(agent.tokensPerUsefulRun)}`,
+        );
+      }
+    }
+    if (report.lowYieldRuns.length > 0) {
+      lines.push("- recent low-yield examples:");
+      for (const run of report.lowYieldRuns) {
+        lines.push(
+          `  - ${run.issueIdentifier ?? "unlinked"}${run.issueTitle ? ` ${run.issueTitle}` : ""}: ${run.agentName ?? "unknown agent"}, ${run.livenessState ?? "unknown"}, ${formatWakeTokens(run.totalTokens)} tokens`,
+        );
+        const nextActionPreview = formatProductivityNextActionPreview(run.nextAction);
+        if (nextActionPreview) lines.push(`    next action: ${nextActionPreview}`);
+      }
+    }
+
+    if (inlineComments.length > 0) {
+      lines.push("", "Latest monitoring issue comment:");
+      for (const comment of inlineComments) {
+        lines.push(
+          `- comment ${comment.id ?? "unknown"} at ${comment.createdAt ?? "unknown"}${comment.bodyTruncated ? " (truncated)" : ""}`,
+          comment.body,
+        );
+      }
+    }
+
+    lines.push(
+      "",
+      "Recommended workflow:",
+      "1. Start from the packet totals and the agents listed above.",
+      "2. Fetch a specific agent productivity summary only when you need detail for that agent.",
+      "3. Fetch a specific run only when you need evidence for a recommendation.",
+      "4. For unlinked or needs-followup runs, recommend missing-link, owner, and unblock-step evidence instead of broad exploration.",
+      "5. Post a compact advisory report; do not mutate target issues, approvals, routing, adapter configuration, or implementation artifacts.",
+    );
+
+    return lines.join("\n");
+  }
+
   const lines = resumedSession
       ? [
         "## Paperclip Resume Delta",
@@ -631,9 +1836,7 @@ export function renderPaperclipWakePrompt(
         "You are resuming an existing Paperclip session.",
         "This heartbeat is scoped to the issue below. Do not switch to another issue until you have handled this wake.",
         "Focus on the new wake delta below and continue the current task without restating the full heartbeat boilerplate.",
-        "Fetch the API thread only when `fallbackFetchNeeded` is true or you need broader history than this batch.",
-        "",
-        "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
+        "Do not replay the full issue thread unless `fallbackFetchNeeded` is true or this delta is insufficient.",
         "",
         `- reason: ${normalized.reason ?? "unknown"}`,
         `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
@@ -646,11 +1849,9 @@ export function renderPaperclipWakePrompt(
         "",
         "Treat this wake payload as the highest-priority change for the current heartbeat.",
         "This heartbeat is scoped to the issue below. Do not switch to another issue until you have handled this wake.",
-        "Before generic repo exploration or boilerplate heartbeat updates, acknowledge the latest comment and explain how it changes your next action.",
+        "Before generic repo exploration or boilerplate heartbeat updates, take one concrete issue action or name the blocker, owner, and unblock step.",
         "Use this inline wake data first before refetching the issue thread.",
-        "Only fetch the API thread when `fallbackFetchNeeded` is true or you need broader history than this batch.",
-        "",
-        "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
+        "Only fetch the API thread when `fallbackFetchNeeded` is true or you need broader history than this small delta.",
         "",
         `- reason: ${normalized.reason ?? "unknown"}`,
         `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
@@ -666,7 +1867,7 @@ export function renderPaperclipWakePrompt(
     lines.push(`- issue work mode: ${normalized.issue.workMode}`);
   }
   if (normalized.issue?.priority) {
-    lines.push(`- issue priority: ${normalized.issue.priority}`);
+      lines.push(`- issue priority: ${normalized.issue.priority}`);
   }
   if (normalized.issue?.workMode === "planning") {
     const hasWakeComments = normalized.comments.length > 0;
@@ -686,6 +1887,20 @@ export function renderPaperclipWakePrompt(
         "- accepted-plan continuation: you may create child implementation issues from the approved plan, but must not start implementation work on the planning issue itself",
       );
     }
+  }
+  if (normalized.continuityStatus) {
+    lines.push(`- continuity status: ${normalized.continuityStatus}`);
+  }
+  if (normalized.mode) {
+    lines.push(`- mode: ${normalized.mode}`);
+  } else if (normalized.planningMode) {
+    lines.push("- planning mode: yes");
+  }
+  if (normalized.openDecisionQuestionCount > 0 || normalized.blockingDecisionQuestionCount > 0) {
+    lines.push(
+      `- open decision questions: ${normalized.openDecisionQuestionCount}`,
+      `- blocking decision questions: ${normalized.blockingDecisionQuestionCount}`,
+    );
   }
   if (normalized.checkedOutByHarness) {
     lines.push("- checkout: already claimed by the harness for this run");
@@ -710,8 +1925,176 @@ export function renderPaperclipWakePrompt(
       lines.push(`- active tree hold: ${hold.holdId ?? "unknown"}${hold.rootIssueId ? ` rooted at ${hold.rootIssueId}` : ""}${hold.mode ? ` (${hold.mode})` : ""}`);
     }
   }
-  if (normalized.missingCount > 0) {
-    lines.push(`- omitted comments: ${normalized.missingCount}`);
+  if (normalized.missingCount > 0 || omittedInlineCommentCount > 0) {
+    lines.push(`- omitted comments: ${normalized.missingCount + omittedInlineCommentCount}`);
+  }
+  if (includeSharedSkillDetails && normalized.sharedSkills.length > 0) {
+    lines.push(`- shared skills in runtime: ${normalized.sharedSkills.length}`);
+  }
+
+  if (normalized.checkedOutByHarness) {
+    lines.push(
+      "",
+      "The harness already checked out this issue for the current run.",
+      "Do not call the checkout endpoint again unless you intentionally switch away and later need to reclaim the issue.",
+    );
+  }
+
+  if (normalized.reason === "shared_skill_review_requested" && normalized.sharedSkillReview) {
+    lines.push(
+      "",
+      "Shared skill review fallback:",
+      `- source run: ${normalized.sharedSkillReview.sourceRunId ?? "unknown"}`,
+      `- source run status: ${normalized.sharedSkillReview.sourceRunStatus ?? "unknown"}`,
+      `- reviewed shared skills: ${normalized.sharedSkillReview.sharedSkillIds.length}`,
+      "Review the completed run for reusable shared-skill improvements.",
+      "Create at most one proposal per mirrored skill if a concrete improvement is warranted; otherwise continue without forcing a proposal.",
+    );
+  }
+
+  if (includeSharedSkillDetails && normalized.sharedSkills.length > 0) {
+    lines.push("", "Shared skill mirror context:");
+    for (const skill of normalized.sharedSkills) {
+      lines.push(
+        `- ${skill.name} (${skill.key})`,
+        `  - shared skill id: ${skill.sharedSkillId}`,
+        `  - mirror state: ${skill.mirrorState ?? "unknown"}`,
+        `  - source drift: ${skill.sourceDriftState ?? "unknown"}`,
+        `  - proposal allowed: ${skill.proposalAllowed ? "yes" : "no"}`,
+        `  - apply allowed: ${skill.applyAllowed ? "yes" : "no"}`,
+      );
+      if (skill.openProposal) {
+        lines.push(
+          `  - open proposal: ${skill.openProposal.id} (${skill.openProposal.kind}, ${skill.openProposal.status})`,
+          `  - proposal summary: ${skill.openProposal.summary}`,
+        );
+      }
+    }
+    lines.push(
+      "",
+      "If a loaded mirrored skill is outdated, incomplete, or wrong, create a shared-skill proposal instead of editing the mirror directly.",
+      "If upstream source drift exists, decide whether to propose upstream adoption or a merge review; never auto-apply shared skill changes yourself.",
+      "Proposal route: POST /api/companies/:companyId/shared-skills/:sharedSkillId/proposals with Authorization: Bearer $PAPERCLIP_API_KEY and X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID.",
+    );
+  }
+
+  if (normalized.decisionQuestion) {
+    const question = normalized.decisionQuestion;
+    lines.push(
+      "",
+      "Decision question context:",
+      `- title: ${question.title ?? "untitled"}`,
+      `- status: ${question.status ?? "unknown"}`,
+      `- blocking: ${question.blocking ? "yes" : "no"}`,
+    );
+    if (question.question) {
+      lines.push(`- question: ${question.question}`);
+    }
+    if (question.whyBlocked) {
+      lines.push(`- why blocked: ${question.whyBlocked}`);
+    }
+    if (question.recommendedOptions.length > 0) {
+      lines.push(
+        "- recommended options:",
+        ...question.recommendedOptions.map((option) =>
+          `  - ${option.key}: ${option.label}${option.description ? ` — ${option.description}` : ""}`),
+      );
+    }
+    if (question.suggestedDefault) {
+      lines.push(`- suggested default: ${question.suggestedDefault}`);
+    }
+    if (question.answer) {
+      lines.push(
+        `- board answer: ${question.answer.answer || "provided"}`,
+        `- selected option: ${question.answer.selectedOptionKey ?? "none"}`,
+      );
+      if (question.answer.note) {
+        lines.push(`- answer note: ${question.answer.note}`);
+      }
+    }
+    if (question.linkedApprovalId) {
+      lines.push(`- linked approval: ${question.linkedApprovalId}`);
+    }
+
+    lines.push("");
+    if (normalized.reason === "decision_question_answered") {
+      lines.push(
+        "The board answered your decision question.",
+        "Use the recorded answer as the new source of truth and continue the issue from that decision.",
+        "",
+      );
+    } else if (normalized.reason === "decision_question_dismissed") {
+      lines.push(
+        "The board dismissed your decision question.",
+        "Continue using your best judgment unless another blocker remains.",
+        "",
+      );
+    } else if (normalized.reason === "decision_question_escalated") {
+      lines.push(
+        "This decision question has been promoted to a formal approval.",
+        "Treat the linked approval as the governed decision path before proceeding on any blocked work.",
+        "",
+      );
+    } else if (question.blocking && question.status === "open") {
+      lines.push(
+        "A blocking decision question is open for this issue.",
+        "Do not continue blocked execution work until the board answers or dismisses it.",
+        "",
+      );
+    }
+  }
+
+  if (normalized.planApproval) {
+    const planApproval = normalized.planApproval;
+    lines.push(
+      "",
+      "Plan approval context:",
+      `- approval id: ${planApproval.approvalId ?? "none"}`,
+      `- status: ${planApproval.status ?? "none"}`,
+      `- current plan revision: ${planApproval.currentPlanRevisionId ?? "none"}`,
+      `- requested revision: ${planApproval.requestedPlanRevisionId ?? "none"}`,
+      `- approved revision: ${planApproval.approvedPlanRevisionId ?? "none"}`,
+      `- current revision approved: ${planApproval.currentRevisionApproved ? "yes" : "no"}`,
+    );
+    if (planApproval.decisionNote) {
+      lines.push(`- board note: ${planApproval.decisionNote}`);
+    }
+    if (planApproval.lastRequestedAt) {
+      lines.push(`- last requested at: ${planApproval.lastRequestedAt}`);
+    }
+    if (planApproval.lastDecidedAt) {
+      lines.push(`- last decided at: ${planApproval.lastDecidedAt}`);
+    }
+
+    lines.push("");
+    if (normalized.reason === "approval_revision_requested") {
+      lines.push(
+        "The board requested revisions on your plan approval.",
+        "Open the linked issue, inspect the board note, revise the plan document and any supporting planning docs, then resubmit the approval.",
+        "",
+      );
+    } else if (normalized.reason === "approval_resubmitted") {
+      lines.push(
+        "The plan approval was resubmitted and is pending board review again.",
+        "Do not continue execution until the current plan revision is approved.",
+        "",
+      );
+    } else if (normalized.reason === "approval_approved") {
+      lines.push(
+        "The current plan revision is approved.",
+        "Proceed on the linked issue using the approved plan as the source of truth.",
+        "",
+      );
+    } else if (
+      normalized.continuityStatus === "awaiting_decision" &&
+      (planApproval.status === "pending" || planApproval.status === "revision_requested" || planApproval.requiresApproval)
+    ) {
+      lines.push(
+        "Issue planning is blocked on board plan approval.",
+        "Revise and resubmit or wait for board approval before starting execution work.",
+        "",
+      );
+    }
   }
 
   if (executionStage) {
@@ -750,69 +2133,11 @@ export function renderPaperclipWakePrompt(
     }
   }
 
-  if (normalized.continuationSummary) {
-    lines.push(
-      "",
-      "Issue continuation summary:",
-      normalized.continuationSummary.body,
-    );
-    if (normalized.continuationSummary.bodyTruncated) {
-      lines.push("[continuation summary truncated]");
-    }
+  if (inlineComments.length > 0) {
+    lines.push(resumedSession ? "Latest wake comment:" : "New comments in order:");
   }
 
-  if (normalized.livenessContinuation) {
-    const continuation = normalized.livenessContinuation;
-    lines.push("", "Run liveness continuation:");
-    if (continuation.attempt) {
-      lines.push(
-        `- attempt: ${continuation.attempt}${continuation.maxAttempts ? `/${continuation.maxAttempts}` : ""}`,
-      );
-    }
-    if (continuation.sourceRunId) {
-      lines.push(`- source run: ${continuation.sourceRunId}`);
-    }
-    if (continuation.state) {
-      lines.push(`- liveness state: ${continuation.state}`);
-    }
-    if (continuation.reason) {
-      lines.push(`- reason: ${continuation.reason}`);
-    }
-    if (continuation.instruction) {
-      lines.push(`- instruction: ${continuation.instruction}`);
-    }
-  }
-
-  if (normalized.childIssueSummaries.length > 0) {
-    lines.push("", "Direct child issue summaries:");
-    for (const child of normalized.childIssueSummaries) {
-      const label = child.identifier ?? child.id ?? "unknown";
-      lines.push(
-        `- ${label}${child.title ? ` ${child.title}` : ""}${child.status ? ` (${child.status})` : ""}`,
-      );
-      if (child.summary) {
-        lines.push(`  ${child.summary}`);
-      }
-    }
-    if (normalized.childIssueSummaryTruncated) {
-      lines.push("[child issue summaries truncated]");
-    }
-  }
-
-  if (normalized.checkedOutByHarness) {
-    lines.push(
-      "",
-      "The harness already checked out this issue for the current run.",
-      "Do not call `/api/issues/{id}/checkout` again unless you intentionally switch to a different task.",
-      "",
-    );
-  }
-
-  if (normalized.comments.length > 0) {
-    lines.push("New comments in order:");
-  }
-
-  for (const [index, comment] of normalized.comments.entries()) {
+  for (const [index, comment] of inlineComments.entries()) {
     const authorLabel = comment.authorId
       ? `${comment.authorType ?? "unknown"} ${comment.authorId}`
       : comment.authorType ?? "unknown";
@@ -878,6 +2203,8 @@ export function buildPaperclipEnv(agent: { id: string; companyId: string }): Rec
   const vars: Record<string, string> = {
     PAPERCLIP_AGENT_ID: agent.id,
     PAPERCLIP_COMPANY_ID: agent.companyId,
+    PAPERCLIP_AGENT_MEMORY_HOT_PATH: "hot/MEMORY.md",
+    PAPERCLIP_AGENT_MEMORY_API_PATH: `/api/agents/${agent.id}/memory/file`,
   };
   const runtimeHost = resolveHostForUrl(
     process.env.PAPERCLIP_LISTEN_HOST ?? process.env.HOST ?? "localhost",
@@ -1112,9 +2439,9 @@ async function resolveSpawnTarget(
       spec: remote,
       command,
       args,
-      env: Object.fromEntries(
+      env: sanitizeSshRemoteEnv(Object.fromEntries(
         Object.entries(options.remoteEnv ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-      ),
+      )),
     });
     return {
       command: sshResolved,
@@ -1208,20 +2535,6 @@ export async function resolvePaperclipSkillsDir(
   return null;
 }
 
-async function readSkillRequired(skillDir: string): Promise<boolean> {
-  try {
-    const content = await fs.readFile(path.join(skillDir, "SKILL.md"), "utf8");
-    const normalized = content.replace(/\r\n/g, "\n");
-    if (!normalized.startsWith("---\n")) return true;
-    const closing = normalized.indexOf("\n---\n", 4);
-    if (closing < 0) return true;
-    const frontmatter = normalized.slice(4, closing);
-    return !/^\s*required\s*:\s*false\s*$/m.test(frontmatter);
-  } catch {
-    return true;
-  }
-}
-
 export async function listPaperclipSkillEntries(
   moduleDir: string,
   additionalCandidates: string[] = [],
@@ -1231,20 +2544,15 @@ export async function listPaperclipSkillEntries(
 
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
-    const dirs = entries.filter((entry) => entry.isDirectory());
-    return Promise.all(dirs.map(async (entry) => {
-      const skillDir = path.join(root, entry.name);
-      const required = await readSkillRequired(skillDir);
-      return {
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
         key: `paperclipai/paperclip/${entry.name}`,
         runtimeName: entry.name,
-        source: skillDir,
-        required,
-        requiredReason: required
-          ? "Bundled Paperclip skills are always available for local adapters."
-          : null,
-      };
-    }));
+        source: path.join(root, entry.name),
+        required: true,
+        requiredReason: "Bundled Paperclip skills are always available for local adapters.",
+      }));
   } catch {
     return [];
   }
@@ -1293,7 +2601,7 @@ export function buildPersistentSkillSnapshot(
       state = desired ? "installed" : "stale";
       detail = installedDetail ?? null;
     } else if (installedEntry) {
-      state = "external";
+      state = "blocked";
       detail = desired ? externalConflictDetail : externalDetail;
     } else if (desired) {
       state = "missing";
@@ -1333,6 +2641,8 @@ export function buildPersistentSkillSnapshot(
     });
   }
 
+  const diagnosticInstalled = options.diagnosticInstalled ?? new Map<string, InstalledSkillTarget>();
+
   for (const [name, installedEntry] of installed.entries()) {
     if (availableEntries.some((entry) => entry.runtimeName === name)) continue;
     entries.push({
@@ -1340,7 +2650,7 @@ export function buildPersistentSkillSnapshot(
       runtimeName: name,
       desired: false,
       managed: false,
-      state: "external",
+      state: "blocked",
       origin: "user_installed",
       originLabel: "User-installed",
       locationLabel: skillLocationLabel(locationLabel),
@@ -1348,6 +2658,25 @@ export function buildPersistentSkillSnapshot(
       sourcePath: null,
       targetPath: installedEntry.targetPath ?? path.join(skillsHome, name),
       detail: externalDetail,
+    });
+  }
+
+  for (const [name, installedEntry] of diagnosticInstalled.entries()) {
+    if (installed.has(name)) continue;
+    if (availableEntries.some((entry) => entry.runtimeName === name)) continue;
+    entries.push({
+      key: name,
+      runtimeName: name,
+      desired: false,
+      managed: false,
+      state: "blocked",
+      origin: "user_installed",
+      originLabel: "Blocked unmanaged skill",
+      locationLabel: skillLocationLabel(options.diagnosticLocationLabel ?? locationLabel),
+      readOnly: true,
+      sourcePath: null,
+      targetPath: installedEntry.targetPath ?? null,
+      detail: options.diagnosticExternalDetail ?? externalDetail,
     });
   }
 
@@ -1417,15 +2746,23 @@ export async function readPaperclipSkillMarkdown(
 export function readPaperclipSkillSyncPreference(config: Record<string, unknown>): {
   explicit: boolean;
   desiredSkills: string[];
+  desiredSkillIds: string[];
 } {
   const raw = config.paperclipSkillSync;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return { explicit: false, desiredSkills: [] };
+    return { explicit: false, desiredSkills: [], desiredSkillIds: [] };
   }
   const syncConfig = raw as Record<string, unknown>;
   const desiredValues = syncConfig.desiredSkills;
+  const desiredSkillIdValues = syncConfig.desiredSkillIds;
   const desired = Array.isArray(desiredValues)
     ? desiredValues
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : [];
+  const desiredSkillIds = Array.isArray(desiredSkillIdValues)
+    ? desiredSkillIdValues
         .filter((value): value is string => typeof value === "string")
         .map((value) => value.trim())
         .filter(Boolean)
@@ -1433,6 +2770,7 @@ export function readPaperclipSkillSyncPreference(config: Record<string, unknown>
   return {
     explicit: Object.prototype.hasOwnProperty.call(raw, "desiredSkills"),
     desiredSkills: Array.from(new Set(desired)),
+    desiredSkillIds: Array.from(new Set(desiredSkillIds)),
   };
 }
 
@@ -1479,6 +2817,7 @@ export function resolvePaperclipDesiredSkillNames(
 export function writePaperclipSkillSyncPreference(
   config: Record<string, unknown>,
   desiredSkills: string[],
+  desiredSkillIds: string[] = [],
 ): Record<string, unknown> {
   const next = { ...config };
   const raw = next.paperclipSkillSync;
@@ -1489,6 +2828,13 @@ export function writePaperclipSkillSyncPreference(
   current.desiredSkills = Array.from(
     new Set(
       desiredSkills
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
+  current.desiredSkillIds = Array.from(
+    new Set(
+      desiredSkillIds
         .map((value) => value.trim())
         .filter(Boolean),
     ),
@@ -1790,6 +3136,8 @@ export async function runChildProcess(
     terminalResultCleanup?: TerminalResultCleanupOptions;
     stdin?: string;
     remoteExecution?: RemoteExecutionSpec | null;
+    localExecutionPolicy?: NormalizedLocalExecutionPolicy | null;
+    declaredEnvKeys?: string[];
   },
 ): Promise<RunProcessResult> {
   const onLogError = opts.onLogError ?? ((err, id, msg) => console.warn({ err, runId: id }, msg));
@@ -1820,9 +3168,18 @@ export async function runChildProcess(
       remoteEnv: opts.remoteExecution ? opts.env : null,
     })
       .then((target) => {
+        const executionPolicyResult = applyLocalExecutionPolicy({
+          policy: opts.localExecutionPolicy,
+          executionKind: opts.remoteExecution ? "remote" : "local",
+          command: target.command,
+          cwd: target.cwd ?? opts.cwd,
+          env: mergedEnv as Record<string, string>,
+          declaredEnvKeys: opts.declaredEnvKeys,
+        });
+        const executionEnv = ensurePathInEnv(executionPolicyResult.env);
         const child = spawn(target.command, target.args, {
           cwd: target.cwd ?? opts.cwd,
-          env: mergedEnv,
+          env: executionEnv,
           detached: process.platform !== "win32",
           shell: false,
           stdio: [opts.stdin != null ? "pipe" : "ignore", "pipe", "pipe"],
@@ -1938,10 +3295,26 @@ export async function runChildProcess(
 
         const stdin = child.stdin;
         if (opts.stdin != null && stdin) {
+          stdin.on("error", (err) => {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === "EPIPE" || code === "ERR_STREAM_DESTROYED") {
+              return;
+            }
+            onLogError(err, runId, "failed to write stdin to child process");
+          });
+
           void spawnPersistPromise.finally(() => {
-            if (child.killed || stdin.destroyed) return;
-            stdin.write(opts.stdin as string);
-            stdin.end();
+            if (child.killed || stdin.destroyed || stdin.writableEnded) return;
+            try {
+              stdin.write(opts.stdin as string);
+              stdin.end();
+            } catch (err) {
+              const code = (err as NodeJS.ErrnoException).code;
+              if (code === "EPIPE" || code === "ERR_STREAM_DESTROYED") {
+                return;
+              }
+              onLogError(err, runId, "failed to write stdin to child process");
+            }
           });
         }
 
@@ -1957,10 +3330,6 @@ export async function runChildProcess(
               ? `Failed to start command "${command}" in "${opts.cwd}". Verify adapter command, working directory, and PATH (${pathValue}).`
               : `Failed to start command "${command}" in "${opts.cwd}": ${err.message}`;
           reject(new Error(msg));
-        });
-
-        child.on("exit", () => {
-          maybeArmTerminalResultCleanup();
         });
 
         child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {

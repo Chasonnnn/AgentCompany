@@ -106,6 +106,8 @@ export function buildSystemNoticeProps(input: {
   timestamp?: string;
   source?: SystemNoticeProps["source"];
   runAgentId?: string | null;
+  copyHref?: string;
+  copyText?: string;
 }): SystemNoticeProps {
   const tone: SystemNoticeTone = input.presentation?.tone ?? "neutral";
   const label = systemNoticeLabelForTone(tone, input.presentation?.title);
@@ -121,5 +123,7 @@ export function buildSystemNoticeProps(input: {
     detailsDefaultOpen,
     timestamp: input.timestamp,
     source: input.source,
+    copyHref: input.copyHref,
+    copyText: input.copyText,
   };
 }
