@@ -187,6 +187,10 @@ export const queryKeys = {
     list: (companyId: string) => ["secrets", companyId] as const,
     providers: (companyId: string) => ["secret-providers", companyId] as const,
   },
+  companySearch: {
+    search: (companyId: string, q: string, scope: string, limit: number, offset: number) =>
+      ["company-search", companyId, q, scope, limit, offset] as const,
+  },
   dashboard: (companyId: string) => ["dashboard", companyId] as const,
   sidebarBadges: (companyId: string) => ["sidebar-badges", companyId] as const,
   inboxDismissals: (companyId: string) => ["inbox-dismissals", companyId] as const,

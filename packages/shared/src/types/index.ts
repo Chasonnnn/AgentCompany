@@ -286,6 +286,16 @@ export type {
   ConferenceRoomQuestionResponse,
 } from "./conference-room.js";
 export type {
+  CompanySearchHighlight,
+  CompanySearchIssueSummary,
+  CompanySearchResponse,
+  CompanySearchResult,
+  CompanySearchResultType,
+  CompanySearchScope,
+  CompanySearchSnippet,
+} from "./search.js";
+export { COMPANY_SEARCH_SCOPES } from "./search.js";
+export type {
   ExecutionWorkspace,
   ExecutionWorkspaceConfig,
   ExecutionWorkspaceCloseAction,

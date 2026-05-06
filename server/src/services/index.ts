@@ -1,5 +1,6 @@
 export { companyService } from "./companies.js";
 export { portfolioClusterService } from "./portfolio-clusters.js";
+export { companySearchService } from "./company-search.js";
 export { feedbackService } from "./feedback.js";
 export { companySkillService } from "./company-skills.js";
 export { skillReliabilityService } from "./skill-reliability.js";

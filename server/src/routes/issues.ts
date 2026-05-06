@@ -10,6 +10,7 @@ import {
   acceptIssueThreadInteractionSchema,
   answerIssueDecisionQuestionSchema,
   cancelIssueThreadInteractionSchema,
+  companySearchQuerySchema,
   createIssueThreadInteractionSchema,
   createIssueDecisionQuestionSchema,
   createIssueContinuityBranchSchema,
@@ -56,6 +57,8 @@ import {
   getClosedIsolatedExecutionWorkspaceMessage,
   isClosedIsolatedExecutionWorkspace,
   normalizeIssueIdentifier as normalizeIssueReferenceIdentifier,
+  type CompanySearchQuery,
+  type CompanySearchResponse,
   type ExecutionWorkspace,
   type ProductivitySummary,
   type SuccessfulRunHandoffState,
@@ -67,6 +70,7 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
+  companySearchService,
   officeCoordinationService,
   executionWorkspaceService,
   feedbackService,
@@ -118,6 +122,10 @@ import {
   collectIssueWorkspaceCommandPaths,
 } from "./workspace-command-authz.js";
 import {
+  createCompanySearchRateLimiter,
+  type CompanySearchRateLimiter,
+} from "../services/company-search-rate-limit.js";
+import {
   applyIssueExecutionPolicyTransition,
   normalizeIssueExecutionPolicy,
   parseIssueExecutionState,
@@ -136,6 +144,10 @@ import {
   inReviewRoutingMissingReviewerError,
   selectLeastLoadedQaReviewer,
 } from "../services/in-review-routing.js";
+import {
+  createCompanySearchRateLimiter,
+  type CompanySearchRateLimiter,
+} from "../services/company-search-rate-limit.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -170,6 +182,9 @@ type IssueRouteDeps = {
 
 type ParsedExecutionState = NonNullable<ReturnType<typeof parseIssueExecutionState>>;
 type NormalizedExecutionPolicy = NonNullable<ReturnType<typeof normalizeIssueExecutionPolicy>>;
+type CompanySearchService = {
+  search(companyId: string, query: CompanySearchQuery): Promise<CompanySearchResponse>;
+};
 type ActivityIssueRelationSummary = {
   id: string;
   identifier: string | null;
@@ -468,6 +483,23 @@ const CONTINUITY_CONTROLLED_DOCUMENT_KEYS = new Set([
   ISSUE_BRANCH_CHARTER_DOCUMENT_KEY,
 ]);
 const EXECUTION_APPROVAL_GATED_DOCUMENT_KEYS = new Set(["spec", "plan", "runbook", "test-plan"]);
+
+const defaultCompanySearchRateLimiter = createCompanySearchRateLimiter();
+
+function companySearchRateLimitActor(req: Request, companyId: string) {
+  if (req.actor.type === "agent") {
+    return {
+      companyId,
+      actorType: "agent" as const,
+      actorId: req.actor.agentId ?? req.actor.keyId ?? "unknown-agent",
+    };
+  }
+  return {
+    companyId,
+    actorType: "board" as const,
+    actorId: req.actor.userId ?? req.actor.source ?? "board",
+  };
+}
 
 function monitorPoliciesEqual(left: NormalizedExecutionPolicy | null, right: NormalizedExecutionPolicy | null) {
   return JSON.stringify(left?.monitor ?? null) === JSON.stringify(right?.monitor ?? null);
@@ -874,6 +906,8 @@ export function issueRoutes(
       }): Promise<unknown>;
     };
     services?: Partial<IssueRouteDeps>;
+    searchService?: CompanySearchService;
+    searchRateLimiter?: CompanySearchRateLimiter;
     telemetry?: {
       getTelemetryClient?: typeof getTelemetryClient;
       trackAgentTaskCompleted?: typeof trackAgentTaskCompleted;
@@ -886,6 +920,12 @@ export function issueRoutes(
   const heartbeat = opts?.services?.heartbeatService ?? heartbeatService(db);
   const feedback = opts?.services?.feedbackService ?? feedbackService(db);
   const companiesSvc = opts?.services?.companyService ?? companyService(db);
+  let searchSvc = opts?.searchService ?? null;
+  const getSearchService = () => {
+    searchSvc ??= companySearchService(db);
+    return searchSvc;
+  };
+  const searchRateLimiter = opts?.searchRateLimiter ?? defaultCompanySearchRateLimiter;
   const instanceSettings = opts?.services?.instanceSettingsService ?? instanceSettingsService(db);
   const agentsSvc = opts?.services?.agentService ?? agentService(db);
   const officeCoordinationSvc =
@@ -1498,6 +1538,25 @@ export function issueRoutes(
     res.status(400).json({
       error: "Missing companyId in path. Use /api/companies/{companyId}/issues.",
     });
+  });
+
+  router.get("/companies/:companyId/search", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const query = companySearchQuerySchema.parse(req.query);
+    const rateLimit = searchRateLimiter.consume(companySearchRateLimitActor(req, companyId));
+    res.setHeader("X-RateLimit-Limit", String(rateLimit.limit));
+    res.setHeader("X-RateLimit-Remaining", String(rateLimit.remaining));
+    if (!rateLimit.allowed) {
+      res.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
+      res.status(429).json({
+        error: "Search rate limit exceeded",
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      });
+      return;
+    }
+    const result = await getSearchService().search(companyId, query);
+    res.json(result);
   });
 
   router.get("/companies/:companyId/issues", async (req, res) => {
