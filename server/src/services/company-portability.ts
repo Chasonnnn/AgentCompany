@@ -4593,9 +4593,13 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           }
           continue;
         }
-        const resolvedIssueStatus = manifestIssue.status && ISSUE_STATUSES.includes(manifestIssue.status as any)
+        let resolvedIssueStatus = manifestIssue.status && ISSUE_STATUSES.includes(manifestIssue.status as any)
           ? manifestIssue.status as typeof ISSUE_STATUSES[number]
           : "backlog";
+        if (!assigneeAgentId && resolvedIssueStatus === "in_progress") {
+          warnings.push(`Task ${manifestIssue.slug} was downgraded to todo because its assignee could not be imported as assignable work.`);
+          resolvedIssueStatus = "todo";
+        }
         const createdIssue = await issues.create(targetCompany.id, {
           projectId,
           projectWorkspaceId,
@@ -4625,6 +4629,33 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             createdByAgentId: null,
             createdByUserId: actorUserId ?? null,
             createdByRunId: null,
+          });
+        }
+        for (const comment of manifestIssue.comments ?? []) {
+          const authorAgentId = comment.authorType === "agent" && comment.authorAgentSlug
+            ? importedSlugToAgentId.get(comment.authorAgentSlug)
+              ?? existingSlugToAgentId.get(comment.authorAgentSlug)
+              ?? null
+            : null;
+          if (comment.authorType === "agent" && comment.authorAgentSlug && !authorAgentId) {
+            warnings.push(`Comment on task ${manifestIssue.slug} was imported as a system comment because author agent ${comment.authorAgentSlug} was not imported.`);
+          }
+          if (comment.authorType === "user" && !actorUserId) {
+            warnings.push(`Comment on task ${manifestIssue.slug} was imported as a system comment because no importing user was available.`);
+          }
+          const authorType = authorAgentId
+            ? "agent"
+            : comment.authorType === "user" && actorUserId
+              ? "user"
+              : "system";
+          await issues.addComment(createdIssue.id, comment.body, {
+            agentId: authorAgentId ?? undefined,
+            userId: authorType === "user" ? actorUserId ?? undefined : undefined,
+          }, {
+            authorType,
+            presentation: comment.presentation,
+            metadata: comment.metadata,
+            createdAt: comment.createdAt,
           });
         }
       }

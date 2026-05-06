@@ -82,6 +82,11 @@ type MessageWithOrder = {
   message: ThreadMessage;
 };
 
+export interface StableThreadMessageCacheEntry {
+  fingerprint: string;
+  message: ThreadMessage;
+}
+
 function toDate(value: Date | string | null | undefined) {
   return value instanceof Date ? value : new Date(value ?? Date.now());
 }
