@@ -27,6 +27,7 @@ import {
   type TerminalResultCleanupOptions,
 } from "./server-utils.js";
 import type { NormalizedLocalExecutionPolicy } from "./local-execution-policy.js";
+import { sanitizeRemoteExecutionEnv } from "./remote-execution-env.js";
 import { preferredShellForSandbox } from "./sandbox-shell.js";
 
 export interface AdapterLocalExecutionTarget {
@@ -97,6 +98,8 @@ export interface AdapterExecutionTargetPaperclipBridgeHandle {
   env: Record<string, string>;
   stop(): Promise<void>;
 }
+
+export { sanitizeRemoteExecutionEnv } from "./remote-execution-env.js";
 
 function parseObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -343,11 +346,12 @@ export async function runAdapterExecutionTargetProcess(
 ): Promise<RunProcessResult> {
   if (target?.kind === "remote" && target.transport === "sandbox") {
     const runner = requireSandboxRunner(target);
+    const env = sanitizeRemoteExecutionEnv(options.env);
     return await runner.execute({
       command,
       args,
       cwd: target.remoteCwd,
-      env: options.env,
+      env,
       stdin: options.stdin,
       timeoutMs: options.timeoutSec > 0 ? options.timeoutSec * 1000 : target.timeoutMs ?? undefined,
       onLog: options.onLog,
@@ -357,9 +361,14 @@ export async function runAdapterExecutionTargetProcess(
     });
   }
 
+  const env =
+    target?.kind === "remote" && target.transport === "ssh"
+      ? sanitizeRemoteExecutionEnv(options.env)
+      : options.env;
+
   return await runChildProcess(runId, command, args, {
     cwd: options.cwd,
-    env: options.env,
+    env,
     stdin: options.stdin,
     timeoutSec: options.timeoutSec,
     graceSec: options.graceSec,
@@ -381,68 +390,76 @@ export async function runAdapterExecutionTargetShellCommand(
   const onLog = options.onLog ?? (async () => {});
   if (target?.kind === "remote") {
     const startedAt = new Date().toISOString();
-    if (target.transport === "sandbox") {
-      const shellCommand = preferredSandboxShell(target);
-      return await requireSandboxRunner(target).execute({
-        command: shellCommand,
-        args: ["-lc", command],
-        cwd: target.remoteCwd,
-        env: options.env,
-        timeoutMs: (options.timeoutSec ?? 15) * 1000,
-        onLog,
-      });
-    }
-    try {
-      const result = await runSshCommand(target.spec, `sh -lc ${shellQuote(command)}`, {
-        timeoutMs: (options.timeoutSec ?? 15) * 1000,
-      });
-      if (result.stdout) await onLog("stdout", result.stdout);
-      if (result.stderr) await onLog("stderr", result.stderr);
-      return {
-        exitCode: 0,
-        signal: null,
-        timedOut: false,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        pid: null,
-        startedAt,
-      };
-    } catch (error) {
-      const timedOutError = error as NodeJS.ErrnoException & {
-        stdout?: string;
-        stderr?: string;
-        signal?: string | null;
-      };
-      const stdout = timedOutError.stdout ?? "";
-      const stderr = timedOutError.stderr ?? "";
-      if (typeof timedOutError.code === "number") {
+    const env = sanitizeRemoteExecutionEnv(options.env);
+    if (target.transport === "ssh") {
+      try {
+        // Pass the raw command — `runSshCommand` owns profile sourcing and
+        // the outer `sh -lc` wrapper. Wrapping again here would nest a second
+        // `sh -lc` after the explicit `env KEY=VAL` overrides, re-sourcing
+        // login profiles AFTER the override and silently undoing any
+        // identity var (NVM_DIR / PATH / etc.) that a profile re-exports.
+        const result = await runSshCommand(target.spec, command, {
+          env,
+          timeoutMs: (options.timeoutSec ?? 15) * 1000,
+        });
+        if (result.stdout) await onLog("stdout", result.stdout);
+        if (result.stderr) await onLog("stderr", result.stderr);
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          pid: null,
+          startedAt,
+        };
+      } catch (error) {
+        const timedOutError = error as NodeJS.ErrnoException & {
+          stdout?: string;
+          stderr?: string;
+          signal?: string | null;
+        };
+        const stdout = timedOutError.stdout ?? "";
+        const stderr = timedOutError.stderr ?? "";
+        if (typeof timedOutError.code === "number") {
+          if (stdout) await onLog("stdout", stdout);
+          if (stderr) await onLog("stderr", stderr);
+          return {
+            exitCode: timedOutError.code,
+            signal: timedOutError.signal ?? null,
+            timedOut: false,
+            stdout,
+            stderr,
+            pid: null,
+            startedAt,
+          };
+        }
+        if (timedOutError.code !== "ETIMEDOUT") {
+          throw error;
+        }
         if (stdout) await onLog("stdout", stdout);
         if (stderr) await onLog("stderr", stderr);
         return {
-          exitCode: timedOutError.code,
+          exitCode: null,
           signal: timedOutError.signal ?? null,
-          timedOut: false,
+          timedOut: true,
           stdout,
           stderr,
           pid: null,
           startedAt,
         };
       }
-      if (timedOutError.code !== "ETIMEDOUT") {
-        throw error;
-      }
-      if (stdout) await onLog("stdout", stdout);
-      if (stderr) await onLog("stderr", stderr);
-      return {
-        exitCode: null,
-        signal: timedOutError.signal ?? null,
-        timedOut: true,
-        stdout,
-        stderr,
-        pid: null,
-        startedAt,
-      };
     }
+
+    const shellCommand = preferredSandboxShell(target);
+    return await requireSandboxRunner(target).execute({
+      command: shellCommand,
+      args: ["-lc", command],
+      cwd: target.remoteCwd,
+      env,
+      timeoutMs: (options.timeoutSec ?? 15) * 1000,
+      onLog,
+    });
   }
 
   return await runAdapterExecutionTargetProcess(
