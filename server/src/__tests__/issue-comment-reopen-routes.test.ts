@@ -31,6 +31,7 @@ const mockHeartbeatService = vi.hoisted(() => ({
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  list: vi.fn(),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
@@ -193,6 +194,7 @@ describe("issue comment reopen routes", () => {
     mockHeartbeatService.getActiveRunForAgent.mockReset();
     mockHeartbeatService.cancelRun.mockReset();
     mockAgentService.getById.mockReset();
+    mockAgentService.list.mockReset();
     mockLogActivity.mockReset();
     mockTxInsertValues.mockReset();
     mockTxInsert.mockReset();
@@ -244,6 +246,7 @@ describe("issue comment reopen routes", () => {
     mockAccessService.canUser.mockResolvedValue(false);
     mockAccessService.hasPermission.mockResolvedValue(false);
     mockAgentService.getById.mockResolvedValue(null);
+    mockAgentService.list.mockResolvedValue([]);
   });
 
   it("treats reopen=true as a no-op when the issue is already open", async () => {
@@ -322,7 +325,7 @@ describe("issue comment reopen routes", () => {
     );
   });
 
-  it("implicitly reopens a closed issue when another agent comments", async () => {
+  it("implicitly reopens a closed issue when a permitted agent comments", async () => {
     const closedIssue = {
       ...makeIssue("done"),
       assigneeAgentId: "22222222-2222-4222-8222-222222222222",
@@ -333,6 +336,7 @@ describe("issue comment reopen routes", () => {
       ...closedIssue,
       ...patch,
     }));
+    mockAccessService.hasPermission.mockResolvedValue(true);
 
     const res = await request(await installActor(createApp(), {
       type: "agent",
@@ -524,7 +528,8 @@ describe("issue comment reopen routes", () => {
     expect(mockIssueService.addComment).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       body,
-      expect.any(Object),
+      { userId: "local-board", agentId: undefined, runId: null },
+      { authorType: "user", metadata: null, presentation: null },
     );
     expect(mockIssueService.update).not.toHaveBeenCalled();
     expect(res.body.body).toBe(body);

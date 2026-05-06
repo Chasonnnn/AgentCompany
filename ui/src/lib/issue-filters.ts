@@ -182,6 +182,6 @@ export function countActiveIssueFilters(
   if (state.projects.length > 0) count += 1;
   if (state.workspaces.length > 0) count += 1;
   if (state.liveOnly) count += 1;
-  if (enableRoutineVisibilityFilter && state.hideRoutineExecutions) count += 1;
+  if (enableRoutineVisibilityFilter && !state.hideRoutineExecutions) count += 1;
   return count;
 }

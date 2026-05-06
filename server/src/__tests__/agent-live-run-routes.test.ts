@@ -6,6 +6,7 @@ import { errorHandler } from "../middleware/index.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  resolveByReference: vi.fn(),
 }));
 
 const mockHeartbeatService = vi.hoisted(() => ({
@@ -91,6 +92,15 @@ describe("agent live run routes", () => {
       companyId: "company-1",
       name: "Builder",
       adapterType: "codex_local",
+    });
+    mockAgentService.resolveByReference.mockResolvedValue({
+      ambiguous: false,
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Builder",
+        adapterType: "codex_local",
+      },
     });
     mockHeartbeatService.getRunIssueSummary.mockResolvedValue({
       id: "run-1",

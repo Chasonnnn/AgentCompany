@@ -78,12 +78,21 @@ const defaultViewState: IssueViewState = {
   collapsedGroups: [],
   collapsedParents: [],
 };
-function getViewState(key: string): IssueViewState {
+
+function defaultViewStateForOptions(enableRoutineVisibilityFilter: boolean): IssueViewState {
+  return {
+    ...defaultViewState,
+    hideRoutineExecutions: enableRoutineVisibilityFilter,
+  };
+}
+
+function getViewState(key: string, enableRoutineVisibilityFilter: boolean): IssueViewState {
+  const defaultState = defaultViewStateForOptions(enableRoutineVisibilityFilter);
   try {
     const raw = localStorage.getItem(key);
-    if (raw) return { ...defaultViewState, ...JSON.parse(raw) };
+    if (raw) return { ...defaultState, ...JSON.parse(raw) };
   } catch { /* ignore */ }
-  return { ...defaultViewState };
+  return { ...defaultState };
 }
 
 function saveViewState(key: string, state: IssueViewState) {
@@ -249,10 +258,11 @@ export function IssuesList({
   const scopedKey = selectedCompanyId ? `${viewStateKey}:${selectedCompanyId}` : viewStateKey;
 
   const [viewState, setViewState] = useState<IssueViewState>(() => {
+    const defaultState = defaultViewStateForOptions(enableRoutineVisibilityFilter);
     if (initialAssignees) {
-      return { ...defaultViewState, assignees: initialAssignees, statuses: [] };
+      return { ...defaultState, assignees: initialAssignees, statuses: [] };
     }
-    return getViewState(scopedKey);
+    return getViewState(scopedKey, enableRoutineVisibilityFilter);
   });
   const [assigneePickerIssueId, setAssigneePickerIssueId] = useState<string | null>(null);
   const [assigneeSearch, setAssigneeSearch] = useState("");
@@ -274,11 +284,12 @@ export function IssuesList({
   useEffect(() => {
     if (prevScopedKey.current !== scopedKey) {
       prevScopedKey.current = scopedKey;
+      const defaultState = defaultViewStateForOptions(enableRoutineVisibilityFilter);
       setViewState(initialAssignees
-        ? { ...defaultViewState, assignees: initialAssignees, statuses: [] }
-        : getViewState(scopedKey));
+        ? { ...defaultState, assignees: initialAssignees, statuses: [] }
+        : getViewState(scopedKey, enableRoutineVisibilityFilter));
     }
-  }, [scopedKey, initialAssignees]);
+  }, [scopedKey, initialAssignees, enableRoutineVisibilityFilter]);
 
   const updateView = useCallback((patch: Partial<IssueViewState>) => {
     setViewState((prev) => {

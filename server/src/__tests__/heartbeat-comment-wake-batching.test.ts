@@ -423,8 +423,9 @@ describe("heartbeat comment wake batching", () => {
           .where(eq(heartbeatRuns.agentId, agentId))
           .orderBy(asc(heartbeatRuns.createdAt));
         return (
-          runs.length === 2 &&
-          runs.every((run) => run.status === "succeeded") &&
+          runs.length >= 2 &&
+          runs[0]?.status === "succeeded" &&
+          runs[1]?.status === "succeeded" &&
           runs[1]?.issueCommentStatus === "satisfied" &&
           runs[1]?.issueCommentSatisfiedByCommentId === comment3.id
         );
@@ -436,7 +437,9 @@ describe("heartbeat comment wake batching", () => {
         .where(eq(heartbeatRuns.agentId, agentId))
         .orderBy(asc(heartbeatRuns.createdAt));
 
-      expect(runs).toHaveLength(2);
+      // Recovery can append a corrective handoff run after the comment wake; this
+      // assertion is scoped to the batched comment wake itself.
+      expect(runs.length).toBeGreaterThanOrEqual(2);
       expect(runs[1]?.issueCommentStatus).toBe("satisfied");
       expect(runs[1]?.issueCommentSatisfiedByCommentId).toBe(comment3.id);
 

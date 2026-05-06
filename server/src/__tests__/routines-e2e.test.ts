@@ -129,6 +129,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     await db.delete(runtime.dbModule.routineTriggers);
     await db.delete(runtime.dbModule.heartbeatRunEvents);
     await db.delete(runtime.dbModule.heartbeatRuns);
+    await db.delete(runtime.dbModule.agentRuntimeState);
     await db.delete(runtime.dbModule.agentWakeupRequests);
     await db.delete(runtime.dbModule.issues);
     await db.delete(runtime.dbModule.executionWorkspaces);
@@ -136,8 +137,10 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     await db.delete(runtime.dbModule.principalPermissionGrants);
     await db.delete(runtime.dbModule.companyMemberships);
     await db.delete(runtime.dbModule.routines);
+    await db.delete(runtime.dbModule.companySkills);
     await db.delete(runtime.dbModule.projects);
     await db.delete(runtime.dbModule.agents);
+    await db.delete(runtime.dbModule.companySkills);
     await db.delete(runtime.dbModule.companies);
     await db.delete(runtime.dbModule.instanceSettings);
     vi.restoreAllMocks();

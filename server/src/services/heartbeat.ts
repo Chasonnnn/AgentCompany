@@ -121,6 +121,10 @@ import { issueContinuityService } from "./issue-continuity.js";
 import { issueDecisionQuestionService } from "./issue-decision-questions.js";
 import { RECOVERY_ORIGIN_KINDS } from "./recovery/origins.js";
 import {
+  recoveryAssigneeAdapterOverrides,
+  withRecoveryModelProfileHint,
+} from "./recovery/model-profile-hint.js";
+import {
   ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS,
   issueTreeControlService,
 } from "./issue-tree-control.js";
@@ -3444,6 +3448,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           projectId: input.claimed.projectId,
           goalId: input.claimed.goalId,
           assigneeAgentId: input.claimed.assigneeAgentId,
+          assigneeAdapterOverrides: recoveryAssigneeAdapterOverrides(),
           originKind: RECOVERY_ORIGIN_KINDS.strandedIssueRecovery,
           originId: input.claimed.id,
           originFingerprint: `issue_monitor:${input.clearReason}`,
@@ -3457,15 +3462,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           triggerDetail: "system",
           reason: "issue_monitor_recovery_issue",
           idempotencyKey: `issue-monitor-recovery-issue:${input.claimed.id}:${input.clearReason}:${input.scheduledAtIso}`,
-          payload: { issueId: recoveryIssue.id, sourceIssueId: input.claimed.id },
+          payload: withRecoveryModelProfileHint({ issueId: recoveryIssue.id, sourceIssueId: input.claimed.id }),
           requestedByActorType: input.actorType,
           requestedByActorId: input.actorId,
-          contextSnapshot: {
+          contextSnapshot: withRecoveryModelProfileHint({
             issueId: recoveryIssue.id,
             sourceIssueId: input.claimed.id,
             source: "issue.monitor.recovery_issue",
             wakeReason: "issue_monitor_recovery_issue",
-          },
+          }),
         });
       }
 
@@ -3518,7 +3523,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       triggerDetail: "system",
       reason: "issue_monitor_recovery",
       idempotencyKey: `issue-monitor-recovery:${input.claimed.id}:${input.clearReason}:${input.scheduledAtIso}`,
-      payload: {
+      payload: withRecoveryModelProfileHint({
         issueId: input.claimed.id,
         monitorAttemptCount: input.nextAttemptCount,
         monitorNotes: input.claimed.monitorNotes ?? null,
@@ -3526,10 +3531,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         serviceName: input.monitor?.serviceName ?? null,
         timeoutAt: input.monitor?.timeoutAt ?? null,
         maxAttempts: input.monitor?.maxAttempts ?? null,
-      },
+      }),
       requestedByActorType: input.actorType,
       requestedByActorId: input.actorId,
-      contextSnapshot: {
+      contextSnapshot: withRecoveryModelProfileHint({
         issueId: input.claimed.id,
         source: "issue.monitor.recovery",
         wakeReason: "issue_monitor_recovery",
@@ -3539,7 +3544,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         serviceName: input.monitor?.serviceName ?? null,
         timeoutAt: input.monitor?.timeoutAt ?? null,
         maxAttempts: input.monitor?.maxAttempts ?? null,
-      },
+      }),
     });
 
     await logActivity(db, {
@@ -5963,7 +5968,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     }
     const taskKey = deriveTaskKeyWithHeartbeatFallback(contextSnapshot, null);
     const sessionBefore = await resolveSessionBeforeForWakeup(agent, taskKey);
-    const retryContextSnapshot: Record<string, unknown> = {
+    const retryContextSnapshot: Record<string, unknown> = withRecoveryModelProfileHint({
       ...contextSnapshot,
       retryOfRunId: run.id,
       wakeReason,
@@ -5973,7 +5978,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       scheduledRetryAt: schedule.dueAt.toISOString(),
       ...(transientRetryNotBefore ? { transientRetryNotBefore: transientRetryNotBefore.toISOString() } : {}),
       ...(codexTransientFallbackMode ? { codexTransientFallbackMode } : {}),
-    };
+    });
     const maxTurnContinuationIdempotencyKey = retryReason === MAX_TURN_CONTINUATION_RETRY_REASON
       ? `max-turn-continuation:${run.companyId}:${issueId ?? "no-issue"}:${run.id}:${schedule.attempt}`
       : null;

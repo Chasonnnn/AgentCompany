@@ -503,6 +503,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
     const childIssueId = randomUUID();
     const grandchildIssueId = randomUUID();
     const siblingIssueId = randomUUID();
+    const projectId = randomUUID();
 
     await db.insert(companies).values({
       id: companyId,
@@ -521,10 +522,17 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Cost Tree Project",
+      status: "active",
+    });
     await db.insert(issues).values([
       {
         id: rootIssueId,
         companyId,
+        projectId,
         title: "Root",
         status: "in_progress",
         priority: "medium",
@@ -534,6 +542,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       {
         id: childIssueId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Child",
         status: "done",
@@ -544,6 +553,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       {
         id: grandchildIssueId,
         companyId,
+        projectId,
         parentId: childIssueId,
         title: "Grandchild",
         status: "done",
@@ -554,6 +564,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       {
         id: siblingIssueId,
         companyId,
+        projectId,
         title: "Sibling",
         status: "done",
         priority: "medium",
@@ -642,6 +653,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
     const childIssueId = randomUUID();
     const grandchildIssueId = randomUUID();
     const siblingIssueId = randomUUID();
+    const projectId = randomUUID();
 
     await db.insert(companies).values({
       id: companyId,
@@ -660,10 +672,17 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Run Tree Project",
+      status: "active",
+    });
     await db.insert(issues).values([
       {
         id: rootIssueId,
         companyId,
+        projectId,
         title: "Root",
         status: "in_progress",
         priority: "medium",
@@ -673,6 +692,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       {
         id: childIssueId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Child",
         status: "in_progress",
@@ -683,6 +703,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       {
         id: grandchildIssueId,
         companyId,
+        projectId,
         parentId: childIssueId,
         title: "Grandchild",
         status: "done",
@@ -693,6 +714,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       {
         id: siblingIssueId,
         companyId,
+        projectId,
         title: "Sibling",
         status: "done",
         priority: "medium",

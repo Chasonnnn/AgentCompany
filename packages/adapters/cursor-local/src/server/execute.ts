@@ -4,6 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
 import {
+  parseLocalExecutionPolicy,
+  permissiveLocalExecutionPolicy,
+} from "@paperclipai/adapter-utils/local-execution-policy";
+import {
   adapterExecutionTargetIsRemote,
   adapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
@@ -32,15 +36,18 @@ import {
   ensureAbsoluteDirectory,
   ensurePaperclipSkillSymlink,
   ensurePathInEnv,
+  prepareManagedAdapterHome,
   readPaperclipRuntimeSkillEntries,
   readPaperclipIssueWorkModeFromContext,
   resolvePaperclipDesiredSkillNames,
+  resolveSharedLocalAdapterHomeDir,
   removeMaintainerOnlySkillSymlinks,
   renderTemplate,
   renderPaperclipWakePrompt,
+  renderPaperclipProjectContext,
+  normalizePaperclipWakePayload,
   shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   joinPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_CURSOR_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
@@ -113,7 +120,7 @@ function renderPaperclipEnvNote(env: Record<string, string>): string {
 }
 
 function cursorSkillsHome(): string {
-  return path.join(os.homedir(), ".cursor", "skills");
+  return path.join(resolveSharedLocalAdapterHomeDir(), ".cursor", "skills");
 }
 
 async function buildCursorSkillsDir(config: Record<string, unknown>): Promise<string> {
@@ -202,7 +209,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const promptTemplate = asString(
     config.promptTemplate,
-    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
+    "You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.",
   );
   let command = asString(config.command, "agent");
   const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
@@ -232,18 +239,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     executionCwd: effectiveExecutionCwd,
   });
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-  const cursorSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredCursorSkillNames = resolvePaperclipDesiredSkillNames(config, cursorSkillEntries);
-  if (!executionTargetIsRemote) {
-    await ensureCursorSkillsInjected(onLog, {
-      skillsEntries: cursorSkillEntries.filter((entry) => desiredCursorSkillNames.includes(entry.key)),
-    });
-  }
+
 
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   let env: Record<string, string> = { ...buildPaperclipEnv(agent) };
+  const localExecutionPolicy =
+    parseLocalExecutionPolicy(config.localExecutionPolicy, { defaultPreset: "permissive" }) ??
+    permissiveLocalExecutionPolicy();
   env.PAPERCLIP_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -269,6 +273,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
+  const wakeMode = normalizePaperclipWakePayload(context.paperclipWake)?.mode ?? null;
   const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) {
     env.PAPERCLIP_TASK_ID = wakeTaskId;
@@ -290,6 +295,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   if (linkedIssueIds.length > 0) {
     env.PAPERCLIP_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
+  }
+  if (wakeMode) {
+    env.PAPERCLIP_CONTINUITY_MODE = wakeMode;
   }
   if (wakePayloadJson) {
     env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
@@ -338,6 +346,27 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   command = sandboxCommand.command;
   env = sandboxCommand.env;
+
+  const sharedHome = resolveSharedLocalAdapterHomeDir({ ...process.env, ...env });
+  const managedHome = await prepareManagedAdapterHome({
+    env: { ...process.env, ...env },
+    adapterKey: "cursor",
+    companyId: agent.companyId,
+    sharedHomeDir: sharedHome,
+    logLabel: "Cursor",
+    subtrees: [{ relativePath: ".cursor", excludeChildren: ["skills"] }],
+    onLog,
+  });
+  env.HOME = managedHome;
+  env.CURSOR_HOME = path.join(managedHome, ".cursor");
+
+  const cursorSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+  const desiredCursorSkillNames = resolvePaperclipDesiredSkillNames(config, cursorSkillEntries);
+  await ensureCursorSkillsInjected(onLog, {
+    skillsEntries: cursorSkillEntries.filter((entry) => desiredCursorSkillNames.includes(entry.key)),
+    skillsHome: path.join(env.CURSOR_HOME, "skills"),
+  });
+
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -349,7 +378,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const resolvedCommand = await resolveAdapterExecutionTargetCommandForLogs(command, executionTarget, cwd, runtimeEnv);
   let loggedEnv = buildInvocationEnvForLogs(env, {
     runtimeEnv,
-    includeRuntimeKeys: ["HOME"],
+    includeRuntimeKeys: ["HOME", "CURSOR_HOME"],
     resolvedCommand,
   });
 
@@ -465,7 +494,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       instructionsPrefix =
         `${instructionsContents}\n\n` +
         `The above agent instructions were loaded from ${instructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsDir}.\n\n`;
+        `Resolve any relative file references from ${instructionsDir}, including sibling files such as ./MEMORY.md.\n\n`;
       instructionsChars = instructionsPrefix.length;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -519,11 +548,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
+  const projectContextNote = renderPaperclipProjectContext(context);
   const paperclipEnvNote = renderPaperclipEnvNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
     renderedBootstrapPrompt,
     wakePrompt,
+    projectContextNote,
     sessionHandoffNote,
     paperclipEnvNote,
     renderedPrompt,
@@ -533,6 +564,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     instructionsChars,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     wakePromptChars: wakePrompt.length,
+    projectContextChars: projectContextNote.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: paperclipEnvNote.length,
     heartbeatPromptChars: renderedPrompt.length,
@@ -595,6 +627,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       graceSec,
       stdin: prompt,
       onSpawn,
+      localExecutionPolicy,
+      declaredEnvKeys: Object.keys(envConfig),
       onLog: async (stream, chunk) => {
         if (stream !== "stdout") {
           await onLog(stream, chunk);

@@ -18,7 +18,7 @@ const SUBSCRIPTION_BILLING_SQL = sql.join(SUBSCRIPTION_BILLING_TYPES.map((value)
 const estimatedApiCostBackfills = new WeakMap<object, Promise<void>>();
 
 function sumAsNumber(column: unknown) {
-  return sql<number>`coalesce(sum(${column}), 0)::int`;
+  return sql<number>`coalesce(sum(${column}), 0)::double precision`;
 }
 
 function currentUtcMonthWindow(now = new Date()) {
@@ -45,7 +45,7 @@ async function getMonthlySpendTotal(
   }
   const [row] = await db
     .select({
-      total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`,
+      total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision`,
     })
     .from(costEvents)
     .where(and(...conditions));
@@ -202,8 +202,8 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
 
       const [{ total, estimatedTotal }] = await db
         .select({
-          total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`,
-          estimatedTotal: sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::int`,
+          total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision`,
+          estimatedTotal: sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::double precision`,
         })
         .from(costEvents)
         .where(and(...conditions));
@@ -366,8 +366,8 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
-      const costCentsExpr = sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`;
-      const estimatedApiCostCentsExpr = sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::int`;
+      const costCentsExpr = sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision`;
+      const estimatedApiCostCentsExpr = sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::double precision`;
 
       return db
         .select({
@@ -375,23 +375,23 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
           agentName: agents.name,
           agentStatus: agents.status,
           costCents: costCentsExpr,
-          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::int`,
-          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::int`,
-          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::int`,
-          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::int`,
+          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::double precision`,
+          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::double precision`,
+          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::double precision`,
+          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::double precision`,
           estimatedApiCostCents: estimatedApiCostCentsExpr,
           apiRunCount:
             sql<number>`count(distinct case when ${costEvents.billingType} = ${METERED_BILLING_TYPE} then ${costEvents.heartbeatRunId} end)::int`,
           subscriptionRunCount:
             sql<number>`count(distinct case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.heartbeatRunId} end)::int`,
           subscriptionCachedInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cachedInputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cachedInputTokens} else 0 end), 0)::double precision`,
           subscriptionCacheCreationInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cacheCreationInputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cacheCreationInputTokens} else 0 end), 0)::double precision`,
           subscriptionInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.inputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.inputTokens} else 0 end), 0)::double precision`,
           subscriptionOutputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.outputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.outputTokens} else 0 end), 0)::double precision`,
         })
         .from(costEvents)
         .leftJoin(agents, eq(costEvents.agentId, agents.id))
@@ -407,8 +407,8 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
-      const costCentsExpr = sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`;
-      const estimatedApiCostCentsExpr = sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::int`;
+      const costCentsExpr = sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision`;
+      const estimatedApiCostCentsExpr = sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::double precision`;
 
       return db
         .select({
@@ -417,23 +417,23 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
           billingType: costEvents.billingType,
           model: costEvents.model,
           costCents: costCentsExpr,
-          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::int`,
-          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::int`,
-          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::int`,
-          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::int`,
+          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::double precision`,
+          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::double precision`,
+          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::double precision`,
+          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::double precision`,
           estimatedApiCostCents: estimatedApiCostCentsExpr,
           apiRunCount:
             sql<number>`count(distinct case when ${costEvents.billingType} = ${METERED_BILLING_TYPE} then ${costEvents.heartbeatRunId} end)::int`,
           subscriptionRunCount:
             sql<number>`count(distinct case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.heartbeatRunId} end)::int`,
           subscriptionCachedInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cachedInputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cachedInputTokens} else 0 end), 0)::double precision`,
           subscriptionCacheCreationInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cacheCreationInputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cacheCreationInputTokens} else 0 end), 0)::double precision`,
           subscriptionInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.inputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.inputTokens} else 0 end), 0)::double precision`,
           subscriptionOutputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.outputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.outputTokens} else 0 end), 0)::double precision`,
         })
         .from(costEvents)
         .where(and(...conditions))
@@ -448,30 +448,30 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
-      const costCentsExpr = sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`;
-      const estimatedApiCostCentsExpr = sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::int`;
+      const costCentsExpr = sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision`;
+      const estimatedApiCostCentsExpr = sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::double precision`;
 
       return db
         .select({
           biller: costEvents.biller,
           costCents: costCentsExpr,
-          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::int`,
-          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::int`,
-          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::int`,
-          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::int`,
+          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::double precision`,
+          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::double precision`,
+          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::double precision`,
+          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::double precision`,
           estimatedApiCostCents: estimatedApiCostCentsExpr,
           apiRunCount:
             sql<number>`count(distinct case when ${costEvents.billingType} = ${METERED_BILLING_TYPE} then ${costEvents.heartbeatRunId} end)::int`,
           subscriptionRunCount:
             sql<number>`count(distinct case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.heartbeatRunId} end)::int`,
           subscriptionCachedInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cachedInputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cachedInputTokens} else 0 end), 0)::double precision`,
           subscriptionCacheCreationInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cacheCreationInputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.cacheCreationInputTokens} else 0 end), 0)::double precision`,
           subscriptionInputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.inputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.inputTokens} else 0 end), 0)::double precision`,
           subscriptionOutputTokens:
-            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.outputTokens} else 0 end), 0)::int`,
+            sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${SUBSCRIPTION_BILLING_SQL}) then ${costEvents.outputTokens} else 0 end), 0)::double precision`,
           providerCount: sql<number>`count(distinct ${costEvents.provider})::int`,
           modelCount: sql<number>`count(distinct ${costEvents.model})::int`,
         })
@@ -502,12 +502,12 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
             .select({
               provider: costEvents.provider,
               biller: sql<string>`case when count(distinct ${costEvents.biller}) = 1 then min(${costEvents.biller}) else 'mixed' end`,
-              costCents: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`,
-              inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::int`,
-              cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::int`,
-              cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::int`,
-              outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::int`,
-              estimatedApiCostCents: sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::int`,
+              costCents: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision`,
+              inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::double precision`,
+              cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::double precision`,
+              cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::double precision`,
+              outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::double precision`,
+              estimatedApiCostCents: sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::double precision`,
             })
             .from(costEvents)
             .where(
@@ -517,7 +517,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
               ),
             )
             .groupBy(costEvents.provider)
-            .orderBy(desc(sql`coalesce(sum(${costEvents.costCents}), 0)::int`));
+            .orderBy(desc(sql`coalesce(sum(${costEvents.costCents}), 0)::double precision`));
 
           return rows.map((row) => ({
             provider: row.provider,
@@ -556,12 +556,12 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
           biller: costEvents.biller,
           billingType: costEvents.billingType,
           model: costEvents.model,
-          costCents: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`,
-          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::int`,
-          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::int`,
-          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::int`,
-          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::int`,
-          estimatedApiCostCents: sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::int`,
+          costCents: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision`,
+          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::double precision`,
+          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::double precision`,
+          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::double precision`,
+          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::double precision`,
+          estimatedApiCostCents: sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::double precision`,
         })
         .from(costEvents)
         .leftJoin(agents, eq(costEvents.agentId, agents.id))
@@ -610,18 +610,18 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
-      const costCentsExpr = sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`;
-      const estimatedApiCostCentsExpr = sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::int`;
+      const costCentsExpr = sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision`;
+      const estimatedApiCostCentsExpr = sql<number>`coalesce(sum(${costEvents.estimatedApiCostCents}), 0)::double precision`;
 
       return db
         .select({
           projectId: effectiveProjectId,
           projectName: projects.name,
           costCents: costCentsExpr,
-          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::int`,
-          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::int`,
-          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::int`,
-          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::int`,
+          inputTokens: sql<number>`coalesce(sum(${costEvents.inputTokens}), 0)::double precision`,
+          cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::double precision`,
+          cacheCreationInputTokens: sql<number>`coalesce(sum(${costEvents.cacheCreationInputTokens}), 0)::double precision`,
+          outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::double precision`,
           estimatedApiCostCents: estimatedApiCostCentsExpr,
         })
         .from(costEvents)

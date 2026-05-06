@@ -102,15 +102,17 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "- Start actionable work in this heartbeat; do not stop at a plan unless the issue asks for planning.",
   "- Inspect the scoped wake delta before broad context. If no linked issue or explicit target exists, report the missing link, likely owner, and unblock step instead of exploring broadly.",
   "- Make the first output useful: one concrete issue action, or a blocker/redirect/no-op verdict when no action is available.",
-  "- Leave durable progress in comments, documents, or work products with a clear next action.",
+  "- Leave durable progress in comments, documents, or work products, then update the issue to a clear final disposition before ending the heartbeat.",
+  "- Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
+  "- Final disposition checklist: mark `done` when complete; use `in_review` only with a real reviewer, approval, interaction, or monitor path; use `blocked` only with first-class blockers or a named unblock owner/action; create delegated follow-up issues with blockers when another agent owns the next step; keep `in_progress` only when a live continuation path exists.",
   "- Prefer the smallest verification that proves the change; do not default to full workspace typecheck/build/test on every heartbeat unless the task scope warrants it.",
   "- Use child issues for parallel or long delegated work instead of polling agents, sessions, or processes.",
   "- If woken by a human comment on a dependency-blocked issue, respond or triage the comment without treating the blocked deliverable work as unblocked.",
   "- Create child issues directly when you know what needs to be done; use issue-thread interactions when the board/user must choose suggested tasks, answer structured questions, or confirm a proposal.",
   "- To ask for that input, create an interaction on the current issue with POST /api/issues/{issueId}/interactions using kind suggest_tasks, ask_user_questions, or request_confirmation. Use continuationPolicy wake_assignee when you need to resume after a response; for request_confirmation this resumes only after acceptance.",
+  "- When you intentionally restart follow-up work on a completed assigned issue, include structured `resume: true` with the POST /api/issues/{issueId}/comments or PATCH /api/issues/{issueId} comment payload. Generic agent comments on closed issues are inert by default.",
   "- For plan approval, update the plan document first, then create request_confirmation targeting the latest plan revision with idempotencyKey confirmation:{issueId}:plan:{revisionId}. Wait for acceptance before creating implementation subtasks, and create a fresh confirmation after superseding board/user comments if approval is still needed.",
   "- If blocked, mark the issue blocked and name the unblock owner and action.",
-  "- Before stopping, say whether the issue can close now; if not, name the exact next action and owner.",
   "- Respect budget, pause/cancel, approval gates, and company boundaries.",
 ].join("\n");
 
@@ -489,6 +491,32 @@ type PaperclipWakeComment = {
   authorId: string | null;
 };
 
+type PaperclipWakeContinuationSummary = {
+  key: string | null;
+  title: string | null;
+  body: string;
+  bodyTruncated: boolean;
+  updatedAt: string | null;
+};
+
+type PaperclipWakeLivenessContinuation = {
+  attempt: number | null;
+  maxAttempts: number | null;
+  sourceRunId: string | null;
+  state: string | null;
+  reason: string | null;
+  instruction: string | null;
+};
+
+type PaperclipWakeChildIssueSummary = {
+  id: string | null;
+  identifier: string | null;
+  title: string | null;
+  status: string | null;
+  priority: string | null;
+  summary: string | null;
+};
+
 type PaperclipWakeConferenceRoomIssue = {
   id: string | null;
   identifier: string | null;
@@ -762,6 +790,10 @@ type PaperclipWakePayload = {
   unresolvedBlockerIssueIds: string[];
   unresolvedBlockerSummaries: PaperclipWakeBlockerSummary[];
   executionStage: PaperclipWakeExecutionStage | null;
+  continuationSummary: PaperclipWakeContinuationSummary | null;
+  livenessContinuation: PaperclipWakeLivenessContinuation | null;
+  childIssueSummaries: PaperclipWakeChildIssueSummary[];
+  childIssueSummaryTruncated: boolean;
   commentIds: string[];
   latestCommentId: string | null;
   comments: PaperclipWakeComment[];
@@ -1095,6 +1127,50 @@ function normalizePaperclipWakeComment(value: unknown): PaperclipWakeComment | n
   };
 }
 
+function normalizePaperclipWakeContinuationSummary(value: unknown): PaperclipWakeContinuationSummary | null {
+  const summary = parseObject(value);
+  const body = asString(summary.body, "").trim();
+  if (!body) return null;
+  return {
+    key: asString(summary.key, "").trim() || null,
+    title: asString(summary.title, "").trim() || null,
+    body,
+    bodyTruncated: asBoolean(summary.bodyTruncated, false),
+    updatedAt: asString(summary.updatedAt, "").trim() || null,
+  };
+}
+
+function normalizePaperclipWakeLivenessContinuation(value: unknown): PaperclipWakeLivenessContinuation | null {
+  const continuation = parseObject(value);
+  const attempt = asNumber(continuation.attempt, 0);
+  const maxAttempts = asNumber(continuation.maxAttempts, 0);
+  const sourceRunId = asString(continuation.sourceRunId, "").trim() || null;
+  const state = asString(continuation.state, "").trim() || null;
+  const reason = asString(continuation.reason, "").trim() || null;
+  const instruction = asString(continuation.instruction, "").trim() || null;
+  if (!attempt && !maxAttempts && !sourceRunId && !state && !reason && !instruction) return null;
+  return {
+    attempt: attempt > 0 ? attempt : null,
+    maxAttempts: maxAttempts > 0 ? maxAttempts : null,
+    sourceRunId,
+    state,
+    reason,
+    instruction,
+  };
+}
+
+function normalizePaperclipWakeChildIssueSummary(value: unknown): PaperclipWakeChildIssueSummary | null {
+  const child = parseObject(value);
+  const id = asString(child.id, "").trim() || null;
+  const identifier = asString(child.identifier, "").trim() || null;
+  const title = asString(child.title, "").trim() || null;
+  const status = asString(child.status, "").trim() || null;
+  const priority = asString(child.priority, "").trim() || null;
+  const summary = asString(child.summary, "").trim() || null;
+  if (!id && !identifier && !title && !status && !summary) return null;
+  return { id, identifier, title, status, priority, summary };
+}
+
 function normalizePaperclipWakeConferenceRoomIssue(value: unknown): PaperclipWakeConferenceRoomIssue | null {
   const issue = parseObject(value);
   const id = asString(issue.id, "").trim() || null;
@@ -1412,6 +1488,13 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
   const sharedSkillReview = normalizePaperclipWakeSharedSkillReview(payload.sharedSkillReview);
   const officeCoordination = normalizePaperclipWakeOfficeCoordination(payload.officeCoordination);
   const productivityReport = normalizePaperclipWakeProductivityReport(payload.productivityReport);
+  const continuationSummary = normalizePaperclipWakeContinuationSummary(payload.continuationSummary);
+  const livenessContinuation = normalizePaperclipWakeLivenessContinuation(payload.livenessContinuation);
+  const childIssueSummaries = Array.isArray(payload.childIssueSummaries)
+    ? payload.childIssueSummaries
+        .map((entry) => normalizePaperclipWakeChildIssueSummary(entry))
+        .filter((entry): entry is PaperclipWakeChildIssueSummary => Boolean(entry))
+    : [];
 
   const activeTreeHold = normalizePaperclipWakeTreeHoldSummary(payload.activeTreeHold);
   const unresolvedBlockerIssueIds = Array.isArray(payload.unresolvedBlockerIssueIds)
@@ -1428,6 +1511,9 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     comments.length === 0 &&
     commentIds.length === 0 &&
     !executionStage &&
+    !continuationSummary &&
+    !livenessContinuation &&
+    childIssueSummaries.length === 0 &&
     !activeTreeHold &&
     unresolvedBlockerIssueIds.length === 0 &&
     unresolvedBlockerSummaries.length === 0 &&
@@ -1461,6 +1547,10 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     unresolvedBlockerIssueIds,
     unresolvedBlockerSummaries,
     executionStage,
+    continuationSummary,
+    livenessContinuation,
+    childIssueSummaries,
+    childIssueSummaryTruncated: asBoolean(payload.childIssueSummaryTruncated, false),
     commentIds,
     latestCommentId: asString(payload.latestCommentId, "").trim() || null,
     comments,
@@ -1838,6 +1928,8 @@ export function renderPaperclipWakePrompt(
         "Focus on the new wake delta below and continue the current task without restating the full heartbeat boilerplate.",
         "Do not replay the full issue thread unless `fallbackFetchNeeded` is true or this delta is insufficient.",
         "",
+        "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
+        "",
         `- reason: ${normalized.reason ?? "unknown"}`,
         `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
         `- pending comments: ${normalized.includedCount}/${normalized.requestedCount}`,
@@ -1852,6 +1944,8 @@ export function renderPaperclipWakePrompt(
         "Before generic repo exploration or boilerplate heartbeat updates, take one concrete issue action or name the blocker, owner, and unblock step.",
         "Use this inline wake data first before refetching the issue thread.",
         "Only fetch the API thread when `fallbackFetchNeeded` is true or you need broader history than this small delta.",
+        "",
+        "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
         "",
         `- reason: ${normalized.reason ?? "unknown"}`,
         `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
@@ -2130,6 +2224,55 @@ export function renderPaperclipWakePrompt(
         "Address the requested changes on this issue and resubmit when the work is ready.",
         "",
       );
+    }
+  }
+
+  if (normalized.continuationSummary) {
+    lines.push(
+      "",
+      "Issue continuation summary:",
+      normalized.continuationSummary.body,
+    );
+    if (normalized.continuationSummary.bodyTruncated) {
+      lines.push("[continuation summary truncated]");
+    }
+  }
+
+  if (normalized.livenessContinuation) {
+    const continuation = normalized.livenessContinuation;
+    lines.push("", "Run liveness continuation:");
+    if (continuation.attempt) {
+      lines.push(
+        `- attempt: ${continuation.attempt}${continuation.maxAttempts ? `/${continuation.maxAttempts}` : ""}`,
+      );
+    }
+    if (continuation.sourceRunId) {
+      lines.push(`- source run: ${continuation.sourceRunId}`);
+    }
+    if (continuation.state) {
+      lines.push(`- liveness state: ${continuation.state}`);
+    }
+    if (continuation.reason) {
+      lines.push(`- reason: ${continuation.reason}`);
+    }
+    if (continuation.instruction) {
+      lines.push(`- instruction: ${continuation.instruction}`);
+    }
+  }
+
+  if (normalized.childIssueSummaries.length > 0) {
+    lines.push("", "Direct child issue summaries:");
+    for (const child of normalized.childIssueSummaries) {
+      const label = child.identifier ?? child.id ?? "unknown";
+      lines.push(
+        `- ${label}${child.title ? ` ${child.title}` : ""}${child.status ? ` (${child.status})` : ""}`,
+      );
+      if (child.summary) {
+        lines.push(`  ${child.summary}`);
+      }
+    }
+    if (normalized.childIssueSummaryTruncated) {
+      lines.push("[child issue summaries truncated]");
     }
   }
 
