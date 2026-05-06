@@ -41,6 +41,8 @@ import type {
   FeedbackVote,
   FeedbackVoteValue,
   IssueAttachment,
+  IssueCommentMetadata,
+  IssueCommentPresentation,
 } from "@paperclipai/shared";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
@@ -72,6 +74,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MarkdownBody } from "./MarkdownBody";
+import { SystemNotice } from "./SystemNotice";
+import { buildSystemNoticeProps } from "../lib/system-notice-comment";
 import { MarkdownEditor, type MentionOption, type MarkdownEditorRef } from "./MarkdownEditor";
 import { Identity } from "./Identity";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
@@ -977,6 +981,57 @@ function getThreadMessageCopyText(message: ThreadMessage) {
     .join("\n\n");
 }
 
+function isIssueCommentPresentation(value: unknown): value is IssueCommentPresentation {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<IssueCommentPresentation>;
+  return candidate.kind === "message" || candidate.kind === "system_notice";
+}
+
+function isIssueCommentMetadata(value: unknown): value is IssueCommentMetadata {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<IssueCommentMetadata>;
+  return candidate.version === 1 && Array.isArray(candidate.sections);
+}
+
+function IssueChatSystemNoticeContent({
+  message,
+  custom,
+}: {
+  message: ThreadMessage;
+  custom: Record<string, unknown>;
+}) {
+  const presentation = isIssueCommentPresentation(custom.presentation)
+    ? custom.presentation
+    : null;
+  const metadata = isIssueCommentMetadata(custom.commentMetadata)
+    ? custom.commentMetadata
+    : null;
+  const runId = typeof custom.runId === "string" ? custom.runId : null;
+  const runAgentId = typeof custom.runAgentId === "string" ? custom.runAgentId : null;
+  const source = runId
+    ? {
+        label: `Run ${runId.slice(0, 8)}`,
+        href: runAgentId ? `/agents/${runAgentId}/runs/${runId}` : undefined,
+      }
+    : undefined;
+  const bodyText = getThreadMessageCopyText(message).trim() || "System update";
+
+  return (
+    <div className="py-2">
+      <SystemNotice
+        {...buildSystemNoticeProps({
+          presentation,
+          metadata,
+          body: <MarkdownBody>{bodyText}</MarkdownBody>,
+          timestamp: message.createdAt.toISOString(),
+          source,
+          runAgentId,
+        })}
+      />
+    </div>
+  );
+}
+
 const IssueChatTextParts = memo(function IssueChatTextParts({
   message,
   recessed = false,
@@ -1740,6 +1795,14 @@ function IssueChatSystemMessage() {
       }
     : null;
 
+  if (custom.kind === "system_notice") {
+    return (
+      <MessagePrimitive.Root id={anchorId}>
+        <IssueChatSystemNoticeContent message={message} custom={custom} />
+      </MessagePrimitive.Root>
+    );
+  }
+
   if (custom.kind === "event" && actorName) {
     const isCurrentUser = actorType === "user" && !!currentUserId && actorId === currentUserId;
     const isAgent = actorType === "agent";
@@ -2184,6 +2247,14 @@ function IssueChatManualSystemMessage({ message }: { message: ThreadMessage }) {
         to: IssueTimelineAssignee;
       }
     : null;
+
+  if (custom.kind === "system_notice") {
+    return (
+      <div id={anchorId}>
+        <IssueChatSystemNoticeContent message={message} custom={custom} />
+      </div>
+    );
+  }
 
   if (custom.kind === "event" && actorName) {
     const isCurrentUser = actorType === "user" && !!currentUserId && actorId === currentUserId;

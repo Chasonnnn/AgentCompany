@@ -74,7 +74,16 @@ import { companySkillService } from "./company-skills.js";
 import { officeCoordinationService } from "./office-coordination.js";
 import { productivityService } from "./productivity.js";
 import { productivityReviewService } from "./productivity-review.js";
-import { recoveryService } from "./recovery/index.js";
+import {
+  FINISH_SUCCESSFUL_RUN_HANDOFF_REASON,
+  SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY,
+  SUCCESSFUL_RUN_MISSING_STATE_REASON,
+  buildFinishSuccessfulRunHandoffIdempotencyKey,
+  buildSuccessfulRunHandoffRequiredNotice,
+  decideSuccessfulRunHandoff,
+  findExistingFinishSuccessfulRunHandoffWake,
+  recoveryService,
+} from "./recovery/index.js";
 import { sharedSkillService } from "./shared-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
@@ -4713,6 +4722,249 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     });
   }
 
+  async function buildDetectedSuccessfulRunProgressSummary(run: typeof heartbeatRuns.$inferSelect) {
+    const resultJson = parseObject(run.resultJson);
+    const candidates = [
+      readNonEmptyString(run.nextAction) ? `Next action noted: ${readNonEmptyString(run.nextAction)}` : null,
+      readNonEmptyString(run.livenessReason),
+      readNonEmptyString(resultJson.summary),
+      readNonEmptyString(resultJson.result),
+      readNonEmptyString(resultJson.message),
+    ].filter((value): value is string => Boolean(value));
+    const summary = candidates[0];
+    if (!summary) return null;
+    return redactCurrentUserText(summary, await getCurrentUserRedactionOptions());
+  }
+
+  async function addSuccessfulRunHandoffCommentOnce(input: {
+    issue: Pick<typeof issues.$inferSelect, "id" | "identifier" | "title" | "status">;
+    run: typeof heartbeatRuns.$inferSelect;
+    agent: Pick<typeof agents.$inferSelect, "id" | "name">;
+    detectedProgressSummary: string;
+  }) {
+    const existing = await db
+      .select({ id: issueComments.id })
+      .from(issueComments)
+      .where(
+        and(
+          eq(issueComments.companyId, input.run.companyId),
+          eq(issueComments.issueId, input.issue.id),
+          eq(issueComments.createdByRunId, input.run.id),
+          sql`(${issueComments.body} = ${SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY} or ${issueComments.body} like '## This issue still needs a next step%' or ${issueComments.body} like '## Successful run missing issue disposition%')`,
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (existing) return null;
+    const notice = buildSuccessfulRunHandoffRequiredNotice(input);
+    return issuesSvc.addComment(
+      input.issue.id,
+      notice.body,
+      { runId: input.run.id },
+      {
+        authorType: "system",
+        presentation: notice.presentation,
+        metadata: notice.metadata,
+      },
+    );
+  }
+
+  async function handleSuccessfulRunHandoff(
+    run: typeof heartbeatRuns.$inferSelect,
+    agent: typeof agents.$inferSelect,
+  ) {
+    if (run.status !== "succeeded") return;
+    const context = parseObject(run.contextSnapshot);
+    const issueId = readNonEmptyString(context.issueId) ?? readNonEmptyString(context.taskId);
+    if (!issueId) return;
+
+    const issue = await db
+      .select({
+        id: issues.id,
+        companyId: issues.companyId,
+        identifier: issues.identifier,
+        title: issues.title,
+        status: issues.status,
+        assigneeAgentId: issues.assigneeAgentId,
+        assigneeUserId: issues.assigneeUserId,
+        executionState: issues.executionState,
+        projectId: issues.projectId,
+      })
+      .from(issues)
+      .where(and(eq(issues.id, issueId), eq(issues.companyId, run.companyId)))
+      .then((rows) => rows[0] ?? null);
+    const idempotencyKey = issue
+      ? buildFinishSuccessfulRunHandoffIdempotencyKey({
+          issueId: issue.id,
+          sourceRunId: run.id,
+        })
+      : null;
+    const taskKey = deriveTaskKeyWithHeartbeatFallback(context, null);
+    const detectedProgressSummary = await buildDetectedSuccessfulRunProgressSummary(run);
+
+    const [
+      activeExecutionPath,
+      queuedWake,
+      explicitBlocker,
+      openRecoveryIssue,
+      existingWake,
+      budgetBlock,
+      pauseHold,
+    ] = await Promise.all([
+      issue
+        ? db
+          .select({ id: heartbeatRuns.id })
+          .from(heartbeatRuns)
+          .where(
+            and(
+              eq(heartbeatRuns.companyId, issue.companyId),
+              eq(heartbeatRuns.agentId, run.agentId),
+              inArray(heartbeatRuns.status, [...EXECUTION_PATH_HEARTBEAT_RUN_STATUSES]),
+              sql`(
+                ${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}
+                or ${heartbeatRuns.contextSnapshot} ->> 'taskId' = ${issue.id}
+              )`,
+              sql`${heartbeatRuns.id} <> ${run.id}`,
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+        : Promise.resolve(null),
+      issue
+        ? db
+          .select({ id: agentWakeupRequests.id })
+          .from(agentWakeupRequests)
+          .where(
+            and(
+              eq(agentWakeupRequests.companyId, issue.companyId),
+              eq(agentWakeupRequests.agentId, run.agentId),
+              inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution", "claimed"]),
+              sql`(
+                ${agentWakeupRequests.payload} ->> 'issueId' = ${issue.id}
+                or ${agentWakeupRequests.payload} ->> 'taskId' = ${issue.id}
+                or ${agentWakeupRequests.payload} -> '_paperclipWakeContext' ->> 'issueId' = ${issue.id}
+                or ${agentWakeupRequests.payload} -> '_paperclipWakeContext' ->> 'taskId' = ${issue.id}
+              )`,
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+        : Promise.resolve(null),
+      issue
+        ? db
+          .select({ id: issueRelations.issueId })
+          .from(issueRelations)
+          .where(
+            and(
+              eq(issueRelations.companyId, issue.companyId),
+              eq(issueRelations.relatedIssueId, issue.id),
+              eq(issueRelations.type, "blocks"),
+              sql`exists (
+                select 1
+                from issues blocker
+                where blocker.id = ${issueRelations.issueId}
+                  and blocker.company_id = ${issue.companyId}
+                  and blocker.status not in ('done', 'cancelled')
+                  and blocker.hidden_at is null
+              )`,
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+        : Promise.resolve(null),
+      issue
+        ? db
+          .select({ id: issues.id })
+          .from(issues)
+          .where(
+            and(
+              eq(issues.companyId, issue.companyId),
+              inArray(issues.originKind, [
+                RECOVERY_ORIGIN_KINDS.strandedIssueRecovery,
+                RECOVERY_ORIGIN_KINDS.issueGraphLivenessEscalation,
+              ]),
+              eq(issues.originId, issue.id),
+              isNull(issues.hiddenAt),
+              notInArray(issues.status, ["done", "cancelled"]),
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+        : Promise.resolve(null),
+      idempotencyKey
+        ? findExistingFinishSuccessfulRunHandoffWake(db, {
+            companyId: run.companyId,
+            idempotencyKey,
+          })
+        : Promise.resolve(null),
+      issue
+        ? budgets.getInvocationBlock(issue.companyId, run.agentId, {
+            issueId: issue.id,
+            projectId: issue.projectId,
+          })
+        : Promise.resolve(null),
+      issue
+        ? treeControlSvc.getActivePauseHoldGate(issue.companyId, issue.id)
+        : Promise.resolve(null),
+    ]);
+
+    const decision = decideSuccessfulRunHandoff({
+      run,
+      issue,
+      agent,
+      livenessState: run.livenessState as RunLivenessState | null,
+      detectedProgressSummary,
+      taskKey,
+      hasActiveExecutionPath: Boolean(activeExecutionPath),
+      hasQueuedWake: Boolean(queuedWake),
+      hasPendingInteractionOrApproval: false,
+      hasExplicitBlockerPath: Boolean(explicitBlocker),
+      hasOpenRecoveryIssue: Boolean(openRecoveryIssue),
+      hasPauseHold: Boolean(pauseHold),
+      budgetBlocked: Boolean(budgetBlock),
+      idempotentWakeExists: Boolean(existingWake),
+    });
+
+    if (decision.kind !== "enqueue" || !issue) return;
+
+    const handoffRun = await enqueueWakeup(run.agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: FINISH_SUCCESSFUL_RUN_HANDOFF_REASON,
+      payload: decision.payload,
+      contextSnapshot: decision.contextSnapshot,
+      idempotencyKey: decision.idempotencyKey,
+      requestedByActorType: "system",
+      requestedByActorId: "heartbeat",
+    });
+    if (!handoffRun) return;
+
+    await addSuccessfulRunHandoffCommentOnce({
+      issue,
+      run,
+      agent,
+      detectedProgressSummary: detectedProgressSummary ?? "The run reported progress, but did not choose a next step.",
+    });
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: "system",
+      actorId: "heartbeat",
+      agentId: run.agentId,
+      runId: run.id,
+      action: "issue.successful_run_handoff_required",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        label: "Successful run missing issue disposition",
+        sourceRunId: run.id,
+        correctiveRunId: handoffRun.id,
+        handoffReason: SUCCESSFUL_RUN_MISSING_STATE_REASON,
+        missingDisposition: "clear_next_step",
+        detectedProgressSummary,
+      },
+    });
+  }
+
   async function handleRunLivenessContinuation(
     run: typeof heartbeatRuns.$inferSelect,
     issue:
@@ -8323,9 +8575,18 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         } else if (outcome === "failed" && readTransientRecoveryContractFromRun(finalizedWithLiveness)) {
           await scheduleBoundedRetryForRun(finalizedWithLiveness, agent);
         }
-        await finalizeIssueCommentPolicy(finalizedWithLiveness, agent);
+        const issueCommentPolicyResult = await finalizeIssueCommentPolicy(finalizedWithLiveness, agent);
         await refreshContinuationSummaryForRun(finalizedWithLiveness, agent);
         await handleRunLivenessContinuation(finalizedWithLiveness, liveness?.issue ?? null, agent);
+        await handleSuccessfulRunHandoff(
+          issueCommentPolicyResult.outcome === "retry_queued" || issueCommentPolicyResult.outcome === "retry_exhausted"
+            ? {
+                ...finalizedWithLiveness,
+                issueCommentStatus: issueCommentPolicyResult.outcome,
+              }
+            : finalizedWithLiveness,
+          agent,
+        );
         await releaseIssueExecutionAndPromote(finalizedWithLiveness);
         await handleSharedSkillReviewContinuation(finalizedWithLiveness);
       }

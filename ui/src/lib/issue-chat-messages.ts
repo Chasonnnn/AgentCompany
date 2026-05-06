@@ -232,6 +232,7 @@ function authorNameForComment(
   agentMap?: Map<string, Agent>,
   currentUserId?: string | null,
 ) {
+  if (comment.authorType === "system") return "System";
   if (comment.authorAgentId) {
     return agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8);
   }
@@ -252,13 +253,18 @@ function createCommentMessage(args: {
   const { comment, agentMap, currentUserId, companyId, projectId } = args;
   const createdAt = toDate(comment.createdAt);
   const authorName = authorNameForComment(comment, agentMap, currentUserId);
+  const isSystemNotice = comment.authorType === "system" ||
+    comment.presentation?.kind === "system_notice";
   const custom = {
-    kind: "comment",
+    kind: isSystemNotice ? "system_notice" : "comment",
     commentId: comment.id,
     anchorId: `comment-${comment.id}`,
     authorName,
+    authorType: comment.authorType,
     authorAgentId: comment.authorAgentId,
     authorUserId: comment.authorUserId,
+    presentation: comment.presentation ?? null,
+    commentMetadata: comment.metadata ?? null,
     companyId: companyId ?? comment.companyId,
     projectId: projectId ?? null,
     runId: comment.runId ?? null,
@@ -269,6 +275,17 @@ function createCommentMessage(args: {
     queueReason: comment.queueReason ?? null,
     interruptedRunId: comment.interruptedRunId ?? null,
   };
+
+  if (isSystemNotice) {
+    const message: ThreadSystemMessage = {
+      id: comment.id,
+      role: "system",
+      createdAt,
+      content: [{ type: "text", text: comment.body }],
+      metadata: { custom },
+    };
+    return message;
+  }
 
   if (comment.authorAgentId) {
     const message: ThreadAssistantMessage = {

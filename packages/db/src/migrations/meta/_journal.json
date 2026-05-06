@@ -589,6 +589,13 @@
       "when": 1778010000000,
       "tag": "0083_routine_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1778010001000,
+      "tag": "0084_issue_comment_presentation",
+      "breakpoints": true
     }
   ]
 }
