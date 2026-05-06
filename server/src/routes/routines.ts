@@ -1,8 +1,6 @@
 import { Router, type Request } from "express";
-import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import {
-  ADVISOR_KINDS,
   createRoutineSchema,
   createRoutineTriggerSchema,
   rotateRoutineTriggerSecretSchema,
@@ -10,38 +8,23 @@ import {
   updateRoutineSchema,
   updateRoutineTriggerSchema,
 } from "@paperclipai/shared";
-import { trackRoutineCreated as baseTrackRoutineCreated } from "@paperclipai/shared/telemetry";
+import { trackRoutineCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { accessService, logActivity as baseLogActivity, routineService } from "../services/index.js";
+import { accessService, logActivity, routineService } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { forbidden, unauthorized } from "../errors.js";
-import { getTelemetryClient as baseGetTelemetryClient } from "../telemetry.js";
+import { getTelemetryClient } from "../telemetry.js";
+import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 
-const createRoutineRouteSchema = createRoutineSchema.extend({
-  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
-  advisorEnabled: z.boolean().optional().default(false),
-});
-
-const updateRoutineRouteSchema = updateRoutineSchema.extend({
-  advisorKind: z.enum(ADVISOR_KINDS).optional().nullable(),
-  advisorEnabled: z.boolean().optional(),
-});
-
-type RoutineRouteDeps = {
-  accessService: ReturnType<typeof accessService>;
-  logActivity: typeof baseLogActivity;
-  routineService: ReturnType<typeof routineService>;
-  getTelemetryClient: typeof baseGetTelemetryClient;
-  trackRoutineCreated: typeof baseTrackRoutineCreated;
-};
-
-export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
+export function routineRoutes(
+  db: Db,
+  options: { pluginWorkerManager?: PluginWorkerManager } = {},
+) {
   const router = Router();
-  const svc = deps?.routineService ?? routineService(db);
-  const access = deps?.accessService ?? accessService(db);
-  const logActivity = deps?.logActivity ?? baseLogActivity;
-  const getTelemetryClient = deps?.getTelemetryClient ?? baseGetTelemetryClient;
-  const trackRoutineCreated = deps?.trackRoutineCreated ?? baseTrackRoutineCreated;
+  const svc = routineService(db, {
+    pluginWorkerManager: options.pluginWorkerManager,
+  });
+  const access = accessService(db);
 
   async function assertBoardCanAssignTasks(req: Request, companyId: string) {
     assertCompanyAccess(req, companyId);
@@ -74,6 +57,34 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     return routine;
   }
 
+  async function logRoutineRevisionCreated(req: Request, input: {
+    companyId: string;
+    routineId: string;
+    revisionId: string | null;
+    revisionNumber: number;
+    changeSummary?: string | null;
+    triggerCount?: number | null;
+  }) {
+    if (!input.revisionId) return;
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: input.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "routine.revision_created",
+      entityType: "routine",
+      entityId: input.routineId,
+      details: {
+        revisionId: input.revisionId,
+        revisionNumber: input.revisionNumber,
+        changeSummary: input.changeSummary ?? null,
+        triggerCount: input.triggerCount ?? null,
+      },
+    });
+  }
+
   router.get("/companies/:companyId/routines", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -88,13 +99,14 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     res.json(await svc.listAdvisorTemplates());
   });
 
-  router.post("/companies/:companyId/routines", validate(createRoutineRouteSchema), async (req, res) => {
+  router.post("/companies/:companyId/routines", validate(createRoutineSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertBoardCanAssignTasks(req, companyId);
     assertCanManageCompanyRoutine(req, companyId, req.body.assigneeAgentId);
     const created = await svc.create(companyId, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      runId: req.actor.runId ?? null,
     });
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -112,6 +124,14 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     if (telemetryClient) {
       trackRoutineCreated(telemetryClient);
     }
+    await logRoutineRevisionCreated(req, {
+      companyId,
+      routineId: created.id,
+      revisionId: created.latestRevisionId,
+      revisionNumber: created.latestRevisionNumber,
+      changeSummary: "Created routine",
+      triggerCount: 0,
+    });
     res.status(201).json(created);
   });
 
@@ -125,7 +145,17 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     res.json(detail);
   });
 
-  router.patch("/routines/:id", validate(updateRoutineRouteSchema), async (req, res) => {
+  router.get("/routines/:id/revisions", async (req, res) => {
+    const routine = await assertCanManageExistingRoutine(req, req.params.id as string);
+    if (!routine) {
+      res.status(404).json({ error: "Routine not found" });
+      return;
+    }
+    const revisions = await svc.listRevisions(routine.id);
+    res.json(revisions);
+  });
+
+  router.patch("/routines/:id", validate(updateRoutineSchema), async (req, res) => {
     const routine = await assertCanManageExistingRoutine(req, req.params.id as string);
     if (!routine) {
       res.status(404).json({ error: "Routine not found" });
@@ -154,6 +184,7 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     const updated = await svc.update(routine.id, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      runId: req.actor.runId ?? null,
     });
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -167,7 +198,50 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
       entityId: routine.id,
       details: { title: updated?.title ?? routine.title },
     });
+    if (updated && updated.latestRevisionId !== routine.latestRevisionId) {
+      await logRoutineRevisionCreated(req, {
+        companyId: routine.companyId,
+        routineId: routine.id,
+        revisionId: updated.latestRevisionId,
+        revisionNumber: updated.latestRevisionNumber,
+        changeSummary: "Updated routine",
+        triggerCount: null,
+      });
+    }
     res.json(updated);
+  });
+
+  router.post("/routines/:id/revisions/:revisionId/restore", async (req, res) => {
+    const routine = await assertCanManageExistingRoutine(req, req.params.id as string);
+    if (!routine) {
+      res.status(404).json({ error: "Routine not found" });
+      return;
+    }
+    await assertBoardCanAssignTasks(req, routine.companyId);
+    const result = await svc.restoreRevision(routine.id, req.params.revisionId as string, {
+      agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+      userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      runId: req.actor.runId ?? null,
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: routine.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "routine.revision_restored",
+      entityType: "routine",
+      entityId: routine.id,
+      details: {
+        revisionId: result.revision.id,
+        revisionNumber: result.revision.revisionNumber,
+        restoredFromRevisionId: result.restoredFromRevisionId,
+        restoredFromRevisionNumber: result.restoredFromRevisionNumber,
+        triggerCount: result.revision.snapshot.triggers.length,
+      },
+    });
+    res.json(result);
   });
 
   router.get("/routines/:id/runs", async (req, res) => {
@@ -192,6 +266,7 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     const created = await svc.createTrigger(routine.id, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      runId: req.actor.runId ?? null,
     });
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -204,6 +279,14 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
       entityType: "routine_trigger",
       entityId: created.trigger.id,
       details: { routineId: routine.id, kind: created.trigger.kind },
+    });
+    await logRoutineRevisionCreated(req, {
+      companyId: routine.companyId,
+      routineId: routine.id,
+      revisionId: created.revision.id,
+      revisionNumber: created.revision.revisionNumber,
+      changeSummary: created.revision.changeSummary,
+      triggerCount: created.revision.snapshot.triggers.length,
     });
     res.status(201).json(created);
   });
@@ -223,6 +306,7 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
     const updated = await svc.updateTrigger(trigger.id, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      runId: req.actor.runId ?? null,
     });
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -234,9 +318,19 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
       action: "routine.trigger_updated",
       entityType: "routine_trigger",
       entityId: trigger.id,
-      details: { routineId: routine.id, kind: updated?.kind ?? trigger.kind },
+      details: { routineId: routine.id, kind: updated?.trigger.kind ?? trigger.kind },
     });
-    res.json(updated);
+    if (updated) {
+      await logRoutineRevisionCreated(req, {
+        companyId: routine.companyId,
+        routineId: routine.id,
+        revisionId: updated.revision.id,
+        revisionNumber: updated.revision.revisionNumber,
+        changeSummary: updated.revision.changeSummary,
+        triggerCount: updated.revision.snapshot.triggers.length,
+      });
+    }
+    res.json(updated?.trigger ?? null);
   });
 
   router.delete("/routine-triggers/:id", async (req, res) => {
@@ -250,7 +344,11 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
       res.status(404).json({ error: "Routine not found" });
       return;
     }
-    await svc.deleteTrigger(trigger.id);
+    const deleted = await svc.deleteTrigger(trigger.id, {
+      agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+      userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      runId: req.actor.runId ?? null,
+    });
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: routine.companyId,
@@ -263,6 +361,16 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
       entityId: trigger.id,
       details: { routineId: routine.id, kind: trigger.kind },
     });
+    if (deleted.revision) {
+      await logRoutineRevisionCreated(req, {
+        companyId: routine.companyId,
+        routineId: routine.id,
+        revisionId: deleted.revision.id,
+        revisionNumber: deleted.revision.revisionNumber,
+        changeSummary: deleted.revision.changeSummary,
+        triggerCount: deleted.revision.snapshot.triggers.length,
+      });
+    }
     res.status(204).end();
   });
 
@@ -283,6 +391,7 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
       const rotated = await svc.rotateTriggerSecret(trigger.id, {
         agentId: req.actor.type === "agent" ? req.actor.agentId : null,
         userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+        runId: req.actor.runId ?? null,
       });
       const actor = getActorInfo(req);
       await logActivity(db, {
@@ -295,6 +404,14 @@ export function routineRoutes(db: Db, deps?: Partial<RoutineRouteDeps>) {
         entityType: "routine_trigger",
         entityId: trigger.id,
         details: { routineId: routine.id },
+      });
+      await logRoutineRevisionCreated(req, {
+        companyId: routine.companyId,
+        routineId: routine.id,
+        revisionId: rotated.revision.id,
+        revisionNumber: rotated.revision.revisionNumber,
+        changeSummary: rotated.revision.changeSummary,
+        triggerCount: rotated.revision.snapshot.triggers.length,
       });
       res.json(rotated);
     },

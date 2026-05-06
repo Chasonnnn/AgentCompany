@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
@@ -44,8 +44,6 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-routines-service-");
     db = createDb(tempDb.connectionString);
-    await db.execute(sql.raw(`ALTER TABLE routines ADD COLUMN IF NOT EXISTS advisor_kind text`));
-    await db.execute(sql.raw(`ALTER TABLE routines ADD COLUMN IF NOT EXISTS advisor_enabled boolean NOT NULL DEFAULT false`));
   }, 20_000);
 
   afterEach(async () => {
@@ -285,57 +283,199 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     expect(routine.status).toBe("paused");
   });
 
-  it("persists advisor metadata on create and update", async () => {
-    const { companyId, projectId, agentId, svc } = await seedFixture();
+  it("creates revision 1 on routine create and appends revisions for real updates only", async () => {
+    const { routine, svc } = await seedFixture();
 
-    const created = await svc.create(
-      companyId,
-      {
-        projectId,
-        goalId: null,
-        parentIssueId: null,
-        title: "security audit",
-        description: "Review the release candidate",
-        assigneeAgentId: agentId,
-        priority: "medium",
-        status: "active",
-        advisorKind: "security_audit",
-        advisorEnabled: true,
-        concurrencyPolicy: "coalesce_if_active",
-        catchUpPolicy: "skip_missed",
-      },
-      {},
-    );
-
-    expect(created.advisorKind).toBe("security_audit");
-    expect(created.advisorEnabled).toBe(true);
+    const initialRevisions = await svc.listRevisions(routine.id);
+    expect(initialRevisions).toHaveLength(1);
+    expect(initialRevisions[0]).toMatchObject({
+      id: routine.latestRevisionId,
+      revisionNumber: 1,
+      title: "ascii frog",
+      changeSummary: "Created routine",
+    });
+    expect(initialRevisions[0]?.snapshot.routine.description).toBe("Run the frog routine");
 
     const updated = await svc.update(
-      created.id,
+      routine.id,
       {
-        advisorKind: "budget_analyst",
-        advisorEnabled: false,
+        description: "Run the frog routine with logs",
+        baseRevisionId: routine.latestRevisionId,
       },
       {},
     );
+    expect(updated?.latestRevisionNumber).toBe(2);
+    expect(updated?.latestRevisionId).not.toBe(routine.latestRevisionId);
 
-    expect(updated?.advisorKind).toBe("budget_analyst");
-    expect(updated?.advisorEnabled).toBe(false);
+    const noOp = await svc.update(
+      routine.id,
+      {
+        description: "Run the frog routine with logs",
+        baseRevisionId: updated?.latestRevisionId,
+      },
+      {},
+    );
+    expect(noOp?.latestRevisionId).toBe(updated?.latestRevisionId);
+    expect(noOp?.latestRevisionNumber).toBe(2);
 
-    const detail = await svc.getDetail(created.id);
-    expect(detail?.advisorKind).toBe("budget_analyst");
-    expect(detail?.advisorEnabled).toBe(false);
+    const revisions = await svc.listRevisions(routine.id);
+    expect(revisions.map((revision) => revision.revisionNumber)).toEqual([2, 1]);
+    expect(revisions[0]?.snapshot.routine.description).toBe("Run the frog routine with logs");
+    expect(revisions[1]?.snapshot.routine.description).toBe("Run the frog routine");
   });
 
-  it("lists built-in advisor routine templates disabled by default", async () => {
-    const { svc } = await seedFixture();
+  it("rejects stale routine baseRevisionId updates", async () => {
+    const { routine, svc } = await seedFixture();
+    const updated = await svc.update(routine.id, { description: "new description" }, {});
+    await expect(
+      svc.update(routine.id, {
+        title: "stale update",
+        baseRevisionId: routine.latestRevisionId,
+      }, {}),
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        currentRevisionId: updated?.latestRevisionId,
+      },
+    });
+  });
 
-    const templates = svc.listAdvisorTemplates();
+  it("restores an older routine revision append-only and preserves run history", async () => {
+    const { routine, svc } = await seedFixture();
+    const revision1Id = routine.latestRevisionId!;
+    const run = await svc.runRoutine(routine.id, { source: "manual" });
+    const revision2Routine = await svc.update(routine.id, { description: "revision 2" }, {});
 
-    expect(templates.length).toBeGreaterThan(0);
-    expect(templates.every((template) => template.disabledByDefault)).toBe(true);
-    expect(templates.map((template) => template.advisorKind)).toContain("security_audit");
-    expect(templates.map((template) => template.advisorKind)).toContain("conversation_qa");
+    const restored = await svc.restoreRevision(routine.id, revision1Id, {});
+
+    expect(restored.restoredFromRevisionId).toBe(revision1Id);
+    expect(restored.restoredFromRevisionNumber).toBe(1);
+    expect(restored.routine.latestRevisionNumber).toBe(3);
+    expect(restored.routine.latestRevisionId).not.toBe(revision2Routine?.latestRevisionId);
+    expect(restored.routine.description).toBe("Run the frog routine");
+    expect(restored.revision.restoredFromRevisionId).toBe(revision1Id);
+    expect(restored.revision.snapshot.routine.description).toBe("Run the frog routine");
+
+    const revisions = await svc.listRevisions(routine.id);
+    expect(revisions.map((revision) => revision.revisionNumber)).toEqual([3, 2, 1]);
+    await expect(db.select().from(routineRuns).where(eq(routineRuns.id, run.id))).resolves.toHaveLength(1);
+  });
+
+  it("rejects restoring the current latest routine revision", async () => {
+    const { routine, svc } = await seedFixture();
+
+    await expect(
+      svc.restoreRevision(routine.id, routine.latestRevisionId!, {}),
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        currentRevisionId: routine.latestRevisionId,
+      },
+    });
+  });
+
+  it("recreates deleted webhook trigger secrets when restoring a historical revision", async () => {
+    const { routine, svc } = await seedFixture();
+    const created = await svc.createTrigger(routine.id, {
+      kind: "webhook",
+      signingMode: "bearer",
+      replayWindowSec: 300,
+    }, {});
+    await svc.deleteTrigger(created.trigger.id, {});
+
+    const restored = await svc.restoreRevision(routine.id, created.revision.id, {});
+
+    expect(restored.secretMaterials).toHaveLength(1);
+    expect(restored.secretMaterials[0]).toMatchObject({
+      triggerId: created.trigger.id,
+    });
+    expect(restored.secretMaterials[0]?.webhookSecret).toBeTruthy();
+    expect(restored.secretMaterials[0]?.webhookUrl).toContain("/api/routine-triggers/public/");
+
+    const restoredTrigger = await svc.getTrigger(created.trigger.id);
+    expect(restoredTrigger?.secretId).toBeTruthy();
+    expect(restoredTrigger?.publicId).toBeTruthy();
+    expect(restoredTrigger?.publicId).not.toBe(created.trigger.publicId);
+  });
+
+  it("blocks agents from restoring routine revisions assigned to another agent", async () => {
+    const { companyId, routine, svc } = await seedFixture();
+    const otherAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: otherAgentId,
+      companyId,
+      name: "OtherCoder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    const revision1Id = routine.latestRevisionId!;
+
+    await svc.update(routine.id, { assigneeAgentId: otherAgentId }, {});
+
+    await expect(
+      svc.restoreRevision(routine.id, revision1Id, { agentId: otherAgentId }),
+    ).rejects.toMatchObject({
+      status: 403,
+      message: "Agents can only restore routine revisions assigned to themselves",
+    });
+    await expect(svc.get(routine.id)).resolves.toMatchObject({
+      assigneeAgentId: otherAgentId,
+      latestRevisionNumber: 2,
+    });
+  });
+
+  it("blocks restoring routine revisions assigned to agents that are no longer assignable", async () => {
+    const { agentId, routine, svc } = await seedFixture();
+    const revision1Id = routine.latestRevisionId!;
+    await svc.update(routine.id, { description: "revision 2" }, {});
+    await db
+      .update(agents)
+      .set({ status: "terminated" })
+      .where(eq(agents.id, agentId));
+
+    await expect(
+      svc.restoreRevision(routine.id, revision1Id, { userId: "board-user" }),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Cannot assign routines to terminated agents",
+    });
+    await expect(svc.get(routine.id)).resolves.toMatchObject({
+      description: "revision 2",
+      latestRevisionNumber: 2,
+    });
+  });
+
+  it("appends safe trigger metadata revisions without leaking webhook secrets", async () => {
+    const { routine, svc } = await seedFixture();
+    const created = await svc.createTrigger(routine.id, {
+      kind: "webhook",
+      signingMode: "bearer",
+      replayWindowSec: 300,
+    }, {});
+    expect(created.revision.revisionNumber).toBe(2);
+    expect(created.secretMaterial?.webhookSecret).toBeTruthy();
+
+    const updated = await svc.updateTrigger(created.trigger.id, { label: "deploy hook" }, {});
+    expect(updated?.revision.revisionNumber).toBe(3);
+
+    const rotated = await svc.rotateTriggerSecret(created.trigger.id, {});
+    expect(rotated.revision.revisionNumber).toBe(4);
+    expect(rotated.secretMaterial.webhookSecret).toBeTruthy();
+
+    const deleted = await svc.deleteTrigger(created.trigger.id, {});
+    expect(deleted.revision?.revisionNumber).toBe(5);
+
+    const revisions = await svc.listRevisions(routine.id);
+    const serialized = JSON.stringify(revisions.map((revision) => revision.snapshot));
+    expect(serialized).toContain(created.trigger.publicId!);
+    expect(serialized).not.toContain(created.secretMaterial!.webhookSecret);
+    expect(serialized).not.toContain(rotated.secretMaterial.webhookSecret);
+    expect(serialized).not.toContain(created.trigger.secretId!);
+    expect(revisions[0]?.snapshot.triggers).toHaveLength(0);
   });
 
   it("wakes the assignee when a routine creates a fresh execution issue", async () => {
@@ -630,6 +770,61 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     });
     expect(inboxIssues.map((issue) => issue.id)).toContain(previousIssue.id);
   });
+
+  it("does not coalesce live routine runs with different resolved variables", async () => {
+    const { companyId, agentId, projectId, svc } = await seedFixture();
+    const variableRoutine = await svc.create(
+      companyId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "pre-pr for {{branch}}",
+        description: "Create a pre-PR from {{branch}}",
+        assigneeAgentId: agentId,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+        variables: [
+          { name: "branch", label: null, type: "text", defaultValue: null, required: true, options: [] },
+        ],
+      },
+      {},
+    );
+
+    const first = await svc.runRoutine(variableRoutine.id, {
+      source: "manual",
+      variables: { branch: "feature/a" },
+    });
+    const second = await svc.runRoutine(variableRoutine.id, {
+      source: "manual",
+      variables: { branch: "feature/b" },
+    });
+
+    expect(first.status).toBe("issue_created");
+    expect(second.status).toBe("issue_created");
+    expect(first.linkedIssueId).toBeTruthy();
+    expect(second.linkedIssueId).toBeTruthy();
+    expect(first.linkedIssueId).not.toBe(second.linkedIssueId);
+
+    const routineIssues = await db
+      .select({
+        id: issues.id,
+        title: issues.title,
+        originFingerprint: issues.originFingerprint,
+      })
+      .from(issues)
+      .where(eq(issues.originId, variableRoutine.id));
+
+    expect(routineIssues).toHaveLength(2);
+    expect(routineIssues.map((issue) => issue.title).sort()).toEqual([
+      "pre-pr for feature/a",
+      "pre-pr for feature/b",
+    ]);
+    expect(new Set(routineIssues.map((issue) => issue.originFingerprint)).size).toBe(2);
+  });
+
   it("interpolates routine variables into the execution issue and stores resolved values", async () => {
     const { companyId, agentId, projectId, svc } = await seedFixture();
     const variableRoutine = await svc.create(
@@ -739,6 +934,90 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
       executionWorkspaceId,
       executionWorkspacePreference: "reuse_existing",
       executionWorkspaceSettings: { mode: "isolated_workspace" },
+    });
+  });
+
+  it("auto-populates workspaceBranch from a reused isolated workspace", async () => {
+    const { companyId, agentId, projectId, svc } = await seedFixture();
+    const projectWorkspaceId = randomUUID();
+    const executionWorkspaceId = randomUUID();
+
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
+    await db
+      .update(projects)
+      .set({
+        executionWorkspacePolicy: {
+          enabled: true,
+          defaultMode: "shared_workspace",
+          defaultProjectWorkspaceId: projectWorkspaceId,
+        },
+      })
+      .where(eq(projects.id, projectId));
+    await db.insert(projectWorkspaces).values({
+      id: projectWorkspaceId,
+      companyId,
+      projectId,
+      name: "Primary workspace",
+      isPrimary: true,
+      sharedWorkspaceKey: "routine-primary",
+    });
+    await db.insert(executionWorkspaces).values({
+      id: executionWorkspaceId,
+      companyId,
+      projectId,
+      projectWorkspaceId,
+      mode: "isolated_workspace",
+      strategyType: "git_worktree",
+      name: "Routine worktree",
+      status: "active",
+      providerType: "git_worktree",
+      branchName: "pap-1634-routine-branch",
+    });
+
+    const branchRoutine = await svc.create(
+      companyId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Review {{workspaceBranch}}",
+        description: "Use branch {{workspaceBranch}}",
+        assigneeAgentId: agentId,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+        variables: [
+          { name: "workspaceBranch", label: null, type: "text", defaultValue: null, required: true, options: [] },
+        ],
+      },
+      {},
+    );
+
+    const run = await svc.runRoutine(branchRoutine.id, {
+      source: "manual",
+      executionWorkspaceId,
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: { mode: "isolated_workspace" },
+    });
+
+    const storedIssue = await db
+      .select({ title: issues.title, description: issues.description })
+      .from(issues)
+      .where(eq(issues.id, run.linkedIssueId!))
+      .then((rows) => rows[0] ?? null);
+    const storedRun = await db
+      .select({ triggerPayload: routineRuns.triggerPayload })
+      .from(routineRuns)
+      .where(eq(routineRuns.id, run.id))
+      .then((rows) => rows[0] ?? null);
+
+    expect(storedIssue?.title).toBe("Review pap-1634-routine-branch");
+    expect(storedIssue?.description).toBe("Use branch pap-1634-routine-branch");
+    expect(storedRun?.triggerPayload).toEqual({
+      variables: {
+        workspaceBranch: "pap-1634-routine-branch",
+      },
     });
   });
 
