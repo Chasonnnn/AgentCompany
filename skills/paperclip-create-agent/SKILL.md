@@ -4,6 +4,27 @@ description: >
   Create new agents in Paperclip with governance-aware hiring. Use when you need
   to inspect adapter configuration options, compare existing agent configs,
   draft a new agent prompt/config, and submit a hire request.
+activationHints:
+  keywords:
+    - create agent
+    - hire agent
+    - new agent
+    - add agent
+    - paperclip agent
+    - agent config
+  phrases:
+    - create a new agent
+    - hire a new agent in paperclip
+    - add an agent to the company
+    - set up a new agent
+    - draft agent configuration
+verification:
+  smokeChecklist:
+    - Identity and company context confirmed before creating agent
+    - Board access or can_create_agents permission verified
+    - Adapter configuration options inspected before drafting config
+    - Hire request submitted via Paperclip API
+    - New agent visible in company agent list after creation
 ---
 
 # Paperclip Create Agent Skill
