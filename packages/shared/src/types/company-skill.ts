@@ -43,6 +43,7 @@ export interface SkillVerificationMetadata {
 
 export interface SkillReliabilityMetadata {
   activationHints: string[];
+  auditClasses: ("ux_copy")[];
   deterministicEntrypoints: string[];
   verification: SkillVerificationMetadata | null;
   overlapDomains: string[];

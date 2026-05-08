@@ -45,6 +45,7 @@ import {
   SKILL_RELIABILITY_AUDIT_ORIGIN_KIND,
   stableDigest,
   shouldUpsertHardeningDocument,
+  isSemanticPromptfooCoverageExempt,
   summarizeHardeningDocumentProgress,
 } from "./skill-reliability-lib.js";
 
@@ -420,7 +421,11 @@ export function skillReliabilityService(db: Db) {
       }
 
       const managedLocalAgentCount = detail.usedByAgents.filter((agent) => MANAGED_LOCAL_ADAPTER_TYPES.has(agent.adapterType)).length;
-      if (managedLocalAgentCount > 0 && (metadata?.verification?.promptfooCaseIds.length ?? 0) === 0) {
+      if (
+        managedLocalAgentCount > 0
+        && (metadata?.verification?.promptfooCaseIds.length ?? 0) === 0
+        && !isSemanticPromptfooCoverageExempt({ skillKey: detail.key, metadata })
+      ) {
         findings.push(buildFinding("missing_semantic_promptfoo_coverage", "medium", "Managed local adapters require promptfoo route/process coverage for this skill.", true, ["verification.promptfooCaseIds"]));
       }
 

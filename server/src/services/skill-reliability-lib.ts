@@ -25,6 +25,9 @@ export const SKILL_RELIABILITY_AUDIT_ORIGIN_KIND = "skill_reliability_audit";
 export const HARDENING_DOC_KEYS = ["spec", "plan", "progress", "test-plan"] as const;
 export type HardeningDocumentKey = typeof HARDENING_DOC_KEYS[number];
 
+export const SEMANTIC_PROMPTFOO_EXEMPT_AUDIT_CLASSES = new Set(["ux_copy"]);
+export const SEMANTIC_PROMPTFOO_EXEMPT_SKILL_KEYS = new Set(["adapt", "design-guide", "clarify"]);
+
 function normalizePortablePath(value: string) {
   return value.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "");
 }
@@ -47,6 +50,7 @@ export function normalizeSkillReliabilityMetadata(
   const { frontmatter } = parseFrontmatterMarkdown(markdown);
   const parsed = skillReliabilityMetadataSchema.safeParse({
     activationHints: frontmatter.activationHints,
+    auditClasses: frontmatter.auditClasses,
     deterministicEntrypoints: frontmatter.deterministicEntrypoints,
     verification: frontmatter.verification,
     overlapDomains: frontmatter.overlapDomains,
@@ -62,6 +66,16 @@ export function normalizeSkillReliabilityMetadata(
     metadata: parsed.data,
     warnings: [],
   };
+}
+
+export function isSemanticPromptfooCoverageExempt(input: {
+  skillKey: string;
+  metadata: SkillReliabilityMetadata | null;
+}) {
+  const normalizedSkillKey = input.skillKey.trim().toLowerCase();
+  const keyTail = normalizedSkillKey.split("/").pop() ?? normalizedSkillKey;
+  if (SEMANTIC_PROMPTFOO_EXEMPT_SKILL_KEYS.has(normalizedSkillKey) || SEMANTIC_PROMPTFOO_EXEMPT_SKILL_KEYS.has(keyTail)) return true;
+  return (input.metadata?.auditClasses ?? []).some((auditClass) => SEMANTIC_PROMPTFOO_EXEMPT_AUDIT_CLASSES.has(auditClass));
 }
 
 export function buildSkillHardeningScaffolds(input: {

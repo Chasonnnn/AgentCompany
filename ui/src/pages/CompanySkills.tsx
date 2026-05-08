@@ -933,7 +933,7 @@ function SkillReliabilityAuditPanel({
               Managed adapter policy
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
-              Semantic promptfoo route/process coverage is required only when a skill is used by Paperclip-managed local adapters.
+              Semantic promptfoo route/process coverage is required only when a skill is used by Paperclip-managed local adapters. UX-copy skills such as adapt, design-guide, clarify, and future skills marked with the ux_copy audit class are smoke-checklist-only.
             </p>
             <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
               {audit.managedAdapterTypes.map((adapterType) => (

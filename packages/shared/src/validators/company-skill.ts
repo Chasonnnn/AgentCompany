@@ -50,6 +50,7 @@ export const skillVerificationMetadataSchema = z.object({
 
 export const skillReliabilityMetadataSchema = z.object({
   activationHints: z.array(z.string().min(1)).default([]),
+  auditClasses: z.array(z.enum(["ux_copy"])).default([]),
   deterministicEntrypoints: z.array(z.string().min(1)).default([]),
   verification: skillVerificationMetadataSchema.nullable().optional().default(null),
   overlapDomains: z.array(z.string().min(1)).default([]),
