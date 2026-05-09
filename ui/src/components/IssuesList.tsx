@@ -528,7 +528,6 @@ export function IssuesList({
         if (groupKey.startsWith("__user:")) defaults.assigneeUserId = groupKey.slice("__user:".length);
         else defaults.assigneeAgentId = groupKey;
       }
-      else if (viewState.groupBy === "project" && groupKey !== "__no_project") defaults.projectId = groupKey;
       else if (viewState.groupBy === "workspace" && groupKey !== "__no_workspace") {
         const representativeIssue = group?.items.find((issue) => issue.executionWorkspaceId === groupKey) ?? null;
         const executionWorkspace = executionWorkspaceById.get(groupKey);
