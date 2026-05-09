@@ -114,7 +114,7 @@ describe("codex remote environment diagnostics", () => {
 
     expect(result.status).toBe("pass");
     expect(result.checks.some((check) => check.code === "codex_hello_probe_passed")).toBe(true);
-    expect(prepareManagedCodexHome).toHaveBeenCalledTimes(1);
+    expect(prepareManagedCodexHome).toHaveBeenCalledTimes(2);
     expect(prepareAdapterExecutionTargetRuntime).toHaveBeenCalledTimes(1);
     const runtimeCalls = prepareAdapterExecutionTargetRuntime.mock.calls as unknown as Array<[
       {

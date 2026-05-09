@@ -59,6 +59,19 @@ vi.mock("../services/index.js", () => ({
     listCompanyIds: vi.fn(async () => ["company-1"]),
   }),
   issueApprovalService: () => ({}),
+  issueContinuityService: () => ({
+    recomputeIssueContinuityState: vi.fn(async () => null),
+    prepare: vi.fn(async () => ({
+      continuityState: null,
+      continuityBundle: null,
+      scaffoldedKeys: [],
+      overriddenKeys: [],
+      planApprovalRequest: null,
+    })),
+  }),
+  officeCoordinationService: () => ({
+    findOfficeOperator: vi.fn(async () => null),
+  }),
   issueReferenceService: () => ({
     deleteDocumentSource: async () => undefined,
     diffIssueReferenceSummary: () => ({

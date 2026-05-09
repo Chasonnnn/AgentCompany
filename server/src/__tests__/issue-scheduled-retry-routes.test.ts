@@ -15,6 +15,7 @@ import {
   issueRelations,
   issueTreeHolds,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -49,6 +50,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
     await db.delete(issueTreeHolds);
     await db.delete(activityLog);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
@@ -100,6 +102,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
   } = {}) {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     const issueId = randomUUID();
     const sourceRunId = randomUUID();
     const retryRunId = randomUUID();
@@ -129,6 +132,12 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
         },
       },
       permissions: {},
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Runtime reliability",
+      status: "active",
     });
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
@@ -191,6 +200,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "Retryable issue",
       status: input.issueStatus ?? "in_progress",
       priority: "medium",
@@ -202,7 +212,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
       identifier: `${issuePrefix}-1`,
     });
 
-    return { companyId, agentId, issueId, sourceRunId, retryRunId, scheduledRetryAt };
+    return { companyId, projectId, agentId, issueId, sourceRunId, retryRunId, scheduledRetryAt };
   }
 
   it("surfaces the current scheduled retry in the issue read model", async () => {
@@ -259,6 +269,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
 
   it("returns a clear no-op response when there is no scheduled retry", async () => {
     const companyId = randomUUID();
+    const projectId = randomUUID();
     const issueId = randomUUID();
     await db.insert(companies).values({
       id: companyId,
@@ -266,9 +277,16 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
       issuePrefix: "NONE",
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "No retry project",
+      status: "active",
+    });
     await db.insert(issues).values({
       id: issueId,
       companyId,
+      projectId,
       title: "No retry",
       status: "todo",
       priority: "medium",
@@ -460,11 +478,12 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
   });
 
   it("suppresses retry-now when unresolved blockers remain", async () => {
-    const { companyId, issueId, retryRunId } = await seedIssueWithRetry();
+    const { companyId, projectId, issueId, retryRunId } = await seedIssueWithRetry();
     const blockerId = randomUUID();
     await db.insert(issues).values({
       id: blockerId,
       companyId,
+      projectId,
       title: "Blocking task",
       status: "todo",
       priority: "medium",

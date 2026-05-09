@@ -28,6 +28,15 @@ const mockAuthApi = vi.hoisted(() => ({
   getSession: vi.fn(),
 }));
 
+const mockRetryNowMutation = vi.hoisted(() => ({
+  data: null,
+  isPending: false,
+  isSuccess: false,
+  lastError: null,
+  mutate: vi.fn(),
+  reset: vi.fn(),
+}));
+
 vi.mock("../context/CompanyContext", () => ({
   useCompany: () => ({
     selectedCompanyId: "company-1",
@@ -48,6 +57,10 @@ vi.mock("../api/issues", () => ({
 
 vi.mock("../api/auth", () => ({
   authApi: mockAuthApi,
+}));
+
+vi.mock("../hooks/useRetryNowMutation", () => ({
+  useRetryNowMutation: () => mockRetryNowMutation,
 }));
 
 vi.mock("../hooks/useProjectOrder", () => ({
