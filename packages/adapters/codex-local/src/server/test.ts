@@ -15,8 +15,10 @@ import {
   runAdapterExecutionTargetProcess,
   describeAdapterExecutionTarget,
   resolveAdapterExecutionTargetCwd,
+  prepareAdapterExecutionTargetRuntime,
   type AdapterExecutionTarget,
 } from "@paperclipai/adapter-utils/execution-target";
+import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { parseCodexJsonl } from "./parse.js";
@@ -112,6 +114,99 @@ async function readCodexLoginStatus(
 
 const CODEX_AUTH_REQUIRED_RE =
   /(?:not\s+logged\s+in|login\s+required|authentication\s+required|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|openai[_\s-]?api[_\s-]?key|api[_\s-]?key.*required|please\s+run\s+`?codex\s+login`?|access token could not be refreshed|please log out and sign in again)/i;
+
+async function prepareCodexHelloProbe(input: {
+  runId: string;
+  companyId: string;
+  target: AdapterEnvironmentTestContext["executionTarget"] | null;
+  targetIsRemote: boolean;
+  cwd: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  probeApiKey: string | null;
+}): Promise<{
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cleanup: () => Promise<void>;
+}> {
+  let preparedRuntime: Awaited<ReturnType<typeof prepareAdapterExecutionTargetRuntime>> | null = null;
+  let preparedRuntimeWorkspaceLocalDir: string | null = null;
+
+  const cleanup = async () => {
+    await preparedRuntime?.restoreWorkspace().catch(() => {});
+    if (preparedRuntimeWorkspaceLocalDir) {
+      await fs.rm(preparedRuntimeWorkspaceLocalDir, { recursive: true, force: true }).catch(() => {});
+    }
+  };
+
+  if (input.targetIsRemote && !input.probeApiKey) {
+    const managedHome = await prepareManagedCodexHome(process.env, async () => {}, input.companyId, {
+      apiKey: null,
+    });
+    preparedRuntimeWorkspaceLocalDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), `paperclip-codex-envtest-${input.runId}-`),
+    );
+    preparedRuntime = await prepareAdapterExecutionTargetRuntime({
+      runId: input.runId,
+      target: input.target,
+      adapterKey: "codex",
+      workspaceLocalDir: preparedRuntimeWorkspaceLocalDir,
+      // Pass `input.cwd` as the base (not a pre-built per-run subdir).
+      // `prepareRemoteManagedRuntime` itself appends
+      // `.paperclip-runtime/runs/<runId>/workspace` to whatever it gets, so
+      // pre-building a per-run path here would double-nest the run ID.
+      workspaceRemoteDir: input.cwd,
+      installCommand: SANDBOX_INSTALL_COMMAND,
+      detectCommand: input.command,
+      assets: [
+        {
+          key: "home",
+          localDir: managedHome,
+          followSymlinks: true,
+        },
+      ],
+    });
+
+    return {
+      command: input.command,
+      args: input.args,
+      env: preparedRuntime.assetDirs.home
+        ? { ...input.env, CODEX_HOME: preparedRuntime.assetDirs.home }
+        : { ...input.env },
+      cleanup,
+    };
+  }
+
+  if (input.probeApiKey) {
+    const probeHome = input.targetIsRemote
+      ? `/tmp/paperclip-codex-probe-${input.runId}`
+      : path.join(os.tmpdir(), `paperclip-codex-probe-${input.runId}`);
+    return {
+      command: "sh",
+      args: [
+        "-c",
+        'set -e; mkdir -p "$CODEX_HOME"; umask 077; printf "%s" "$_PAPERCLIP_CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"; unset _PAPERCLIP_CODEX_AUTH_JSON; trap \'rm -rf "$CODEX_HOME"\' EXIT INT TERM; "$0" "$@"',
+        input.command,
+        ...input.args,
+      ],
+      env: {
+        ...input.env,
+        CODEX_HOME: probeHome,
+        _PAPERCLIP_CODEX_AUTH_JSON: JSON.stringify({ OPENAI_API_KEY: input.probeApiKey }),
+      },
+      cleanup,
+    };
+  }
+
+  return {
+    command: input.command,
+    args: input.args,
+    env: { ...input.env },
+    cleanup,
+  };
+}
 
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
@@ -263,92 +358,86 @@ export async function testEnvironment(
         : isNonEmpty(hostOpenAiKey)
           ? hostOpenAiKey
           : null;
-      let probeCommand = command;
-      let probeArgs = args;
-      const probeEnv: Record<string, string> = { ...env };
-      if (probeApiKey) {
-        const probeHome = targetIsRemote
-          ? `/tmp/paperclip-codex-probe-${runId}`
-          : path.join(os.tmpdir(), `paperclip-codex-probe-${runId}`);
-        probeEnv.CODEX_HOME = probeHome;
-        probeEnv._PAPERCLIP_CODEX_AUTH_JSON = JSON.stringify({ OPENAI_API_KEY: probeApiKey });
-        probeCommand = "sh";
-        // Trap on EXIT removes the probe home (with the API-key auth.json) on
-        // any exit path; we drop `exec` so the wrapper shell stays alive long
-        // enough for the trap to fire after the child returns.
-        probeArgs = [
-          "-c",
-          'set -e; mkdir -p "$CODEX_HOME"; umask 077; printf "%s" "$_PAPERCLIP_CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"; unset _PAPERCLIP_CODEX_AUTH_JSON; trap \'rm -rf "$CODEX_HOME"\' EXIT INT TERM; "$0" "$@"',
-          command,
-          ...args,
-        ];
-      }
-
-      const probe = await runAdapterExecutionTargetProcess(
+      const preparedProbe = await prepareCodexHelloProbe({
         runId,
+        companyId: ctx.companyId,
         target,
-        probeCommand,
-        probeArgs,
-        {
-          cwd,
-          env: probeEnv,
-          timeoutSec: 45,
-          graceSec: 5,
-          stdin: "Respond with hello.",
-          onLog: async () => {},
-        },
-      );
-      const parsed = parseCodexJsonl(probe.stdout);
-      const detail = summarizeProbeDetail(probe.stdout, probe.stderr, parsed.errorMessage);
-      const authEvidence = `${parsed.errorMessage ?? ""}\n${probe.stdout}\n${probe.stderr}`.trim();
+        targetIsRemote,
+        cwd,
+        command,
+        args,
+        env,
+        probeApiKey,
+      });
+      try {
+        const probe = await runAdapterExecutionTargetProcess(
+          runId,
+          target,
+          preparedProbe.command,
+          preparedProbe.args,
+          {
+            cwd,
+            env: preparedProbe.env,
+            timeoutSec: 45,
+            graceSec: 5,
+            stdin: "Respond with hello.",
+            onLog: async () => {},
+          },
+        );
+        const parsed = parseCodexJsonl(probe.stdout);
+        const detail = summarizeProbeDetail(probe.stdout, probe.stderr, parsed.errorMessage);
+        const authEvidence = `${parsed.errorMessage ?? ""}\n${probe.stdout}\n${probe.stderr}`.trim();
 
-      if (probe.timedOut) {
-        checks.push({
-          code: "codex_hello_probe_timed_out",
-          level: "warn",
-          message: "Codex hello probe timed out.",
-          hint: "Retry the probe. If this persists, verify Codex can run `Respond with hello` from this directory manually.",
-        });
-      } else if ((probe.exitCode ?? 1) === 0) {
-        const summary = parsed.summary.trim();
-        const hasHello = /\bhello\b/i.test(summary);
-        checks.push({
-          code: hasHello ? "codex_hello_probe_passed" : "codex_hello_probe_unexpected_output",
-          level: hasHello ? "info" : "warn",
-          message: hasHello
-            ? "Codex hello probe succeeded."
-            : "Codex probe ran but did not return `hello` as expected.",
-          ...(summary ? { detail: summary.replace(/\s+/g, " ").trim().slice(0, 240) } : {}),
-          ...(hasHello
-            ? {}
-            : {
-                hint: "Try the probe manually (`codex exec --json -` then prompt: Respond with hello) to inspect full output.",
-              }),
-        });
-      } else if (CODEX_AUTH_REQUIRED_RE.test(authEvidence)) {
-        const hasSavedAuth = checks.some((check) => check.code === "codex_native_auth_present");
-        const staleSavedAuth = hasSavedAuth && isCodexRefreshFailure(authEvidence);
-        checks.push({
-          code: staleSavedAuth ? "codex_hello_probe_auth_stale" : "codex_hello_probe_auth_required",
-          level: "warn",
-          message: staleSavedAuth
-            ? "Saved Codex auth was detected, but `codex exec` could not refresh it."
-            : "Codex CLI is installed, but authentication is not ready.",
-          ...(detail ? { detail } : {}),
-          hint: staleSavedAuth
-            ? "Run `codex logout` and `codex login` to refresh the saved session, or set OPENAI_API_KEY in adapter env/shell, then retry the probe."
-            : probeApiKey
-              ? "OPENAI_API_KEY was provided but Codex still rejected the request. Verify the key is valid for the OpenAI Responses API (e.g. `curl -H \"Authorization: Bearer $OPENAI_API_KEY\" https://api.openai.com/v1/models`), or run `codex login` and seed `~/.codex/auth.json`."
-              : "Codex CLI does not read OPENAI_API_KEY from the environment; set OPENAI_API_KEY in this adapter's config (so Paperclip writes it to `$CODEX_HOME/auth.json`) or run `codex login` on the host first.",
-        });
-      } else {
-        checks.push({
-          code: "codex_hello_probe_failed",
-          level: "error",
-          message: "Codex hello probe failed.",
-          ...(detail ? { detail } : {}),
-          hint: "Run `codex exec --json -` manually in this working directory and prompt `Respond with hello` to debug.",
-        });
+        if (probe.timedOut) {
+          checks.push({
+            code: "codex_hello_probe_timed_out",
+            level: "warn",
+            message: "Codex hello probe timed out.",
+            hint: "Retry the probe. If this persists, verify Codex can run `Respond with hello` from this directory manually.",
+          });
+        } else if ((probe.exitCode ?? 1) === 0) {
+          const summary = parsed.summary.trim();
+          const hasHello = /\bhello\b/i.test(summary);
+          checks.push({
+            code: hasHello ? "codex_hello_probe_passed" : "codex_hello_probe_unexpected_output",
+            level: hasHello ? "info" : "warn",
+            message: hasHello
+              ? "Codex hello probe succeeded."
+              : "Codex probe ran but did not return `hello` as expected.",
+            ...(summary ? { detail: summary.replace(/\s+/g, " ").trim().slice(0, 240) } : {}),
+            ...(hasHello
+              ? {}
+              : {
+                  hint: "Try the probe manually (`codex exec --json -` then prompt: Respond with hello) to inspect full output.",
+                }),
+          });
+        } else if (CODEX_AUTH_REQUIRED_RE.test(authEvidence)) {
+          const hasSavedAuth = checks.some((check) => check.code === "codex_native_auth_present");
+          const staleSavedAuth = hasSavedAuth && isCodexRefreshFailure(authEvidence);
+          checks.push({
+            code: staleSavedAuth ? "codex_hello_probe_auth_stale" : "codex_hello_probe_auth_required",
+            level: "warn",
+            message: staleSavedAuth
+              ? "Saved Codex auth was detected, but `codex exec` could not refresh it."
+              : "Codex CLI is installed, but authentication is not ready.",
+            ...(detail ? { detail } : {}),
+            hint: staleSavedAuth
+              ? "Run `codex logout` and `codex login` to refresh the saved session, or set OPENAI_API_KEY in adapter env/shell, then retry the probe."
+              : probeApiKey
+                ? "OPENAI_API_KEY was provided but Codex still rejected the request. Verify the key is valid for the OpenAI Responses API (e.g. `curl -H \"Authorization: Bearer $OPENAI_API_KEY\" https://api.openai.com/v1/models`), or run `codex login` and seed `~/.codex/auth.json`."
+                : "Codex CLI does not read OPENAI_API_KEY from the environment; set OPENAI_API_KEY in this adapter's config (so Paperclip writes it to `$CODEX_HOME/auth.json`) or run `codex login` on the host first.",
+          });
+        } else {
+          checks.push({
+            code: "codex_hello_probe_failed",
+            level: "error",
+            message: "Codex hello probe failed.",
+            ...(detail ? { detail } : {}),
+            hint: "Run `codex exec --json -` manually in this working directory and prompt `Respond with hello` to debug.",
+          });
+        }
+      } finally {
+        await preparedProbe.cleanup();
       }
     }
   }
