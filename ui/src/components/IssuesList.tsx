@@ -231,6 +231,7 @@ export function IssuesList({
   initialAssignees,
   initialSearch,
   searchFilters,
+  baseCreateIssueDefaults,
   enableRoutineVisibilityFilter = false,
   hasMoreIssues = false,
   isLoadingMoreIssues = false,
@@ -349,10 +350,10 @@ export function IssuesList({
   }, [projects]);
 
   const projectWorkspaceById = useMemo(() => {
-    const map = new Map<string, { name: string }>();
+    const map = new Map<string, { name: string; projectId: string }>();
     for (const project of projects ?? []) {
       for (const workspace of project.workspaces ?? []) {
-        map.set(workspace.id, { name: workspace.name || project.name });
+        map.set(workspace.id, { name: workspace.name || project.name, projectId: project.id });
       }
     }
     return map;
@@ -375,16 +376,21 @@ export function IssuesList({
       name: string;
       mode: "shared_workspace" | "isolated_workspace" | "operator_branch" | "adapter_managed" | "cloud_sandbox";
       projectWorkspaceId: string | null;
+      projectId: string | null;
     }>();
     for (const workspace of executionWorkspaces) {
+      const projectWorkspace = workspace.projectWorkspaceId
+        ? projectWorkspaceById.get(workspace.projectWorkspaceId) ?? null
+        : null;
       map.set(workspace.id, {
         name: workspace.name,
         mode: workspace.mode,
         projectWorkspaceId: workspace.projectWorkspaceId ?? null,
+        projectId: projectWorkspace?.projectId ?? null,
       });
     }
     return map;
-  }, [executionWorkspaces]);
+  }, [executionWorkspaces, projectWorkspaceById]);
 
   const workspaceNameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -511,9 +517,10 @@ export function IssuesList({
     }));
   }, [filtered, viewState.groupBy, agents, agentName, currentUserId, workspaceNameMap, issueTitleMap]);
 
-  const newIssueDefaults = useCallback((groupKey?: string) => {
-    const defaults: Record<string, string> = {};
-    if (projectId) defaults.projectId = projectId;
+  const newIssueDefaults = useCallback((group?: { key: string; items: Issue[] }) => {
+    const groupKey = group?.key;
+    const defaults: Record<string, unknown> = { ...(baseCreateIssueDefaults ?? {}) };
+    if (projectId && defaults.projectId === undefined) defaults.projectId = projectId;
     if (groupKey) {
       if (viewState.groupBy === "status") defaults.status = groupKey;
       else if (viewState.groupBy === "priority") defaults.priority = groupKey;
@@ -521,12 +528,44 @@ export function IssuesList({
         if (groupKey.startsWith("__user:")) defaults.assigneeUserId = groupKey.slice("__user:".length);
         else defaults.assigneeAgentId = groupKey;
       }
+      else if (viewState.groupBy === "project" && groupKey !== "__no_project") defaults.projectId = groupKey;
+      else if (viewState.groupBy === "workspace" && groupKey !== "__no_workspace") {
+        const representativeIssue = group?.items.find((issue) => issue.executionWorkspaceId === groupKey) ?? null;
+        const executionWorkspace = executionWorkspaceById.get(groupKey);
+        if (executionWorkspace) {
+          defaults.executionWorkspaceId = groupKey;
+          defaults.executionWorkspaceMode = "reuse_existing";
+          if (executionWorkspace.projectWorkspaceId) defaults.projectWorkspaceId = executionWorkspace.projectWorkspaceId;
+          const groupedProjectId = executionWorkspace.projectId
+            ?? (executionWorkspace.projectWorkspaceId
+              ? projectWorkspaceById.get(executionWorkspace.projectWorkspaceId)?.projectId
+              : null)
+            ?? (representativeIssue?.executionWorkspaceId === groupKey ? representativeIssue.projectId : null);
+          if (groupedProjectId) defaults.projectId = groupedProjectId;
+        } else {
+          const projectWorkspace = projectWorkspaceById.get(groupKey);
+          if (projectWorkspace) {
+            defaults.projectWorkspaceId = groupKey;
+            defaults.projectId = projectWorkspace.projectId;
+          }
+        }
+      }
       else if (viewState.groupBy === "parent" && groupKey !== "__no_parent") {
         defaults.parentId = groupKey;
       }
     }
     return defaults;
-  }, [projectId, viewState.groupBy]);
+  }, [
+    baseCreateIssueDefaults,
+    executionWorkspaceById,
+    projectId,
+    projectWorkspaceById,
+    viewState.groupBy,
+  ]);
+
+  const openCreateIssueDialog = useCallback((group?: { key: string; items: Issue[] }) => {
+    openNewIssue(newIssueDefaults(group));
+  }, [newIssueDefaults, openNewIssue]);
 
   const filterToWorkspace = useCallback((workspaceId: string) => {
     updateView({ workspaces: [workspaceId] });
@@ -759,7 +798,9 @@ export function IssuesList({
                   variant="ghost"
                   size="icon-xs"
                   className="ml-auto text-muted-foreground"
-                  onClick={() => openNewIssue(newIssueDefaults(group.key))}
+                  title={`New issue in ${group.label}`}
+                  aria-label={`New issue in ${group.label}`}
+                  onClick={() => openCreateIssueDialog(group)}
                 >
                   <Plus className="h-3 w-3" />
                 </Button>
