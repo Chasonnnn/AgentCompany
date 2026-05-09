@@ -25,9 +25,12 @@ import {
   projects,
 } from "@paperclipai/db";
 import type {
+  IssueBlockerAttention,
   IssueCommentAuthorType,
   IssueCommentMetadata,
   IssueCommentPresentation,
+  IssueProductivityReview,
+  IssueProductivityReviewTrigger,
   IssueRelationIssueSummary,
 } from "@paperclipai/shared";
 import {
@@ -839,6 +842,17 @@ async function withIssueLabels(dbOrTx: any, rows: IssueRow[]): Promise<IssueWith
 }
 
 const ACTIVE_RUN_STATUSES = ["queued", "running", "scheduled_retry"];
+const PRODUCTIVITY_REVIEW_ORIGIN_KIND = "issue_productivity_review";
+const PRODUCTIVITY_REVIEW_TERMINAL_STATUSES = ["done", "cancelled"];
+const PRODUCTIVITY_REVIEW_ACTIVITY_ACTIONS = [
+  "issue.productivity_review_created",
+  "issue.productivity_review_updated",
+];
+const PRODUCTIVITY_REVIEW_TRIGGERS: readonly IssueProductivityReviewTrigger[] = [
+  "no_comment_streak",
+  "long_active_duration",
+  "high_churn",
+];
 
 async function activeRunMapForIssues(
   dbOrTx: any,
@@ -905,6 +919,194 @@ async function activeRunMapForIssues(
     }
   }
   return map;
+}
+
+function createIssueBlockerAttention(input: Partial<IssueBlockerAttention> = {}): IssueBlockerAttention {
+  return {
+    state: input.state ?? "none",
+    reason: input.reason ?? null,
+    unresolvedBlockerCount: input.unresolvedBlockerCount ?? 0,
+    coveredBlockerCount: input.coveredBlockerCount ?? 0,
+    stalledBlockerCount: input.stalledBlockerCount ?? 0,
+    attentionBlockerCount: input.attentionBlockerCount ?? 0,
+    sampleBlockerIdentifier: input.sampleBlockerIdentifier ?? null,
+    sampleStalledBlockerIdentifier: input.sampleStalledBlockerIdentifier ?? null,
+  };
+}
+
+function issueRelationSampleIdentifier(issue: IssueRelationIssueSummary | null | undefined) {
+  return issue?.identifier ?? issue?.id ?? null;
+}
+
+function readProductivityReviewTrigger(value: unknown): IssueProductivityReviewTrigger | null {
+  return typeof value === "string" && PRODUCTIVITY_REVIEW_TRIGGERS.includes(value as IssueProductivityReviewTrigger)
+    ? value as IssueProductivityReviewTrigger
+    : null;
+}
+
+function readProductivityReviewStreak(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  return Math.floor(value);
+}
+
+async function listIssueProductivityReviewMap(
+  dbOrTx: any,
+  companyId: string,
+  sourceIssueIds: string[],
+): Promise<Map<string, IssueProductivityReview>> {
+  const map = new Map<string, IssueProductivityReview>();
+  const uniqueIssueIds = [...new Set(sourceIssueIds)];
+  if (uniqueIssueIds.length === 0) return map;
+
+  const reviewRows: Array<{
+    sourceIssueId: string | null;
+    reviewIssueId: string;
+    reviewIdentifier: string | null;
+    status: string;
+    priority: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }> = [];
+  for (const issueIdChunk of chunkList(uniqueIssueIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const rows = await dbOrTx
+      .select({
+        sourceIssueId: issues.originId,
+        reviewIssueId: issues.id,
+        reviewIdentifier: issues.identifier,
+        status: issues.status,
+        priority: issues.priority,
+        createdAt: issues.createdAt,
+        updatedAt: issues.updatedAt,
+      })
+      .from(issues)
+      .where(
+        and(
+          eq(issues.companyId, companyId),
+          eq(issues.originKind, PRODUCTIVITY_REVIEW_ORIGIN_KIND),
+          inArray(issues.originId, issueIdChunk),
+          isNull(issues.hiddenAt),
+          notInArray(issues.status, PRODUCTIVITY_REVIEW_TERMINAL_STATUSES),
+        ),
+      )
+      .orderBy(desc(issues.createdAt), desc(issues.id));
+    reviewRows.push(...rows);
+  }
+  if (reviewRows.length === 0) return map;
+
+  const reviewIssueIds = reviewRows.map((row) => row.reviewIssueId);
+  const detailByReviewIssueId = new Map<
+    string,
+    { trigger: IssueProductivityReviewTrigger | null; noCommentStreak: number | null }
+  >();
+  for (const reviewIdChunk of chunkList(reviewIssueIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const detailRows = await dbOrTx
+      .select({
+        entityId: activityLog.entityId,
+        details: activityLog.details,
+      })
+      .from(activityLog)
+      .where(
+        and(
+          eq(activityLog.companyId, companyId),
+          eq(activityLog.entityType, "issue"),
+          inArray(activityLog.entityId, reviewIdChunk),
+          inArray(activityLog.action, PRODUCTIVITY_REVIEW_ACTIVITY_ACTIONS),
+        ),
+      )
+      .orderBy(desc(activityLog.createdAt), desc(activityLog.id));
+    for (const row of detailRows as Array<{ entityId: string; details: Record<string, unknown> | null }>) {
+      if (detailByReviewIssueId.has(row.entityId)) continue;
+      detailByReviewIssueId.set(row.entityId, {
+        trigger: readProductivityReviewTrigger(row.details?.trigger),
+        noCommentStreak: readProductivityReviewStreak(row.details?.noCommentStreak),
+      });
+    }
+  }
+
+  for (const row of reviewRows) {
+    if (!row.sourceIssueId || map.has(row.sourceIssueId)) continue;
+    const details = detailByReviewIssueId.get(row.reviewIssueId);
+    map.set(row.sourceIssueId, {
+      reviewIssueId: row.reviewIssueId,
+      reviewIdentifier: row.reviewIdentifier,
+      status: row.status as IssueProductivityReview["status"],
+      priority: row.priority as IssueProductivityReview["priority"],
+      trigger: details?.trigger ?? null,
+      noCommentStreak: details?.noCommentStreak ?? null,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
+  }
+  return map;
+}
+
+async function listIssueBlockerAttentionMap(
+  companyId: string,
+  issueRows: Array<Pick<IssueWithLabels, "id" | "companyId" | "status">>,
+  dbOrTx: DbReader,
+): Promise<Map<string, IssueBlockerAttention>> {
+  const attentionMap = new Map<string, IssueBlockerAttention>();
+  for (const row of issueRows) {
+    if (row.status !== "blocked") {
+      attentionMap.set(row.id, createIssueBlockerAttention());
+    }
+  }
+
+  const blockedIssues = issueRows.filter((row) => row.companyId === companyId && row.status === "blocked");
+  if (blockedIssues.length === 0) return attentionMap;
+
+  const relationMap = await getIssueRelationSummaryMap(companyId, blockedIssues.map((issue) => issue.id), dbOrTx);
+  for (const issue of blockedIssues) {
+    const blockers = relationMap.get(issue.id)?.blockedBy ?? [];
+    const unresolvedBlockers = blockers.filter((blocker) => blocker.status !== "done");
+    if (unresolvedBlockers.length === 0) {
+      attentionMap.set(issue.id, createIssueBlockerAttention({
+        state: "needs_attention",
+        reason: "attention_required",
+      }));
+      continue;
+    }
+
+    const assignedBacklogBlockers = unresolvedBlockers.filter((blocker) =>
+      blocker.status === "backlog" && Boolean(blocker.assigneeAgentId || blocker.assigneeUserId),
+    );
+    const stalledReviewBlockers = unresolvedBlockers.filter((blocker) =>
+      blocker.status === "in_review" && !blocker.assigneeUserId,
+    );
+    if (assignedBacklogBlockers.length > 0) {
+      attentionMap.set(issue.id, createIssueBlockerAttention({
+        state: "needs_attention",
+        reason: "attention_required",
+        unresolvedBlockerCount: unresolvedBlockers.length,
+        coveredBlockerCount: Math.max(0, unresolvedBlockers.length - assignedBacklogBlockers.length),
+        stalledBlockerCount: 0,
+        attentionBlockerCount: assignedBacklogBlockers.length,
+        sampleBlockerIdentifier: issueRelationSampleIdentifier(assignedBacklogBlockers[0]),
+      }));
+      continue;
+    }
+    if (stalledReviewBlockers.length > 0) {
+      attentionMap.set(issue.id, createIssueBlockerAttention({
+        state: "stalled",
+        reason: "stalled_review",
+        unresolvedBlockerCount: unresolvedBlockers.length,
+        coveredBlockerCount: Math.max(0, unresolvedBlockers.length - stalledReviewBlockers.length),
+        stalledBlockerCount: stalledReviewBlockers.length,
+        attentionBlockerCount: 0,
+        sampleBlockerIdentifier: issueRelationSampleIdentifier(stalledReviewBlockers[0]),
+        sampleStalledBlockerIdentifier: issueRelationSampleIdentifier(stalledReviewBlockers[0]),
+      }));
+      continue;
+    }
+    attentionMap.set(issue.id, createIssueBlockerAttention({
+      state: "covered",
+      reason: "active_dependency",
+      unresolvedBlockerCount: unresolvedBlockers.length,
+      coveredBlockerCount: unresolvedBlockers.length,
+      sampleBlockerIdentifier: issueRelationSampleIdentifier(unresolvedBlockers[0]),
+    }));
+  }
+  return attentionMap;
 }
 
 function withActiveRuns(
@@ -2045,6 +2247,17 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!issue) throw notFound("Issue not found");
       return getCurrentScheduledRetryForIssue(issue.id, issue.companyId);
+    },
+
+    listProductivityReviews: async (companyId: string, issueIds: string[]) => {
+      return listIssueProductivityReviewMap(db, companyId, issueIds);
+    },
+
+    listBlockerAttention: async (
+      companyId: string,
+      issueRows: Array<Pick<IssueWithLabels, "id" | "companyId" | "status">>,
+    ) => {
+      return listIssueBlockerAttentionMap(companyId, issueRows, db);
     },
 
     getRelationSummaries: async (issueId: string) => {

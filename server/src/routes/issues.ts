@@ -23,6 +23,7 @@ import {
   checkoutIssueSchema,
   createChildIssueSchema,
   createIssueSchema,
+  resolveCreateIssueStatusDefault,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
   feedbackVoteValueSchema,
@@ -352,6 +353,44 @@ type SuccessfulRunHandoffActivityRow = {
   details: Record<string, unknown> | null;
   createdAt: Date;
 };
+
+function applyCreateIssueStatusDefault(req: Request, res: Response, next: () => void) {
+  if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+    next();
+    return;
+  }
+
+  const resolution = resolveCreateIssueStatusDefault(req.body as Record<string, unknown>);
+  res.locals.createIssueStatusDefault = resolution;
+  if (resolution.defaulted) {
+    req.body = {
+      ...req.body,
+      status: resolution.status,
+    };
+  }
+  next();
+}
+
+function buildCreateIssueActivityStatusDetails(
+  issue: { assigneeAgentId: string | null; status: string },
+  res: Response,
+) {
+  const statusDefault = res.locals.createIssueStatusDefault as
+    | ReturnType<typeof resolveCreateIssueStatusDefault>
+    | undefined;
+  const assignmentWakeSkipped = !issue.assigneeAgentId || issue.status === "backlog";
+  return {
+    status: issue.status,
+    statusDefaulted: statusDefault?.defaulted ?? false,
+    statusDefaultReason: statusDefault?.reason ?? "explicit",
+    assignmentWakeSkipped,
+    assignmentWakeSkipReason: assignmentWakeSkipped
+      ? issue.assigneeAgentId
+        ? "assigned_backlog"
+        : "no_agent_assignee"
+      : null,
+  };
+}
 
 const SUCCESSFUL_RUN_HANDOFF_ACTIONS = [
   "issue.successful_run_handoff_required",
@@ -3545,7 +3584,7 @@ export function issueRoutes(
     res.json({ ok: true });
   });
 
-  router.post("/companies/:companyId/issues", validate(createIssueSchema), async (req, res) => {
+  router.post("/companies/:companyId/issues", applyCreateIssueStatusDefault, validate(createIssueSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const hasExplicitAssignee = !!(req.body.assigneeAgentId || req.body.assigneeUserId);
@@ -3637,6 +3676,7 @@ export function issueRoutes(
       details: {
         title: issue.title,
         identifier: issue.identifier,
+        ...buildCreateIssueActivityStatusDetails(issue, res),
         ...(Array.isArray(req.body.blockedByIssueIds) ? { blockedByIssueIds: req.body.blockedByIssueIds } : {}),
         ...(scaffoldedKeys.length > 0 || overriddenKeys.length > 0
           ? {
@@ -3733,7 +3773,7 @@ export function issueRoutes(
     }));
   });
 
-  router.post("/issues/:id/children", validate(createChildIssueSchema), async (req, res) => {
+  router.post("/issues/:id/children", applyCreateIssueStatusDefault, validate(createChildIssueSchema), async (req, res) => {
     const parentId = req.params.id as string;
     const parent = await svc.getById(parentId);
     if (!parent) {
@@ -3775,6 +3815,7 @@ export function issueRoutes(
         parentId: parent.id,
         identifier: issue.identifier,
         title: issue.title,
+        ...buildCreateIssueActivityStatusDetails(issue, res),
         inheritedExecutionWorkspaceFromIssueId: parent.id,
         ...(Array.isArray(req.body.blockedByIssueIds) ? { blockedByIssueIds: req.body.blockedByIssueIds } : {}),
         ...(parentBlockerAdded ? { parentBlockerAdded: true } : {}),

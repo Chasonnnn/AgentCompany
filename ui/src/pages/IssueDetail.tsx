@@ -2663,6 +2663,10 @@ export function IssueDetail() {
                 timelineEvents={timelineEvents}
                 liveRuns={liveRuns}
                 activeRun={activeRun}
+                blockedBy={issue.blockedBy ?? []}
+                blockerAttention={issue.blockerAttention ?? null}
+                successfulRunHandoff={issue.successfulRunHandoff ?? null}
+                assigneeUserId={issue.assigneeUserId ?? null}
                 companyId={issue.companyId}
                 projectId={issue.projectId}
                 issueStatus={issue.status}
@@ -2717,6 +2721,14 @@ export function IssueDetail() {
                       await interruptQueuedComment.mutateAsync(runningIssueRun.id);
                     }
                   : undefined}
+                onResumeFromBacklog={
+                  issue.status === "backlog" && Boolean(issue.assigneeAgentId || issue.assigneeUserId)
+                    ? async () => {
+                        await updateIssue.mutateAsync({ status: "todo" });
+                      }
+                    : undefined
+                }
+                resumeFromBacklogPending={updateIssue.isPending && updateIssue.variables?.status === "todo"}
                 onImageClick={handleChatImageClick}
               />
             </div>

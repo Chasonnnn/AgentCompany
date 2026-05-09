@@ -42,8 +42,11 @@ import type {
   FeedbackVote,
   FeedbackVoteValue,
   IssueAttachment,
+  IssueBlockerAttention,
   IssueCommentMetadata,
   IssueCommentPresentation,
+  IssueRelationIssueSummary,
+  SuccessfulRunHandoffState,
   IssueWorkMode,
 } from "@paperclipai/shared";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
@@ -104,6 +107,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, ClipboardList, Copy, Hammer, Info, Loader2, MoreHorizontal, Paperclip, Search, Square, ThumbsDown, ThumbsUp } from "lucide-react";
+import { IssueAssignedBacklogNotice } from "./IssueAssignedBacklogNotice";
 
 interface IssueChatMessageContext {
   feedbackVoteByTargetId: Map<string, FeedbackVoteValue>;
@@ -214,6 +218,12 @@ interface IssueChatThreadProps {
   timelineEvents?: IssueTimelineEvent[];
   liveRuns?: LiveRunForIssue[];
   activeRun?: ActiveRunForIssue | null;
+  blockedBy?: IssueRelationIssueSummary[];
+  blockerAttention?: IssueBlockerAttention | null;
+  successfulRunHandoff?: SuccessfulRunHandoffState | null;
+  assigneeUserId?: string | null;
+  onResumeFromBacklog?: () => Promise<void> | void;
+  resumeFromBacklogPending?: boolean;
   companyId?: string | null;
   projectId?: string | null;
   issueStatus?: string;
@@ -3497,8 +3507,17 @@ export function IssueChatThread({
   issueWorkMode,
   onWorkModeChange,
   onRefreshLatestComments,
+  assigneeUserId = null,
+  onResumeFromBacklog,
+  resumeFromBacklogPending = false,
 }: IssueChatThreadProps) {
   const location = useLocation();
+  const currentAssigneeAgentId = currentAssigneeValue.startsWith("agent:")
+    ? currentAssigneeValue.slice("agent:".length)
+    : null;
+  const assignedAgent = currentAssigneeAgentId
+    ? agentMap?.get(currentAssigneeAgentId) ?? null
+    : null;
   const lastScrolledHashRef = useRef<string | null>(null);
   const virtualizedThreadRef = useRef<VirtualizedIssueChatThreadListHandle | null>(null);
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -3770,6 +3789,17 @@ export function IssueChatThread({
               ) : (
                 <ThreadPrimitive.Messages components={components} />
               )}
+              {showComposer ? (
+                <div data-testid="issue-chat-thread-notices" className="space-y-2">
+                  <IssueAssignedBacklogNotice
+                    issueStatus={issueStatus ?? ""}
+                    assigneeAgent={assignedAgent}
+                    assigneeUserId={assigneeUserId}
+                    onResume={onResumeFromBacklog}
+                    resuming={resumeFromBacklogPending}
+                  />
+                </div>
+              ) : null}
               <div ref={bottomAnchorRef} />
             </ThreadPrimitive.Viewport>
           </ThreadPrimitive.Root>
