@@ -1055,7 +1055,7 @@ async function listIssueBlockerAttentionMap(
   const blockedIssues = issueRows.filter((row) => row.companyId === companyId && row.status === "blocked");
   if (blockedIssues.length === 0) return attentionMap;
 
-  const relationMap = await getIssueRelationSummaryMap(companyId, blockedIssues.map((issue) => issue.id), dbOrTx);
+  const relationMap = await getIssueBlockedByRelationSummaryMap(companyId, blockedIssues.map((issue) => issue.id), dbOrTx);
   for (const issue of blockedIssues) {
     const blockers = relationMap.get(issue.id)?.blockedBy ?? [];
     const unresolvedBlockers = blockers.filter((blocker) => blocker.status !== "done");
@@ -1107,6 +1107,56 @@ async function listIssueBlockerAttentionMap(
     }));
   }
   return attentionMap;
+}
+
+async function getIssueBlockedByRelationSummaryMap(
+  companyId: string,
+  issueIds: string[],
+  dbOrTx: DbReader,
+): Promise<Map<string, Pick<IssueRelationSummaryMap, "blockedBy">>> {
+  const uniqueIssueIds = [...new Set(issueIds)];
+  const relationMap = new Map<string, Pick<IssueRelationSummaryMap, "blockedBy">>();
+  for (const issueId of uniqueIssueIds) {
+    relationMap.set(issueId, { blockedBy: [] });
+  }
+  if (uniqueIssueIds.length === 0) return relationMap;
+
+  const rows = await dbOrTx
+    .select({
+      currentIssueId: issueRelations.relatedIssueId,
+      relatedId: issues.id,
+      identifier: issues.identifier,
+      title: issues.title,
+      status: issues.status,
+      priority: issues.priority,
+      assigneeAgentId: issues.assigneeAgentId,
+      assigneeUserId: issues.assigneeUserId,
+    })
+    .from(issueRelations)
+    .innerJoin(issues, eq(issueRelations.issueId, issues.id))
+    .where(
+      and(
+        eq(issueRelations.companyId, companyId),
+        eq(issueRelations.type, "blocks"),
+        inArray(issueRelations.relatedIssueId, uniqueIssueIds),
+      ),
+    );
+
+  for (const row of rows) {
+    relationMap.get(row.currentIssueId)?.blockedBy.push({
+      id: row.relatedId,
+      identifier: row.identifier,
+      title: row.title,
+      status: row.status as IssueRelationIssueSummary["status"],
+      priority: row.priority as IssueRelationIssueSummary["priority"],
+      assigneeAgentId: row.assigneeAgentId,
+      assigneeUserId: row.assigneeUserId,
+    });
+  }
+  for (const relations of relationMap.values()) {
+    relations.blockedBy.sort((a, b) => a.title.localeCompare(b.title));
+  }
+  return relationMap;
 }
 
 function withActiveRuns(
