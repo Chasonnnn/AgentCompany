@@ -94,6 +94,9 @@ jobs:
       - name: Run general test suites
         run: pnpm test:run:general
 
+      - name: Verify release registry test coverage
+        run: pnpm run test:release-registry
+
       - name: Build
         run: pnpm build
 
