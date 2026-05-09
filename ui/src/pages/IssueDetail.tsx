@@ -61,6 +61,7 @@ import { IssueChatThread, type IssueChatComposerHandle } from "../components/Iss
 import { AgentIcon } from "../components/AgentIconPicker";
 import { IssueRunLedger } from "../components/IssueRunLedger";
 import { IssueMonitorActivityCard } from "../components/IssueMonitorActivityCard";
+import { IssueScheduledRetryCard } from "../components/IssueScheduledRetryCard";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueContinuityPanel } from "../components/IssueContinuityPanel";
@@ -2738,6 +2739,7 @@ export function IssueDetail() {
                   hasLiveRuns={hasLiveRuns}
                 />
               </div>
+              <IssueScheduledRetryCard issueId={issue.id} scheduledRetry={issue.scheduledRetry ?? null} />
               <IssueMonitorActivityCard issue={issue} />
               <IssueContinuationHandoff document={continuationHandoff} focusSignal={handoffFocusSignal} />
               {linkedApprovals && linkedApprovals.length > 0 && (

@@ -121,6 +121,9 @@ async function createHarness(options?: {
       latestCommentAt: null,
     }),
     getComment: vi.fn().mockResolvedValue(null),
+    listBlockerAttention: vi.fn().mockResolvedValue(new Map()),
+    listProductivityReviews: vi.fn().mockResolvedValue(new Map()),
+    getCurrentScheduledRetry: vi.fn().mockResolvedValue(null),
     listAttachments: vi.fn().mockResolvedValue([]),
   };
   const projectService = {
@@ -178,7 +181,16 @@ async function createHarness(options?: {
     };
     next();
   });
-  app.use("/api", issueRoutes({} as any, {} as any, {
+  const db = {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          orderBy: vi.fn(async () => []),
+        })),
+      })),
+    })),
+  };
+  app.use("/api", issueRoutes(db as any, {} as any, {
     services: {
       accessService: {
         canUser: vi.fn(),

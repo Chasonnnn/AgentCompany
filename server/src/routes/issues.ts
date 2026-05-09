@@ -1946,15 +1946,32 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const [continuityState, { project, goal }, ancestors, mentionedProjectIds, documentPayload, relations, continuationSummary, referenceSummary] = await Promise.all([
+    const [
+      continuityState,
+      { project, goal },
+      ancestors,
+      mentionedProjectIds,
+      documentPayload,
+      relations,
+      blockerAttention,
+      productivityReview,
+      continuationSummary,
+      referenceSummary,
+      successfulRunHandoffStates,
+      scheduledRetry,
+    ] = await Promise.all([
       continuitySvc.recomputeIssueContinuityState(issue.id),
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.findMentionedProjectIds(issue.id),
       documentsSvc.getIssueDocumentPayload(issue),
       svc.getRelationSummaries(issue.id),
+      svc.listBlockerAttention(issue.companyId, [issue]).then((map) => map.get(issue.id) ?? null),
+      svc.listProductivityReviews(issue.companyId, [issue.id]).then((map) => map.get(issue.id) ?? null),
       documentsSvc.getIssueDocumentByKey(issue.id, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
       issueReferencesSvc.listIssueReferenceSummary(issue.id),
+      listSuccessfulRunHandoffStates(db, issue.companyId, [issue.id]),
+      svc.getCurrentScheduledRetry(issue.id),
     ]);
     const mentionedProjects = mentionedProjectIds.length > 0
       ? await projectsSvc.listByIds(issue.companyId, mentionedProjectIds)
@@ -1968,6 +1985,10 @@ export function issueRoutes(
       continuityState,
       goalId: goal?.id ?? issue.goalId,
       ancestors,
+      ...(blockerAttention ? { blockerAttention } : {}),
+      productivityReview,
+      successfulRunHandoff: successfulRunHandoffStates.get(issue.id) ?? null,
+      scheduledRetry,
       blockedBy: relations.blockedBy,
       blocks: relations.blocks,
       relatedWork: referenceSummary,
@@ -2682,13 +2703,32 @@ export function issueRoutes(
         ? req.query.wakeCommentId.trim()
         : null;
 
-    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments, continuity, assignedAgent] =
-      await Promise.all([
+    const currentExecutionWorkspacePromise = issue.executionWorkspaceId
+      ? executionWorkspacesSvc.getById(issue.executionWorkspaceId)
+      : Promise.resolve(null);
+    const [
+      { project, goal },
+      ancestors,
+      commentCursor,
+      wakeComment,
+      relations,
+      blockerAttention,
+      productivityReview,
+      scheduledRetry,
+      attachments,
+      continuity,
+      assignedAgent,
+      continuationSummary,
+      currentExecutionWorkspace,
+    ] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.getCommentCursor(issue.id),
       wakeCommentId ? svc.getComment(wakeCommentId) : null,
       svc.getRelationSummaries(issue.id),
+      svc.listBlockerAttention(issue.companyId, [issue]).then((map) => map.get(issue.id) ?? null),
+      svc.listProductivityReviews(issue.companyId, [issue.id]).then((map) => map.get(issue.id) ?? null),
+      svc.getCurrentScheduledRetry(issue.id),
       svc.listAttachments(issue.id),
       continuitySvc.getIssueContinuity(issue.id, {
         agentId: req.actor.type === "agent" ? req.actor.agentId ?? null : null,
@@ -2696,6 +2736,8 @@ export function issueRoutes(
         isBoard: req.actor.type === "board",
       }),
       issue.assigneeAgentId ? agentsSvc.getById(issue.assigneeAgentId) : null,
+      documentsSvc.getIssueDocumentByKey(issue.id, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
+      currentExecutionWorkspacePromise,
     ]);
     const productivityReport =
       assignedAgent?.archetypeKey === "productivity_monitor"
@@ -2729,7 +2771,6 @@ export function issueRoutes(
             lastDecisionOutcome: executionState.lastDecisionOutcome,
           }
         : null;
-
     res.json({
       mode,
       planningMode: mode === "planning",
@@ -2743,6 +2784,9 @@ export function issueRoutes(
         description: issue.description,
         status: issue.status,
         workMode: issue.workMode,
+        ...(blockerAttention ? { blockerAttention } : {}),
+        productivityReview,
+        scheduledRetry,
         priority: issue.priority,
         projectId: issue.projectId,
         goalId: goal?.id ?? issue.goalId,
@@ -2792,6 +2836,17 @@ export function issueRoutes(
         createdAt: a.createdAt,
       })),
       productivityReport,
+      continuationSummary: continuationSummary
+        ? {
+            key: continuationSummary.key,
+            title: continuationSummary.title,
+            body: continuationSummary.body,
+            latestRevisionId: continuationSummary.latestRevisionId,
+            latestRevisionNumber: continuationSummary.latestRevisionNumber,
+            updatedAt: continuationSummary.updatedAt,
+          }
+        : null,
+      currentExecutionWorkspace,
     });
   });
 
@@ -3782,6 +3837,44 @@ export function issueRoutes(
     });
 
     res.json({ ok: true });
+  });
+
+  router.post("/issues/:id/scheduled-retry/retry-now", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    const actor = getActorInfo(req);
+    const result = await heartbeat.retryScheduledRetryNow({
+      issueId: issue.id,
+      actor: {
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+      },
+    });
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "issue.scheduled_retry_retry_now",
+      entityType: "issue",
+      entityId: issue.id,
+      agentId: result.scheduledRetry?.agentId ?? issue.assigneeAgentId ?? null,
+      runId: result.scheduledRetry?.runId ?? null,
+      details: {
+        outcome: result.outcome,
+        message: result.message,
+        scheduledRetry: result.scheduledRetry,
+      },
+    });
+
+    res.json(result);
   });
 
   router.patch("/issues/:id", validate(updateIssueRouteSchema), async (req, res) => {
